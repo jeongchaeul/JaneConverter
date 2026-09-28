@@ -122,6 +122,19 @@ def test_build_ffmpeg_args_mp4_cpu():
     assert "h264_nvenc" not in cmd
 
 
+def test_build_ffmpeg_args_do_not_set_thread_queue_size_for_local_inputs(tmp_path):
+    cover_file = tmp_path / "cover.jpg"
+    cover_file.write_bytes(b"cover")
+
+    commands = [
+        build_ffmpeg_args("input.mov", "output.mp4", "mp4"),
+        build_ffmpeg_args("input.mov", "output.mkv", "mkv", stream_copy=True),
+        build_ffmpeg_args("input.wav", "output.mp3", "mp3", cover_path=str(cover_file)),
+    ]
+
+    assert all("-thread_queue_size" not in cmd for cmd in commands)
+
+
 def test_best_video_quality_is_applied_to_each_hardware_encoder():
     nvenc = build_ffmpeg_args(
         input_path="input.mov", output_path="output.mp4", target_format="mp4",

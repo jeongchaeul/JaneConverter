@@ -626,10 +626,13 @@ def build_ffmpeg_args(
     active_gpu = use_gpu if use_gpu is not None else use_nvenc
     has_valid_cover = bool(cover_path and os.path.exists(cover_path))
 
+    # Current FFmpeg builds scope -thread_queue_size to output muxers. Local
+    # file inputs do not need a custom demux queue, so omit it before each -i.
+
     # Fast-path: Instant zero-loss stream copy when safe and requested
     if stream_copy:
         ffmpeg_bin = get_ffmpeg_binary()
-        cmd = [ffmpeg_bin, "-y", "-thread_queue_size", "1024", "-i", input_path]
+        cmd = [ffmpeg_bin, "-y", "-i", input_path]
         if metadata:
             for k, v in metadata.items():
                 if v:
@@ -659,11 +662,11 @@ def build_ffmpeg_args(
         cmd.extend(["-hwaccel", "auto"])
 
     if can_embed_art:
-        cmd.extend(["-thread_queue_size", "1024", "-i", input_path])
-        cmd.extend(["-thread_queue_size", "64", "-i", cover_path])
+        cmd.extend(["-i", input_path])
+        cmd.extend(["-i", cover_path])
         cmd.extend(["-map", "0:a", "-map", "1:v"])
     else:
-        cmd.extend(["-thread_queue_size", "1024", "-i", input_path])
+        cmd.extend(["-i", input_path])
 
     # Metadata tags
     if metadata:

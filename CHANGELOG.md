@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.2.6] - 2026-09-29 - FFmpeg Conversion Fallback Fix
+
+### Fixed
+- Removed the invalid `-thread_queue_size` arguments from local FFmpeg input commands so Universal Video CPU fallback can proceed with current FFmpeg builds.
+
 ## [2.2.5] - 2026-09-27 - Social Photo Capture and Hardware Pipeline
 
 ### Added
