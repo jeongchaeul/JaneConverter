@@ -131,6 +131,49 @@ def test_published_release_check_finds_newer_github_version_and_installer(monkey
     assert requested["kwargs"]["headers"]["User-Agent"].startswith("JaneConverter/")
 
 
+def test_published_release_check_falls_back_to_atom_feed_on_api_403(monkeypatch):
+    atom_feed = b'''<?xml version="1.0" encoding="UTF-8"?>
+    <feed xmlns="http://www.w3.org/2005/Atom">
+      <entry>
+        <title>JaneConverter v1.3.0</title>
+        <link rel="alternate" href="https://github.com/jeongchaeul/JaneConverter/releases/tag/v1.3.0" />
+      </entry>
+    </feed>'''
+    requested = []
+
+    class FakeResponse:
+        def __init__(self, status_code, text="", content=b""):
+            self.status_code = status_code
+            self.text = text
+            self.content = content
+
+    def fake_get(url, **kwargs):
+        requested.append((url, kwargs))
+        if url == updater.GITHUB_LATEST_RELEASE_URL:
+            return FakeResponse(403, "API rate limit exceeded")
+        return FakeResponse(200, atom_feed.decode("utf-8"), atom_feed)
+
+    monkeypatch.setattr(updater.requests, "get", fake_get)
+    monkeypatch.setattr(updater, "__version__", "1.2.0")
+
+    result = updater.check_for_release_updates()
+
+    assert result["has_update"] is True
+    assert result["latest_version"] == "1.3.0"
+    assert result["installer_available"] is True
+    assert result["installer_url"] == (
+        "https://github.com/jeongchaeul/JaneConverter/releases/download/v1.3.0/"
+        "JaneConverter-1.3.0-windows-x64-setup.exe"
+    )
+    assert result["installer_checksum_url"] == f"{result['installer_url']}.sha256"
+    assert result["release_url"] == "https://github.com/jeongchaeul/JaneConverter/releases/tag/v1.3.0"
+    assert [url for url, _ in requested] == [
+        updater.GITHUB_LATEST_RELEASE_URL,
+        updater.GITHUB_RELEASES_ATOM_URL,
+    ]
+    assert requested[1][1]["headers"]["Accept"] == "application/atom+xml"
+
+
 def test_application_update_downloads_and_verifies_the_installer(monkeypatch, tmp_path):
     installer_bytes = b"trusted installer bytes"
     checksum = __import__("hashlib").sha256(installer_bytes).hexdigest()

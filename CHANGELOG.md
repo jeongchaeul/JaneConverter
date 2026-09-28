@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.2.7] - 2026-09-29 - Update Check Recovery
+
+### Fixed
+- Added a public GitHub releases-feed fallback so the in-app updater can find releases when the unauthenticated GitHub API is rate-limited or unavailable.
+
 ## [2.2.6] - 2026-09-29 - FFmpeg Conversion Fallback Fix
 
 ### Fixed

@@ -9,6 +9,7 @@ import subprocess
 import hashlib
 import shutil
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
 from urllib.parse import urlparse
@@ -26,8 +27,10 @@ REPO_DIR = str(
 GITHUB_OWNER = "jeongchaeul"
 GITHUB_REPO = "JaneConverter"
 GITHUB_LATEST_RELEASE_URL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+GITHUB_RELEASES_ATOM_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases.atom"
 GITHUB_RELEASE_PREFIX = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/"
 LEGACY_GITHUB_RELEASE_PREFIX = "https://github.com/janecerys/JaneConverter/releases/"
+ATOM_NAMESPACE = "{http://www.w3.org/2005/Atom}"
 
 def _run_git_cmd(args: list, timeout: float = 10.0) -> subprocess.CompletedProcess:
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -106,14 +109,34 @@ def _trusted_release_url(value: Any) -> str:
     return ""
 
 
-def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
-    """Check the published GitHub release used by packaged consumer installs.
+def _release_update_result(
+    current_version: str,
+    latest_version: str,
+    release_url: str,
+    installer_url: str,
+    installer_checksum_url: str,
+) -> Dict[str, Any]:
+    installer_url = _trusted_release_url(installer_url)
+    installer_checksum_url = _trusted_release_url(installer_checksum_url)
+    return {
+        "has_update": _is_newer_version(latest_version, current_version),
+        "online": True,
+        "current_version": current_version,
+        "latest_version": latest_version,
+        "release_url": _trusted_release_url(release_url),
+        "installer_available": bool(installer_url and installer_checksum_url),
+        "installer_url": installer_url,
+        "installer_checksum_url": installer_checksum_url,
+        "error": None,
+    }
 
-    A packaged snapshot has no ``.git`` directory, so Git fetches cannot tell it
-    whether a newer consumer build exists. This endpoint is read-only and only
-    reports a newer published release; it never downloads or installs anything.
-    """
-    current_version = __version__
+
+def _check_release_updates_via_atom(
+    current_version: str,
+    timeout_seconds: float,
+    api_error: str,
+) -> Dict[str, Any]:
+    """Use GitHub's public Atom feed when the unauthenticated REST API is unavailable."""
     unavailable = {
         "has_update": False,
         "online": False,
@@ -127,6 +150,77 @@ def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
     }
     try:
         response = requests.get(
+            GITHUB_RELEASES_ATOM_URL,
+            headers={
+                "Accept": "application/atom+xml",
+                "User-Agent": f"JaneConverter/{current_version}",
+            },
+            timeout=max(1.0, float(timeout_seconds)),
+        )
+    except Exception as error:
+        unavailable["error"] = f"GitHub release API {api_error}; releases feed unavailable: {error}"
+        return unavailable
+
+    if response.status_code != 200:
+        unavailable["error"] = (
+            f"GitHub release API {api_error}; releases feed returned HTTP {response.status_code}."
+        )
+        return unavailable
+
+    try:
+        feed_content = response.content or response.text
+        if isinstance(feed_content, str):
+            feed_content = feed_content.encode("utf-8")
+        feed = ET.fromstring(feed_content)
+        entry = feed.find(f"{ATOM_NAMESPACE}entry")
+    except (ET.ParseError, TypeError, ValueError) as error:
+        unavailable["error"] = f"GitHub release API {api_error}; releases feed was invalid: {error}"
+        return unavailable
+
+    if entry is None:
+        unavailable["error"] = f"GitHub release API {api_error}; releases feed contained no releases."
+        return unavailable
+
+    release_url = ""
+    for link in entry.findall(f"{ATOM_NAMESPACE}link"):
+        if link.get("rel", "alternate") == "alternate":
+            release_url = _trusted_release_url(link.get("href"))
+            if release_url:
+                break
+
+    release_path = urlparse(release_url).path
+    if not release_url or "/releases/tag/" not in release_path:
+        unavailable["error"] = f"GitHub release API {api_error}; releases feed had no trusted release link."
+        return unavailable
+
+    tag = release_path.rsplit("/", 1)[-1]
+    latest_version = tag[1:] if tag.lower().startswith("v") else tag
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", latest_version):
+        unavailable["error"] = f"GitHub release API {api_error}; releases feed had an invalid version tag."
+        return unavailable
+
+    download_base = release_url.rsplit("/tag/", 1)[0] + f"/download/{tag}"
+    installer_name = f"JaneConverter-{latest_version}-windows-x64-setup.exe"
+    installer_url = f"{download_base}/{installer_name}"
+    return _release_update_result(
+        current_version,
+        latest_version,
+        release_url,
+        installer_url,
+        f"{installer_url}.sha256",
+    )
+
+
+def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
+    """Check the published GitHub release used by packaged consumer installs.
+
+    A packaged snapshot has no ``.git`` directory, so Git fetches cannot tell it
+    whether a newer consumer build exists. This endpoint is read-only and only
+    reports a newer published release; it never downloads or installs anything.
+    """
+    current_version = __version__
+    try:
+        response = requests.get(
             GITHUB_LATEST_RELEASE_URL,
             headers={
                 "Accept": "application/vnd.github+json",
@@ -135,27 +229,42 @@ def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
             timeout=max(1.0, float(timeout_seconds)),
         )
     except Exception as error:
-        unavailable["error"] = f"GitHub release check unavailable: {error}"
-        return unavailable
+        return _check_release_updates_via_atom(
+            current_version,
+            timeout_seconds,
+            f"unavailable ({error})",
+        )
 
     if response.status_code != 200:
-        unavailable["error"] = f"GitHub release check returned HTTP {response.status_code}."
-        return unavailable
+        return _check_release_updates_via_atom(
+            current_version,
+            timeout_seconds,
+            f"returned HTTP {response.status_code}",
+        )
 
     try:
         release = response.json()
     except ValueError:
-        unavailable["error"] = "GitHub release check returned invalid JSON."
-        return unavailable
+        return _check_release_updates_via_atom(
+            current_version,
+            timeout_seconds,
+            "returned invalid JSON",
+        )
     if not isinstance(release, dict):
-        unavailable["error"] = "GitHub release check returned an unexpected response."
-        return unavailable
+        return _check_release_updates_via_atom(
+            current_version,
+            timeout_seconds,
+            "returned an unexpected response",
+        )
 
     tag = str(release.get("tag_name", "")).strip()
     latest_version = tag[1:] if tag.lower().startswith("v") else tag
     if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", latest_version):
-        unavailable["error"] = "GitHub latest release did not contain a valid JaneConverter version."
-        return unavailable
+        return _check_release_updates_via_atom(
+            current_version,
+            timeout_seconds,
+            "returned an invalid version tag",
+        )
 
     assets = release.get("assets") if isinstance(release, dict) else []
     if not isinstance(assets, list):
@@ -174,17 +283,13 @@ def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
             installer_checksum_url = asset_url
 
     release_url = _trusted_release_url(release.get("html_url"))
-    return {
-        "has_update": _is_newer_version(latest_version, current_version),
-        "online": True,
-        "current_version": current_version,
-        "latest_version": latest_version,
-        "release_url": release_url,
-        "installer_available": bool(installer_url),
-        "installer_url": installer_url,
-        "installer_checksum_url": installer_checksum_url,
-        "error": None,
-    }
+    return _release_update_result(
+        current_version,
+        latest_version,
+        release_url,
+        installer_url,
+        installer_checksum_url,
+    )
 
 
 def cleanup_update_cache() -> None:
