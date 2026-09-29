@@ -60,19 +60,13 @@ export interface UpdateCheckResult {
   };
   repo?: {
     has_update?: boolean;
+    current_commit?: string;
+    latest_commit?: string;
     current_version?: string;
     latest_version?: string;
     installer_available?: boolean;
-    installer_url?: string;
-    installer_checksum_url?: string;
     release_url?: string;
   };
-}
-
-export interface UpdateInstallRequest {
-  installerUrl: string;
-  checksumUrl: string;
-  version: string;
 }
 
 export interface ConversionRequest extends Omit<ConverterSettings, "fetchedDir"> {
@@ -189,7 +183,7 @@ export interface JaneBridge {
   clearAccessLink(): Promise<void>;
   relaunch(): Promise<void>;
   checkUpdates(): Promise<UpdateCheckResult>;
-  installUpdate(update: UpdateInstallRequest): Promise<void>;
+  installUpdate(): Promise<void>;
 }
 
 const demoSettings: ConverterSettings = {
@@ -290,7 +284,7 @@ const tauriBridge: JaneBridge = {
   clearAccessLink: () => invoke<void>("clear_access_link"),
   relaunch: () => invoke<void>("relaunch"),
   checkUpdates: () => invoke<UpdateCheckResult>("check_updates"),
-  installUpdate: (update) => invoke<void>("install_update", { update }),
+  installUpdate: () => invoke<void>("install_update"),
 };
 
 export const bridge: JaneBridge = isTauriRuntime() ? tauriBridge : demoBridge;

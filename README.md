@@ -43,6 +43,7 @@ Download the matching artifact from the [latest release](https://github.com/jeon
 
 - Windows x64 installer: `JaneConverter-<version>-windows-x64-setup.exe`
 - Windows x64 portable: `JaneConverter-<version>-windows-x64-portable.zip`
+- Linux x86_64 AppImage with in-app updates: `JaneConverter-<version>-linux-x86_64.AppImage`
 - Linux x86_64 portable: `JaneConverter-<version>-linux-x86_64.tar.gz`
 - macOS Apple Silicon: `JaneConverter-<version>-macos-arm64.dmg`
 - macOS Intel: `JaneConverter-<version>-macos-x86_64.dmg`

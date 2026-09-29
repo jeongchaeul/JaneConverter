@@ -1,24 +1,56 @@
-name: Release packages
+name: Continuous updater packages
 
 on:
-  workflow_dispatch:
-    inputs:
-      existing_release_tag:
-        description: Existing v<version> release whose packages should be rebuilt and replaced
-        required: false
-        type: string
   push:
-    tags:
-      - "v*"
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: janeconverter-continuous-updates-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.build-info.outputs.version }}
+      commit: ${{ steps.build-info.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - name: Verify update signing configuration
+        env:
+          JANECONVERTER_UPDATER_PUBKEY: ${{ vars.JANECONVERTER_UPDATER_PUBKEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$JANECONVERTER_UPDATER_PUBKEY" ]; then
+            echo "Configure the JANECONVERTER_UPDATER_PUBKEY repository variable."
+            exit 1
+          fi
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "Configure the TAURI_SIGNING_PRIVATE_KEY repository secret."
+            exit 1
+          fi
+      - name: Compute the commit build version
+        id: build-info
+        run: |
+          uv sync --locked
+          version="$(uv run --locked python -c 'from janeconverter.version import __version__; print(__version__)')+build.${GITHUB_RUN_NUMBER}.g${GITHUB_SHA}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
   windows-x64:
+    needs: prepare
     runs-on: windows-latest
     env:
-      JANECONVERTER_BUILD_COMMIT: ${{ github.sha }}
+      JANECONVERTER_BUILD_COMMIT: ${{ needs.prepare.outputs.commit }}
       JANECONVERTER_UPDATER_PUBKEY: ${{ vars.JANECONVERTER_UPDATER_PUBKEY }}
     steps:
       - uses: actions/checkout@v4
@@ -26,8 +58,7 @@ jobs:
         with:
           python-version: "3.12"
           architecture: x64
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
       - uses: actions/setup-node@v4
@@ -43,11 +74,6 @@ jobs:
           rustup default stable
       - name: Install Python build dependencies
         run: uv sync --locked
-      - name: Validate packaging contracts
-        run: |
-          uv run --locked python packaging/set_version.py --check
-          uv pip check
-          uv run --locked pytest -q tests/test_consumer_packaging.py
       - name: Download and verify static FFmpeg
         id: ffmpeg
         shell: pwsh
@@ -66,50 +92,40 @@ jobs:
           if (-not $ffmpeg -or -not $ffprobe) { throw "Verified FFmpeg archive did not contain both tools." }
           "ffmpeg=$ffmpeg" >> $env:GITHUB_OUTPUT
           "ffprobe=$ffprobe" >> $env:GITHUB_OUTPUT
-      - name: Verify tag version
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.existing_release_tag != '')
-        env:
-          PUBLISH_TAG: ${{ inputs.existing_release_tag || github.ref_name }}
-        shell: pwsh
-        run: |
-          $version = & uv run --locked python -c "from janeconverter.version import __version__; print(__version__)"
-          if ($env:PUBLISH_TAG -ne "v$version") { throw "Release tag $env:PUBLISH_TAG does not match engine version $version." }
-      - name: Build Windows installer and portable package
+      - name: Build signed updater package
         shell: pwsh
         env:
+          UPDATER_VERSION: ${{ needs.prepare.outputs.version }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           ./packaging/build_consumer.ps1 `
-            -EnableUpdater `
+            -UpdaterOnly `
+            -UpdaterBuildVersion $env:UPDATER_VERSION `
             -BuildCommit $env:JANECONVERTER_BUILD_COMMIT `
             -FFmpegPath "${{ steps.ffmpeg.outputs.ffmpeg }}" `
             -FFprobePath "${{ steps.ffmpeg.outputs.ffprobe }}" `
             -NodePath (Get-Command node.exe).Source
-      - name: Upload Windows release artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: windows-x64-release
+          name: updater-windows-x64
           if-no-files-found: error
           path: |
-            dist/JaneConverter-*-windows-x64-setup.exe
-            dist/JaneConverter-*-windows-x64-setup.exe.sha256
-            dist/JaneConverter-*-windows-x64-portable.zip
-            dist/JaneConverter-*-windows-x64-portable.zip.sha256
-            dist/JaneConverter-Browser-Bridge-*.zip
+            dist/JaneConverter-continuous-windows-x64.nsis.zip
+            dist/JaneConverter-continuous-windows-x64.nsis.zip.sig
 
   linux-x86_64:
+    needs: prepare
     runs-on: ubuntu-22.04
     env:
-      JANECONVERTER_BUILD_COMMIT: ${{ github.sha }}
+      JANECONVERTER_BUILD_COMMIT: ${{ needs.prepare.outputs.commit }}
       JANECONVERTER_UPDATER_PUBKEY: ${{ vars.JANECONVERTER_UPDATER_PUBKEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
       - uses: actions/setup-node@v4
@@ -117,7 +133,7 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: desktop-ui/package-lock.json
-      - name: Install Tauri Linux prerequisites
+      - name: Install Tauri and AppImage prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -129,11 +145,6 @@ jobs:
           rustup default stable
       - name: Install Python build dependencies
         run: uv sync --locked
-      - name: Validate packaging contracts
-        run: |
-          uv run --locked python packaging/set_version.py --check
-          uv pip check
-          uv run --locked pytest -q tests/test_consumer_packaging.py
       - name: Download and verify static FFmpeg
         id: ffmpeg
         run: |
@@ -153,38 +164,30 @@ jobs:
           test -n "$ffmpeg" && test -n "$ffprobe"
           echo "ffmpeg=$ffmpeg" >> "$GITHUB_OUTPUT"
           echo "ffprobe=$ffprobe" >> "$GITHUB_OUTPUT"
-      - name: Verify tag version
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.existing_release_tag != '')
+      - name: Build signed updater AppImage
         env:
-          PUBLISH_TAG: ${{ inputs.existing_release_tag || github.ref_name }}
-        run: |
-          version="$(uv run --locked python -c 'from janeconverter.version import __version__; print(__version__)')"
-          test "$PUBLISH_TAG" = "v$version"
-      - name: Build Linux portable package
-        env:
+          UPDATER_VERSION: ${{ needs.prepare.outputs.version }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           bash packaging/build_linux.sh \
-            --enable-updater \
+            --updater-only \
+            --updater-version "$UPDATER_VERSION" \
             --build-commit "$JANECONVERTER_BUILD_COMMIT" \
             --ffmpeg "${{ steps.ffmpeg.outputs.ffmpeg }}" \
             --ffprobe "${{ steps.ffmpeg.outputs.ffprobe }}" \
             --node "$(command -v node)"
-      - name: Upload Linux release artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: linux-x86_64-release
+          name: updater-linux-x86_64
           if-no-files-found: error
           path: |
-            dist/JaneConverter-*-linux-x86_64.tar.gz
-            dist/JaneConverter-*-linux-x86_64.tar.gz.sha256
-            dist/JaneConverter-*-linux-x86_64.AppImage
-            dist/JaneConverter-*-linux-x86_64.AppImage.sha256
-            dist/JaneConverter-*-linux-x86_64.AppImage.sig
+            dist/JaneConverter-continuous-linux-x86_64.AppImage
+            dist/JaneConverter-continuous-linux-x86_64.AppImage.sig
 
   macos:
-    name: macos-${{ matrix.arch }}
+    needs: prepare
+    name: updater-macos-${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
@@ -211,7 +214,7 @@ jobs:
             ffprobe-sha256: fa3add0ce901f7241abe0dfc0155d958fc834aca3f8ce61f87cc712ae669c1e0
     runs-on: ${{ matrix.runner }}
     env:
-      JANECONVERTER_BUILD_COMMIT: ${{ github.sha }}
+      JANECONVERTER_BUILD_COMMIT: ${{ needs.prepare.outputs.commit }}
       JANECONVERTER_UPDATER_PUBKEY: ${{ vars.JANECONVERTER_UPDATER_PUBKEY }}
     steps:
       - uses: actions/checkout@v4
@@ -219,8 +222,7 @@ jobs:
         with:
           python-version: "3.12"
           architecture: ${{ matrix.python-architecture }}
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
       - uses: actions/setup-node@v4
@@ -237,11 +239,6 @@ jobs:
           rustup default stable
       - name: Install Python build dependencies
         run: uv sync --locked
-      - name: Validate packaging contracts
-        run: |
-          uv run --locked python packaging/set_version.py --check
-          uv pip check
-          uv run --locked pytest -q tests/test_consumer_packaging.py
       - name: Download and verify FFmpeg tools
         id: ffmpeg
         run: |
@@ -249,82 +246,74 @@ jobs:
           mkdir ffmpeg-static
           ffmpeg="ffmpeg-static/${{ matrix.ffmpeg-asset }}"
           ffprobe="ffmpeg-static/${{ matrix.ffprobe-asset }}"
-          curl --fail --location --retry 3 \
-            --output "$ffmpeg" \
-            "${{ matrix.ffmpeg-url }}"
-          curl --fail --location --retry 3 \
-            --output "$ffprobe" \
-            "${{ matrix.ffprobe-url }}"
+          curl --fail --location --retry 3 --output "$ffmpeg" "${{ matrix.ffmpeg-url }}"
+          curl --fail --location --retry 3 --output "$ffprobe" "${{ matrix.ffprobe-url }}"
           printf '%s  %s\n' '${{ matrix.ffmpeg-sha256 }}' "$ffmpeg" | shasum -a 256 -c -
           printf '%s  %s\n' '${{ matrix.ffprobe-sha256 }}' "$ffprobe" | shasum -a 256 -c -
           chmod 0755 "$ffmpeg" "$ffprobe"
           echo "ffmpeg=$PWD/$ffmpeg" >> "$GITHUB_OUTPUT"
           echo "ffprobe=$PWD/$ffprobe" >> "$GITHUB_OUTPUT"
-      - name: Verify tag version
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.existing_release_tag != '')
+      - name: Build signed updater app
         env:
-          PUBLISH_TAG: ${{ inputs.existing_release_tag || github.ref_name }}
-        run: |
-          version="$(uv run --locked python -c 'from janeconverter.version import __version__; print(__version__)')"
-          test "$PUBLISH_TAG" = "v$version"
-      - name: Build macOS DMG
-        env:
+          UPDATER_VERSION: ${{ needs.prepare.outputs.version }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           bash packaging/build_macos.sh \
-            --enable-updater \
+            --updater-only \
+            --updater-version "$UPDATER_VERSION" \
             --build-commit "$JANECONVERTER_BUILD_COMMIT" \
             --ffmpeg "${{ steps.ffmpeg.outputs.ffmpeg }}" \
             --ffprobe "${{ steps.ffmpeg.outputs.ffprobe }}" \
             --node "$(command -v node)"
-      - name: Upload macOS release artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: macos-${{ matrix.arch }}-release
+          name: updater-macos-${{ matrix.arch }}
           if-no-files-found: error
           path: |
-            dist/JaneConverter-*-macos-${{ matrix.arch }}.dmg
-            dist/JaneConverter-*-macos-${{ matrix.arch }}.dmg.sha256
+            dist/JaneConverter-continuous-macos-${{ matrix.arch }}.app.tar.gz
+            dist/JaneConverter-continuous-macos-${{ matrix.arch }}.app.tar.gz.sig
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.existing_release_tag != '')
-    needs: [windows-x64, linux-x86_64, macos]
+    needs: [prepare, windows-x64, linux-x86_64, macos]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
-      - name: Create GitHub release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - name: Create and validate the complete signed update feed
+        env:
+          UPDATER_VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: |
+          uv run --locked --no-sync python packaging/create_updater_manifest.py \
+            --version "$UPDATER_VERSION" \
+            --commit "$SOURCE_COMMIT" \
+            --repository "$GITHUB_REPOSITORY" \
+            --artifacts-dir artifacts \
+            --output artifacts/latest.json
+      - name: Publish the rolling continuous update feed
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.existing_release_tag || github.ref_name }}
         run: |
-          if [ -z "$RELEASE_TAG" ] || [ "$RELEASE_TAG" = "main" ]; then
-            echo "Set existing_release_tag to the v<version> release whose assets should be replaced."
-            exit 1
-          fi
-          files=()
-          while IFS= read -r -d '' f; do
-            files+=("$f")
-          done < <(find artifacts -type f -print0)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No artifact files found to publish."
-            exit 1
-          fi
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG exists, uploading assets..."
-            gh release upload "$RELEASE_TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          set -euo pipefail
+          if gh release view continuous --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload continuous artifacts/JaneConverter* --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload continuous artifacts/latest.json --repo "$GITHUB_REPOSITORY" --clobber
           else
-            if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-              echo "Release $RELEASE_TAG does not exist; refusing to create a release from a manual asset refresh."
-              exit 1
-            fi
-            echo "Creating release $RELEASE_TAG..."
-            gh release create "$RELEASE_TAG" "${files[@]}" \
-              --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
-              --title "JaneConverter $RELEASE_TAG"
+            gh release create continuous artifacts/JaneConverter* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --title "JaneConverter Continuous Updates" \
+              --notes "Signed per-commit update packages for the JaneConverter desktop app."
+            gh release upload continuous artifacts/latest.json --repo "$GITHUB_REPOSITORY"
           fi

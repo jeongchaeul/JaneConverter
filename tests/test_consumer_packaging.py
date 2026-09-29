@@ -41,10 +41,11 @@ def test_manifest_defines_one_ui_engine_and_toolset():
         "JaneConverter-<version>-windows-x64-setup.exe",
         "JaneConverter-<version>-windows-x64-portable.zip",
         "JaneConverter-<version>-linux-x86_64.tar.gz",
+        "JaneConverter-<version>-linux-x86_64.AppImage",
         "JaneConverter-<version>-macos-arm64.dmg",
         "JaneConverter-<version>-macos-x86_64.dmg",
     ]
-    assert len(manifest["artifacts"]) == 5
+    assert len(manifest["artifacts"]) == 6
 
 
 def test_windows_build_stages_one_private_runtime_for_both_outputs():
@@ -64,7 +65,7 @@ def test_windows_build_stages_one_private_runtime_for_both_outputs():
         assert script.count(obsolete) == 1  # rejection list only
 
 
-def test_linux_build_is_x86_64_tarball_without_appimage():
+def test_linux_build_keeps_portable_tarball_and_can_build_updater_appimage():
     script = read("packaging/build_linux.sh")
 
     assert script.startswith("#!/usr/bin/env bash")
@@ -74,7 +75,10 @@ def test_linux_build_is_x86_64_tarball_without_appimage():
     assert "linux-x86_64.tar.gz" in script
     assert "install -m 0755" in script
     assert '"$RUNTIME_ENGINE/JaneConverterEngine" --version' in script
-    assert "AppImage" not in script
+    assert "--enable-updater" in script
+    assert "--updater-only" in script
+    assert 'UPDATER_ARTIFACT="$OUTPUT_DIR/JaneConverter-$VERSION-linux-x86_64.AppImage"' in script
+    assert 'UPDATER_ARTIFACT="$OUTPUT_DIR/JaneConverter-continuous-linux-x86_64.AppImage"' in script
 
 
 def test_macos_build_is_native_arch_specific_and_ad_hoc_signed():
@@ -93,7 +97,7 @@ def test_macos_build_is_native_arch_specific_and_ad_hoc_signed():
     assert "assert_macho_arch" in script
     assert "xattr -dr com.apple.quarantine" in script
     assert "codesign --force --sign -" in script
-    assert 'config["bundle"]["targets"] = ["app", "dmg"]' in script
+    assert 'config["bundle"]["targets"] = ["app"] if os.environ.get("JANECONVERTER_UPDATER_ONLY") == "1" else ["app", "dmg"]' in script
     assert 'setdefault("macOS", {})["signingIdentity"] = "-"' in script
     assert "macos-$ARCH.dmg" in script
     assert "shasum -a 256" in script
@@ -167,7 +171,8 @@ def test_release_workflow_builds_and_publishes_all_agreed_platforms():
     assert "--prerelease" not in workflow
     assert "github.token" in workflow
     assert workflow.count("uv run --locked python packaging/set_version.py --check") == 3
-    assert "AppImage" not in workflow
+    assert "JaneConverter-*-linux-x86_64.AppImage" in workflow
+    assert "JaneConverter-*-linux-x86_64.AppImage.sig" in workflow
 
 
 def test_frozen_engine_entrypoint_calls_installed_package_cli():

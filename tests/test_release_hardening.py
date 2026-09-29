@@ -1,8 +1,11 @@
 """Regression tests for bounded events, source routing, and safe update defaults."""
 
+import json
 import os
+import sys
 from pathlib import Path
 
+from janeconverter import cli
 from janeconverter.events import BoundedLogQueue, CoalescingCallbackQueue
 from janeconverter.extractor import identify_source_type, is_playlist_url
 from janeconverter import updater
@@ -71,6 +74,21 @@ def test_updates_are_read_only_by_default(monkeypatch):
     assert result["already_up_to_date"] is True
     assert result["repo_updated"] is False
     assert result["engine_updated"] is False
+
+
+def test_packaged_update_check_can_skip_the_repository_release_api(monkeypatch, capsys):
+    engine_info = {"has_update": False, "online": True, "current_version": "1", "latest_version": "1"}
+
+    def fail_if_called():
+        raise AssertionError("the updater-enabled app must use its signed commit feed for app updates")
+
+    monkeypatch.setattr(cli, "check_for_engine_updates", lambda: engine_info)
+    monkeypatch.setattr(cli, "check_for_repo_updates", fail_if_called)
+    monkeypatch.setattr(sys, "argv", ["janeconverter", "--check-engine-updates"])
+
+    cli.main()
+
+    assert json.loads(capsys.readouterr().out) == {"engine": engine_info}
 
 
 def test_engine_install_requires_explicit_permission(monkeypatch):

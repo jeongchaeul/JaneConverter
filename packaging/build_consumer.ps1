@@ -4,6 +4,10 @@ param(
     [string]$FFprobePath = "",
     [string]$NodePath = "",
     [string]$OutputDirectory = "",
+    [string]$UpdaterBuildVersion = "",
+    [string]$BuildCommit = "",
+    [switch]$EnableUpdater,
+    [switch]$UpdaterOnly,
     [switch]$SkipInstaller,
     [switch]$SkipPortable,
     [switch]$KeepStaging
@@ -59,10 +63,35 @@ if ($Version -and $Version -ne $engineVersion) {
     throw "Requested version $Version does not match src/janeconverter/version.py ($engineVersion)."
 }
 $Version = $engineVersion
+$enableUpdater = $EnableUpdater -or $UpdaterOnly
+$signingPrivateKey = $env:TAURI_SIGNING_PRIVATE_KEY
+$signingPrivateKeyPassword = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+
+if ($enableUpdater) {
+    if (-not $BuildCommit) { $BuildCommit = $env:JANECONVERTER_BUILD_COMMIT }
+    if (-not $BuildCommit -or $BuildCommit -notmatch '^[0-9a-fA-F]{40}$') {
+        throw "Updater builds require a full 40-character source commit."
+    }
+    if ($UpdaterOnly -and (-not $UpdaterBuildVersion -or $UpdaterBuildVersion -notmatch "^$([regex]::Escape($Version))\+build\.\d+\.g$BuildCommit$")) {
+        throw "Updater build version must be $Version+build.<sequence>.g$BuildCommit."
+    }
+    if (-not $env:JANECONVERTER_UPDATER_PUBKEY) {
+        throw "Set the JANECONVERTER_UPDATER_PUBKEY GitHub Actions variable before building updater packages."
+    }
+    if (-not $signingPrivateKey) {
+        throw "Set the TAURI_SIGNING_PRIVATE_KEY GitHub Actions secret before building updater packages."
+    }
+    $env:JANECONVERTER_BUILD_COMMIT = $BuildCommit.ToLowerInvariant()
+}
+Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
+Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+
+$applicationVersion = if ($UpdaterOnly) { $UpdaterBuildVersion } else { $Version }
 
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repoRoot "dist" }
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
-$buildRoot = Join-Path $OutputDirectory "consumer-build-$Version-windows-x64"
+$buildRootName = if ($UpdaterOnly) { "consumer-build-updater-windows-x64" } else { "consumer-build-$Version-windows-x64" }
+$buildRoot = Join-Path $OutputDirectory $buildRootName
 $payloadRoot = Join-Path $buildRoot "payload\JaneConverter"
 $runtimeRoot = Join-Path $payloadRoot "resources\runtime"
 $runtimeEngine = Join-Path $runtimeRoot "engine"
@@ -71,10 +100,12 @@ $pyinstallerRoot = Join-Path $buildRoot "pyinstaller"
 $tauriTarget = Join-Path $buildRoot "tauri-target"
 $installerOutput = Join-Path $OutputDirectory "JaneConverter-$Version-windows-x64-setup.exe"
 $portableOutput = Join-Path $OutputDirectory "JaneConverter-$Version-windows-x64-portable.zip"
+$updaterOutput = Join-Path $OutputDirectory "JaneConverter-continuous-windows-x64.nsis.zip"
+$updaterSignature = "$updaterOutput.sig"
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 if (Test-Path -LiteralPath $buildRoot) { Remove-Item -LiteralPath $buildRoot -Recurse -Force }
-foreach ($artifact in @($installerOutput, "$installerOutput.sha256", $portableOutput, "$portableOutput.sha256")) {
+foreach ($artifact in @($installerOutput, "$installerOutput.sha256", $portableOutput, "$portableOutput.sha256", $updaterOutput, $updaterSignature)) {
     if (Test-Path -LiteralPath $artifact) { Remove-Item -LiteralPath $artifact -Force }
 }
 New-Item -ItemType Directory -Path $runtimeEngine,$runtimeBin,$pyinstallerRoot -Force | Out-Null
@@ -135,14 +166,24 @@ if (Get-ChildItem -LiteralPath $runtimeRoot -Recurse -Force -File -Filter "*.py"
 
 $baseConfig = Get-Content -Raw (Join-Path $repoRoot "desktop-ui\src-tauri\tauri.conf.json") | ConvertFrom-Json
 $baseConfig.productName = "JaneConverter"
-$baseConfig.version = $Version
+$baseConfig.version = $applicationVersion
 $baseConfig.build.beforeBuildCommand = ""
-$baseConfig.bundle.active = -not $SkipInstaller
+$baseConfig.bundle.active = $UpdaterOnly -or -not $SkipInstaller
 $baseConfig.bundle.targets = @("nsis")
 $baseConfig.bundle | Add-Member -MemberType NoteProperty -Name resources -Value ([ordered]@{
     $runtimeRoot = "runtime"
     $extensionFolder = "browser-extension"
 }) -Force
+if ($enableUpdater) {
+    $baseConfig.bundle | Add-Member -MemberType NoteProperty -Name createUpdaterArtifacts -Value $true -Force
+    $baseConfig | Add-Member -MemberType NoteProperty -Name plugins -Value ([ordered]@{
+        updater = [ordered]@{
+            pubkey = $env:JANECONVERTER_UPDATER_PUBKEY
+            endpoints = @("https://github.com/jeongchaeul/JaneConverter/releases/download/continuous/latest.json")
+            windows = [ordered]@{ installMode = "passive" }
+        }
+    }) -Force
+}
 $baseConfig.bundle | Add-Member -MemberType NoteProperty -Name windows -Value ([ordered]@{
     nsis = [ordered]@{
         installMode = "currentUser"
@@ -164,10 +205,19 @@ try {
         Invoke-Checked { & $npm ci --no-audit --no-fund --ignore-scripts } "Desktop dependency installation"
         Invoke-Checked { & $npm run build } "Desktop frontend build"
         $tauri = Join-Path (Get-Location) "node_modules\.bin\tauri.cmd"
-        if ($SkipInstaller) {
-            Invoke-Checked { & $tauri build --no-bundle --config $tauriConfig } "Tauri application build"
-        } else {
-            Invoke-Checked { & $tauri build --config $tauriConfig } "Tauri application and NSIS build"
+        if ($enableUpdater) {
+            $env:TAURI_SIGNING_PRIVATE_KEY = $signingPrivateKey
+            if ($signingPrivateKeyPassword) { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $signingPrivateKeyPassword }
+        }
+        try {
+            if ($SkipInstaller) {
+                Invoke-Checked { & $tauri build --no-bundle --config $tauriConfig } "Tauri application build"
+            } else {
+                Invoke-Checked { & $tauri build --config $tauriConfig } "Tauri application and NSIS build"
+            }
+        } finally {
+            Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
+            Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
         }
     } finally {
         Pop-Location
@@ -181,9 +231,52 @@ $tauriExecutable = Join-Path $tauriTarget "release\janeconverter-desktop.exe"
 if (-not (Test-Path -LiteralPath $tauriExecutable -PathType Leaf)) {
     throw "Tauri did not produce the expected executable."
 }
+
+if ($EnableUpdater -and -not $UpdaterOnly -and -not $SkipPortable) {
+    $portableTarget = Join-Path $buildRoot "portable-tauri-target"
+    $portableConfigObject = $baseConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $portableConfigObject.version = $Version
+    $portableConfigObject.bundle.active = $false
+    $portableConfigObject.bundle.targets = @()
+    $portableConfigObject.PSObject.Properties.Remove("plugins")
+    $portableConfig = Join-Path $buildRoot "tauri.portable.json"
+    $portableConfigObject | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $portableConfig -Encoding utf8
+
+    $previousCargoTarget = $env:CARGO_TARGET_DIR
+    $previousBuildCommit = $env:JANECONVERTER_BUILD_COMMIT
+    $env:CARGO_TARGET_DIR = $portableTarget
+    Remove-Item Env:JANECONVERTER_BUILD_COMMIT -ErrorAction SilentlyContinue
+    try {
+        Push-Location (Join-Path $repoRoot "desktop-ui")
+        try {
+            Invoke-Checked { & $tauri build --no-bundle --config $portableConfig } "Portable Tauri application build"
+        } finally {
+            Pop-Location
+        }
+    } finally {
+        if ($null -eq $previousCargoTarget) { Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue } else { $env:CARGO_TARGET_DIR = $previousCargoTarget }
+        if ($null -eq $previousBuildCommit) { Remove-Item Env:JANECONVERTER_BUILD_COMMIT -ErrorAction SilentlyContinue } else { $env:JANECONVERTER_BUILD_COMMIT = $previousBuildCommit }
+    }
+    $tauriExecutable = Join-Path $portableTarget "release\janeconverter-desktop.exe"
+    if (-not (Test-Path -LiteralPath $tauriExecutable -PathType Leaf)) {
+        throw "Tauri did not produce the expected portable executable."
+    }
+}
 Copy-Item -LiteralPath $tauriExecutable -Destination (Join-Path $payloadRoot "JaneConverter.exe")
 
-if (-not $SkipInstaller) {
+if ($UpdaterOnly) {
+    $nsisDirectory = Join-Path $tauriTarget "release\bundle\nsis"
+    $builtUpdater = Get-ChildItem -LiteralPath $nsisDirectory -Filter "*.nsis.zip" -File |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    if (-not $builtUpdater) { throw "Tauri completed without producing a signed NSIS updater package." }
+    $builtSignature = "$($builtUpdater.FullName).sig"
+    if (-not (Test-Path -LiteralPath $builtSignature -PathType Leaf)) {
+        throw "Tauri did not produce the NSIS updater signature."
+    }
+    Copy-Item -LiteralPath $builtUpdater.FullName -Destination $updaterOutput -Force
+    Copy-Item -LiteralPath $builtSignature -Destination $updaterSignature -Force
+    Write-Host "Created signed updater package $updaterOutput" -ForegroundColor Green
+} elseif (-not $SkipInstaller) {
     $builtInstaller = Get-ChildItem -LiteralPath (Join-Path $tauriTarget "release\bundle\nsis") -Filter "*-setup.exe" -File |
         Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
     if (-not $builtInstaller) { throw "Tauri completed without producing an NSIS installer." }
@@ -192,7 +285,7 @@ if (-not $SkipInstaller) {
     Write-Host "Created $installerOutput" -ForegroundColor Green
 }
 
-if (-not $SkipPortable) {
+if (-not $UpdaterOnly -and -not $SkipPortable) {
     Compress-Archive -LiteralPath $payloadRoot -DestinationPath $portableOutput -CompressionLevel Optimal
     Write-Checksum $portableOutput
     Write-Host "Created $portableOutput" -ForegroundColor Green
@@ -200,7 +293,7 @@ if (-not $SkipPortable) {
 
 $extensionZips = Get-ChildItem -LiteralPath (Join-Path $repoRoot "browser-extension\releases") -Filter "JaneConverter-Browser-Bridge-*.zip" -File |
     Sort-Object LastWriteTimeUtc -Descending
-if ($extensionZips) {
+if (-not $UpdaterOnly -and $extensionZips) {
     $latestExtensionZip = $extensionZips | Select-Object -First 1
     Copy-Item -LiteralPath $latestExtensionZip.FullName -Destination (Join-Path $repoRoot "dist\$($latestExtensionZip.Name)") -Force
     Write-Host "Copied $($latestExtensionZip.Name) to dist" -ForegroundColor Green

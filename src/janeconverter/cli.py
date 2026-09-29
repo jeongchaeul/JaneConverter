@@ -879,6 +879,7 @@ def main():
     parser.add_argument("--social-photo-manifest-stdin", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-update", action="store_true", help="Skip the read-only yt-dlp update availability check on startup")
     parser.add_argument("--check-updates", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--check-engine-updates", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--download-update", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--update-url", help=argparse.SUPPRESS)
     parser.add_argument("--update-checksum-url", help=argparse.SUPPRESS)
@@ -910,6 +911,9 @@ def main():
             social_photo_manifest = json.load(sys.stdin)
         except (json.JSONDecodeError, OSError) as error:
             parser.error(f"Could not read the social photo manifest: {error}")
+    if args.check_engine_updates:
+        print(json.dumps({"engine": check_for_engine_updates()}))
+        return
     if args.check_updates:
         print(json.dumps({
             "engine": check_for_engine_updates(),

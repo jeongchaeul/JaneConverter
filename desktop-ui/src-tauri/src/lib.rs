@@ -21,7 +21,6 @@ use process::{
     terminate_child, ConversionSlots,
 };
 use rfd::FileDialog;
-use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -29,13 +28,66 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use tauri::{State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri_plugin_updater::{Update, UpdaterExt};
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UpdateInstallRequest {
-    installer_url: String,
-    checksum_url: String,
-    version: String,
+const BUILD_COMMIT: &str = match option_env!("JANECONVERTER_BUILD_COMMIT") {
+    Some(commit) => commit,
+    None => "unknown",
+};
+
+#[derive(Default)]
+struct PendingUpdate(Mutex<Option<Update>>);
+
+fn is_commit_sha(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn version_core_and_build(value: &str) -> Option<((u64, u64, u64), Option<u64>)> {
+    let (core, metadata) = value.split_once('+').unwrap_or((value, ""));
+    let mut parts = core.split('.');
+    let core = (
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    );
+    if parts.next().is_some() {
+        return None;
+    }
+    let mut metadata = metadata.split('.');
+    let sequence = if metadata.next() == Some("build") {
+        metadata.next().and_then(|value| value.parse::<u64>().ok())
+    } else {
+        None
+    };
+    Some((core, sequence))
+}
+
+fn build_metadata_commit(value: &str) -> Option<&str> {
+    let (_, metadata) = value.split_once('+')?;
+    let mut parts = metadata.split('.');
+    if parts.next()? != "build" || parts.next()?.parse::<u64>().is_err() {
+        return None;
+    }
+    let commit = parts.next()?.strip_prefix('g')?;
+    (parts.next().is_none() && is_commit_sha(commit)).then_some(commit)
+}
+
+fn short_commit(value: &str) -> String {
+    value.chars().take(7).collect()
+}
+
+fn is_newer_updater_build(current: &str, latest: &str) -> bool {
+    let (Some((current_core, current_build)), Some((latest_core, latest_build))) = (
+        version_core_and_build(current),
+        version_core_and_build(latest),
+    ) else {
+        return false;
+    };
+    if latest_core != current_core {
+        return latest_core > current_core;
+    }
+    matches!((current_build, latest_build), (Some(current), Some(latest)) if latest > current)
+        || matches!((current_build, latest_build), (None, Some(latest)) if latest > 0)
 }
 
 #[derive(Clone)]
@@ -1247,6 +1299,45 @@ fn format_update_summary(stdout: &str) -> String {
     }
 
     if let Some(repo) = payload.get("repo") {
+        let current_commit = repo
+            .get("current_commit")
+            .and_then(serde_json::Value::as_str);
+        let latest_commit = repo
+            .get("latest_commit")
+            .and_then(serde_json::Value::as_str);
+        if let (Some(current_commit), Some(latest_commit)) = (current_commit, latest_commit) {
+            if is_commit_sha(current_commit) && is_commit_sha(latest_commit) {
+                if repo
+                    .get("has_update")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    messages.push(format!(
+                        "JaneConverter repository update available: {} -> {}. Choose Update now to install it.",
+                        short_commit(current_commit),
+                        short_commit(latest_commit)
+                    ));
+                } else if let Some(error) = repo.get("error").and_then(serde_json::Value::as_str) {
+                    if !error.trim().is_empty() {
+                        messages.push(format!(
+                            "JaneConverter repository update check unavailable: {error}"
+                        ));
+                    } else {
+                        messages.push(format!(
+                            "JaneConverter repository build is up to date ({ }).",
+                            short_commit(current_commit)
+                        ));
+                    }
+                } else {
+                    messages.push(format!(
+                        "JaneConverter repository build is up to date ({ }).",
+                        short_commit(current_commit)
+                    ));
+                }
+                return format!("Update check complete. {}", messages.join(" "));
+            }
+        }
+
         let packaged_snapshot = !repo
             .get("is_git")
             .and_then(serde_json::Value::as_bool)
@@ -1326,141 +1417,241 @@ fn format_update_summary(stdout: &str) -> String {
         format!("Update check complete. {}", messages.join(" "))
     }
 }
+
+fn format_update_summary_value(payload: &serde_json::Value) -> String {
+    format_update_summary(&payload.to_string())
+}
+
 #[tauri::command]
-fn check_updates() -> Result<serde_json::Value, String> {
+async fn check_updates(
+    app: tauri::AppHandle,
+    pending_update: State<'_, PendingUpdate>,
+) -> Result<serde_json::Value, String> {
     let engine = find_python();
     let mut command = Command::new(&engine);
     if !packaged_engine(&engine) {
         command.args(["run", "--locked", "janeconverter"]);
     }
+    if is_commit_sha(BUILD_COMMIT) {
+        command.arg("--check-engine-updates");
+    } else {
+        command.arg("--check-updates");
+    }
     command
-        .arg("--check-updates")
         .current_dir(project_root())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     prepare_command(&mut command);
-    let output = command
-        .output()
-        .map_err(|error| format!("Could not start update check: {error}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    if !output.status.success() {
-        return Err(if stderr.is_empty() { stdout } else { stderr });
+    let mut payload = match command.output() {
+        Ok(output) if output.status.success() => {
+            serde_json::from_slice(&output.stdout).unwrap_or_else(|_| serde_json::json!({}))
+        }
+        Ok(output) if is_commit_sha(BUILD_COMMIT) => {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            serde_json::json!({
+                "engine": { "has_update": false, "online": false, "error": detail }
+            })
+        }
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            return Err(if stderr.is_empty() { stdout } else { stderr });
+        }
+        Err(error) if is_commit_sha(BUILD_COMMIT) => serde_json::json!({
+            "engine": { "has_update": false, "online": false, "error": error.to_string() }
+        }),
+        Err(error) => return Err(format!("Could not start update check: {error}")),
+    };
+    if !payload.is_object() {
+        payload = serde_json::json!({});
     }
-    let summary = format_update_summary(&stdout);
-    let mut payload = serde_json::from_str::<serde_json::Value>(&stdout)
-        .unwrap_or_else(|_| serde_json::json!({}));
     if let Some(object) = payload.as_object_mut() {
+        if is_commit_sha(BUILD_COMMIT) {
+            *pending_update
+                .0
+                .lock()
+                .map_err(|_| "The pending update state is unavailable.".to_owned())? = None;
+
+            let updater = app
+                .updater_builder()
+                .version_comparator(|current, release| {
+                    is_newer_updater_build(&current.to_string(), &release.version.to_string())
+                })
+                .timeout(Duration::from_secs(20))
+                .build();
+
+            let current_version = app.package_info().version.to_string();
+            let check = match updater {
+                Ok(updater) => updater.check().await,
+                Err(_) => {
+                    object.insert(
+                        "repo".into(),
+                        serde_json::json!({
+                            "has_update": false,
+                            "is_git": false,
+                            "online": false,
+                            "current_commit": BUILD_COMMIT,
+                            "latest_commit": BUILD_COMMIT,
+                            "commits_behind": 0,
+                            "current_version": current_version,
+                            "latest_version": current_version,
+                            "installer_available": false,
+                            "release_url": "https://github.com/jeongchaeul/JaneConverter/releases/tag/continuous",
+                            "error": "The signed repository updater is not configured."
+                        }),
+                    );
+                    let summary =
+                        format_update_summary_value(&serde_json::Value::Object(object.clone()));
+                    object.insert("message".into(), serde_json::Value::String(summary));
+                    return Ok(payload);
+                }
+            };
+
+            match check {
+                Ok(Some(update)) => {
+                    let latest_commit = update
+                        .raw_json
+                        .get("build_commit")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned();
+                    let version_commit = build_metadata_commit(&update.version).unwrap_or_default();
+                    if !is_commit_sha(&latest_commit)
+                        || !is_commit_sha(version_commit)
+                        || !latest_commit.eq_ignore_ascii_case(version_commit)
+                    {
+                        object.insert(
+                            "repo".into(),
+                            serde_json::json!({
+                                "has_update": false,
+                                "is_git": false,
+                                "online": false,
+                                "current_commit": BUILD_COMMIT,
+                                "latest_commit": BUILD_COMMIT,
+                                "commits_behind": 0,
+                                "current_version": current_version,
+                                "latest_version": current_version,
+                                "installer_available": false,
+                                "release_url": "https://github.com/jeongchaeul/JaneConverter/releases/tag/continuous",
+                                "error": "The signed update metadata did not match its build."
+                            }),
+                        );
+                    } else if latest_commit.eq_ignore_ascii_case(BUILD_COMMIT) {
+                        object.insert(
+                            "repo".into(),
+                            serde_json::json!({
+                                "has_update": false,
+                                "is_git": false,
+                                "online": true,
+                                "current_commit": BUILD_COMMIT,
+                                "latest_commit": BUILD_COMMIT,
+                                "commits_behind": 0,
+                                "current_version": current_version,
+                                "latest_version": update.version,
+                                "installer_available": false,
+                                "release_url": "https://github.com/jeongchaeul/JaneConverter/releases/tag/continuous",
+                                "error": null
+                            }),
+                        );
+                    } else {
+                        let latest_version = update.version.clone();
+                        *pending_update
+                            .0
+                            .lock()
+                            .map_err(|_| "The pending update state is unavailable.".to_owned())? =
+                            Some(update);
+                        object.insert(
+                            "repo".into(),
+                            serde_json::json!({
+                                "has_update": true,
+                                "is_git": false,
+                                "online": true,
+                                "current_commit": BUILD_COMMIT,
+                                "latest_commit": latest_commit,
+                                "commits_behind": 1,
+                                "current_version": current_version,
+                                "latest_version": latest_version,
+                                "installer_available": true,
+                                "release_url": "https://github.com/jeongchaeul/JaneConverter/releases/tag/continuous",
+                                "error": null
+                            }),
+                        );
+                    }
+                }
+                Ok(None) => {
+                    object.insert(
+                        "repo".into(),
+                        serde_json::json!({
+                            "has_update": false,
+                            "is_git": false,
+                            "online": true,
+                            "current_commit": BUILD_COMMIT,
+                            "latest_commit": BUILD_COMMIT,
+                            "commits_behind": 0,
+                            "current_version": current_version,
+                            "latest_version": current_version,
+                            "installer_available": false,
+                            "release_url": "https://github.com/jeongchaeul/JaneConverter/releases/tag/continuous",
+                            "error": null
+                        }),
+                    );
+                }
+                Err(_) => {
+                    object.insert(
+                        "repo".into(),
+                        serde_json::json!({
+                            "has_update": false,
+                            "is_git": false,
+                            "online": false,
+                            "current_commit": BUILD_COMMIT,
+                            "latest_commit": BUILD_COMMIT,
+                            "commits_behind": 0,
+                            "current_version": current_version,
+                            "latest_version": current_version,
+                            "installer_available": false,
+                            "release_url": "https://github.com/jeongchaeul/JaneConverter/releases/tag/continuous",
+                            "error": "The signed repository update feed could not be reached or verified."
+                        }),
+                    );
+                }
+            }
+        }
+        let summary = format_update_summary_value(&serde_json::Value::Object(object.clone()));
         object.insert("message".into(), serde_json::Value::String(summary));
     }
     Ok(payload)
 }
 
 #[tauri::command]
-fn install_update(app: tauri::AppHandle, update: UpdateInstallRequest) -> Result<(), String> {
+async fn install_update(
+    _app: tauri::AppHandle,
+    pending_update: State<'_, PendingUpdate>,
+) -> Result<(), String> {
+    let update = pending_update
+        .0
+        .lock()
+        .map_err(|_| "The pending update state is unavailable.".to_owned())?
+        .take()
+        .ok_or_else(|| "Check for updates again before installing.".to_owned())?;
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|_| {
+            "The signed JaneConverter update could not be downloaded or installed.".to_owned()
+        })?;
+
     #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (app, update);
-        return Err(
-            "Automatic application updates are currently available only for Windows packages."
-                .into(),
-        );
-    }
+    _app.restart();
 
-    #[cfg(target_os = "windows")]
-    {
-        if update.installer_url.trim().is_empty()
-            || update.checksum_url.trim().is_empty()
-            || update.version.trim().is_empty()
-        {
-            return Err("The application update details are incomplete.".into());
-        }
-
-        let engine = find_python();
-        let mut command = Command::new(&engine);
-        if !packaged_engine(&engine) {
-            command.args(["run", "--locked", "janeconverter"]);
-        }
-        command.args([
-            "--no-update",
-            "--download-update",
-            "--update-url",
-            update.installer_url.trim(),
-            "--update-checksum-url",
-            update.checksum_url.trim(),
-            "--update-version",
-            update.version.trim(),
-        ]);
-        command
-            .current_dir(project_root())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        prepare_command(&mut command);
-        let output = command
-            .output()
-            .map_err(|error| format!("Could not start the application update: {error}"))?;
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        if !output.status.success() {
-            return Err(if stderr.is_empty() { stdout } else { stderr });
-        }
-        let result = serde_json::from_str::<serde_json::Value>(&stdout)
-            .map_err(|error| format!("The application update returned invalid data: {error}"))?;
-        if !result
-            .get("success")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
-        {
-            return Err(result
-                .get("error")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("The application update could not be verified.")
-                .to_owned());
-        }
-        let installer_path = result
-            .get("installer_path")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| "The verified installer path was not returned.".to_owned())?;
-        let installer = PathBuf::from(installer_path);
-        if !installer.is_file()
-            || installer
-                .extension()
-                .and_then(|value| value.to_str())
-                .map(str::to_ascii_lowercase)
-                .as_deref()
-                != Some("exe")
-        {
-            return Err("The verified application installer could not be found.".into());
-        }
-        let temp_dir = installer.parent().map(Path::to_path_buf);
-        if let Some(dir) = temp_dir {
-            let cmd = format!(
-                "start /wait \"\" \"{}\" & rmdir /s /q \"{}\"",
-                installer.to_string_lossy(),
-                dir.to_string_lossy()
-            );
-            let mut command = Command::new("cmd");
-            command.args(["/C", &cmd]);
-            prepare_command(&mut command);
-            command
-                .spawn()
-                .map_err(|error| format!("Could not launch the verified installer: {error}"))?;
-        } else {
-            let mut command = Command::new(&installer);
-            prepare_command(&mut command);
-            command
-                .spawn()
-                .map_err(|error| format!("Could not launch the verified installer: {error}"))?;
-        }
-        app.exit(0);
-        Ok(())
-    }
+    Ok(())
 }
 
 pub fn run() {
     cleanup_stale_update_installers();
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::default())
+        .manage(PendingUpdate::default())
         .invoke_handler(tauri::generate_handler![
             runtime_info,
             hardware_snapshot,
@@ -1547,6 +1738,38 @@ mod tests {
         assert!(summary.contains("JaneConverter update available: v1.2.0 -> v1.3.0"));
         assert!(summary.contains("latest consumer installer"));
         assert!(!summary.contains("not a Git repository"));
+    }
+
+    #[test]
+    fn updater_accepts_newer_build_metadata_without_version_bump() {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        assert!(is_newer_updater_build(
+            "2.2.6",
+            &format!("2.2.6+build.1.g{commit}")
+        ));
+        assert!(is_newer_updater_build(
+            &format!("2.2.6+build.4.g{commit}"),
+            &format!("2.2.6+build.5.g{commit}")
+        ));
+        assert!(!is_newer_updater_build(
+            &format!("2.2.6+build.5.g{commit}"),
+            &format!("2.2.6+build.5.g{commit}")
+        ));
+        assert!(!is_newer_updater_build(
+            "2.2.7",
+            &format!("2.2.6+build.99.g{commit}")
+        ));
+    }
+
+    #[test]
+    fn updater_commit_metadata_must_match_a_full_sha() {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(
+            build_metadata_commit(&format!("2.2.6+build.4.g{commit}")),
+            Some(commit)
+        );
+        assert!(build_metadata_commit("2.2.6+build.4.gshort").is_none());
+        assert_eq!(short_commit("é123456789"), "é123456");
     }
 
     #[test]

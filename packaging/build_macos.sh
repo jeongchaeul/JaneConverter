@@ -8,6 +8,12 @@ FFPROBE_PATH=""
 NODE_PATH=""
 OUTPUT_DIR="$REPO_ROOT/dist"
 KEEP_STAGING=0
+ENABLE_UPDATER=0
+UPDATER_ONLY=0
+UPDATER_VERSION=""
+BUILD_COMMIT="${JANECONVERTER_BUILD_COMMIT:-}"
+signing_private_key="${TAURI_SIGNING_PRIVATE_KEY:-}"
+signing_private_key_password="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
 BUILD_ROOT=""
 
 usage() {
@@ -17,6 +23,10 @@ Usage: packaging/build_macos.sh [options]
   --ffprobe PATH      native FFprobe executable
   --node PATH         native Node.js executable
   --output-dir PATH   artifact directory (default: dist)
+  --enable-updater    configure the signed repository updater in this package
+  --updater-only      build only a signed continuous updater package
+  --updater-version VERSION   semver build version used by the continuous feed
+  --build-commit SHA  full source commit embedded in the application
   --keep-staging      retain the intermediate payload
 EOF
 }
@@ -27,6 +37,10 @@ while (($#)); do
     --ffprobe) FFPROBE_PATH="${2:?missing value for --ffprobe}"; shift 2 ;;
     --node) NODE_PATH="${2:?missing value for --node}"; shift 2 ;;
     --output-dir) OUTPUT_DIR="${2:?missing value for --output-dir}"; shift 2 ;;
+    --enable-updater) ENABLE_UPDATER=1; shift ;;
+    --updater-only) UPDATER_ONLY=1; ENABLE_UPDATER=1; shift ;;
+    --updater-version) UPDATER_VERSION="${2:?missing value for --updater-version}"; shift 2 ;;
+    --build-commit) BUILD_COMMIT="${2:?missing value for --build-commit}"; shift 2 ;;
     --keep-staging) KEEP_STAGING=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -110,9 +124,38 @@ if [[ -z "$VERSION" ]]; then
   echo "Could not determine the version from src/janeconverter/version.py." >&2
   exit 1
 fi
+TAURI_VERSION="$VERSION"
+if ((ENABLE_UPDATER)); then
+  [[ "$BUILD_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] || {
+    echo "Updater builds require a full 40-character source commit." >&2
+    exit 1
+  }
+  [[ -n "${JANECONVERTER_UPDATER_PUBKEY:-}" ]] || {
+    echo "Set the JANECONVERTER_UPDATER_PUBKEY GitHub Actions variable before building updater packages." >&2
+    exit 1
+  }
+  [[ -n "$signing_private_key" ]] || {
+    echo "Set the TAURI_SIGNING_PRIVATE_KEY GitHub Actions secret before building updater packages." >&2
+    exit 1
+  }
+  if ((UPDATER_ONLY)); then
+    [[ "$UPDATER_VERSION" =~ ^${VERSION//./\.}\+build\.[0-9]+\.g${BUILD_COMMIT}$ ]] || {
+      echo "Updater build version must be $VERSION+build.<sequence>.g$BUILD_COMMIT." >&2
+      exit 1
+    }
+    TAURI_VERSION="$UPDATER_VERSION"
+  fi
+  BUILD_COMMIT="$(printf '%s' "$BUILD_COMMIT" | tr '[:upper:]' '[:lower:]')"
+  export JANECONVERTER_BUILD_COMMIT="$BUILD_COMMIT"
+fi
+unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 
 OUTPUT_DIR="$(mkdir -p -- "$OUTPUT_DIR" && cd -- "$OUTPUT_DIR" && pwd)"
-BUILD_ROOT="$OUTPUT_DIR/consumer-build-$VERSION-macos-$ARCH"
+if ((UPDATER_ONLY)); then
+  BUILD_ROOT="$OUTPUT_DIR/consumer-build-updater-macos-$ARCH"
+else
+  BUILD_ROOT="$OUTPUT_DIR/consumer-build-$VERSION-macos-$ARCH"
+fi
 STAGING_ROOT="$BUILD_ROOT/resources"
 RUNTIME_ROOT="$STAGING_ROOT/runtime"
 RUNTIME_ENGINE="$RUNTIME_ROOT/engine"
@@ -120,9 +163,12 @@ RUNTIME_BIN="$RUNTIME_ROOT/bin"
 PYINSTALLER_ROOT="$BUILD_ROOT/pyinstaller"
 TAURI_TARGET="$BUILD_ROOT/tauri-target"
 ARTIFACT="$OUTPUT_DIR/JaneConverter-$VERSION-macos-$ARCH.dmg"
+UPDATER_ARTIFACT="$OUTPUT_DIR/JaneConverter-continuous-macos-$ARCH.app.tar.gz"
+UPDATER_SIGNATURE="$UPDATER_ARTIFACT.sig"
 
 rm -rf -- "$BUILD_ROOT"
 rm -f -- "$ARTIFACT" "$ARTIFACT.sha256"
+rm -f -- "$UPDATER_ARTIFACT" "$UPDATER_SIGNATURE"
 mkdir -p -- "$RUNTIME_ENGINE" "$RUNTIME_BIN" "$PYINSTALLER_ROOT/spec"
 
 echo "Building the frozen engine (onedir)..."
@@ -169,10 +215,12 @@ done < <(find "$RUNTIME_ROOT" -type f -print0)
 "$RUNTIME_BIN/node" --version >/dev/null
 
 TAURI_CONFIG="$BUILD_ROOT/tauri.release.json"
-export JANECONVERTER_RELEASE_VERSION="$VERSION"
+export JANECONVERTER_RELEASE_VERSION="$TAURI_VERSION"
 export JANECONVERTER_RUNTIME_ROOT="$RUNTIME_ROOT"
 export JANECONVERTER_STAGED_LICENSE="$STAGING_ROOT/LICENSE"
 export JANECONVERTER_TAURI_CONFIG="$TAURI_CONFIG"
+export JANECONVERTER_ENABLE_UPDATER="$ENABLE_UPDATER"
+export JANECONVERTER_UPDATER_ONLY="$UPDATER_ONLY"
 uv run --locked python - <<'PY'
 import json
 import os
@@ -185,12 +233,18 @@ config["version"] = os.environ["JANECONVERTER_RELEASE_VERSION"]
 config["build"]["beforeBuildCommand"] = ""
 config["bundle"]["active"] = True
 # Keep the app bundle so it can be verified after Tauri creates the DMG.
-config["bundle"]["targets"] = ["app", "dmg"]
+config["bundle"]["targets"] = ["app"] if os.environ.get("JANECONVERTER_UPDATER_ONLY") == "1" else ["app", "dmg"]
 config["bundle"]["resources"] = {
     os.environ["JANECONVERTER_RUNTIME_ROOT"]: "runtime",
     os.environ["JANECONVERTER_STAGED_LICENSE"]: "LICENSE",
 }
 config["bundle"].setdefault("macOS", {})["signingIdentity"] = "-"
+if os.environ["JANECONVERTER_ENABLE_UPDATER"] == "1":
+    config["bundle"]["createUpdaterArtifacts"] = True
+    config.setdefault("plugins", {})["updater"] = {
+        "pubkey": os.environ["JANECONVERTER_UPDATER_PUBKEY"],
+        "endpoints": ["https://github.com/jeongchaeul/JaneConverter/releases/download/continuous/latest.json"],
+    }
 Path(os.environ["JANECONVERTER_TAURI_CONFIG"]).write_text(
     json.dumps(config, indent=2) + "\n", encoding="utf-8"
 )
@@ -203,6 +257,12 @@ export npm_config_cache="$BUILD_ROOT/npm-cache"
   cd -- "$REPO_ROOT/desktop-ui"
   npm ci --no-audit --no-fund --ignore-scripts
   npm run build
+  if ((ENABLE_UPDATER)); then
+    export TAURI_SIGNING_PRIVATE_KEY="$signing_private_key"
+    if [[ -n "$signing_private_key_password" ]]; then
+      export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$signing_private_key_password"
+    fi
+  fi
   ./node_modules/.bin/tauri build --config "$TAURI_CONFIG"
 )
 
@@ -228,6 +288,18 @@ assert_macho_arch "$BUNDLED_RUNTIME/engine/JaneConverterEngine" "Bundled engine"
 "$BUNDLED_RUNTIME/bin/ffmpeg" -version >/dev/null
 "$BUNDLED_RUNTIME/bin/ffprobe" -version >/dev/null
 "$BUNDLED_RUNTIME/bin/node" --version >/dev/null
+
+if ((UPDATER_ONLY)); then
+  BUILT_UPDATER="$TAURI_TARGET/release/bundle/macos/JaneConverter.app.tar.gz"
+  [[ -f "$BUILT_UPDATER" && -f "$BUILT_UPDATER.sig" ]] || {
+    echo "Tauri did not produce the signed macOS updater archive." >&2
+    exit 1
+  }
+  cp -p -- "$BUILT_UPDATER" "$UPDATER_ARTIFACT"
+  cp -p -- "$BUILT_UPDATER.sig" "$UPDATER_SIGNATURE"
+  echo "Created signed updater package $UPDATER_ARTIFACT"
+  exit 0
+fi
 
 DMG_DIRECTORY="$TAURI_TARGET/release/bundle/dmg"
 DMG_COUNT="$(find "$DMG_DIRECTORY" -type f -name '*.dmg' | wc -l | tr -d ' ')"

@@ -61,8 +61,6 @@ describe("Settings updates", () => {
         current_version: "2.2.0",
         latest_version: "2.3.0",
         installer_available: true,
-        installer_url: "https://github.com/janecerys/JaneConverter/releases/download/v2.3.0/JaneConverter-2.3.0-windows-x64-setup.exe",
-        installer_checksum_url: "https://github.com/janecerys/JaneConverter/releases/download/v2.3.0/JaneConverter-2.3.0-windows-x64-setup.exe.sha256",
         release_url: "https://github.com/janecerys/JaneConverter/releases/tag/v2.3.0",
       },
     };
@@ -93,11 +91,7 @@ describe("Settings updates", () => {
       Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Update now")?.click();
       await Promise.resolve();
     });
-    expect(installUpdate.run).toHaveBeenCalledWith({
-      installerUrl: available.repo.installer_url,
-      checksumUrl: available.repo.installer_checksum_url,
-      version: available.repo.latest_version,
-    });
+    expect(installUpdate.run).toHaveBeenCalledWith();
 
     await act(async () => { root.unmount(); });
     container.remove();
