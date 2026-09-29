@@ -607,6 +607,14 @@ def _apply_video_quality_to_encoder_args(
             args[args.index(option) + 1] = value
 
     if encoder == "h264_nvenc":
+        quality_name = (quality_name or "").lower()
+        # NVENC p7 is the slowest preset; use faster presets for balanced and small output.
+        nvenc_preset = {
+            "best": "p7",
+            "high": "p5",
+            "balanced": "p4",
+            "small": "p2",
+        }.get(quality_name, "p4")
         res_lower = (resolution or "original").lower()
         if "4k" in res_lower or "2160" in res_lower:
             maxrate = "60M"
@@ -624,10 +632,10 @@ def _apply_video_quality_to_encoder_args(
             maxrate = "60M"
             bufsize = "120M"
 
-        return [
-            "-c:v", "h264_nvenc",
-            "-preset", "p7",
-            "-tune", "hq",
+        nvenc_args = ["-c:v", "h264_nvenc", "-preset", nvenc_preset]
+        if quality_name in ("best", "high"):
+            nvenc_args.extend(["-tune", "hq"])
+        nvenc_args.extend([
             "-rc:v", "vbr",
             "-cq", crf,
             "-qmin", crf,
@@ -638,7 +646,8 @@ def _apply_video_quality_to_encoder_args(
             "-spatial_aq", "1",
             "-temporal_aq", "1",
             "-pix_fmt", "yuv420p",
-        ]
+        ])
+        return nvenc_args
     elif encoder == "h264_qsv":
         replace_value("-global_quality", crf)
     elif encoder == "h264_vaapi":
@@ -675,7 +684,8 @@ def build_ffmpeg_args(
     metadata: Optional[Dict[str, str]] = None,
     cover_path: Optional[str] = None,
     fps: Optional[int] = None,
-    stream_copy: bool = False
+    stream_copy: bool = False,
+    input_sample_rate: Optional[int] = None,
 ) -> list:
     """Constructs command line argument list for FFmpeg transcode or instant stream remuxing."""
     target_format = target_format.lower().strip(".")
@@ -741,7 +751,13 @@ def build_ffmpeg_args(
             # Industry standard EBU R128 loudness normalization
             audio_filters.append(LOUDNORM_FILTER)
 
-        if sample_rate and has_soxr_support():
+        source_rate_matches = (
+            input_sample_rate is not None
+            and sample_rate
+            and int(input_sample_rate) == int(sample_rate)
+        )
+        # Avoid a high-quality resampler pass when the output rate already matches.
+        if sample_rate and (normalize_audio or not source_rate_matches) and has_soxr_support():
             audio_filters.append("aresample=resampler=soxr:precision=28:cutoff=0.99")
 
         if audio_filters:
@@ -1092,6 +1108,24 @@ def convert_media(
 
     require_ffmpeg()
 
+    audio_probe = (
+        probe_media_streams(input_path)
+        if target_format in SUPPORTED_AUDIO_FORMATS
+        else None
+    )
+    input_sample_rate = None
+    if audio_probe:
+        input_sample_rate = next(
+            (
+                int(stream["sample_rate"])
+                for stream in audio_probe.get("streams", [])
+                if stream.get("codec_type") == "audio"
+                and stream.get("sample_rate")
+                and str(stream["sample_rate"]).isdigit()
+            ),
+            None,
+        )
+
     can_copy = allow_stream_copy and is_stream_copy_safe(
         input_path=input_path,
         target_format=target_format,
@@ -1099,6 +1133,7 @@ def convert_media(
         normalize_audio=normalize_audio,
         resolution=resolution,
         cover_path=cover_path,
+        probed_info=audio_probe,
     )
 
     if can_copy:
@@ -1115,6 +1150,7 @@ def convert_media(
             use_gpu=False,
             metadata=metadata,
             cover_path=None,
+            input_sample_rate=input_sample_rate,
             fps=fps,
             stream_copy=True,
         )
@@ -1133,6 +1169,7 @@ def convert_media(
             gpu_codec=gpu_codec,
             metadata=metadata,
             cover_path=cover_path,
+            input_sample_rate=input_sample_rate,
             fps=fps,
             stream_copy=False,
         )
