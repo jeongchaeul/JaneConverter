@@ -12,12 +12,62 @@ import shutil
 import threading
 import subprocess
 import json
+import tempfile
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
 
-SUPPORTED_AUDIO_FORMATS = {"mp3", "wav", "flac", "aac", "m4a", "ogg"}
-SUPPORTED_VIDEO_FORMATS = {"mp4", "mkv", "webm", "mov", "gif"}
-SUPPORTED_IMAGE_FORMATS = {"jpg", "jpeg", "png", "webp"}
+SUPPORTED_AUDIO_FORMATS = {
+    "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus", "aiff", "aif",
+    "alac", "ac3", "mp2", "wma", "caf", "au",
+}
+SUPPORTED_VIDEO_FORMATS = {
+    "mp4", "mkv", "webm", "mov", "gif", "avi", "flv", "m4v", "ts",
+    "m2ts", "mpeg", "mpg", "vob", "3gp", "wmv", "asf",
+}
+SUPPORTED_IMAGE_FORMATS = {
+    "jpg", "jpeg", "jfif", "png", "webp", "bmp", "tif", "tiff", "gif",
+    "ico", "tga", "ppm", "pgm", "pbm",
+}
+OUTPUT_FILE_EXTENSIONS = {"alac": "m4a"}
+
+# Static image outputs are normalized through Pillow so output support is not
+# tied to which optional image encoders happen to be present in a platform's
+# FFmpeg build. Video-to-image exports first decode a PNG frame through FFmpeg.
+IMAGE_FFMPEG_ENCODERS = {
+    "jpg": "mjpeg", "jpeg": "mjpeg", "jfif": "mjpeg", "png": "png",
+    "webp": "libwebp", "bmp": "bmp", "tif": "tiff", "tiff": "tiff",
+    "tga": "targa", "ppm": "ppm", "pgm": "pgm", "pbm": "pbm",
+}
+
+HARDWARE_VIDEO_FORMATS = {"mp4", "mkv", "mov", "m4v", "ts", "m2ts"}
+VIDEO_ENCODER_PROFILES = {
+    "mp4": ("libx264", "aac"),
+    "mkv": ("libx264", "aac"),
+    "mov": ("libx264", "aac"),
+    "m4v": ("libx264", "aac"),
+    "ts": ("libx264", "aac"),
+    "m2ts": ("libx264", "aac"),
+    "avi": ("mpeg4", "libmp3lame"),
+    "flv": ("flv", "libmp3lame"),
+    "mpeg": ("mpeg2video", "mp2"),
+    "mpg": ("mpeg2video", "mp2"),
+    "vob": ("mpeg2video", "mp2"),
+    "3gp": ("mpeg4", "aac"),
+    "wmv": ("wmv2", "wmav2"),
+    "asf": ("wmv2", "wmav2"),
+}
+KNOWN_MEDIA_EXTENSIONS = {
+    f".{format_name}"
+    for format_name in SUPPORTED_AUDIO_FORMATS | SUPPORTED_VIDEO_FORMATS | SUPPORTED_IMAGE_FORMATS
+} | {
+    ".oga", ".m4b", ".m4p", ".ape", ".aifc", ".amr", ".dts", ".mka", ".mpc",
+    ".ra", ".ram", ".tta", ".voc", ".wv", ".wvc", ".3ga", ".3g2", ".asx",
+    ".avchd", ".divx", ".dv", ".f4v", ".m2v", ".mjpg", ".mjpeg", ".mts",
+    ".mxf", ".ogv", ".qt", ".rm", ".rmvb", ".yuv", ".apng", ".avif", ".cur",
+    ".dib", ".emf", ".eps", ".exr", ".heic", ".heif", ".icns", ".j2k", ".jp2",
+    ".jpe", ".jfi", ".jif", ".jxl", ".pcx", ".pfm", ".pic", ".psd", ".ras",
+    ".sgi", ".svg", ".xbm", ".xpm", ".qoi",
+}
 VIDEO_QUALITY_SETTINGS = {
     "best": {"crf": 16, "audio_bitrate": "192k", "gif_fps": 30},
     "high": {"crf": 18, "audio_bitrate": "160k", "gif_fps": 24},
@@ -163,7 +213,7 @@ def format_video_dimensions(probe: Optional[Dict[str, Any]]) -> str:
 def validate_output_file(
     output_path: str,
     target_format: str,
-    min_size_bytes: int = 100
+    min_size_bytes: int = 1
 ) -> None:
     """
     Validates that a converted file exists, is non-empty, and passes ffprobe structure checks.
@@ -181,6 +231,18 @@ def validate_output_file(
         )
 
     target_format = target_format.lower().strip(".")
+    if target_format in SUPPORTED_IMAGE_FORMATS:
+        try:
+            from PIL import Image
+
+            with Image.open(output_path) as image:
+                image.verify()
+        except Exception as exc:
+            raise RuntimeError(
+                f"ValidationFailed: output file '{output_path}' is not a readable {target_format.upper()} image."
+            ) from exc
+        return
+
     probe = probe_media_streams(output_path)
     if not probe or not probe.get("streams"):
         raise RuntimeError(
@@ -199,12 +261,6 @@ def validate_output_file(
         if not has_video:
             raise RuntimeError(
                 f"ValidationFailed: output file '{output_path}' does not contain a video stream."
-            )
-    elif target_format in SUPPORTED_IMAGE_FORMATS:
-        has_image = any(s.get("codec_type") == "video" for s in streams)
-        if not has_image:
-            raise RuntimeError(
-                f"ValidationFailed: output file '{output_path}' does not contain valid image frame data."
             )
 
 _soxr_supported: Optional[bool] = None
@@ -653,7 +709,7 @@ def build_ffmpeg_args(
 
     # Resolve the encoder once so decode acceleration and encode args stay consistent
     enc_spec = None
-    if active_gpu and target_format in SUPPORTED_VIDEO_FORMATS and target_format != "gif":
+    if active_gpu and target_format in HARDWARE_VIDEO_FORMATS:
         enc_spec = get_best_hardware_encoder(preferred_codec=gpu_codec)
 
     # Peak GPU Acceleration: offload video decoding to GPU silicon when hardware acceleration is
@@ -721,6 +777,22 @@ def build_ffmpeg_args(
                 (bitrate or "").lower(), "7"
             )
             cmd.extend(["-c:a", "libvorbis", "-q:a", ogg_quality])
+        elif target_format == "opus":
+            cmd.extend(["-c:a", "libopus", "-b:a", bitrate])
+        elif target_format == "alac":
+            cmd.extend(["-c:a", "alac"])
+        elif target_format in ("aiff", "aif"):
+            cmd.extend(["-c:a", "pcm_s16be"])
+        elif target_format == "ac3":
+            cmd.extend(["-c:a", "ac3", "-b:a", bitrate])
+        elif target_format == "mp2":
+            cmd.extend(["-c:a", "mp2", "-b:a", bitrate])
+        elif target_format == "wma":
+            cmd.extend(["-c:a", "wmav2", "-b:a", bitrate])
+        elif target_format == "caf":
+            cmd.extend(["-c:a", "pcm_s16le"])
+        elif target_format == "au":
+            cmd.extend(["-c:a", "pcm_s16be"])
 
     # 2. Video Conversion
     elif target_format in SUPPORTED_VIDEO_FORMATS:
@@ -787,42 +859,102 @@ def build_ffmpeg_args(
                     )
                     cmd.extend(encoder_args)
                 else:
-                    cpu_preset = {
-                        "best": "slow",
-                        "high": "medium",
-                        "balanced": "veryfast",
-                        "small": "veryfast",
-                    }.get((bitrate or "").lower(), "veryfast")
-                    cmd.extend([
-                        "-c:v", "libx264", "-preset", cpu_preset,
-                        "-crf", str(video_quality["crf"]), "-pix_fmt", "yuv420p"
-                    ])
+                    video_codec, audio_codec = VIDEO_ENCODER_PROFILES.get(
+                        target_format, ("libx264", "aac")
+                    )
+                    if video_codec == "libx264":
+                        cpu_preset = {
+                            "best": "slow",
+                            "high": "medium",
+                            "balanced": "veryfast",
+                            "small": "veryfast",
+                        }.get((bitrate or "").lower(), "veryfast")
+                        cmd.extend([
+                            "-c:v", video_codec, "-preset", cpu_preset,
+                            "-crf", str(video_quality["crf"]), "-pix_fmt", "yuv420p"
+                        ])
+                    else:
+                        quantizer = {"best": "2", "high": "3", "balanced": "5", "small": "8"}.get(
+                            (bitrate or "").lower(), "5"
+                        )
+                        cmd.extend(["-c:v", video_codec, "-q:v", quantizer, "-pix_fmt", "yuv420p"])
 
-                cmd.extend([
-                    "-c:a", "aac",
-                    "-b:a", video_quality["audio_bitrate"]
-                ])
+                if target_format not in ("webm",):
+                    _, audio_codec = VIDEO_ENCODER_PROFILES.get(target_format, ("libx264", "aac"))
+                    cmd.extend([
+                        "-c:a", audio_codec,
+                        "-b:a", video_quality["audio_bitrate"]
+                    ])
 
             if video_filters:
                 cmd.extend(["-vf", ",".join(video_filters)])
     # 3. Still-image export (stories and captured image media)
     elif target_format in SUPPORTED_IMAGE_FORMATS:
         cmd.extend(["-an", "-frames:v", "1"])
-        if target_format in ("jpg", "jpeg"):
-            cmd.extend(["-c:v", "mjpeg", "-q:v", "2"])
-        elif target_format == "png":
-            cmd.extend(["-c:v", "png", "-compression_level", "9"])
-        else:
+        image_encoder = IMAGE_FFMPEG_ENCODERS.get(target_format)
+        if not image_encoder:
+            raise ValueError(
+                f"FFmpeg cannot export a video frame as {target_format.upper()}; use a still image input for this format."
+            )
+        if image_encoder == "mjpeg":
+            cmd.extend(["-c:v", image_encoder, "-q:v", "2"])
+        elif image_encoder == "png":
+            cmd.extend(["-c:v", image_encoder, "-compression_level", "9"])
+        elif image_encoder == "libwebp":
             image_quality = {"best": "95", "high": "90", "balanced": "80", "small": "65"}.get(
                 (bitrate or "").lower(), "90"
             )
-            cmd.extend(["-c:v", "libwebp", "-q:v", image_quality])
+            cmd.extend(["-c:v", image_encoder, "-q:v", image_quality])
+        else:
+            cmd.extend(["-c:v", image_encoder])
     else:
         raise ValueError(f"Unsupported conversion format: '{target_format}'")
 
     cmd.extend(["-threads", "0"])
     cmd.append(output_path)
     return cmd
+
+
+def _extract_png_frame(input_path: str, output_path: str, abort_event: Optional[Any] = None) -> str:
+    """Decode the first video frame to a PNG, with cancellation and validation."""
+    if abort_event and abort_event.is_set():
+        raise KeyboardInterrupt("Conversion aborted by user.")
+
+    cmd = build_ffmpeg_args(
+        input_path=input_path,
+        output_path=output_path,
+        target_format="png",
+        bitrate="best",
+        normalize_audio=False,
+        resolution="original",
+        use_nvenc=False,
+        use_gpu=False,
+        stream_copy=False,
+    )
+    cmd[1:1] = ["-hide_banner", "-loglevel", "error"]
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+    while process.poll() is None:
+        if abort_event and abort_event.is_set():
+            process.kill()
+            _, stderr = process.communicate()
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            raise KeyboardInterrupt("Conversion aborted by user.")
+        time.sleep(0.05)
+
+    _, stderr = process.communicate()
+    if process.returncode != 0:
+        detail = stderr.decode("utf-8", errors="ignore") if stderr else ""
+        raise RuntimeError(f"FFmpeg frame extraction error: {detail}")
+    validate_output_file(output_path, "png")
+    return output_path
+
 
 def convert_media(
     input_path: str,
@@ -874,29 +1006,91 @@ def convert_media(
         return destination_path
 
     active_gpu = use_gpu if use_gpu is not None else use_nvenc
-    known_media_exts = {
-        ".mp3", ".wav", ".flac", ".aac", ".ogg", ".opus", ".m4a",
-        ".mp4", ".mkv", ".mov", ".avi", ".webm", ".wma", ".alac", ".aiff", ".gif"
-    }
     raw_stem, raw_ext = os.path.splitext(output_filename)
-    if raw_ext.lower() in known_media_exts or raw_ext.lower() == f".{target_format}":
+    if raw_ext.lower() in KNOWN_MEDIA_EXTENSIONS or raw_ext.lower() == f".{target_format}":
         stem = raw_stem
     else:
         stem = output_filename
-    destination_path = get_unique_target_path(output_dir, f"{stem}.{target_format}")
+    output_extension = OUTPUT_FILE_EXTENSIONS.get(target_format, target_format)
+    destination_path = get_unique_target_path(output_dir, f"{stem}.{output_extension}")
 
     if abort_event and abort_event.is_set():
         raise KeyboardInterrupt("Conversion aborted by user.")
 
     ffmpeg_bin = get_ffmpeg_binary()
-    if not shutil.which(ffmpeg_bin) and not os.path.isfile(ffmpeg_bin):
-        raise FileNotFoundError(
-            "FFmpeg executable not found. Please install FFmpeg, add it to PATH, or place ffmpeg.exe in the JaneConverter directory."
-        )
+
+    def require_ffmpeg() -> None:
+        if not shutil.which(ffmpeg_bin) and not os.path.isfile(ffmpeg_bin):
+            raise FileNotFoundError(
+                "FFmpeg executable not found. Please install FFmpeg, add it to PATH, or place ffmpeg.exe in the JaneConverter directory."
+            )
 
     def report(frac: float, msg: str):
         if progress_callback:
             progress_callback(frac, msg)
+
+    if target_format in SUPPORTED_IMAGE_FORMATS and os.path.isfile(input_path):
+        from PIL import Image
+        from .image_format import convert_image_format
+
+        try:
+            with Image.open(input_path) as image:
+                image.verify()
+            input_is_still_image = True
+        except Exception:
+            input_is_still_image = False
+
+        # Pillow decodes still and animated images directly. This handles JFIF
+        # and the wider family of Pillow-readable inputs without asking FFmpeg
+        # to guess from a filename or discard animation.
+        if input_is_still_image:
+            report(0.70, f"Converting image to {target_format.upper()}...")
+            try:
+                convert_image_format(
+                    input_path,
+                    target_format,
+                    bitrate,
+                    output_path=destination_path,
+                    remove_source=False,
+                )
+                validate_output_file(destination_path, target_format)
+            except Exception:
+                if os.path.exists(destination_path):
+                    try:
+                        os.remove(destination_path)
+                    except OSError:
+                        pass
+                raise
+            report(1.0, f"Conversion complete: {os.path.basename(destination_path)}")
+            return destination_path
+
+        # Extract one PNG frame first and let Pillow write the requested format.
+        # GIF remains on the animated video path when its input is a video.
+        if target_format != "gif":
+            require_ffmpeg()
+            report(0.70, f"Extracting a frame for {target_format.upper()} output...")
+            try:
+                with tempfile.TemporaryDirectory(prefix=".janeconverter-image-", dir=output_dir) as frame_dir:
+                    frame_path = _extract_png_frame(input_path, os.path.join(frame_dir, "frame.png"), abort_event)
+                    convert_image_format(
+                        frame_path,
+                        target_format,
+                        bitrate,
+                        output_path=destination_path,
+                        remove_source=False,
+                    )
+                validate_output_file(destination_path, target_format)
+            except Exception:
+                if os.path.exists(destination_path):
+                    try:
+                        os.remove(destination_path)
+                    except OSError:
+                        pass
+                raise
+            report(1.0, f"Conversion complete: {os.path.basename(destination_path)}")
+            return destination_path
+
+    require_ffmpeg()
 
     can_copy = allow_stream_copy and is_stream_copy_safe(
         input_path=input_path,
@@ -1065,7 +1259,7 @@ def convert_media(
             )
 
         # If hardware GPU transcode failed, retry with multi-core CPU libx264
-        if active_gpu and target_format in ("mp4", "mkv", "mov", "webm"):
+        if active_gpu and target_format in HARDWARE_VIDEO_FORMATS:
             report(0.85, "Hardware GPU encoder unavailable or failed, switching to multi-core CPU transcode...")
             return convert_media(
                 input_path=input_path,

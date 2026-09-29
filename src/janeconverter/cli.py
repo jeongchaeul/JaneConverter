@@ -820,6 +820,10 @@ def validate_cli_args(args, parser: argparse.ArgumentParser):
     elif fmt in ("wav", "flac"):
         if bitrate not in CLI_BIT_DEPTHS:
             parser.error(f"Invalid bit depth '{args.bitrate}' for {fmt}. Choose from: {', '.join(sorted(CLI_BIT_DEPTHS))}")
+    elif fmt in ("aiff", "aif", "alac", "caf", "au"):
+        if bitrate not in CLI_BITRATES and bitrate != "best":
+            parser.error(f"Invalid quality '{args.bitrate}' for {fmt}. Choose from: {', '.join(sorted(CLI_BITRATES | {'best'}))}")
+        bitrate = "best"
     elif fmt == "ogg":
         if bitrate not in CLI_OGG_QUALITIES and bitrate not in CLI_BITRATES:
             parser.error(

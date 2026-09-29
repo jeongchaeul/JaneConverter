@@ -244,10 +244,14 @@ export function ConverterView({
   const activeCategory = (capturedCategory || settings.category) === "Music" ? "Audio" : (capturedCategory || settings.category);
   const activeFormat = capturedFormat || settings.format;
   const formats = useMemo(() => formatsFor(activeCategory), [activeCategory]);
-  const qualities = useMemo(() => qualitiesFor(activeFormat), [activeFormat]);
+  const qualities = useMemo(() => qualitiesFor(activeFormat, activeCategory), [activeFormat, activeCategory]);
   const isSourceFormat = activeFormat === "source";
-  const isVideo = videoFormats.includes(activeFormat) || (isSourceFormat && activeCategory === "Video");
-  const isImage = imageFormats.includes(activeFormat) || (isSourceFormat && activeCategory === "Image");
+  const isVideo = isSourceFormat
+    ? activeCategory === "Video"
+    : videoFormats.includes(activeFormat) && activeCategory !== "Image";
+  const isImage = isSourceFormat
+    ? activeCategory === "Image"
+    : imageFormats.includes(activeFormat) && (activeCategory === "Image" || !videoFormats.includes(activeFormat));
   const isAudio = audioFormats.includes(activeFormat) || (isSourceFormat && (activeCategory === "Audio" || activeCategory === "Music"));
   const presetCategory = activeCategory === "Video" || activeCategory === "Image" ? activeCategory : "Audio";
   const visiblePresets = intentPresets.filter((preset) => preset.group === (presetCategory === "Audio" ? "Music" : presetCategory) || preset.group === "Other");
@@ -256,7 +260,7 @@ export function ConverterView({
 
   useEffect(() => {
     if (!formats.includes(settings.format)) {
-      onSettings({ ...settings, format: formats[0], bitrate: qualitiesFor(formats[0])[0] });
+      onSettings({ ...settings, format: formats[0], bitrate: qualitiesFor(formats[0], activeCategory)[0] });
     }
   }, [formats, settings, onSettings]);
 
@@ -1086,8 +1090,14 @@ export function ConverterView({
             label="Container format"
             value={activeFormat}
             values={formats}
-            formatValue={(format) => (format === "source" ? "Source (preserve original)" : String(format).toUpperCase())}
-            onChange={(format) => update({ format, bitrate: qualitiesFor(format)[0] })}
+            formatValue={(format) =>
+              format === "source"
+                ? "Source (preserve original)"
+                : format === "alac"
+                  ? "ALAC (M4A container)"
+                  : String(format).toUpperCase()
+            }
+            onChange={(format) => update({ format, bitrate: qualitiesFor(format, activeCategory)[0] })}
           />
           <div className="flex items-end">
             <button

@@ -69,7 +69,8 @@ This roadmap is **not a remediation plan for a broken converter**. It is a strat
 *Goal: Lock in current stability with formal matrix documentation and regression fixtures.*
 
 #### Task 1: Define the supported conversion matrix
-- Document all valid input $\rightarrow$ output permutations across Audio (`mp3`, `flac`, `wav`, `aac`, `ogg`, `m4a`), Video (`mp4`, `mkv`, `webm`, `mov`, `gif`), and Image (`jpg`, `png`, `webp`).
+- Document all valid input $\rightarrow$ output permutations across Audio (`mp3`, `flac`, `wav`, `aac`, `ogg`, `m4a`, `opus`, `aiff`, `alac`, `ac3`, `mp2`, `wma`, `caf`, `au`), Video (`mp4`, `mkv`, `webm`, `mov`, `avi`, `flv`, `m4v`, `ts`, `m2ts`, `mpeg`, `mpg`, `3gp`, `wmv`, `asf`, `gif`), and Image (`jpg`, `jpeg`, `jfif`, `png`, `webp`, `bmp`, `tif`, `tiff`, `gif`, `ico`, `tga`, `ppm`, `pgm`, `pbm`).
+- Treat filename detection as a UI convenience; actual input compatibility depends on the decoder available in the bundled FFmpeg or Pillow build.
 - Formally document the exact boundary where zero-loss stream copying (`-c copy`) is permitted versus when transcoding is strictly mandatory.
 - Define actionable, user-friendly error categories for unsupported conversions.
 

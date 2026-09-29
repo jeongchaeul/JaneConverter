@@ -1,9 +1,32 @@
 import type { Category } from "./bridge";
 
-export const audioFormats = ["mp3", "flac", "wav", "aac", "ogg", "m4a"];
-export const videoFormats = ["mp4", "mkv", "webm", "mov", "gif"];
-export const imageFormats = ["jpg", "png", "webp"];
+export const audioFormats = [
+  "mp3", "flac", "wav", "aac", "ogg", "m4a", "opus", "aiff", "aif",
+  "alac", "ac3", "mp2", "wma", "caf", "au",
+];
+export const videoFormats = [
+  "mp4", "mkv", "webm", "mov", "gif", "avi", "flv", "m4v", "ts",
+  "m2ts", "mpeg", "mpg", "vob", "3gp", "wmv", "asf",
+];
+export const imageFormats = [
+  "jpg", "jpeg", "jfif", "png", "webp", "bmp", "tif", "tiff", "gif",
+  "ico", "tga", "ppm", "pgm", "pbm",
+];
 export const resolutions = ["original", "4k", "1440p", "1080p", "720p", "480p"];
+
+const AUDIO_INPUT_EXTENSIONS = new Set([
+  ...audioFormats, "oga", "m4b", "m4p", "ape", "aifc", "amr", "dts", "mka",
+  "mpc", "ra", "ram", "tta", "voc", "wv", "wvc", "8svx", "3ga",
+]);
+const VIDEO_INPUT_EXTENSIONS = new Set([
+  ...videoFormats, "3g2", "asx", "avchd", "divx", "dv", "f4v", "m2v", "mjpg",
+  "mjpeg", "mts", "mxf", "ogv", "qt", "rm", "rmvb", "yuv",
+]);
+const IMAGE_INPUT_EXTENSIONS = new Set([
+  ...imageFormats, "apng", "avif", "cur", "dib", "emf", "eps", "exr", "heic",
+  "heif", "icns", "j2k", "jp2", "jpe", "jfi", "jif", "jxl", "pcx", "pfm",
+  "pic", "psd", "ras", "sgi", "svg", "xbm", "xpm", "qoi",
+]);
 
 const VIDEO_QUALITY_LABELS: Record<string, string> = {
   best: "Highest quality / least compression",
@@ -31,26 +54,28 @@ export function resolutionLabel(value: string): string {
 
 export function imageQualityLabel(value: string, format: string): string {
   if (value !== "best") return value;
-  if (format === "png") return "Lossless / every pixel preserved";
+  if (["png", "bmp", "tif", "tiff", "ico", "tga", "ppm", "pgm", "pbm"].includes(format)) return "Lossless / every pixel preserved";
   if (format === "webp") return "Highest WebP quality / larger file";
-  if (format === "jpg" || format === "jpeg") return "Highest JPEG quality / larger file";
+  if (["jpg", "jpeg", "jfif"].includes(format)) return "Highest JPEG quality / larger file";
   return value;
 }
 
 export function formatsFor(category: Category): string[] {
   if (category === "Video") return ["source", ...videoFormats];
   if (category === "Image") return ["source", ...imageFormats];
-  if (category === "Miscellaneous") return ["source", ...videoFormats, ...audioFormats, ...imageFormats];
+  if (category === "Miscellaneous") return ["source", ...new Set([...videoFormats, ...audioFormats, ...imageFormats])];
   return ["source", ...audioFormats];
 }
 
-export function qualitiesFor(format: string): string[] {
+export function qualitiesFor(format: string, category?: Category): string[] {
   if (format === "source") return ["best"];
   if (format === "wav") return ["16-bit", "24-bit", "32-bit"];
   if (format === "flac") return ["16-bit", "24-bit"];
+  if (["aiff", "aif", "alac", "caf", "au"].includes(format)) return ["best"];
   if (format === "ogg") return ["q10", "q8", "q6", "q4"];
-  if (imageFormats.includes(format)) return ["best"];
+  if (category === "Image" && imageFormats.includes(format)) return ["best"];
   if (videoFormats.includes(format)) return ["best", "high", "balanced", "small"];
+  if (imageFormats.includes(format)) return ["best"];
   return ["320k", "256k", "192k", "128k"];
 }
 
@@ -170,10 +195,11 @@ export function detectCategoryFromPath(pathOrUrl: string): Category | null {
   if (!pathOrUrl || !pathOrUrl.trim()) return null;
   const cleanPath = pathOrUrl.trim().split("?")[0].split("#")[0];
   const lastDot = cleanPath.lastIndexOf(".");
-  if (lastDot === -1) return null;
+  const lastSeparator = Math.max(cleanPath.lastIndexOf("/"), cleanPath.lastIndexOf("\\"));
+  if (lastDot <= lastSeparator) return null;
   const ext = cleanPath.slice(lastDot + 1).toLowerCase();
-  if (audioFormats.includes(ext) || ["opus", "alac", "aiff", "wma"].includes(ext)) return "Audio";
-  if (videoFormats.includes(ext) || ["avi", "ts", "m2ts", "flv"].includes(ext)) return "Video";
-  if (imageFormats.includes(ext) || ["jpeg", "bmp", "svg", "tiff", "ico"].includes(ext)) return "Image";
+  if (IMAGE_INPUT_EXTENSIONS.has(ext)) return "Image";
+  if (AUDIO_INPUT_EXTENSIONS.has(ext)) return "Audio";
+  if (VIDEO_INPUT_EXTENSIONS.has(ext)) return "Video";
   return null;
 }

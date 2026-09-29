@@ -18,6 +18,7 @@ import {
 import { motion } from "framer-motion";
 import type { ConverterSettings, LibraryEntry } from "../bridge";
 import { bridge } from "../bridge";
+import { detectCategoryFromPath } from "../options";
 
 function size(value: number) {
   return value < 1024 * 1024
@@ -62,10 +63,6 @@ const MEDIA_FILTERS: Array<{ id: MediaFilter; label: string }> = [
   { id: "metadata", label: "Metadata" },
 ];
 
-const AUDIO_EXTENSIONS = new Set(["mp3", "flac", "wav", "aac", "m4a", "ogg"]);
-const VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "webm", "mov"]);
-const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif"]);
-
 function isMetadataEntry(entry: LibraryEntry) {
   return entry.path.split(/[\\/]+/).some((part) => part.toLowerCase() === "metadata");
 }
@@ -76,9 +73,10 @@ function matchesMediaFilter(entry: LibraryEntry, filter: MediaFilter) {
   const inMetadataFolder = isMetadataEntry(entry);
   if (filter === "metadata") return inMetadataFolder;
   if (inMetadataFolder) return false;
-  if (filter === "audio") return AUDIO_EXTENSIONS.has(extension);
-  if (filter === "video") return VIDEO_EXTENSIONS.has(extension);
-  return IMAGE_EXTENSIONS.has(extension);
+  const category = detectCategoryFromPath(entry.path);
+  if (filter === "audio") return category === "Audio";
+  if (filter === "video") return category === "Video";
+  return category === "Image";
 }
 
 type PendingAction =
@@ -89,12 +87,9 @@ function mediaIcon(entry: LibraryEntry) {
   if (isMetadataEntry(entry)) {
     return <FileText size={17} />;
   }
-  if (entry.extension === "JPG" || entry.extension === "JPEG" || entry.extension === "PNG" || entry.extension === "WEBP") {
-    return <ImageIcon size={17} />;
-  }
-  if (entry.extension === "MP4" || entry.extension === "MKV" || entry.extension === "WEBM" || entry.extension === "MOV" || entry.extension === "GIF") {
-    return <Video size={17} />;
-  }
+  const category = detectCategoryFromPath(entry.path);
+  if (category === "Image") return <ImageIcon size={17} />;
+  if (category === "Video") return <Video size={17} />;
   return <FileAudio size={17} />;
 }
 

@@ -13,9 +13,9 @@
   <img src="https://img.shields.io/badge/Python-3.10%2B-blueviolet?style=flat-square" alt="Python" />
   <img src="https://img.shields.io/badge/Acceleration-NVENC%20%7C%20AMF%20%7C%20QSV%20%7C%20VAAPI-success?style=flat-square" alt="Hardware Acceleration" />
   <br />
-  <img src="https://img.shields.io/badge/Audio-WAV%20%7C%20FLAC%20%7C%20MP3%20%7C%20AAC%20%7C%20OGG-orange?style=flat-square" alt="Audio Formats" />
-  <img src="https://img.shields.io/badge/Video-MP4%20%7C%20MKV%20%7C%20WebM%20%7C%20MOV%20%7C%20GIF-red?style=flat-square" alt="Video Formats" />
-  <img src="https://img.shields.io/badge/Image-PNG%20%7C%20JPG%20%7C%20WebP-green?style=flat-square" alt="Image Formats" />
+  <img src="https://img.shields.io/badge/Audio-MP3%20%7C%20WAV%20%7C%20FLAC%20%7C%20AAC%20%7C%20Opus%20%7C%20more-orange?style=flat-square" alt="Audio Formats" />
+  <img src="https://img.shields.io/badge/Video-MP4%20%7C%20MKV%20%7C%20WebM%20%7C%20AVI%20%7C%20MOV%20%7C%20more-red?style=flat-square" alt="Video Formats" />
+  <img src="https://img.shields.io/badge/Image-JFIF%20%7C%20PNG%20%7C%20WebP%20%7C%20TIFF%20%7C%20more-green?style=flat-square" alt="Image Formats" />
 </p>
 
 JaneConverter downloads and converts media through a sleek Tauri desktop app or high-speed Python CLI. It supports audio, video, and image processing with studio-grade SoX resampling, zero-loss stream copy remuxing (`-c copy`), EBU R128 loudness normalization, and hardware-accelerated GPU encoding.
@@ -25,9 +25,10 @@ JaneConverter downloads and converts media through a sleek Tauri desktop app or 
 ## Features
 
 - **Comprehensive Multi-Format Processing**:
-  - **Audio**: WAV (16/24/32-bit linear PCM), FLAC (lossless archive), MP3 (up to 320 kbps), AAC/M4A, and OGG/Opus.
-  - **Video**: MP4, MKV, WebM, MOV, and high-framerate GIF with zero-loss stream copying or hardware GPU transcoding.
-  - **Image**: Lossless PNG, high-efficiency WebP, and JPG optimization.
+  - **Audio outputs**: WAV, FLAC, MP3, AAC/M4A, OGG, Opus, AIFF, ALAC, AC3, MP2, WMA, CAF, and AU.
+  - **Video outputs**: MP4, MKV, WebM, MOV, AVI, FLV, M4V, TS/M2TS, MPEG/MPG/VOB, 3GP, WMV/ASF, and GIF.
+  - **Image outputs**: JPG/JPEG/JFIF, PNG, WebP, BMP, TIFF, GIF, ICO, TGA, and portable PBM/PGM/PPM.
+  - **Inputs**: Common audio, video, and still-image files are detected by extension, including JFIF, TIFF, AVIF, and HEIF/HEIC. The actual files a build can decode depend on its bundled FFmpeg and Pillow support.
 - **Audiophile-Grade Sound Engine**: 64-bit float SoX resampler (`soxr`, precision 28, cutoff 0.99), EBU R128 loudness normalization (`-14 LUFS`), and post-conversion `ffprobe` stream validation to prevent corrupt, 0-byte completions.
 - **Instant Stream Copy Remuxing**: Zero-loss container conversion (`-c copy`) when underlying codecs match, with automatic safety fallback to transcode when audio normalization or filters are requested.
 - **Drag-and-Drop & Batch Queue**: Drag local media files or web links directly into the converter. Dropping multiple files automatically populates the sequential batch queue with live per-item progress, cancel, and retry controls.

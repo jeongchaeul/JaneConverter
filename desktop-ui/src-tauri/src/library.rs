@@ -14,7 +14,37 @@ pub fn media_extension(path: &Path) -> bool {
             .unwrap_or_default()
             .to_ascii_lowercase()
             .as_str(),
-        "mp3" | "flac" | "wav" | "aac" | "m4a" | "ogg" | "mp4" | "mkv" | "webm" | "mov" | "gif"
+        "mp3"
+            | "flac"
+            | "wav"
+            | "aac"
+            | "m4a"
+            | "ogg"
+            | "opus"
+            | "aiff"
+            | "aif"
+            | "alac"
+            | "ac3"
+            | "mp2"
+            | "wma"
+            | "caf"
+            | "au"
+            | "mp4"
+            | "mkv"
+            | "webm"
+            | "mov"
+            | "gif"
+            | "avi"
+            | "flv"
+            | "m4v"
+            | "ts"
+            | "m2ts"
+            | "mpeg"
+            | "mpg"
+            | "vob"
+            | "3gp"
+            | "wmv"
+            | "asf"
     )
 }
 
@@ -25,7 +55,20 @@ fn image_extension(path: &Path) -> bool {
             .unwrap_or_default()
             .to_ascii_lowercase()
             .as_str(),
-        "jpg" | "jpeg" | "png" | "webp"
+        "jpg"
+            | "jpeg"
+            | "jfif"
+            | "png"
+            | "webp"
+            | "bmp"
+            | "tif"
+            | "tiff"
+            | "gif"
+            | "ico"
+            | "tga"
+            | "ppm"
+            | "pgm"
+            | "pbm"
     )
 }
 
