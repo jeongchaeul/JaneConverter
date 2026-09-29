@@ -7,9 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [2.2.6] - 2026-09-29 - FFmpeg Conversion Fallback Fix
 
+### Added
+- Added one-link public photo capture code paths for Facebook, Instagram, X/Twitter, TikTok photo posts, Reddit galleries, Tumblr photo posts, and Pinterest Pins, boards, and sections. Live JaneConverter capture has not yet been verified on these platforms; Jane confirmed that the supplied Facebook post is publicly viewable, but app capture of it remains unverified.
+
 ### Fixed
 - Removed the invalid `-thread_queue_size` arguments from local FFmpeg input commands so Universal Video CPU fallback can proceed with current FFmpeg builds.
 - Added a public GitHub releases-feed fallback so the in-app updater can find published updates when the unauthenticated GitHub API is rate-limited or unavailable.
+- Automatically close recognizable login prompts over public photo collections across supported social capture paths, while keeping close actions scoped to the prompt dialog. Facebook capture also scrolls the photo grid's own lazy-loading container instead of the outer page.
 
 ## [2.2.5] - 2026-09-27 - Social Photo Capture and Hardware Pipeline
 

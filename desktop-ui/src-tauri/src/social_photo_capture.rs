@@ -274,8 +274,8 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
   }};
   const closeGuestPrompt = () => {{
     // Social photo viewers use the same generic close label as account
-    // prompts. Scope the click to a dialog that identifies the platform login
-    // prompt so the scan cannot dismiss its own post viewer.
+    // prompts. Require login language and account controls before closing so
+    // the scan cannot dismiss its own post viewer or carousel.
     const promptPatterns = {{
       instagram: /log in to instagram|sign in to instagram|sign up for instagram/i,
       twitter: /log in to x|sign in to x|sign up for x/i,
@@ -285,9 +285,16 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
       pinterest: /log in to pinterest|sign in to pinterest|sign up for pinterest/i
     }};
     const promptPattern = promptPatterns[platform];
-    const prompt = Array.from(document.querySelectorAll('[role="dialog"]')).find((dialog) =>
-      promptPattern.test(dialog.innerText || "")
-    );
+    const commonPromptPattern = /log in or sign up|sign in or sign up|log in to continue|sign in to continue|see more from|see more on/i;
+    const prompt = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]')).find((dialog) => {{
+      const text = dialog.innerText || "";
+      const hasLoginForm = !!dialog.querySelector('input[type="password"], input[name="password"], input[name="pass"], input[autocomplete="current-password"]');
+      const hasAccountAction = Array.from(dialog.querySelectorAll('button, [role="button"]')).some((action) =>
+        /log in|sign in|sign up|continue with/i.test((action.innerText || "") + " " + (action.getAttribute("aria-label") || ""))
+      );
+      const identifiesPrompt = (promptPattern && promptPattern.test(text)) || commonPromptPattern.test(text);
+      return identifiesPrompt && (hasLoginForm || hasAccountAction);
+    }});
     const button = prompt && prompt.querySelector('button[aria-label="Close"], [role="button"][aria-label="Close"]');
     if (button) button.click();
   }};
@@ -551,6 +558,10 @@ mod tests {
         ] {
             let script = initialization_script("session-1", platform);
             assert!(script.contains(prompt));
+            assert!(script.contains("commonPromptPattern"));
+            assert!(script.contains("log in or sign up|sign in or sign up|log in to continue|sign in to continue|see more from|see more on"));
+            assert!(script.contains("hasLoginForm || hasAccountAction"));
+            assert!(script.contains("[role=\"dialog\"], [aria-modal=\"true\"]"));
             assert!(script.contains("prompt && prompt.querySelector"));
             assert!(!script.contains("document.querySelector('button[aria-label=\"Close\"]"));
             assert!(script.contains("window.scrollTo(0, Math.min(window.scrollY"));

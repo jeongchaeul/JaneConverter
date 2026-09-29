@@ -117,9 +117,14 @@ pub fn initialization_script(nonce: &str) -> String {
     // Facebook also labels the photo viewer's close button "Close". Only
     // dismiss a dialog when its own text identifies it as an account prompt;
     // otherwise this can close the album before its photos are scanned.
-    const prompt = Array.from(document.querySelectorAll('[role="dialog"]')).find((dialog) =>
-      /log in to facebook|log in or sign up|sign up for facebook/i.test(dialog.innerText || "")
-    );
+    const prompt = Array.from(document.querySelectorAll('[role="dialog"]')).find((dialog) => {{
+      const text = dialog.innerText || "";
+      const hasLoginForm = dialog.querySelector('input[type="password"], input[name="pass"]')
+        && dialog.querySelector('button[aria-label*="log in" i], button[type="submit"]');
+      const identifiesLogin = /log in to facebook|log in or sign up|sign up for facebook|see more on facebook/i.test(text)
+        || (hasLoginForm && /see more from/i.test(text));
+      return identifiesLogin && hasLoginForm;
+    }});
     const button = prompt && prompt.querySelector('button[aria-label="Close"], [role="button"][aria-label="Close"]');
     if (button) button.click();
   }};
@@ -132,6 +137,20 @@ pub fn initialization_script(nonce: &str) -> String {
       }} catch (_) {{}}
     }}
     return "";
+  }};
+  const findAlbumScroller = () => {{
+    const candidates = Array.from(document.querySelectorAll("div"))
+      .filter((element) => element.querySelector('a[href*="fbid="]'))
+      .filter((element) => {{
+        const overflowY = getComputedStyle(element).overflowY;
+        return element.clientHeight > 0
+          && element.scrollHeight > element.clientHeight + 80
+          && (overflowY === "auto" || overflowY === "scroll");
+      }});
+    candidates.sort((left, right) =>
+      (right.scrollHeight - right.clientHeight) - (left.scrollHeight - left.clientHeight)
+    );
+    return candidates[0] || document.scrollingElement || document.documentElement;
   }};
   const scan = () => {{
     if (finished) return;
@@ -168,11 +187,20 @@ pub fn initialization_script(nonce: &str) -> String {
         awaitingSequence = ++nextSequence;
         send({{kind:"photos",sequence:awaitingSequence,photos:pending.splice(0,2),title}});
       }}
-      const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 8;
+      const scroller = findAlbumScroller();
+      const isDocumentScroller = scroller === document.scrollingElement || scroller === document.documentElement;
+      const scrollTop = isDocumentScroller ? window.scrollY : scroller.scrollTop;
+      const viewportHeight = isDocumentScroller ? window.innerHeight : scroller.clientHeight;
+      const scrollHeight = isDocumentScroller ? document.documentElement.scrollHeight : scroller.scrollHeight;
+      const atBottom = scrollTop + viewportHeight >= scrollHeight - 8;
       if (scanned.size === previousCount && atBottom) unchanged += 1;
       else unchanged = 0;
       previousCount = scanned.size;
-      window.scrollTo(0, document.documentElement.scrollHeight);
+      if (!atBottom) {{
+        const nextScrollTop = Math.min(scrollTop + Math.max(400, viewportHeight * 0.8), scrollHeight);
+        if (isDocumentScroller) window.scrollTo(0, nextScrollTop);
+        else scroller.scrollTop = nextScrollTop;
+      }}
       if (((unchanged >= 4 && scanned.size >= 2) || attempts >= 55) && pending.length === 0 && awaitingSequence === 0) {{
         finished = true;
         if (scanned.size >= 2) send({{kind:"done",count:scanned.size,title}});
@@ -233,7 +261,15 @@ mod tests {
         assert!(script.contains("__JANE_FACEBOOK_ACK__"));
         assert!(script.contains("pending.splice(0,2)"));
         assert!(script.contains("awaitingSequence === 0"));
-        assert!(script.contains("log in to facebook|log in or sign up|sign up for facebook"));
+        assert!(script.contains("findAlbumScroller"));
+        assert!(script.contains("element.scrollHeight > element.clientHeight + 80"));
+        assert!(script.contains("else scroller.scrollTop = nextScrollTop"));
+        assert!(script.contains(
+            "log in to facebook|log in or sign up|sign up for facebook|see more on facebook"
+        ));
+        assert!(script.contains("hasLoginForm && /see more from/i.test(text)"));
+        assert!(script.contains("input[type=\"password\"], input[name=\"pass\"]"));
+        assert!(script.contains("identifiesLogin && hasLoginForm"));
         assert!(script.contains("prompt && prompt.querySelector"));
     }
 }
