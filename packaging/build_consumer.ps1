@@ -211,9 +211,17 @@ try {
         }
         try {
             if ($SkipInstaller) {
-                Invoke-Checked { & $tauri build --no-bundle --config $tauriConfig } "Tauri application build"
+                if ($enableUpdater) {
+                    Invoke-Checked { & $tauri build --features updater --no-bundle --config $tauriConfig } "Tauri application build"
+                } else {
+                    Invoke-Checked { & $tauri build --no-bundle --config $tauriConfig } "Tauri application build"
+                }
             } else {
-                Invoke-Checked { & $tauri build --config $tauriConfig } "Tauri application and NSIS build"
+                if ($enableUpdater) {
+                    Invoke-Checked { & $tauri build --features updater --config $tauriConfig } "Tauri application and NSIS build"
+                } else {
+                    Invoke-Checked { & $tauri build --config $tauriConfig } "Tauri application and NSIS build"
+                }
             }
         } finally {
             Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue

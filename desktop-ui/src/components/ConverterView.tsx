@@ -205,6 +205,7 @@ export function ConverterView({
   onCreateAccess,
   onClearAccess,
   onStatus,
+  onError,
 }: {
   settings: ConverterSettings;
   runtime: RuntimeInfo | null;
@@ -220,6 +221,7 @@ export function ConverterView({
   onCreateAccess: (source: string) => Promise<AccessStatus>;
   onClearAccess: () => Promise<void>;
   onStatus: (message: string) => void;
+  onError: (message: string) => void;
 }) {
   const [source, setSource] = useState("");
   const [playlist, setPlaylist] = useState<PlaylistCatalog | null>(null);
@@ -436,7 +438,7 @@ export function ConverterView({
       setQueue((curr) => [...curr, ...newItems]);
       onStatus(`Added ${paths.length} items to conversion queue.`);
     } catch (error) {
-      onStatus(error instanceof Error ? error.message : String(error));
+      onError(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -466,7 +468,7 @@ export function ConverterView({
         };
       }));
     } catch (error) {
-      onStatus(error instanceof Error ? error.message : "JaneConverter could not verify the dropped file location, so it was ignored.");
+      onError(error instanceof Error ? error.message : "JaneConverter could not verify the dropped file location, so it was ignored.");
       return;
     }
 
@@ -586,7 +588,7 @@ export function ConverterView({
       setPlaylist(catalog);
       onStatus(`Loaded ${catalog.items.length} tracks from ${catalog.title}.`);
     } catch (error) {
-      onStatus(error instanceof Error ? error.message : String(error));
+      onError(error instanceof Error ? error.message : String(error));
     } finally {
       setLoadingPlaylist(false);
     }
@@ -673,7 +675,9 @@ export function ConverterView({
         onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
         await onStart(trimmedSource, undefined, capture.captureId);
       } catch (error) {
-        onStatus(error instanceof Error ? error.message : String(error));
+        const message = error instanceof Error ? error.message : String(error);
+        if (/cancelled|canceled/i.test(message)) onStatus(message);
+        else onError(message);
       } finally {
         facebookCaptureIdRef.current = null;
         setFacebookCaptureBusy(false);
@@ -696,8 +700,10 @@ export function ConverterView({
         if (photoPlatform === "twitter" && message === "NO_PUBLIC_PHOTOS") {
           onStatus("No X/Twitter photos found. Passing the post to the standard media downloader...");
           await onStart(trimmedSource, indexes);
-        } else {
+        } else if (/cancelled|canceled/i.test(message)) {
           onStatus(message);
+        } else {
+          onError(message);
         }
       } finally {
         socialCaptureIdRef.current = null;
@@ -715,7 +721,7 @@ export function ConverterView({
       await bridge.cancelFacebookAlbum(captureId);
       onStatus("Facebook photo capture cancelled.");
     } catch (error) {
-      onStatus(error instanceof Error ? error.message : String(error));
+      onError(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -726,7 +732,7 @@ export function ConverterView({
       await bridge.cancelSocialPostPhotos(captureId);
       onStatus("Public photo capture cancelled.");
     } catch (error) {
-      onStatus(error instanceof Error ? error.message : String(error));
+      onError(error instanceof Error ? error.message : String(error));
     }
   }
 

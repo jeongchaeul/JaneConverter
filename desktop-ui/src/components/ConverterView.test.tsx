@@ -63,6 +63,7 @@ function renderView(
         onCreateAccess={onCreateAccess}
         onClearAccess={vi.fn().mockResolvedValue(undefined)}
         onStatus={onStatus}
+        onError={vi.fn()}
       />,
     );
   });

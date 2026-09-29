@@ -511,6 +511,27 @@ async fn capture_facebook_album(
             }
             "done" => {
                 let result = accumulator_for_title.lock().map_err(|_| "The Facebook photo list became unavailable.".to_string()).and_then(|collected| {
+                    let Some(expected_count) = message.expected_count else {
+                        return Err(format!(
+                            "Facebook did not confirm the album's full photo count after finding {} photos. No partial album was saved.",
+                            message.count
+                        ));
+                    };
+                    if expected_count != message.count {
+                        return Err(if expected_count > message.count {
+                            format!(
+                                "Facebook exposed only {} of {} album photos. No partial album was saved.",
+                                message.count,
+                                expected_count
+                            )
+                        } else {
+                            format!(
+                                "Facebook advertised {} album photos but exposed {}. No partial album was saved.",
+                                expected_count,
+                                message.count
+                            )
+                        });
+                    }
                     if message.count < 2 || message.count > 500 || collected.photos.len() != message.count {
                         return Err(format!(
                             "Facebook reported {} photos, but JaneConverter received {}. No partial album was saved.",
@@ -553,7 +574,7 @@ async fn capture_facebook_album(
         .insert(capture_id.clone(), window.clone());
 
     let received = tauri::async_runtime::spawn_blocking(move || {
-        receiver.recv_timeout(Duration::from_secs(90))
+        receiver.recv_timeout(Duration::from_secs(210))
     })
     .await;
     if let Ok(mut captures) = state.facebook_captures.lock() {
@@ -585,7 +606,7 @@ async fn capture_facebook_album(
         }
         Ok(Ok(Err(message))) => Err(message),
         Ok(Err(mpsc::RecvTimeoutError::Timeout)) => {
-            Err("Facebook did not finish loading the public album within 90 seconds.".into())
+            Err("Facebook did not finish loading the public album within 210 seconds.".into())
         }
         Ok(Err(mpsc::RecvTimeoutError::Disconnected)) => {
             Err("Facebook photo capture was cancelled.".into())
@@ -1648,8 +1669,11 @@ async fn install_update(
 
 pub fn run() {
     cleanup_stale_update_installers();
-    tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "updater")]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
         .manage(AppState::default())
         .manage(PendingUpdate::default())
         .invoke_handler(tauri::generate_handler![

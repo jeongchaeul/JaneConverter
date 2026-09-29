@@ -5,6 +5,9 @@ description = "The modern JaneConverter desktop surface"
 authors = ["project//aspyr"]
 edition = "2021"
 
+[features]
+updater = []
+
 [lib]
 name = "janeconverter_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

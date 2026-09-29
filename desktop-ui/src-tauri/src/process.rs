@@ -27,7 +27,26 @@ pub fn emit_event(app: &tauri::AppHandle, event: ConverterEvent) {
     let _ = app.emit("converter-event", event);
 }
 
-pub fn forward_output<R: Read + Send + 'static>(reader: R, app: tauri::AppHandle, job_id: String) {
+fn failure_detail_from_line(line: &str) -> Option<String> {
+    let (label, detail) = line.trim().split_once(':')?;
+    let label = label.trim();
+    let detail = detail.trim();
+    if detail.is_empty()
+        || !(label.ends_with("Error")
+            || label.ends_with("Exception")
+            || label.eq_ignore_ascii_case("error"))
+    {
+        return None;
+    }
+    Some(detail.chars().take(500).collect())
+}
+
+pub fn forward_output<R: Read + Send + 'static>(
+    reader: R,
+    app: tauri::AppHandle,
+    job_id: String,
+    failure_detail: Option<Arc<Mutex<Option<String>>>>,
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut buf_reader = BufReader::new(reader);
         let mut line_buf = Vec::new();
@@ -60,6 +79,13 @@ pub fn forward_output<R: Read + Send + 'static>(reader: R, app: tauri::AppHandle
             if message.is_empty() {
                 continue;
             }
+            if let Some(detail) = failure_detail_from_line(&message) {
+                if let Some(failure_detail) = &failure_detail {
+                    if let Ok(mut current) = failure_detail.lock() {
+                        *current = Some(detail);
+                    }
+                }
+            }
 
             let progress = progress_from_line(&message);
             let is_progress = progress.is_some()
@@ -76,7 +102,7 @@ pub fn forward_output<R: Read + Send + 'static>(reader: R, app: tauri::AppHandle
                 },
             );
         }
-    });
+    })
 }
 
 pub fn terminate_child(child: &mut Child) {
@@ -272,12 +298,17 @@ pub fn start_conversion(
         .cancel
         .lock()
         .map_err(|_| "The cancellation slot is unavailable.")? = Some(Arc::clone(&cancel));
-    if let Some(reader) = stdout {
-        forward_output(reader, app.clone(), job_id.clone());
-    }
-    if let Some(reader) = stderr {
-        forward_output(reader, app.clone(), job_id.clone());
-    }
+    let failure_detail = Arc::new(Mutex::new(None));
+    let stdout_thread =
+        stdout.map(|reader| forward_output(reader, app.clone(), job_id.clone(), None));
+    let stderr_thread = stderr.map(|reader| {
+        forward_output(
+            reader,
+            app.clone(),
+            job_id.clone(),
+            Some(Arc::clone(&failure_detail)),
+        )
+    });
     emit_event(
         &app,
         ConverterEvent {
@@ -304,18 +335,26 @@ pub fn start_conversion(
         let cancelled = cancel.load(Ordering::Relaxed);
         let code = status.code().unwrap_or(1);
         output(code, cancelled);
+        if let Some(thread) = stdout_thread {
+            let _ = thread.join();
+        }
+        if let Some(thread) = stderr_thread {
+            let _ = thread.join();
+        }
         let (kind, message, progress) = if cancelled {
-            ("cancelled", "Conversion cancelled.", None)
+            ("cancelled", "Conversion cancelled.".to_string(), None)
         } else if status.success() {
             (
                 "finished",
-                "Conversion finished. Your media is ready.",
+                "Conversion finished. Your media is ready.".to_string(),
                 Some(1.0),
             )
         } else {
+            let detail = failure_detail.lock().ok().and_then(|value| value.clone());
             (
                 "failed",
-                "The Python engine reported a conversion failure. Review Console for details.",
+                detail.map(|value| format!("Conversion failed: {value}"))
+                    .unwrap_or_else(|| "The Python engine reported a conversion failure. Review Console for details.".to_string()),
                 None,
             )
         };
@@ -324,7 +363,7 @@ pub fn start_conversion(
             ConverterEvent {
                 job_id,
                 kind: kind.into(),
-                message: message.into(),
+                message,
                 progress,
                 output: None,
             },
@@ -414,6 +453,18 @@ mod tests {
     fn progress_parser_is_bounded() {
         assert_eq!(progress_from_line("[105%] done"), Some(1.0));
         assert_eq!(progress_from_line("plain output"), None);
+    }
+
+    #[test]
+    fn extracts_engine_failure_without_traceback_noise() {
+        assert_eq!(
+            failure_detail_from_line(
+                "RuntimeError: Facebook returned an unsupported image type for photo 21."
+            ),
+            Some("Facebook returned an unsupported image type for photo 21.".into())
+        );
+        assert_eq!(failure_detail_from_line("File \"cli.py\", line 279"), None);
+        assert_eq!(failure_detail_from_line("[download] 86%"), None);
     }
 
     #[test]
