@@ -28,7 +28,7 @@ def test_validate_output_file_missing(tmp_path):
 def test_validate_output_file_empty(tmp_path):
     tiny_file = tmp_path / "empty.mp3"
     tiny_file.write_bytes(b"too small")
-    with pytest.raises(RuntimeError, match="ValidationFailed: destination file .* is corrupted or empty"):
+    with pytest.raises(RuntimeError, match="ValidationFailed: destination file .* has invalid or unreadable media headers"):
         validate_output_file(str(tiny_file), "mp3")
 
 
@@ -171,4 +171,3 @@ def test_convert_media_preserve_quality_source_format(tmp_path):
     info = probe_media_streams(result)
     assert info is not None
     assert any(s.get("codec_type") == "video" for s in info.get("streams", []))
-
