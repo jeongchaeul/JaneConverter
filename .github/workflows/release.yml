@@ -10,6 +10,7 @@ on:
   push:
     tags:
       - "v*"
+      - "bootstrap-v2.2.6-*"
 
 permissions:
   contents: read
@@ -67,9 +68,9 @@ jobs:
           "ffmpeg=$ffmpeg" >> $env:GITHUB_OUTPUT
           "ffprobe=$ffprobe" >> $env:GITHUB_OUTPUT
       - name: Verify tag version
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.existing_release_tag != '')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/bootstrap-v2.2.6-') || (github.event_name == 'workflow_dispatch' && inputs.existing_release_tag != '')
         env:
-          PUBLISH_TAG: ${{ inputs.existing_release_tag || github.ref_name }}
+          PUBLISH_TAG: ${{ inputs.existing_release_tag || (startsWith(github.ref, 'refs/tags/bootstrap-v2.2.6-') && 'v2.2.6') || github.ref_name }}
         shell: pwsh
         run: |
           $version = & uv run --locked python -c "from janeconverter.version import __version__; print(__version__)"
@@ -154,9 +155,9 @@ jobs:
           echo "ffmpeg=$ffmpeg" >> "$GITHUB_OUTPUT"
           echo "ffprobe=$ffprobe" >> "$GITHUB_OUTPUT"
       - name: Verify tag version
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.existing_release_tag != '')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/bootstrap-v2.2.6-') || (github.event_name == 'workflow_dispatch' && inputs.existing_release_tag != '')
         env:
-          PUBLISH_TAG: ${{ inputs.existing_release_tag || github.ref_name }}
+          PUBLISH_TAG: ${{ inputs.existing_release_tag || (startsWith(github.ref, 'refs/tags/bootstrap-v2.2.6-') && 'v2.2.6') || github.ref_name }}
         run: |
           version="$(uv run --locked python -c 'from janeconverter.version import __version__; print(__version__)')"
           test "$PUBLISH_TAG" = "v$version"
@@ -261,9 +262,9 @@ jobs:
           echo "ffmpeg=$PWD/$ffmpeg" >> "$GITHUB_OUTPUT"
           echo "ffprobe=$PWD/$ffprobe" >> "$GITHUB_OUTPUT"
       - name: Verify tag version
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.existing_release_tag != '')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/bootstrap-v2.2.6-') || (github.event_name == 'workflow_dispatch' && inputs.existing_release_tag != '')
         env:
-          PUBLISH_TAG: ${{ inputs.existing_release_tag || github.ref_name }}
+          PUBLISH_TAG: ${{ inputs.existing_release_tag || (startsWith(github.ref, 'refs/tags/bootstrap-v2.2.6-') && 'v2.2.6') || github.ref_name }}
         run: |
           version="$(uv run --locked python -c 'from janeconverter.version import __version__; print(__version__)')"
           test "$PUBLISH_TAG" = "v$version"
@@ -288,7 +289,7 @@ jobs:
             dist/JaneConverter-*-macos-${{ matrix.arch }}.dmg.sha256
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.existing_release_tag != '')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/bootstrap-v2.2.6-') || (github.event_name == 'workflow_dispatch' && inputs.existing_release_tag != '')
     needs: [windows-x64, linux-x86_64, macos]
     runs-on: ubuntu-22.04
     permissions:
@@ -301,7 +302,7 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.existing_release_tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.existing_release_tag || (startsWith(github.ref, 'refs/tags/bootstrap-v2.2.6-') && 'v2.2.6') || github.ref_name }}
         run: |
           if [ -z "$RELEASE_TAG" ] || [ "$RELEASE_TAG" = "main" ]; then
             echo "Set existing_release_tag to the v<version> release whose assets should be replaced."
