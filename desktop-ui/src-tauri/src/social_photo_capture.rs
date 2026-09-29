@@ -295,8 +295,22 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
       const identifiesPrompt = (promptPattern && promptPattern.test(text)) || commonPromptPattern.test(text);
       return identifiesPrompt && (hasLoginForm || hasAccountAction);
     }});
-    const button = prompt && prompt.querySelector('button[aria-label="Close"], [role="button"][aria-label="Close"]');
-    if (button) button.click();
+    if (prompt) {{
+      let overlay = prompt;
+      for (let parent = prompt.parentElement; parent && parent !== document.body; parent = parent.parentElement) {{
+        const rect = parent.getBoundingClientRect();
+        if (getComputedStyle(parent).position === "fixed"
+          && rect.width >= window.innerWidth * 0.7
+          && rect.height >= window.innerHeight * 0.7) {{
+          overlay = parent;
+          break;
+        }}
+      }}
+      overlay.remove();
+      document.documentElement.style.overflow = "";
+      document.body.style.overflow = "";
+      document.body.style.position = "";
+    }}
   }};
   const postContainer = () => {{
     const articles = Array.from(document.querySelectorAll("article"));
@@ -562,7 +576,10 @@ mod tests {
             assert!(script.contains("log in or sign up|sign in or sign up|log in to continue|sign in to continue|see more from|see more on"));
             assert!(script.contains("hasLoginForm || hasAccountAction"));
             assert!(script.contains("[role=\"dialog\"], [aria-modal=\"true\"]"));
-            assert!(script.contains("prompt && prompt.querySelector"));
+            assert!(script.contains("if (prompt)"));
+            assert!(script.contains("getComputedStyle(parent).position === \"fixed\""));
+            assert!(script.contains("overlay.remove()"));
+            assert!(script.contains("document.body.style.overflow = \"\""));
             assert!(!script.contains("document.querySelector('button[aria-label=\"Close\"]"));
             assert!(script.contains("window.scrollTo(0, Math.min(window.scrollY"));
             assert!(script.contains("photos.size >= 500 && !waiting && !pending.length"));

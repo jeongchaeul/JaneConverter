@@ -125,8 +125,22 @@ pub fn initialization_script(nonce: &str) -> String {
         || (hasLoginForm && /see more from/i.test(text));
       return identifiesLogin && hasLoginForm;
     }});
-    const button = prompt && prompt.querySelector('button[aria-label="Close"], [role="button"][aria-label="Close"]');
-    if (button) button.click();
+    if (prompt) {{
+      let overlay = prompt;
+      for (let parent = prompt.parentElement; parent && parent !== document.body; parent = parent.parentElement) {{
+        const rect = parent.getBoundingClientRect();
+        if (getComputedStyle(parent).position === "fixed"
+          && rect.width >= window.innerWidth * 0.7
+          && rect.height >= window.innerHeight * 0.7) {{
+          overlay = parent;
+          break;
+        }}
+      }}
+      overlay.remove();
+      document.documentElement.style.overflow = "";
+      document.body.style.overflow = "";
+      document.body.style.position = "";
+    }}
   }};
   const findAlbumSet = () => {{
     for (const anchor of document.querySelectorAll('a[href*="fbid="]')) {{
@@ -270,6 +284,9 @@ mod tests {
         assert!(script.contains("hasLoginForm && /see more from/i.test(text)"));
         assert!(script.contains("input[type=\"password\"], input[name=\"pass\"]"));
         assert!(script.contains("identifiesLogin && hasLoginForm"));
-        assert!(script.contains("prompt && prompt.querySelector"));
+        assert!(script.contains("if (prompt)"));
+        assert!(script.contains("getComputedStyle(parent).position === \"fixed\""));
+        assert!(script.contains("overlay.remove()"));
+        assert!(script.contains("document.body.style.overflow = \"\""));
     }
 }
