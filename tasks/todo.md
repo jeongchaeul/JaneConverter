@@ -66,3 +66,18 @@
 - [x] Lightweight batch queue operates reliably without memory leaks
 - [x] Mahoraga story engine adapts across test fixtures without destabilizing the core app
 - [x] Packaged Windows installer and portable builds convert cleanly on fresh machines
+
+---
+
+## Phase 5: Public Photo Collections
+
+- [x] Task 15: Pinterest board, section, and Pin URL capture through bounded guest-page scrolling
+- [x] Task 16: TikTok photo posts, Reddit galleries, and Tumblr photo posts through platform-scoped CDN validation
+- [x] Task 17: Converter routing, grouped source folders, documentation, and URL/CDN regression coverage
+- [ ] Verify capture against real public desktop pages for each platform
+- [ ] Add Snapchat Public Story capture after guest desktop viewing is confirmed
+
+### Checkpoint: Public Photo Collection Support
+- [x] Captures use the existing one-link Converter flow and temporary isolated guest sessions
+- [x] Incomplete or sign-in-gated collections do not produce saved partial albums
+- [ ] Representative public collections complete end to end in the desktop app

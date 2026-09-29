@@ -34,8 +34,48 @@ JaneConverter downloads and converts media through a sleek Tauri desktop app or 
 - **Drag-and-Drop & Batch Queue**: Drag local media files or web links directly into the converter. Dropping multiple files automatically populates the sequential batch queue with live per-item progress, cancel, and retry controls.
 - **1-Click Intent Presets**: Goal-oriented presets including *Preserve Quality (raw stream without re-encoding)*, *Studio Master (32-bit WAV)*, *Universal Music (320k MP3)*, *Lossless FLAC (24-bit)*, *Universal Video (1080p MP4)*, and *Lossless Image (PNG)*. Presets are optional; users can choose **No preset** to customize parameters manually.
 - **Hardware Acceleration**: NVIDIA NVENC, AMD AMF, Intel QSV, and Linux VAAPI with multi-core CPU fallback.
-- **Online Extraction**: Smart playlist selection, public Spotify & Apple Music metadata matching, and 4x parallel fragment downloading with anti-throttling heuristics.
+- **Online Extraction**: yt-dlp-powered media extraction, playlist selection, public Spotify and Apple Music catalog matching, and parallel fragment downloading where the source supports it.
 - **Air-Gapped Browser Bridge**: Optional local companion extension to capture active media from authenticated browser pages without ever exporting or reading cookies, session tokens, or passwords.
+
+## Platform Coverage and Verification
+
+JaneConverter has code paths for the platforms below. A code path, unit test, or successful app build does not by itself confirm that a live site can be captured. Public site layouts and access behavior can change.
+
+| Platform or workflow | Implemented path | Verification status |
+| --- | --- | --- |
+| Facebook public post photos | Hidden guest-page capture | You confirmed the supplied post is viewable without signing in. JaneConverter's end-to-end capture of it has not been verified. |
+| Instagram and X/Twitter post photos | Hidden guest-page capture | Code paths and automated checks are present; live capture has not been verified on current public posts. |
+| TikTok photo posts, Reddit galleries, Tumblr photo posts, Pinterest Pins/boards/sections | Hidden guest-page capture | Code paths and automated checks are present; live capture has not been verified platform by platform. |
+| Snapchat Public Stories | None | Not implemented; guest access in a desktop browser has not been verified. |
+| YouTube, SoundCloud, TikTok, X/Twitter, Facebook, Reddit, Twitch, Vimeo, and other yt-dlp sites | yt-dlp media extraction | These are intended extractor sources, not a list of sites individually tested for this README update. Availability depends on the site and yt-dlp extractor behavior. |
+| Spotify tracks/albums/playlists; Apple Music songs/public albums | Public catalog metadata matching to find a stream | Current live catalog behavior has not been verified here. Apple Music playlists are not supported as playlists. JaneConverter does not download protected subscription audio. |
+| Browser Bridge | Capture of media exposed by a user-selected browser tab | Platform-by-platform live behavior has not been verified. The extension does not export cookies, passwords, or session tokens. |
+
+Social photo capture only reads images rendered to logged-out visitors. Private or sign-in-gated posts are not supported. Site-specific Save/Download eligibility controls are not detected separately from public image visibility.
+
+Automated checks cover URL routing, platform-specific media-host allowlists, and local capture handling. They do not substitute for testing a live post on each site.
+
+## Supported Formats
+
+### Selectable output formats
+
+These are the output targets configured in the app. Every source/target codec combination has not been validated end to end.
+
+| Media type | Selectable output formats |
+| --- | --- |
+| Audio | MP3, FLAC, WAV, AAC, OGG, M4A, Opus, AIFF, AIF, ALAC, AC3, MP2, WMA, CAF, AU |
+| Video | MP4, MKV, WebM, MOV, GIF, AVI, FLV, M4V, TS, M2TS, MPEG, MPG, VOB, 3GP, WMV, ASF |
+| Images | JPG, JPEG, JFIF, PNG, WebP, BMP, TIF, TIFF, GIF, ICO, TGA, PPM, PGM, PBM |
+
+ALAC files use the `.m4a` extension. Video output size can be set to original, 4K, 1440p, 1080p, 720p, or 480p when the source provides a suitable stream.
+
+### Recognized local input extensions
+
+These extensions are recognized when adding local files. Decoding depends on the file's actual encoding and the bundled FFmpeg and Pillow support.
+
+- **Audio:** `.mp3`, `.flac`, `.wav`, `.aac`, `.ogg`, `.m4a`, `.opus`, `.aiff`, `.aif`, `.alac`, `.ac3`, `.mp2`, `.wma`, `.caf`, `.au`, `.oga`, `.m4b`, `.m4p`, `.ape`, `.aifc`, `.amr`, `.dts`, `.mka`, `.mpc`, `.ra`, `.ram`, `.tta`, `.voc`, `.wv`, `.wvc`, `.8svx`, `.3ga`
+- **Video:** `.mp4`, `.mkv`, `.webm`, `.mov`, `.gif`, `.avi`, `.flv`, `.m4v`, `.ts`, `.m2ts`, `.mpeg`, `.mpg`, `.vob`, `.3gp`, `.wmv`, `.asf`, `.3g2`, `.asx`, `.avchd`, `.divx`, `.dv`, `.f4v`, `.m2v`, `.mjpg`, `.mjpeg`, `.mts`, `.mxf`, `.ogv`, `.qt`, `.rm`, `.rmvb`, `.yuv`
+- **Images:** `.jpg`, `.jpeg`, `.jfif`, `.png`, `.webp`, `.bmp`, `.tif`, `.tiff`, `.gif`, `.ico`, `.tga`, `.ppm`, `.pgm`, `.pbm`, `.apng`, `.avif`, `.cur`, `.dib`, `.emf`, `.eps`, `.exr`, `.heic`, `.heif`, `.icns`, `.j2k`, `.jp2`, `.jpe`, `.jfi`, `.jif`, `.jxl`, `.pcx`, `.pfm`, `.pic`, `.psd`, `.ras`, `.sgi`, `.svg`, `.xbm`, `.xpm`, `.qoi`
 
 ## Install
 
@@ -69,6 +109,12 @@ Paste a public Facebook post link and choose **Download all photos**. JaneConver
 ### Public Instagram and X/Twitter photo posts
 
 Paste a public Instagram post or X/Twitter post link and choose **Download all photos**. JaneConverter uses a separate, hidden temporary guest WebView to collect the photos the post exposes to logged-out visitors, then downloads them locally into grouped folders under `Images/Instagram` or `Images/Twitter`. Instagram carousel slides are opened in sequence. Posts that require sign-in or do not expose photos to logged-out visitors cannot be captured; X/Twitter posts without photos continue through the standard media downloader. No normal browser profile, saved login cookies, browser extension, or remote download service is used.
+
+### Other public photo collections
+
+The one-link capture flow has code paths for public TikTok photo posts, Reddit image galleries, Tumblr photo posts, and Pinterest Pins, boards, and sections. Pinterest boards are scanned as a collection, while post carousels and gallery viewers are advanced in sequence. Captures are limited to image URLs rendered by the public page and validated against that platform's image CDN; incomplete captures are not saved. Live capture on these sites has not been verified. Secret/private boards and posts that require sign-in are not supported. Snapchat Public Stories are not implemented because guest access through its desktop browser has not been verified.
+
+JaneConverter does not sign in, bypass private-content gates, or read browser cookies. Site-specific Save/Download eligibility controls are not yet detected separately from an image being publicly rendered, so support can vary by post and platform behavior.
 
 Spotify and Apple Music links provide public catalog metadata matching. JaneConverter does not download protected DRM-subscription audio directly.
 

@@ -114,7 +114,13 @@ pub fn initialization_script(nonce: &str) -> String {
     return candidates[0] || null;
   }};
   const closeGuestPrompt = () => {{
-    const button = document.querySelector('button[aria-label="Close"], [role="button"][aria-label="Close"]');
+    // Facebook also labels the photo viewer's close button "Close". Only
+    // dismiss a dialog when its own text identifies it as an account prompt;
+    // otherwise this can close the album before its photos are scanned.
+    const prompt = Array.from(document.querySelectorAll('[role="dialog"]')).find((dialog) =>
+      /log in to facebook|log in or sign up|sign up for facebook/i.test(dialog.innerText || "")
+    );
+    const button = prompt && prompt.querySelector('button[aria-label="Close"], [role="button"][aria-label="Close"]');
     if (button) button.click();
   }};
   const findAlbumSet = () => {{
@@ -227,5 +233,7 @@ mod tests {
         assert!(script.contains("__JANE_FACEBOOK_ACK__"));
         assert!(script.contains("pending.splice(0,2)"));
         assert!(script.contains("awaitingSequence === 0"));
+        assert!(script.contains("log in to facebook|log in or sign up|sign up for facebook"));
+        assert!(script.contains("prompt && prompt.querySelector"));
     }
 }

@@ -42,7 +42,7 @@ from .version import __version__
 from .paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR
 from .auth import normalize_browser_session
 from .facebook_capture import download_facebook_photo_manifest
-from .social_photo_capture import download_social_photo_manifest
+from .social_photo_capture import MEDIA_HOSTS as SOCIAL_PHOTO_MEDIA_HOSTS, download_social_photo_manifest
 from .hardware_snapshot import get_hardware_snapshot
 
 MIN_FREE_DISK_BYTES = 256 * 1024 * 1024  # keep a reasonable minimum without rejecting small conversions
@@ -78,6 +78,8 @@ def media_library_folder(
         "instagram": "Instagram",
         "facebook": "Facebook",
         "reddit": "Reddit",
+        "tumblr": "Tumblr",
+        "pinterest": "Pinterest",
         "twitch": "Twitch",
         "local": "Local Files",
         "local_file": "Local Files",
@@ -290,7 +292,7 @@ def process_conversion(
 
     if social_photo_manifest is not None:
         platform = social_photo_manifest.get("platform")
-        source_type = platform if platform in ("instagram", "twitter") else "other"
+        source_type = platform if platform in SOCIAL_PHOTO_MEDIA_HOSTS else "other"
         photo_format = target_format if is_image_target else None
         photo_folder = media_library_folder(output_dir, photo_format or "source", source_type, "Images")
         album = download_social_photo_manifest(

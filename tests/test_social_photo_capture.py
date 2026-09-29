@@ -112,3 +112,27 @@ def test_conversion_passes_selected_image_format_to_social_downloader(tmp_path, 
     assert received["target_format"] == "png"
     assert received["quality"] == "best"
     assert result == str(tmp_path / "export")
+
+
+def test_supported_collection_cdns_are_platform_scoped():
+    valid_urls = {
+        "tiktok": "https://p16-sign.tiktokcdn.com/tos/image.jpeg",
+        "reddit": "https://i.redd.it/image.jpg",
+        "tumblr": "https://64.media.tumblr.com/image.jpg",
+        "pinterest": "https://i.pinimg.com/originals/image.jpg",
+    }
+
+    for platform, url in valid_urls.items():
+        assert social_photo_capture._media_url(url, platform) == url
+        try:
+            social_photo_capture._media_url("https://notallowed.example/image.jpg", platform)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{platform} accepted an unapproved image host")
+
+
+def test_new_photo_sources_use_their_own_library_folders(tmp_path):
+    for platform, folder in (("tiktok", "TikTok"), ("reddit", "Reddit"), ("tumblr", "Tumblr"), ("pinterest", "Pinterest")):
+        path = cli.media_library_folder(str(tmp_path), "source", platform, "Images")
+        assert path.endswith(f"Images/{folder}") or path.endswith(f"Images\\{folder}")

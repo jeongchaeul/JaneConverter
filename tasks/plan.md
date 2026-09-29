@@ -178,3 +178,24 @@ A release is validated when:
 - [ ] The lightweight batch queue handles multi-item local conversions predictably.
 - [ ] The Mahoraga story engine runs in its isolated sandbox without leaking errors into ordinary conversion.
 - [ ] Packaged application smoke tests pass on a clean Windows machine with bundled runtimes.
+
+---
+
+## Phase 5: Public Photo Collections
+
+*Goal: Make one-link photo collection capture useful on the desktop sites where saving a whole public collection is cumbersome.*
+
+#### Task 15: Pinterest board and section capture
+- Detect public board, section, and Pin links in the existing Converter field.
+- Scan rendered board Pins with bounded scrolling and validate image URLs against Pinterest's public CDN.
+- Preserve the board title and save images under `Images/Pinterest`; refuse private or sign-in-gated content.
+
+#### Task 16: Public post galleries
+- Add public TikTok photo posts, Reddit gallery posts, and Tumblr photo posts to the same local manifest flow.
+- Advance supported carousels and galleries, deduplicate image renditions, and validate each platform's CDN.
+- Respect complete-manifest limits and report guest/sign-in failures without saving partial collections.
+
+#### Task 17: User-facing routing and regression coverage
+- Keep all supported collection URLs in the existing Converter workflow and show the platform name while capturing.
+- Add URL/CDN/export tests and document supported collection types and access limits.
+- Leave Snapchat Public Stories as a separate story-capture task until desktop guest access is verified.

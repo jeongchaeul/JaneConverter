@@ -63,13 +63,32 @@ function isFacebookPostLink(value: string): boolean {
   }
 }
 
-function socialPhotoPlatform(value: string): "instagram" | "twitter" | null {
+type SocialPhotoPlatform = "instagram" | "twitter" | "tiktok" | "reddit" | "tumblr" | "pinterest";
+const SOCIAL_PHOTO_PLATFORM_LABELS: Record<SocialPhotoPlatform, string> = {
+  instagram: "Instagram",
+  twitter: "X/Twitter",
+  tiktok: "TikTok",
+  reddit: "Reddit",
+  tumblr: "Tumblr",
+  pinterest: "Pinterest",
+};
+
+function socialPhotoPlatformLabel(platform: SocialPhotoPlatform): string {
+  return SOCIAL_PHOTO_PLATFORM_LABELS[platform];
+}
+
+function socialPhotoPlatform(value: string): SocialPhotoPlatform | null {
   try {
     const url = new URL(value.trim());
     const host = url.hostname.toLowerCase();
     const path = url.pathname.toLowerCase();
     if ((host === "instagram.com" || host === "www.instagram.com") && /^\/p\/[^/]+\/?$/.test(path)) return "instagram";
     if ((host === "x.com" || host === "www.x.com" || host === "twitter.com" || host === "www.twitter.com") && /\/status\/\d+/.test(path)) return "twitter";
+    if ((host === "tiktok.com" || host.endsWith(".tiktok.com")) && (/\/photo\/\d+/.test(path) || path.startsWith("/t/") || path.startsWith("/share/photo/"))) return "tiktok";
+    if ((host === "reddit.com" || host.endsWith(".reddit.com")) && (/\/comments\//.test(path) || path.startsWith("/gallery/"))) return "reddit";
+    if ((host === "tumblr.com" || host.endsWith(".tumblr.com")) && (/\/post\/\d+/.test(path) || /^\/[^/]+\/\d+/.test(path))) return "tumblr";
+    if ((host === "pinterest.com" || host.endsWith(".pinterest.com") || host === "pin.it")
+      && (host === "pin.it" || path.startsWith("/pin/") || /^\/[^/]+\/[^/]+(?:\/[^/]+)?\/?$/.test(path))) return "pinterest";
     return null;
   } catch {
     return null;
@@ -666,7 +685,7 @@ export function ConverterView({
       const captureId = crypto.randomUUID();
       socialCaptureIdRef.current = captureId;
       setSocialCaptureBusy(true);
-      const platformLabel = photoPlatform === "instagram" ? "Instagram" : "X/Twitter";
+      const platformLabel = socialPhotoPlatformLabel(photoPlatform);
       onStatus(`Reading the public ${platformLabel} post in a hidden guest session...`);
       try {
         const capture = await bridge.captureSocialPostPhotos(trimmedSource, captureId);
@@ -1305,7 +1324,7 @@ export function ConverterView({
               >
                 <Play className="size-3.5 fill-current" />
                 {socialCaptureBusy
-                  ? `Finding ${socialPlatform === "instagram" ? "Instagram" : "X"} photos...`
+                  ? `Finding ${socialPlatform ? socialPhotoPlatformLabel(socialPlatform) : "social"} photos...`
                   : facebookCaptureBusy
                   ? "Finding Facebook photos..."
                   : running

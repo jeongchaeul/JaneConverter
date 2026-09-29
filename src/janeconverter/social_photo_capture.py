@@ -1,4 +1,4 @@
-"""Download public photo URLs collected from isolated Instagram/X guest pages."""
+"""Download public photo URLs collected from isolated social collection pages."""
 
 from __future__ import annotations
 
@@ -29,6 +29,18 @@ MAX_REDIRECTS = 5
 MEDIA_HOSTS = {
     "instagram": ("cdninstagram.com", "fbcdn.net", "fbsbx.com"),
     "twitter": ("pbs.twimg.com",),
+    "tiktok": ("tiktokcdn.com", "tiktokcdn-us.com", "tiktokv.com", "ibyteimg.com", "ibytedtos.com"),
+    "reddit": ("redd.it", "redditmedia.com"),
+    "tumblr": ("media.tumblr.com",),
+    "pinterest": ("pinimg.com",),
+}
+PLATFORM_LABELS = {
+    "instagram": "Instagram",
+    "twitter": "X/Twitter",
+    "tiktok": "TikTok",
+    "reddit": "Reddit",
+    "tumblr": "Tumblr",
+    "pinterest": "Pinterest",
 }
 
 
@@ -85,7 +97,7 @@ def download_social_photo_manifest(
     platform_key = manifest.get("platform")
     if platform_key not in MEDIA_HOSTS:
         raise ValueError("The public photo list has an unsupported platform.")
-    platform = "Instagram" if platform_key == "instagram" else "X/Twitter"
+    platform = PLATFORM_LABELS[platform_key]
     raw_photos = manifest.get("photos")
     if not isinstance(raw_photos, list) or not raw_photos:
         raise RuntimeError(f"No {platform} photos were available to download.")
