@@ -4,6 +4,8 @@ The desktop updater downloads signed application packages from the rolling GitHu
 
 The engine version in `src/janeconverter/version.py` does not change for ordinary commits. CI adds a monotonically increasing build number and the full Git commit as SemVer build metadata, then validates that the feed's commit matches that metadata. The feed includes all four platform entries because Tauri validates the complete static manifest before selecting the current platform.
 
+Windows updates use the signed NSIS setup executable (`.exe` and `.exe.sig`) directly. This matches Tauri's current updater artifact format; the `.nsis.zip` artifact belongs to its legacy-compatible format.
+
 ## One-time GitHub configuration
 
 1. From `desktop-ui`, run `npx tauri signer generate -w <private-key-path>` and choose a secure path outside the repository. Keep the private key and its backup private. Do not rotate or lose it while existing updater-enabled installations are in use.

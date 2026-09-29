@@ -111,8 +111,8 @@ jobs:
           name: updater-windows-x64
           if-no-files-found: error
           path: |
-            dist/JaneConverter-continuous-windows-x64.nsis.zip
-            dist/JaneConverter-continuous-windows-x64.nsis.zip.sig
+            dist/JaneConverter-continuous-windows-x64-setup.exe
+            dist/JaneConverter-continuous-windows-x64-setup.exe.sig
 
   linux-x86_64:
     needs: prepare

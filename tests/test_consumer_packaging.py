@@ -65,6 +65,58 @@ def test_windows_build_stages_one_private_runtime_for_both_outputs():
         assert script.count(obsolete) == 1  # rejection list only
 
 
+def test_continuous_manifest_uses_the_signed_windows_setup_executable(tmp_path):
+    commit = "a" * 40
+    version = f"{__version__}+build.7.g{commit}"
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    expected_assets = {
+        "windows-x86_64": "JaneConverter-continuous-windows-x64-setup.exe",
+        "linux-x86_64": "JaneConverter-continuous-linux-x86_64.AppImage",
+        "darwin-aarch64": "JaneConverter-continuous-macos-arm64.app.tar.gz",
+        "darwin-x86_64": "JaneConverter-continuous-macos-x86_64.app.tar.gz",
+    }
+    for platform, filename in expected_assets.items():
+        (artifacts / filename).write_bytes(b"signed package")
+        (artifacts / f"{filename}.sig").write_text(f"signature-{platform}\n", encoding="utf-8")
+
+    output = tmp_path / "latest.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "packaging" / "create_updater_manifest.py"),
+            "--version",
+            version,
+            "--commit",
+            commit,
+            "--repository",
+            "jeongchaeul/JaneConverter",
+            "--artifacts-dir",
+            str(artifacts),
+            "--output",
+            str(output),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    manifest = json.loads(output.read_text(encoding="utf-8"))
+    windows = manifest["platforms"]["windows-x86_64"]
+    assert windows["url"].endswith(f"/continuous/{expected_assets['windows-x86_64']}")
+    assert windows["signature"] == "signature-windows-x86_64"
+
+    script = read("packaging/build_consumer.ps1")
+    workflow = read(".github/workflows/continuous-updates.yml")
+    assert '"JaneConverter-continuous-windows-x64-setup.exe"' in script
+    assert '-Filter "*-setup.exe"' in script
+    assert '"$($builtUpdater.FullName).sig"' in script
+    assert "dist/JaneConverter-continuous-windows-x64-setup.exe" in workflow
+    assert "dist/JaneConverter-continuous-windows-x64-setup.exe.sig" in workflow
+
+
 def test_linux_build_keeps_portable_tarball_and_can_build_updater_appimage():
     script = read("packaging/build_linux.sh")
 

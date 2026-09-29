@@ -49,7 +49,7 @@ def create_manifest(
         raise ValueError("Repository must be written as owner/name.")
 
     platform_files = {
-        "windows-x86_64": "JaneConverter-continuous-windows-x64.nsis.zip",
+        "windows-x86_64": "JaneConverter-continuous-windows-x64-setup.exe",
         "linux-x86_64": "JaneConverter-continuous-linux-x86_64.AppImage",
         "darwin-aarch64": "JaneConverter-continuous-macos-arm64.app.tar.gz",
         "darwin-x86_64": "JaneConverter-continuous-macos-x86_64.app.tar.gz",

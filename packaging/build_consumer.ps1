@@ -100,7 +100,7 @@ $pyinstallerRoot = Join-Path $buildRoot "pyinstaller"
 $tauriTarget = Join-Path $buildRoot "tauri-target"
 $installerOutput = Join-Path $OutputDirectory "JaneConverter-$Version-windows-x64-setup.exe"
 $portableOutput = Join-Path $OutputDirectory "JaneConverter-$Version-windows-x64-portable.zip"
-$updaterOutput = Join-Path $OutputDirectory "JaneConverter-continuous-windows-x64.nsis.zip"
+$updaterOutput = Join-Path $OutputDirectory "JaneConverter-continuous-windows-x64-setup.exe"
 $updaterSignature = "$updaterOutput.sig"
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
@@ -266,12 +266,12 @@ Copy-Item -LiteralPath $tauriExecutable -Destination (Join-Path $payloadRoot "Ja
 
 if ($UpdaterOnly) {
     $nsisDirectory = Join-Path $tauriTarget "release\bundle\nsis"
-    $builtUpdater = Get-ChildItem -LiteralPath $nsisDirectory -Filter "*.nsis.zip" -File |
+    $builtUpdater = Get-ChildItem -LiteralPath $nsisDirectory -Filter "*-setup.exe" -File |
         Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-    if (-not $builtUpdater) { throw "Tauri completed without producing a signed NSIS updater package." }
+    if (-not $builtUpdater) { throw "Tauri completed without producing a signed NSIS updater executable." }
     $builtSignature = "$($builtUpdater.FullName).sig"
     if (-not (Test-Path -LiteralPath $builtSignature -PathType Leaf)) {
-        throw "Tauri did not produce the NSIS updater signature."
+        throw "Tauri did not produce the NSIS updater executable signature."
     }
     Copy-Item -LiteralPath $builtUpdater.FullName -Destination $updaterOutput -Force
     Copy-Item -LiteralPath $builtSignature -Destination $updaterSignature -Force
