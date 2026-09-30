@@ -125,6 +125,56 @@
     }
   }
 
+  function visualHashFromPixels(pixels) {
+    if (!pixels || pixels.length !== 9 * 8 * 4) return null;
+    let hash = "";
+    const colors = [0, 0, 0];
+    for (let row = 0; row < 8; row += 1) {
+      let bits = 0;
+      for (let column = 0; column < 8; column += 1) {
+        const offset = (row * 9 + column) * 4;
+        const next = offset + 4;
+        for (let channel = 0; channel < 3; channel += 1) colors[channel] += pixels[offset + channel];
+        const light = pixels[offset] * 299 + pixels[offset + 1] * 587 + pixels[offset + 2] * 114;
+        const nextLight = pixels[next] * 299 + pixels[next + 1] * 587 + pixels[next + 2] * 114;
+        bits = (bits << 1) | Number(light > nextLight);
+      }
+      const last = (row * 9 + 8) * 4;
+      for (let channel = 0; channel < 3; channel += 1) colors[channel] += pixels[last + channel];
+      hash += bits.toString(16).padStart(2, "0");
+    }
+    return hash + colors.map(function (value) { return Math.round(value / 72).toString(16).padStart(2, "0"); }).join("");
+  }
+
+  function sameStoryFingerprint(left, right) {
+    if (!left || !right || left.site !== right.site || left.kind !== right.kind
+      || left.width !== right.width || left.height !== right.height
+      || left.surface !== right.surface || left.duration !== right.duration) return false;
+    if (left.sequenceIndex != null && right.sequenceIndex != null
+      && left.sequenceIndex !== right.sequenceIndex) return false;
+    if (left.visualHash && right.visualHash) {
+      if (!/^[0-9a-f]{22}$/.test(left.visualHash) || !/^[0-9a-f]{22}$/.test(right.visualHash)) return false;
+      if (left.kind === "video" && !left.duration) {
+        return Boolean(left.url && right.url && normalizeMediaUrl(left.url).url === normalizeMediaUrl(right.url).url);
+      }
+      let differences = 0;
+      for (let index = 0; index < 16; index += 1) {
+        let bits = parseInt(left.visualHash[index], 16) ^ parseInt(right.visualHash[index], 16);
+        while (bits) {
+          differences += bits & 1;
+          bits >>= 1;
+        }
+      }
+      const colorTolerance = left.kind === "video" ? 12 : 24;
+      for (let index = 16; index < 22; index += 2) {
+        if (Math.abs(parseInt(left.visualHash.slice(index, index + 2), 16)
+          - parseInt(right.visualHash.slice(index, index + 2), 16)) > colorTolerance) return false;
+      }
+      return differences <= (left.kind === "video" ? 2 : 4);
+    }
+    return Boolean(left.url && right.url && normalizeMediaUrl(left.url).url === normalizeMediaUrl(right.url).url);
+  }
+
   function isStreamSegment(url, contentType) {
     const value = String(url || "");
     const type = String(contentType || "").toLowerCase();
@@ -186,7 +236,9 @@
     networkCaptureDisposition,
     networkMediaCandidate,
     normalizeMediaUrl,
+    sameStoryFingerprint,
     sessionPlatformForPage,
-    selectCaptureItems
+    selectCaptureItems,
+    visualHashFromPixels
   };
 }));

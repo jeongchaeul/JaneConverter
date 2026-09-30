@@ -27,11 +27,11 @@ test("falls back to visible player capture when a media URL returns no bytes", (
   assert.match(popupSource, /async function captureVisibleMedia\(sourceTab, item\)/);
   assert.match(
     popupSource,
-    /source page returned no media bytes[\s\S]*captureVisibleMedia\(sourceTab, item\)/s
+    /if \(!await tryPageFetch\(\)\)[\s\S]*if \(!mediaResponse && !pageFetched && !pageCapture && !await tryRenderedCapture\(\)\)/s
   );
 });
 
-test("uses the authenticated service-worker path before rendered capture", () => {
+test("retains the authenticated service-worker path with rendered fallback", () => {
   assert.match(popupSource, /async function captureThroughAuthenticatedSession\(/);
   assert.match(popupSource, /type:\s*"jane-authenticated-fetch"/);
   assert.match(popupSource, /Using the signed-in browser session[\s\S]*captureThroughAuthenticatedSession\(sourceTab, item, mode\)/);

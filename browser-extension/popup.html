@@ -29,6 +29,7 @@
     <button id="current" type="button">Capture current media</button>
     <button id="sequence" class="secondary" type="button">Capture story sequence (Experimental)</button>
     <button id="collect" class="collect" type="button">Enable collect mode</button>
+    <button id="reset-learning" class="secondary" type="button">Reset story capture learning</button>
     <button id="network" class="network" type="button">Enable Network Compatibility Mode</button>
     <p class="note"><span class="experimental">Experimental:</span> story sequence capture is still being hardened because story viewers change their media codes and layout frequently. It may miss pages or capture duplicates.</p>
     <p class="note">Collect mode stays active after this popup closes. Play or advance stories and their primary rendered media is sent to Fetched Media automatically.</p>
@@ -36,6 +37,7 @@
     <p class="note">JaneConverter records safe capture diagnostics in its Console: site, media type, response status, size, and fallback reason. It never records cookies, tokens, headers, or signed URLs.</p>
     <div id="status" role="status" aria-live="polite">Confirm access in JaneConverter first.</div>
     <script src="media-utils.js"></script>
+    <script src="adaptation.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

@@ -34,6 +34,8 @@ session files.
 
 Story sequence capture remains experimental. It is intentionally kept available for testing, but it is not the reliability path yet; use **Capture current media**, **Collect mode**, or **Network Compatibility Mode** when you need repeatable captures.
 
+Successful story captures can make the extension prefer a working method for the same site and layout. This local preference stores only structural details and expires after 14 days. Use **Reset story capture learning** in the popup to clear it at any time.
+
 ## Story sequence status
 
 Story sequence capture remains experimental. It is intentionally kept available for testing, but it is not the reliability path yet; use **Capture current media**, **Collect mode**, or **Network Compatibility Mode** when you need repeatable captures.

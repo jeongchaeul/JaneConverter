@@ -2,6 +2,7 @@ const currentButton = document.getElementById("current");
 const sequenceButton = document.getElementById("sequence");
 const collectButton = document.getElementById("collect");
 const networkButton = document.getElementById("network");
+const resetLearningButton = document.getElementById("reset-learning");
 const statusElement = document.getElementById("status");
 
 const MAX_CHUNK_BYTES = 1024 * 1024;
@@ -10,6 +11,30 @@ const MAX_SEQUENCE_MS = 45 * 1000;
 const STORY_QUIET_MS = 8 * 1000;
 const MAX_RENDERED_CAPTURE_BYTES = 64 * 1024 * 1024;
 const MEDIA_FETCH_TIMEOUT_MS = 8 * 1000;
+const STORY_MEMORY_KEY = "janeStoryAdaptation";
+
+async function storyMemoryPreference(key) {
+  if (!key || !globalThis.JaneStoryAdaptation) return null;
+  try {
+    const stored = await chrome.storage.local.get({ [STORY_MEMORY_KEY]: null });
+    return globalThis.JaneStoryAdaptation.preferredStrategy(stored[STORY_MEMORY_KEY], key, Date.now());
+  } catch (_) {
+    return null;
+  }
+}
+
+async function noteStoryStrategy(key, strategy, succeeded) {
+  if (!key || !globalThis.JaneStoryAdaptation) return;
+  try {
+    const stored = await chrome.storage.local.get({ [STORY_MEMORY_KEY]: null });
+    const updated = globalThis.JaneStoryAdaptation.recordOutcome(
+      stored[STORY_MEMORY_KEY], key, strategy, succeeded, Date.now()
+    );
+    await chrome.storage.local.set({ [STORY_MEMORY_KEY]: updated });
+  } catch (_) {
+    // Learning must not prevent capture or fallback.
+  }
+}
 
 function setStatus(message, kind) {
   statusElement.textContent = message;
@@ -350,6 +375,18 @@ function inspectPageMedia(sequence) {
     } catch (_) {}
     return "browser-capture-" + (index + 1) + "." + (kind === "image" ? "jpg" : kind === "audio" ? "mp3" : "webm");
   };
+  const visualPixels = function (element) {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 9;
+      canvas.height = 8;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      context.drawImage(element, 0, 0, 9, 8);
+      return Array.from(context.getImageData(0, 0, 9, 8).data);
+    } catch (_) {
+      return null;
+    }
+  };
   const collect = function () {
     return collectElements().map(function (element, index) {
       const url = currentUrl(element);
@@ -379,6 +416,12 @@ function inspectPageMedia(sequence) {
         playing: playing,
         storyCandidate: storyCandidate,
         surfaceScore: area + (storyCandidate ? 1000000 : 0),
+        width: element.videoWidth || element.naturalWidth || element.width || 0,
+        height: element.videoHeight || element.naturalHeight || element.height || 0,
+        duration: kind === "video" && Number.isFinite(element.duration) ? Math.round(element.duration * 2) / 2 : 0,
+        surface: [rect.left, rect.top, rect.width, rect.height].map(function (value) { return Math.round(value / 32); }).join(":"),
+        sequenceIndex: Number(element.closest && element.closest("[aria-posinset]")?.getAttribute("aria-posinset")) || null,
+        visualPixels: storyCandidate && (kind === "image" || kind === "video") ? visualPixels(element) : null,
         score: mediaScore
       };
     }).filter(Boolean).sort(function (left, right) {
@@ -698,94 +741,138 @@ async function captureVisibleMedia(sourceTab, item) {
 
 async function sendCapture(sourceTab, accessTab, challenge, item, mode, index) {
   const isWebUrl = /^https?:\/\//i.test(item.mediaUrl || "");
+  const memoryKey = mode === "sequence" && globalThis.JaneStoryAdaptation
+    ? globalThis.JaneStoryAdaptation.layoutKey(sourceTab.url, item) : null;
+  const preferred = await storyMemoryPreference(memoryKey);
   let mediaResponse = null;
   let pageFetched = null;
   let pageCapture = null;
+  let method = null;
+  let lastCaptureError = null;
+  const attempted = new Set();
   let contentLength = 0;
   let responseMime = "";
   let filename = item.fileName || ("browser-capture-" + (index + 1) + "." + (item.mediaKind === "image" ? "jpg" : item.mediaKind === "audio" ? "mp3" : "webm"));
   const sessionFetchAllowed = isWebUrl
     && globalThis.JaneMediaUtils
     && globalThis.JaneMediaUtils.isAllowedSessionMediaUrl(sourceTab.url, item.mediaUrl);
-  if (sessionFetchAllowed) {
+  const trySessionFetch = async function () {
+    if (attempted.has("session-fetch")) return false;
+    attempted.add("session-fetch");
     try {
       setStatus("Using the signed-in browser session to fetch the selected media...", "warning");
       await captureThroughAuthenticatedSession(sourceTab, item, mode);
-      return;
+      await noteStoryStrategy(memoryKey, "session-fetch", true);
+      return true;
     } catch (error) {
+      lastCaptureError = error;
+      await noteStoryStrategy(memoryKey, "session-fetch", false);
       setStatus("Authenticated browser fetch was unavailable; trying the rendered media fallback...", "warning");
+      return false;
     }
-  }
+  };
   const preferRenderedCapture = item.storyCandidate === true || item.source === "page-dom" || mode === "sequence";
-  if (preferRenderedCapture) {
+  const tryRenderedCapture = async function () {
+    if (attempted.has("rendered")) return false;
+    attempted.add("rendered");
     try {
       pageCapture = await captureVisibleMedia(sourceTab, item);
       contentLength = pageCapture.buffer.byteLength;
       responseMime = String(pageCapture.contentType || "").split(";")[0].toLowerCase();
       filename = pageCapture.fileName || filename;
-    } catch (_) {
+      method = "rendered";
+      return true;
+    } catch (error) {
+      lastCaptureError = error;
+      await noteStoryStrategy(memoryKey, "rendered", false);
       setStatus("Rendered capture unavailable; trying the source media...", "warning");
+      return false;
     }
-  }
-  if (!pageCapture && isWebUrl) {
-    const mediaUrl = new URL(item.mediaUrl);
-    await requestOriginPermission(item.mediaUrl);
-    setStatus("Reading " + (mode === "sequence" ? "story item " + (index + 1) : "the selected media") + " from " + mediaUrl.host + "...", "warning");
+  };
+  const tryDirectFetch = async function () {
+    if (!isWebUrl || attempted.has("direct-fetch")) return false;
+    attempted.add("direct-fetch");
     try {
+      await requestOriginPermission(item.mediaUrl);
+      const mediaUrl = new URL(item.mediaUrl);
+      setStatus("Reading " + (mode === "sequence" ? "story item " + (index + 1) : "the selected media") + " from " + mediaUrl.host + "...", "warning");
       mediaResponse = await fetchWithTimeout(item.mediaUrl, { credentials: "include", cache: "no-store" });
       if (!mediaResponse.ok || !mediaResponse.body) throw new Error("HTTP " + mediaResponse.status);
       contentLength = Number(mediaResponse.headers.get("content-length") || 0);
       responseMime = String(mediaResponse.headers.get("content-type") || "").split(";")[0].toLowerCase();
-    } catch (extensionError) {
+      method = "direct-fetch";
+      return true;
+    } catch (error) {
+      lastCaptureError = error;
+      mediaResponse = null;
+      await noteStoryStrategy(memoryKey, "direct-fetch", false);
+      return false;
+    }
+  };
+  const tryPageFetch = async function () {
+    if (!isWebUrl || attempted.has("page-fetch")) return false;
+    attempted.add("page-fetch");
+    try {
+      const pageResult = await chrome.scripting.executeScript({
+        target: { tabId: sourceTab.id },
+        world: "MAIN",
+        func: async function (url) {
+          const controller = new AbortController();
+          const timer = setTimeout(function () { controller.abort(); }, 8000);
+          let response;
+          try {
+            response = await fetch(url, { credentials: "include", cache: "no-store", signal: controller.signal });
+          } finally {
+            clearTimeout(timer);
+          }
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          const blob = await response.blob();
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          let binary = "";
+          for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+          }
+          return { base64: btoa(binary), contentType: response.headers.get("content-type") || blob.type || "" };
+        },
+        args: [item.mediaUrl]
+      });
+      pageFetched = await normalizePageCapture(pageResult && pageResult[0] && pageResult[0].result);
+      if (!pageFetched || !pageFetched.buffer || !pageFetched.buffer.byteLength) {
+        throw new Error("The source page returned no media bytes.");
+      }
+      contentLength = pageFetched.buffer.byteLength;
+      responseMime = String(pageFetched.contentType || "").split(";")[0].toLowerCase();
+      method = "page-fetch";
+      return true;
+    } catch (error) {
+      lastCaptureError = error;
+      pageFetched = null;
+      await noteStoryStrategy(memoryKey, "page-fetch", false);
+      return false;
+    }
+  };
+  if (preferred === "direct-fetch") await tryDirectFetch();
+  if (preferred === "page-fetch" && !mediaResponse) await tryPageFetch();
+  if (!mediaResponse && !pageFetched) {
+    if (preferred === "rendered" && preferRenderedCapture) {
+      await tryRenderedCapture();
+      if (!pageCapture && sessionFetchAllowed && await trySessionFetch()) return;
+    } else {
+      if (sessionFetchAllowed && await trySessionFetch()) return;
+      if (preferRenderedCapture) await tryRenderedCapture();
+    }
+  }
+  if (!mediaResponse && !pageFetched && !pageCapture && isWebUrl) {
+    if (!await tryDirectFetch()) {
       setStatus("Direct extension fetch failed; retrying from the signed-in source page...", "warning");
-      try {
-        const pageResult = await chrome.scripting.executeScript({
-          target: { tabId: sourceTab.id },
-          world: "MAIN",
-              func: async function (url) {
-            const controller = new AbortController();
-            const timer = setTimeout(function () { controller.abort(); }, 8000);
-            let response;
-            try {
-              response = await fetch(url, { credentials: "include", cache: "no-store", signal: controller.signal });
-            } finally {
-              clearTimeout(timer);
-                }
-                if (!response.ok) throw new Error("HTTP " + response.status);
-                const blob = await response.blob();
-                const bytes = new Uint8Array(await blob.arrayBuffer());
-                let binary = "";
-                for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-                  binary += String.fromCharCode.apply(null, bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
-                }
-                return {
-                  base64: btoa(binary),
-                  contentType: response.headers.get("content-type") || blob.type || ""
-                };
-          },
-          args: [item.mediaUrl]
-            });
-            pageFetched = await normalizePageCapture(pageResult && pageResult[0] && pageResult[0].result);
-            if (!pageFetched || !pageFetched.buffer || !pageFetched.buffer.byteLength) throw new Error("The source page returned no media bytes.");
-        contentLength = pageFetched.buffer.byteLength;
-        responseMime = String(pageFetched.contentType || "").split(";")[0].toLowerCase();
-      } catch (pageError) {
+      if (!await tryPageFetch()) {
         setStatus("The media URL returned no bytes; reading the visible player instead...", "warning");
-        try {
-          pageCapture = await captureVisibleMedia(sourceTab, item);
-          contentLength = pageCapture.buffer.byteLength;
-          responseMime = String(pageCapture.contentType || "").split(";")[0].toLowerCase();
-          filename = pageCapture.fileName || filename;
-        } catch (captureError) {
-          throw new Error(describeFetchFailure("Media read", item.mediaUrl, captureError || pageError || extensionError));
-        }
       }
     }
-  } else if (!pageCapture) {
-    pageCapture = await captureVisibleMedia(sourceTab, item);
-    contentLength = pageCapture.buffer.byteLength;
-    responseMime = String(pageCapture.contentType || "").split(";")[0].toLowerCase();
-    filename = pageCapture.fileName || filename;
+  }
+  if (!mediaResponse && !pageFetched && !pageCapture && !await tryRenderedCapture()) {
+    throw new Error(lastCaptureError && lastCaptureError.message
+      || "The browser did not expose readable media. Keep it open and playing, then retry.");
   }
   const mediaPrefix = item.mediaKind === "image" ? "image/" : item.mediaKind === "audio" ? "audio/" : "video/";
   const mimeType = responseMime.startsWith(mediaPrefix) ? responseMime : (mediaPrefix + "*");
@@ -855,6 +942,7 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index) {
   }, "JaneConverter capture finalize");
   const result = await readJson(finished);
   if (!finished.ok) throw new Error(result.error || "JaneConverter could not finish the capture.");
+  await noteStoryStrategy(memoryKey, method, true);
 }
 
 function captureItemKey(item) {
@@ -886,27 +974,52 @@ async function inspectCurrentMedia(sourceTab) {
       args: [false]
     });
     for (const frame of visible || []) {
-      for (const item of frame.result || []) items.push(Object.assign({}, item, { frameId: frame.frameId }));
+      for (const item of frame.result || []) {
+        const visualHash = item.visualPixels && globalThis.JaneMediaUtils
+          ? globalThis.JaneMediaUtils.visualHashFromPixels(item.visualPixels) : null;
+        items.unshift(Object.assign({}, item, { frameId: frame.frameId, visualHash: visualHash, visualPixels: undefined }));
+      }
     }
   } catch (_) {}
   return items;
 }
 
+function storyFingerprint(item) {
+  let site = "";
+  try { site = new URL(item.pageUrl).hostname; } catch (_) {}
+  return {
+    site: site,
+    kind: item.mediaKind,
+    width: item.width || 0,
+    height: item.height || 0,
+    surface: item.surface || "",
+    duration: item.duration || 0,
+    sequenceIndex: item.sequenceIndex || null,
+    visualHash: item.visualHash || null,
+    url: item.mediaUrl || ""
+  };
+}
+
 async function captureStorySequence(sourceTab, accessTab, challenge, initialItems) {
   const seen = new Set();
+  const fingerprints = [];
   const attempts = new Map();
   const failures = [];
   const deadline = Date.now() + MAX_SEQUENCE_MS;
   let lastNewItem = Date.now();
   let count = 0;
-  let nextItems = initialItems;
+  let nextItems = (await inspectCurrentMedia(sourceTab)).concat(initialItems);
   while (Date.now() < deadline && Date.now() - lastNewItem < STORY_QUIET_MS) {
     const candidates = globalThis.JaneMediaUtils
       ? globalThis.JaneMediaUtils.selectCaptureItems(nextItems, "sequence", MAX_SEQUENCE_ITEMS)
       : nextItems.slice(0, MAX_SEQUENCE_ITEMS);
     const candidate = candidates.find(function (item) {
       const key = captureItemKey(item);
-      return !seen.has(key) && (attempts.get(key) || 0) < 2;
+      const fingerprint = storyFingerprint(item);
+      return !seen.has(key) && (attempts.get(key) || 0) < 2
+        && !fingerprints.some(function (previous) {
+          return globalThis.JaneMediaUtils && globalThis.JaneMediaUtils.sameStoryFingerprint(previous, fingerprint);
+        });
     });
     if (candidate) {
       const key = captureItemKey(candidate);
@@ -915,6 +1028,7 @@ async function captureStorySequence(sourceTab, accessTab, challenge, initialItem
       try {
         await sendCapture(sourceTab, accessTab, challenge, candidate, "sequence", count);
         seen.add(key);
+        fingerprints.push(storyFingerprint(candidate));
         count += 1;
         lastNewItem = Date.now();
       } catch (error) {
@@ -1078,7 +1192,7 @@ async function toggleCollectMode() {
     const collectTabs = Object.assign({}, stored.janeCollectTabs || {});
     const key = String(sourceTab.id);
     const enabled = !collectTabs[key];
-    await chrome.scripting.executeScript({ target: { tabId: sourceTab.id }, files: ["collect.js"] });
+    await chrome.scripting.executeScript({ target: { tabId: sourceTab.id }, files: ["media-utils.js", "collect.js"] });
     await chrome.tabs.sendMessage(sourceTab.id, { type: "jane-collect-control", enabled: enabled });
     if (enabled) {
       collectTabs[key] = { enabled: true, sourceUrl: sourceTab.url, title: sourceTab.title || "" };
@@ -1148,6 +1262,14 @@ async function toggleNetworkMode() {
 
 collectButton && collectButton.addEventListener("click", function () { void toggleCollectMode(); });
 networkButton && networkButton.addEventListener("click", function () { void toggleNetworkMode(); });
+resetLearningButton && resetLearningButton.addEventListener("click", async function () {
+  try {
+    await chrome.storage.local.remove(STORY_MEMORY_KEY);
+    setStatus("Story capture learning has been reset.");
+  } catch (_) {
+    setStatus("Story capture learning could not be reset. Try again.", "error");
+  }
+});
 sequenceButton.addEventListener("click", function () { void capture("sequence"); });
 void updateCollectButton();
 void updateNetworkButton();

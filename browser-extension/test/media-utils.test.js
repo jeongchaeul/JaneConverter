@@ -9,8 +9,10 @@ const {
   networkCaptureDisposition,
   networkMediaCandidate,
   normalizeMediaUrl,
+  sameStoryFingerprint,
   sessionPlatformForPage,
-  selectCaptureItems
+  selectCaptureItems,
+  visualHashFromPixels
 } = require("../media-utils.js");
 
 test("classifies CDN video responses even when the URL has no video extension", () => {
@@ -27,6 +29,41 @@ test("normalizes Facebook-style byte-range URLs to one canonical media URL", () 
 
   assert.equal(result.wasRanged, true);
   assert.equal(result.url, "https://scontent.example/video.mp4?token=abc");
+});
+
+test("perceptual pixels identify a repeated image across changing CDN URLs", () => {
+  const pixels = new Uint8Array(9 * 8 * 4);
+  for (let row = 0; row < 8; row += 1) {
+    for (let column = 0; column < 9; column += 1) {
+      const offset = (row * 9 + column) * 4;
+      pixels.fill(column * 20, offset, offset + 3);
+      pixels[offset + 3] = 255;
+    }
+  }
+  const hash = visualHashFromPixels(pixels);
+  assert.equal(hash, "0000000000000000505050");
+  const first = {
+    site: "example.test", kind: "image", width: 1080, height: 1920,
+    surface: "0:0:12:21", duration: 0, sequenceIndex: null,
+    visualHash: hash, url: "https://cdn.example.test/one.jpg?token=old"
+  };
+  assert.equal(sameStoryFingerprint(first, { ...first, url: "https://cdn.example.test/two.jpg?token=new" }), true);
+  assert.equal(sameStoryFingerprint(first, { ...first, visualHash: "ffffffffffffffff505050" }), false);
+  assert.equal(sameStoryFingerprint(first, { ...first, visualHash: "0000000000000000ffffff" }), false);
+  assert.equal(sameStoryFingerprint(first, { ...first, surface: "1:0:12:21" }), false);
+  assert.equal(sameStoryFingerprint(first, { ...first, sequenceIndex: 2 }), true);
+  assert.equal(sameStoryFingerprint({ ...first, sequenceIndex: 1 }, { ...first, sequenceIndex: 2 }), false);
+});
+
+test("unreadable pixels require the same media URL before deduplication", () => {
+  const first = {
+    site: "example.test", kind: "video", width: 720, height: 1280,
+    surface: "0:0:12:21", duration: 12, sequenceIndex: null,
+    visualHash: null, url: "https://cdn.example.test/one.mp4?token=old"
+  };
+  assert.equal(sameStoryFingerprint(first, { ...first, url: "https://cdn.example.test/two.mp4?token=new" }), false);
+  assert.equal(sameStoryFingerprint(first, { ...first, url: first.url }), true);
+  assert.equal(sameStoryFingerprint(first, { ...first, duration: 13 }), false);
 });
 
 test("rejects stream fragments and social thumbnails as capture candidates", () => {
