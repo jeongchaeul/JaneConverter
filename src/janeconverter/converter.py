@@ -13,8 +13,11 @@ import threading
 import subprocess
 import json
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
+
+from .recovery import FailureCategory, FailureEvidence, OutputIntent, RecoveryCoordinator, STRATEGIES, record_local_success
 
 SUPPORTED_AUDIO_FORMATS = {
     "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus", "aiff", "aif",
@@ -262,6 +265,149 @@ def validate_output_file(
             raise RuntimeError(
                 f"ValidationFailed: output file '{output_path}' does not contain a video stream."
             )
+
+
+def validate_output_intent(
+    input_path: str,
+    output_path: str,
+    intent: OutputIntent,
+) -> None:
+    """Check requested media properties and required streams before publication."""
+    target = intent.target_format
+    if target not in SUPPORTED_AUDIO_FORMATS | SUPPORTED_VIDEO_FORMATS:
+        return
+    source = probe_media_streams(input_path) or {}
+    output = probe_media_streams(output_path) or {}
+    source_streams = source.get("streams", [])
+    output_streams = output.get("streams", [])
+    if intent.metadata:
+        output_tags = {
+            str(key).lower(): str(value)
+            for tags in [output.get("format", {}).get("tags", {}),
+                         *(stream.get("tags", {}) for stream in output_streams)]
+            if isinstance(tags, dict)
+            for key, value in tags.items()
+        }
+        for key, value in intent.metadata:
+            if output_tags.get(key.lower(), "").strip() != value.strip():
+                raise RuntimeError("ValidationFailed: requested media metadata was not retained.")
+    audio = next((stream for stream in output_streams if stream.get("codec_type") == "audio"), None)
+    video = next((stream for stream in output_streams if stream.get("codec_type") == "video"
+                  and not stream.get("disposition", {}).get("attached_pic")), None)
+    if target in SUPPORTED_AUDIO_FORMATS:
+        if not audio:
+            raise RuntimeError("ValidationFailed: the requested audio stream is missing.")
+        source_audio = next((stream for stream in source_streams if stream.get("codec_type") == "audio"), None)
+        if source_audio and source_audio.get("channels") and audio.get("channels") != source_audio.get("channels"):
+            raise RuntimeError("ValidationFailed: the output audio channel count changed.")
+        if intent.sample_rate and str(audio.get("sample_rate")) != str(intent.sample_rate):
+            raise RuntimeError("ValidationFailed: the output audio sample rate changed.")
+        quality = intent.quality.lower().strip()
+        if target == "wav":
+            expected_codec = {
+                "16-bit": "pcm_s16le", "16": "pcm_s16le",
+                "24-bit": "pcm_s24le", "24": "pcm_s24le",
+                "32-bit": "pcm_f32le", "32": "pcm_f32le",
+                "32-bit float": "pcm_f32le", "float": "pcm_f32le",
+            }.get(quality)
+            if expected_codec and audio.get("codec_name") != expected_codec:
+                raise RuntimeError("ValidationFailed: the requested WAV bit depth was not produced.")
+        if target == "flac" and quality in {"16-bit", "16", "24-bit", "24"}:
+            expected_depth = 24 if quality.startswith("24") else 16
+            if str(audio.get("bits_per_raw_sample")) != str(expected_depth):
+                raise RuntimeError("ValidationFailed: the requested FLAC bit depth was not produced.")
+        if intent.cover_required and target in {"mp3", "flac", "m4a", "aac"}:
+            if not any(stream.get("disposition", {}).get("attached_pic") for stream in output_streams):
+                raise RuntimeError("ValidationFailed: requested cover art was not embedded.")
+    elif target != "gif":
+        if not video:
+            raise RuntimeError("ValidationFailed: the requested video stream is missing.")
+        if any(stream.get("codec_type") == "audio" for stream in source_streams) and not audio:
+            raise RuntimeError("ValidationFailed: the source audio stream was lost.")
+        source_video = next((stream for stream in source_streams if stream.get("codec_type") == "video"), None)
+        if source_video:
+            from fractions import Fraction
+            try:
+                source_rate = float(Fraction(source_video.get("avg_frame_rate") or "0"))
+                output_rate = float(Fraction(video.get("avg_frame_rate") or "0"))
+            except (ValueError, ZeroDivisionError, TypeError):
+                source_rate = output_rate = 0
+            if source_rate > 0 and output_rate > 0 and abs(source_rate - output_rate) > max(0.5, source_rate * 0.02):
+                raise RuntimeError("ValidationFailed: the output video frame rate changed.")
+        if intent.resolution == "original" and source_video:
+            for dimension in ("width", "height"):
+                if source_video.get(dimension) and source_video.get(dimension) != video.get(dimension):
+                    raise RuntimeError("ValidationFailed: the output video dimensions changed.")
+        elif intent.resolution in {"4k", "1440p", "1080p", "720p", "480p"}:
+            expected_height = {"4k": 2160, "1440p": 1440, "1080p": 1080,
+                               "720p": 720, "480p": 480}[intent.resolution]
+            if video.get("height") != expected_height:
+                raise RuntimeError("ValidationFailed: the requested video height was not produced.")
+        try:
+            source_duration = float(source.get("format", {}).get("duration") or 0)
+            output_duration = float(output.get("format", {}).get("duration") or 0)
+        except (TypeError, ValueError):
+            source_duration = output_duration = 0
+        if source_duration > 0 and output_duration > 0:
+            if abs(source_duration - output_duration) > max(0.5, source_duration * 0.02):
+                raise RuntimeError("ValidationFailed: the output video duration changed unexpectedly.")
+    elif intent.fps:
+        if not video:
+            raise RuntimeError("ValidationFailed: the requested GIF frames are missing.")
+        rate = video.get("avg_frame_rate") or video.get("r_frame_rate") or "0"
+        try:
+            from fractions import Fraction
+            actual_fps = float(Fraction(rate))
+        except (ValueError, ZeroDivisionError, TypeError):
+            actual_fps = 0
+        if abs(actual_fps - intent.fps) > max(0.5, intent.fps * 0.02):
+            raise RuntimeError("ValidationFailed: the requested GIF frame rate changed.")
+
+
+def validate_image_intent(input_path: str, output_path: str, target_format: str) -> None:
+    """Reject a staged image that loses frames, dimensions, or supported alpha."""
+    if target_format not in SUPPORTED_IMAGE_FORMATS:
+        return
+    from PIL import Image, ImageOps
+
+    try:
+        source = Image.open(input_path)
+    except (OSError, ValueError):
+        return  # A video-to-image export has an explicitly selected first frame.
+    with source, Image.open(output_path) as output:
+        source_frames = getattr(source, "n_frames", 1)
+        output_frames = getattr(output, "n_frames", 1)
+        if source_frames > 1 and output_frames != source_frames:
+            raise RuntimeError("ValidationFailed: the requested image format would discard animation frames.")
+        if target_format != "ico" and ImageOps.exif_transpose(source.copy()).size != output.size:
+            raise RuntimeError("ValidationFailed: the output image dimensions changed.")
+        has_source_alpha = "A" in source.getbands() or "transparency" in source.info
+        target_supports_alpha = target_format in {"png", "webp", "tif", "tiff", "gif", "ico"}
+        has_output_alpha = "A" in output.getbands() or "transparency" in output.info
+        if has_source_alpha and target_supports_alpha and not has_output_alpha:
+            raise RuntimeError("ValidationFailed: the output image lost transparency.")
+        if source.info.get("icc_profile") and target_format in {"jpg", "jpeg", "jfif", "png", "webp", "tif", "tiff"}:
+            if output.info.get("icc_profile") != source.info["icc_profile"]:
+                raise RuntimeError("ValidationFailed: the output image lost its color profile.")
+
+
+def validated_output_properties(output_path: str, target_format: str) -> str:
+    """Return a short media summary without source paths or metadata values."""
+    if target_format in SUPPORTED_IMAGE_FORMATS:
+        from PIL import Image
+        with Image.open(output_path) as image:
+            return f"{image.width}×{image.height}, {getattr(image, 'n_frames', 1)} frame(s)"
+    probe = probe_media_streams(output_path) or {}
+    streams = probe.get("streams", [])
+    audio = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
+    video = next((stream for stream in streams if stream.get("codec_type") == "video"
+                  and not stream.get("disposition", {}).get("attached_pic")), None)
+    if video:
+        dimensions = f"{video.get('width', '?')}×{video.get('height', '?')}"
+        return f"{dimensions}, {'with' if audio else 'without'} audio"
+    if audio:
+        return f"{audio.get('sample_rate', '?')} Hz, {audio.get('channels', '?')} channel(s)"
+    return "validated media"
 
 _soxr_supported: Optional[bool] = None
 _soxr_lock = threading.Lock()
@@ -698,7 +844,7 @@ def build_ffmpeg_args(
     # Fast-path: Instant zero-loss stream copy when safe and requested
     if stream_copy:
         ffmpeg_bin = get_ffmpeg_binary()
-        cmd = [ffmpeg_bin, "-y", "-i", input_path]
+        cmd = [ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error", "-i", input_path]
         if metadata:
             for k, v in metadata.items():
                 if v:
@@ -715,7 +861,7 @@ def build_ffmpeg_args(
     can_embed_art = has_valid_cover and target_format in ("mp3", "flac", "m4a", "aac")
 
     ffmpeg_bin = get_ffmpeg_binary()
-    cmd = [ffmpeg_bin, "-y"]
+    cmd = [ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
 
     # Resolve the encoder once so decode acceleration and encode args stay consistent
     enc_spec = None
@@ -966,13 +1112,13 @@ def _extract_png_frame(input_path: str, output_path: str, abort_event: Optional[
 
     _, stderr = process.communicate()
     if process.returncode != 0:
-        detail = stderr.decode("utf-8", errors="ignore") if stderr else ""
-        raise RuntimeError(f"FFmpeg frame extraction error: {detail}")
+        category = FailureEvidence.ffmpeg(stderr).category.value
+        raise RuntimeError(f"FFmpegProcessError: image frame extraction failed ({category}).")
     validate_output_file(output_path, "png")
     return output_path
 
 
-def convert_media(
+def _convert_media_impl(
     input_path: str,
     output_dir: str,
     output_filename: str,
@@ -989,7 +1135,10 @@ def convert_media(
     abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     fps: Optional[int] = None,
-    allow_stream_copy: bool = True
+    allow_stream_copy: bool = True,
+    allow_lossless_png_recovery: bool = False,
+    _method_override: Optional[str] = None,
+    _recovery: Optional[RecoveryCoordinator] = None,
 ) -> str:
     """
     Transcodes or stream-remuxes input_path into the specified target format and writes to output_dir.
@@ -1000,8 +1149,19 @@ def convert_media(
     """
     os.makedirs(output_dir, exist_ok=True)
     target_format = target_format.lower().strip(".")
+    if _recovery is None:
+        _recovery = RecoveryCoordinator(OutputIntent(
+            target_format=target_format, quality=bitrate, sample_rate=sample_rate,
+            resolution=resolution, normalize_audio=normalize_audio, fps=fps,
+            cover_required=bool(cover_path),
+            gpu_allowed=bool((use_gpu if use_gpu is not None else use_nvenc)
+                             and target_format in HARDWARE_VIDEO_FORMATS),
+            allow_png_fallback=allow_lossless_png_recovery,
+            metadata=tuple((key, value) for key, value in (metadata or {}).items() if value),
+        ))
 
     if target_format in ("source", "original", ""):
+        _recovery.start("source-preserve")
         # Preserve Quality Fast-Path: Zero conversion or re-encoding. Keep the pristine raw file!
         def report_raw(frac: float, msg: str):
             if progress_callback:
@@ -1009,6 +1169,19 @@ def convert_media(
 
         _, in_ext = os.path.splitext(input_path)
         actual_ext = in_ext.lower().lstrip(".") or "media"
+        image_extensions = {
+            "JPEG": "jpg", "PNG": "png", "WEBP": "webp", "GIF": "gif",
+            "TIFF": "tif", "BMP": "bmp",
+        }
+        try:
+            from PIL import Image
+            with Image.open(input_path) as image:
+                decoded_format = image.format
+                image.verify()
+            if decoded_format in image_extensions:
+                actual_ext = image_extensions[decoded_format]
+        except (OSError, ValueError):
+            pass
         raw_stem, _ = os.path.splitext(output_filename)
         dest_filename = f"{raw_stem}.{actual_ext}" if not output_filename.lower().endswith(f".{actual_ext}") else output_filename
         destination_path = get_unique_target_path(output_dir, dest_filename)
@@ -1060,6 +1233,7 @@ def convert_media(
         # and the wider family of Pillow-readable inputs without asking FFmpeg
         # to guess from a filename or discard animation.
         if input_is_still_image:
+            _recovery.start("image-pillow")
             report(0.70, f"Converting image to {target_format.upper()}...")
             try:
                 convert_image_format(
@@ -1083,6 +1257,21 @@ def convert_media(
         # Extract one PNG frame first and let Pillow write the requested format.
         # GIF remains on the animated video path when its input is a video.
         if target_format != "gif":
+            source_extension = os.path.splitext(input_path)[1].lower().lstrip(".")
+            is_image_source = source_extension in SUPPORTED_IMAGE_FORMATS | {
+                "avif", "heic", "heif", "jxl", "jp2", "j2k", "psd", "qoi"
+            }
+            if is_image_source:
+                source_probe = probe_media_streams(input_path) or {}
+                frames = [stream.get("nb_frames") for stream in source_probe.get("streams", [])
+                          if stream.get("codec_type") == "video"]
+                if not frames or any(not str(value).isdigit() or int(value) != 1 for value in frames):
+                    raise RuntimeError("InputInvalid: the image decoder could not confirm a single frame; no frame was discarded.")
+                _recovery.start("image-pillow")
+                failure = FailureEvidence("image-decode", FailureCategory.DECODER, True, "image:decoder")
+                if _recovery.next_method(failure) != "image-ffmpeg-frame":
+                    raise RuntimeError("InputInvalid: no image decoder can preserve this source.")
+            _recovery.start("image-ffmpeg-frame")
             require_ffmpeg()
             report(0.70, f"Extracting a frame for {target_format.upper()} output...")
             try:
@@ -1135,6 +1324,8 @@ def convert_media(
         cover_path=cover_path,
         probed_info=audio_probe,
     )
+    method = _method_override or ("stream-copy" if can_copy else "gpu-transcode" if active_gpu and target_format in HARDWARE_VIDEO_FORMATS else "cpu-transcode")
+    _recovery.start(method)
 
     if can_copy:
         report(0.70, f"Compatible streams detected: instant stream remuxing to {target_format.upper()}...")
@@ -1241,6 +1432,17 @@ def convert_media(
                     except Exception:
                         pass
                 raise KeyboardInterrupt("Conversion aborted by user.")
+            if len(_recovery.attempts) > 1 and (
+                time.monotonic() - _recovery.started_at > _recovery.max_recovery_seconds
+                or time.monotonic() - _recovery.attempts[-1].started_at > STRATEGIES[method].max_seconds
+            ):
+                proc.kill()
+                proc.wait()
+                reader_thread.join(timeout=1.0)
+                progress_thread.join(timeout=1.0)
+                if os.path.exists(destination_path):
+                    os.remove(destination_path)
+                raise RuntimeError("Conversion recovery stopped at its time limit.")
             time.sleep(0.05)
 
         proc.wait()
@@ -1272,9 +1474,34 @@ def convert_media(
             except Exception:
                 pass
 
-        # If stream remuxing failed, retry with full transcode
-        if can_copy:
-            report(0.75, "Stream remux encountered container incompatibility, falling back to full transcode...")
+        failure = FailureEvidence.ffmpeg(e.stderr)
+        category = failure.category
+        next_method = _recovery.next_method(failure)
+        if next_method:
+            report(0.75, f"{method} could not finish ({category.value}); trying {next_method}...")
+            if next_method == "cover-normalized":
+                from PIL import Image, ImageOps
+                with tempfile.TemporaryDirectory(prefix=".janeconverter-cover-", dir=output_dir) as cover_dir:
+                    normalized_cover = os.path.join(cover_dir, "cover.png")
+                    try:
+                        with Image.open(cover_path) as cover_image:
+                            if getattr(cover_image, "n_frames", 1) != 1:
+                                raise ValueError("animated cover")
+                            ImageOps.exif_transpose(cover_image.copy()).save(normalized_cover, "PNG")
+                    except (OSError, ValueError) as cover_error:
+                        raise RuntimeError("InputInvalid: requested cover art could not be normalized without loss.") from cover_error
+                    return convert_media(
+                        input_path=input_path, output_dir=output_dir,
+                        output_filename=output_filename, target_format=target_format,
+                        bitrate=bitrate, sample_rate=sample_rate,
+                        normalize_audio=normalize_audio, resolution=resolution,
+                        use_nvenc=False, use_gpu=False, metadata=metadata,
+                        cover_path=normalized_cover, abort_event=abort_event,
+                        progress_callback=progress_callback, fps=fps,
+                        allow_stream_copy=False,
+                        allow_lossless_png_recovery=allow_lossless_png_recovery,
+                        _method_override="cover-normalized", _recovery=_recovery,
+                    )
             return convert_media(
                 input_path=input_path,
                 output_dir=output_dir,
@@ -1284,62 +1511,19 @@ def convert_media(
                 sample_rate=sample_rate,
                 normalize_audio=normalize_audio,
                 resolution=resolution,
-                use_nvenc=use_nvenc,
-                use_gpu=active_gpu,
-                gpu_codec=gpu_codec,
+                use_nvenc=next_method == "gpu-transcode",
+                use_gpu=next_method == "gpu-transcode",
+                gpu_codec=gpu_codec if next_method == "gpu-transcode" else None,
                 metadata=metadata,
                 cover_path=cover_path,
                 abort_event=abort_event,
                 progress_callback=progress_callback,
                 fps=fps,
-                allow_stream_copy=False
+                allow_stream_copy=False,
+                allow_lossless_png_recovery=allow_lossless_png_recovery,
+                _recovery=_recovery,
             )
-
-        # If hardware GPU transcode failed, retry with multi-core CPU libx264
-        if active_gpu and target_format in HARDWARE_VIDEO_FORMATS:
-            report(0.85, "Hardware GPU encoder unavailable or failed, switching to multi-core CPU transcode...")
-            return convert_media(
-                input_path=input_path,
-                output_dir=output_dir,
-                output_filename=output_filename,
-                target_format=target_format,
-                bitrate=bitrate,
-                sample_rate=sample_rate,
-                normalize_audio=normalize_audio,
-                resolution=resolution,
-                use_nvenc=False,
-                use_gpu=False,
-                metadata=metadata,
-                cover_path=cover_path,
-                abort_event=abort_event,
-                progress_callback=progress_callback,
-                fps=fps,
-                allow_stream_copy=False
-            )
-        # If cover art embedding failed, retry without cover art
-        if cover_path:
-            report(0.85, "Cover art embedding encountered an issue, transcoding media directly...")
-            return convert_media(
-                input_path=input_path,
-                output_dir=output_dir,
-                output_filename=output_filename,
-                target_format=target_format,
-                bitrate=bitrate,
-                sample_rate=sample_rate,
-                normalize_audio=normalize_audio,
-                resolution=resolution,
-                use_nvenc=active_gpu,
-                use_gpu=active_gpu,
-                gpu_codec=gpu_codec,
-                metadata=metadata,
-                cover_path=None,
-                abort_event=abort_event,
-                progress_callback=progress_callback,
-                fps=fps,
-                allow_stream_copy=False
-            )
-        err_detail = e.stderr.decode("utf-8", errors="ignore") if e.stderr else ""
-        raise RuntimeError(f"FFmpeg transcode error: {err_detail}") from e
+        raise RuntimeError(f"FFmpegProcessError: {method} failed ({category.value}); no policy-safe recovery remains.") from e
 
     try:
         validate_output_file(destination_path, target_format)
@@ -1351,5 +1535,128 @@ def convert_media(
                 pass
         raise RuntimeError(f"Output validation error: {val_err}") from val_err
 
-    report(1.0, f"Conversion complete: {os.path.basename(destination_path)}")
+    if len(_recovery.attempts) > 1:
+        report(1.0, f"Conversion complete using {method} after bounded recovery: {os.path.basename(destination_path)}")
+    else:
+        report(1.0, f"Conversion complete: {os.path.basename(destination_path)}")
     return destination_path
+
+
+def convert_media(
+    input_path: str,
+    output_dir: str,
+    output_filename: str,
+    target_format: str,
+    bitrate: str = "320k",
+    sample_rate: int = 48000,
+    normalize_audio: bool = False,
+    resolution: str = "original",
+    use_nvenc: bool = True,
+    use_gpu: Optional[bool] = None,
+    gpu_codec: Optional[str] = None,
+    metadata: Optional[Dict[str, str]] = None,
+    cover_path: Optional[str] = None,
+    abort_event: Optional[Any] = None,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    fps: Optional[int] = None,
+    allow_stream_copy: bool = True,
+    allow_lossless_png_recovery: bool = False,
+    _method_override: Optional[str] = None,
+    _recovery: Optional[RecoveryCoordinator] = None,
+) -> str:
+    """Stage and validate every attempt before publishing one completed output."""
+    os.makedirs(output_dir, exist_ok=True)
+    if _recovery is None:
+        _recovery = RecoveryCoordinator(OutputIntent(
+            target_format=target_format.lower().strip("."),
+            quality=bitrate,
+            sample_rate=sample_rate,
+            resolution=resolution,
+            normalize_audio=normalize_audio,
+            fps=fps,
+            cover_required=bool(cover_path),
+            gpu_allowed=bool((use_gpu if use_gpu is not None else use_nvenc)
+                             and target_format.lower().strip(".") in HARDWARE_VIDEO_FORMATS),
+            allow_png_fallback=allow_lossless_png_recovery,
+            metadata=tuple((key, value) for key, value in (metadata or {}).items() if value),
+        ))
+
+    def staged_progress(value: float, message: str) -> None:
+        if progress_callback and value < 1.0:
+            progress_callback(value, message)
+
+    with tempfile.TemporaryDirectory(prefix=".janeconverter-convert-", dir=output_dir) as staging_dir:
+        common = dict(
+            input_path=input_path, output_dir=staging_dir, output_filename=output_filename,
+            bitrate=bitrate, sample_rate=sample_rate, normalize_audio=normalize_audio,
+            resolution=resolution, use_nvenc=use_nvenc, use_gpu=use_gpu,
+            gpu_codec=gpu_codec, metadata=metadata, cover_path=cover_path,
+            abort_event=abort_event, progress_callback=staged_progress, fps=fps,
+        )
+        effective_target = target_format.lower().strip(".")
+        try:
+            staged_path = _convert_media_impl(
+                **common, target_format=target_format, allow_stream_copy=allow_stream_copy,
+                allow_lossless_png_recovery=allow_lossless_png_recovery,
+                _method_override=_method_override, _recovery=_recovery,
+            )
+        except RuntimeError as error:
+            if not (allow_lossless_png_recovery and effective_target in {"source", "original", ""}
+                    and str(error).startswith("ValidationFailed:")):
+                raise
+            from PIL import Image
+            try:
+                with Image.open(input_path) as image:
+                    if getattr(image, "n_frames", 1) != 1:
+                        raise ValueError("animated input")
+                    image.verify()
+            except (OSError, ValueError):
+                raise error
+            failure = FailureEvidence("source-validation", FailureCategory.VALIDATION, True, "image:source-validation")
+            if _recovery.next_method(failure) != "image-png":
+                raise error
+            _recovery.start("image-png")
+            effective_target = "png"
+            png_recovery = RecoveryCoordinator(replace(
+                _recovery.intent, target_format="png", allow_png_fallback=False,
+            ))
+            staged_path = _convert_media_impl(
+                **common, target_format="png", allow_stream_copy=False,
+                allow_lossless_png_recovery=False, _recovery=png_recovery,
+            )
+        if abort_event and abort_event.is_set():
+            raise KeyboardInterrupt("Conversion aborted by user.")
+        validate_output_intent(input_path, staged_path, replace(_recovery.intent, target_format=effective_target))
+        validate_image_intent(input_path, staged_path, effective_target)
+        if abort_event and abort_event.is_set():
+            raise KeyboardInterrupt("Conversion aborted by user.")
+        final_path = get_unique_target_path(output_dir, os.path.basename(staged_path))
+        for attempt in range(5):
+            if abort_event and abort_event.is_set():
+                raise KeyboardInterrupt("Conversion aborted by user.")
+            try:
+                os.replace(staged_path, final_path)
+                break
+            except PermissionError as error:
+                if getattr(error, "winerror", None) not in (32, 33) or attempt == 4:
+                    raise
+                time.sleep(0.1 * (2 ** attempt))
+
+    if len(_recovery.attempts) > 1:
+        try:
+            from .paths import APP_DATA_DIR
+            record_local_success(os.path.join(APP_DATA_DIR, "recovery-evidence.json"), _recovery)
+        except (OSError, ValueError, TypeError):
+            pass
+    if progress_callback:
+        if len(_recovery.attempts) > 1:
+            first = _recovery.attempts[0]
+            outcome = first.result.value if first.result else "unknown"
+            try:
+                properties = validated_output_properties(final_path, effective_target)
+            except (OSError, ValueError, RuntimeError):
+                properties = "validated media"
+            progress_callback(1.0, f"Recovered from {outcome} as {effective_target.upper()} using {_recovery.attempts[-1].method} ({properties}): {os.path.basename(final_path)}")
+        else:
+            progress_callback(1.0, f"Ready: {os.path.basename(final_path)}")
+    return final_path

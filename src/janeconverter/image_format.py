@@ -37,6 +37,8 @@ def _has_alpha(image: Image.Image) -> bool:
 def _prepare_frame(image: Image.Image, target_format: str, extension: str) -> Image.Image:
     alpha = _has_alpha(image)
     if target_format == "JPEG":
+        if image.mode == "CMYK":
+            return image.copy()
         rgba = image.convert("RGBA")
         output = Image.new("RGB", rgba.size, "white")
         output.paste(rgba, mask=rgba.getchannel("A"))
@@ -108,6 +110,7 @@ def convert_image_format(
             return image_path
 
         source_info = dict(source.info)
+        source_mode = source.mode
         frame_count = getattr(source, "n_frames", 1)
         preserve_frames = frame_count > 1 and pillow_format in _ANIMATED_FORMATS
         frame_total = frame_count if preserve_frames else 1
@@ -121,6 +124,9 @@ def convert_image_format(
             frames.append(_prepare_frame(frame, pillow_format, extension))
             duration = frame.info.get("duration", source_info.get("duration", 100))
             durations.append(duration if duration is not None else 100)
+
+    if source_info.get("icc_profile") and source_mode == "CMYK" and any(frame.mode != "CMYK" for frame in frames):
+        raise ValueError("A color-managed CMYK image needs a compatible output format to preserve its color profile.")
 
     if output_path is None:
         output_path = os.path.splitext(image_path)[0] + extension
