@@ -14,6 +14,8 @@ pub struct ConverterSettings {
     pub use_gpu: bool,
     pub save_cover: bool,
     pub save_metadata: bool,
+    #[serde(default)]
+    pub allow_png_fallback: bool,
     pub retries: u8,
 }
 
@@ -31,6 +33,8 @@ pub struct ConversionRequest {
     pub use_gpu: bool,
     pub save_cover: bool,
     pub save_metadata: bool,
+    #[serde(default)]
+    pub allow_png_fallback: bool,
     pub retries: u8,
     pub playlist_indexes: Option<String>,
     pub browser_session: Option<String>,
@@ -45,6 +49,8 @@ pub struct FacebookPhoto {
     pub id: String,
     pub url: String,
     pub width: u32,
+    #[serde(default)]
+    pub alternates: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +74,7 @@ pub struct FacebookCaptureResult {
     pub capture_id: String,
     pub title: String,
     pub photo_count: usize,
+    pub media_kind: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]

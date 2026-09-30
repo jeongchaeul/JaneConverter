@@ -7,7 +7,7 @@ mod process;
 mod social_photo_capture;
 
 use model::{
-    AccessDiagnostic, AccessStatus, ConversionRequest, FacebookCaptureResult, FacebookPhoto,
+    AccessDiagnostic, AccessStatus, ConversionRequest, FacebookCaptureResult,
     FacebookPhotoManifest, FetchedMedia, HardwareSnapshot, LibraryEntry, RuntimeInfo,
     SocialCaptureResult, SocialPhotoManifest,
 };
@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
@@ -37,6 +37,19 @@ const BUILD_COMMIT: &str = match option_env!("JANECONVERTER_BUILD_COMMIT") {
 
 #[derive(Default)]
 struct PendingUpdate(Mutex<Option<Update>>);
+
+type FacebookRefreshWaiters =
+    std::collections::HashMap<String, (String, mpsc::Sender<Vec<String>>)>;
+
+#[derive(Clone)]
+struct FacebookCaptureSession {
+    window: WebviewWindow,
+    profile: PathBuf,
+    refresh_waiters: Arc<Mutex<FacebookRefreshWaiters>>,
+    refresh_function: String,
+    created: Instant,
+    in_use: Arc<AtomicBool>,
+}
 
 fn is_commit_sha(value: &str) -> bool {
     value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -97,7 +110,7 @@ pub struct AppState {
     active_job: Arc<Mutex<Option<String>>>,
     sequence: Arc<AtomicU64>,
     access: Arc<Mutex<Option<access::AccessServer>>>,
-    facebook_captures: Arc<Mutex<std::collections::HashMap<String, WebviewWindow>>>,
+    facebook_captures: Arc<Mutex<std::collections::HashMap<String, FacebookCaptureSession>>>,
     facebook_manifests: Arc<
         Mutex<
             std::collections::HashMap<String, (String, FacebookPhotoManifest, std::time::Instant)>,
@@ -359,6 +372,93 @@ fn valid_capture_id(value: &str) -> bool {
         })
 }
 
+fn valid_refresh_request_id(value: &str) -> bool {
+    value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn valid_facebook_photo_id(value: &str) -> bool {
+    (5..=30).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn refresh_facebook_candidates(
+    captures: &Arc<Mutex<std::collections::HashMap<String, FacebookCaptureSession>>>,
+    capture_id: &str,
+    request_id: &str,
+    photo_id: &str,
+) -> Result<Vec<String>, String> {
+    if !valid_capture_id(capture_id)
+        || !valid_refresh_request_id(request_id)
+        || !valid_facebook_photo_id(photo_id)
+    {
+        return Err("The Facebook rendition refresh request was invalid.".into());
+    }
+    let session = captures
+        .lock()
+        .map_err(|_| "The Facebook capture registry is unavailable.")?
+        .get(capture_id)
+        .cloned()
+        .ok_or_else(|| "The Facebook guest session has expired.".to_string())?;
+    if session.created.elapsed() >= Duration::from_secs(600)
+        || !session.in_use.load(Ordering::Relaxed)
+    {
+        return Err("The Facebook guest session has expired.".into());
+    }
+
+    let (sender, receiver) = mpsc::channel();
+    {
+        let mut waiters = session
+            .refresh_waiters
+            .lock()
+            .map_err(|_| "The Facebook rendition refresh is unavailable.")?;
+        if waiters.len() >= 1 || waiters.contains_key(request_id) {
+            return Err("A Facebook rendition refresh is already in progress.".into());
+        }
+        waiters.insert(request_id.to_owned(), (photo_id.to_owned(), sender));
+    }
+
+    let function = serde_json::to_string(&session.refresh_function)
+        .map_err(|_| "The Facebook rendition refresh could not be prepared.")?;
+    let request = serde_json::to_string(request_id)
+        .map_err(|_| "The Facebook rendition refresh could not be prepared.")?;
+    let photo = serde_json::to_string(photo_id)
+        .map_err(|_| "The Facebook rendition refresh could not be prepared.")?;
+    if let Err(error) = session
+        .window
+        .eval(&format!("window[{function}]({request},{photo});"))
+    {
+        if let Ok(mut waiters) = session.refresh_waiters.lock() {
+            waiters.remove(request_id);
+        }
+        return Err(format!(
+            "Could not refresh the Facebook photo rendition: {error}"
+        ));
+    }
+
+    match receiver.recv_timeout(Duration::from_secs(10)) {
+        Ok(urls) => Ok(urls),
+        Err(_) => {
+            if let Ok(mut waiters) = session.refresh_waiters.lock() {
+                waiters.remove(request_id);
+            }
+            Ok(Vec::new())
+        }
+    }
+}
+
+fn close_facebook_capture_session(
+    captures: &Arc<Mutex<std::collections::HashMap<String, FacebookCaptureSession>>>,
+    capture_id: &str,
+) {
+    let session = captures
+        .lock()
+        .ok()
+        .and_then(|mut values| values.remove(capture_id));
+    if let Some(session) = session {
+        let _ = session.window.close();
+        clean_facebook_capture_profile(&session.profile);
+    }
+}
+
 fn clean_facebook_capture_profile(path: &Path) {
     let Ok(temp_root) = fs::canonicalize(std::env::temp_dir()) else {
         return;
@@ -452,110 +552,129 @@ async fn capture_facebook_album(
     fs::create_dir(&profile)
         .map_err(|error| format!("Could not create a temporary guest session: {error}"))?;
 
-    let (sender, receiver) = mpsc::channel::<Result<FacebookPhotoManifest, String>>();
+    let (sender, receiver) = mpsc::channel::<Result<facebook_capture::CaptureOutcome, String>>();
     let accumulator = Arc::new(Mutex::new(facebook_capture::CaptureAccumulator::default()));
     let accumulator_for_title = Arc::clone(&accumulator);
+    let refresh_waiters = Arc::new(Mutex::new(FacebookRefreshWaiters::new()));
+    let refresh_waiters_for_title = Arc::clone(&refresh_waiters);
     let nonce_for_title = nonce.clone();
+    let refresh_function = format!("__JANE_FACEBOOK_REFRESH__{nonce}");
     let sender_for_title = sender.clone();
     let initial_script = facebook_capture::initialization_script(&nonce);
-    let builder = WebviewWindowBuilder::new(
-        &app,
-        &label,
-        WebviewUrl::External(source_url),
-    )
-    .title("Reading public Facebook album")
-    .inner_size(940.0, 700.0)
-    .visible(false)
-    .incognito(true)
-    .data_directory(profile.clone())
-    .initialization_script(&initial_script)
-    .on_navigation(|url| facebook_capture::is_facebook_navigation(url.as_str()))
-    .on_document_title_changed(move |window, title| {
-        let Some(message) = facebook_capture::message_from_title(&title, &nonce_for_title) else {
-            return;
-        };
-        match message.kind.as_str() {
-            "photos" => {
-                if message.photos.is_empty() || message.photos.len() > 2 || message.sequence == 0 {
-                    return;
-                }
-                let sequence = message.sequence;
-                let count = {
-                    let Ok(mut collected) = accumulator_for_title.lock() else {
+    let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(source_url))
+        .title("Reading public Facebook album")
+        .inner_size(940.0, 700.0)
+        .visible(false)
+        .incognito(true)
+        .data_directory(profile.clone())
+        .initialization_script(&initial_script)
+        .on_navigation(|url| facebook_capture::is_facebook_navigation(url.as_str()))
+        .on_document_title_changed(move |window, title| {
+            let Some(message) = facebook_capture::message_from_title(&title, &nonce_for_title)
+            else {
+                return;
+            };
+            match message.kind.as_str() {
+                "photos" => {
+                    if message.photos.is_empty()
+                        || message.photos.len() > 2
+                        || message.sequence == 0
+                    {
                         return;
-                    };
-                    if !message.title.is_empty() && message.title.len() <= 500 {
-                        collected.title.clone_from(&message.title);
                     }
-                    for photo in message.photos {
-                        if photo.id.len() < 5
-                            || photo.id.len() > 30
-                            || !photo.id.bytes().all(|byte| byte.is_ascii_digit())
-                            || !facebook_capture::validate_photo_url(&photo.url)
-                        {
-                            continue;
+                    let sequence = message.sequence;
+                    let count = {
+                        let Ok(mut collected) = accumulator_for_title.lock() else {
+                            return;
+                        };
+                        if !message.title.is_empty() && message.title.len() <= 500 {
+                            collected.title.clone_from(&message.title);
                         }
-                        match collected.photos.get(&photo.id) {
-                            Some(existing) if existing.width >= photo.width => {}
-                            _ => {
-                                collected.photos.insert(photo.id.clone(), photo);
+                        for mut photo in message.photos {
+                            if photo.id.len() < 5
+                                || photo.id.len() > 30
+                                || !photo.id.bytes().all(|byte| byte.is_ascii_digit())
+                                || !facebook_capture::validate_photo_url(&photo.url)
+                            {
+                                continue;
                             }
+                            photo
+                                .alternates
+                                .retain(|url| facebook_capture::validate_photo_url(url));
+                            photo.alternates.truncate(3);
+                            collected.add_photo(photo);
                         }
-                    }
-                    collected.photos.len()
-                };
-                let _ = window.set_title(&format!("Found {count} public Facebook photos..."));
-                let ack_key = serde_json::to_string(&format!("__JANE_FACEBOOK_ACK__{nonce_for_title}"))
-                    .expect("acknowledgment key is a string");
-                let _ = window.eval(&format!("window[{ack_key}] = {sequence};"));
-            }
-            "done" => {
-                let result = accumulator_for_title.lock().map_err(|_| "The Facebook photo list became unavailable.".to_string()).and_then(|collected| {
-                    let Some(expected_count) = message.expected_count else {
-                        return Err(format!(
-                            "Facebook did not confirm the album's full photo count after finding {} photos. No partial album was saved.",
-                            message.count
-                        ));
+                        collected.photos.len()
                     };
-                    if expected_count != message.count {
-                        return Err(if expected_count > message.count {
-                            format!(
-                                "Facebook exposed only {} of {} album photos. No partial album was saved.",
-                                message.count,
-                                expected_count
-                            )
-                        } else {
-                            format!(
-                                "Facebook advertised {} album photos but exposed {}. No partial album was saved.",
-                                expected_count,
-                                message.count
-                            )
+                    let _ = window.set_title(&format!("Found {count} public Facebook photos..."));
+                    let ack_key =
+                        serde_json::to_string(&format!("__JANE_FACEBOOK_ACK__{nonce_for_title}"))
+                            .expect("acknowledgment key is a string");
+                    let _ = window.eval(&format!("window[{ack_key}] = {sequence};"));
+                }
+                "done" => {
+                    let result = accumulator_for_title
+                        .lock()
+                        .map_err(|_| "The Facebook photo list became unavailable.".to_string())
+                        .and_then(|collected| {
+                            facebook_capture::validate_completion(
+                                &message,
+                                collected.photos.len(),
+                            )?;
+                            let title = if !message.title.is_empty() {
+                                message.title
+                            } else {
+                                collected.title.clone()
+                            };
+                            Ok(facebook_capture::CaptureOutcome::Photos(
+                                FacebookPhotoManifest {
+                                    title,
+                                    photos: collected.ordered_photos(),
+                                },
+                            ))
                         });
+                    let _ = sender_for_title.send(result);
+                }
+                "refresh" => {
+                    if !valid_refresh_request_id(&message.request_id) {
+                        return;
                     }
-                    if message.count < 2 || message.count > 500 || collected.photos.len() != message.count {
-                        return Err(format!(
-                            "Facebook reported {} photos, but JaneConverter received {}. No partial album was saved.",
-                            message.count,
-                            collected.photos.len()
-                        ));
+                    let waiter = refresh_waiters_for_title
+                        .lock()
+                        .ok()
+                        .and_then(|mut waiters| waiters.remove(&message.request_id));
+                    if let Some((expected_photo_id, sender)) = waiter {
+                        let urls = facebook_capture::refreshed_candidate_urls(
+                            &message,
+                            &expected_photo_id,
+                        );
+                        let _ = sender.send(urls);
                     }
-                    let title = if !message.title.is_empty() { message.title } else { collected.title.clone() };
-                    Ok(FacebookPhotoManifest {
-                        title,
-                        photos: collected.photos.values().cloned().collect::<Vec<FacebookPhoto>>(),
-                    })
-                });
-                let _ = sender_for_title.send(result);
-                let _ = window.close();
+                }
+                "video" => {
+                    let has_photos = accumulator_for_title
+                        .lock()
+                        .map(|collected| !collected.photos.is_empty())
+                        .unwrap_or(true);
+                    if !has_photos {
+                        let title = message.title.chars().take(500).collect();
+                        let _ = sender_for_title
+                            .send(Ok(facebook_capture::CaptureOutcome::Video(title)));
+                        let _ = window.close();
+                    }
+                }
+                "error" => {
+                    let message = if message.error.len() <= 400 {
+                        message.error
+                    } else {
+                        "Facebook could not show this album to a logged-out visitor.".into()
+                    };
+                    let _ = sender_for_title.send(Err(message));
+                    let _ = window.close();
+                }
+                _ => {}
             }
-            "error" => {
-                let message = if message.error.len() <= 400 { message.error } else { "Facebook could not show this album to a logged-out visitor.".into() };
-                let _ = sender_for_title.send(Err(message));
-                let _ = window.close();
-            }
-            _ => {}
-        }
-    });
+        });
 
     let window = match builder.build() {
         Ok(window) => window,
@@ -571,40 +690,24 @@ async fn capture_facebook_album(
         .facebook_captures
         .lock()
         .map_err(|_| "The Facebook capture registry is unavailable.")?
-        .insert(capture_id.clone(), window.clone());
+        .insert(
+            capture_id.clone(),
+            FacebookCaptureSession {
+                window: window.clone(),
+                profile: profile.clone(),
+                refresh_waiters,
+                refresh_function,
+                created: Instant::now(),
+                in_use: Arc::new(AtomicBool::new(false)),
+            },
+        );
 
     let received = tauri::async_runtime::spawn_blocking(move || {
         receiver.recv_timeout(Duration::from_secs(210))
     })
     .await;
-    if let Ok(mut captures) = state.facebook_captures.lock() {
-        captures.remove(&capture_id);
-    }
-    let _ = window.close();
-    clean_facebook_capture_profile(&profile);
-
-    match received {
-        Ok(Ok(Ok(manifest))) => {
-            let result = FacebookCaptureResult {
-                capture_id: capture_id.clone(),
-                title: manifest.title.clone(),
-                photo_count: manifest.photos.len(),
-            };
-            state
-                .facebook_manifests
-                .lock()
-                .map_err(|_| "The Facebook photo manifest registry is unavailable.")?
-                .insert(
-                    capture_id,
-                    (
-                        source.trim().to_string(),
-                        manifest,
-                        std::time::Instant::now(),
-                    ),
-                );
-            Ok(result)
-        }
-        Ok(Ok(Err(message))) => Err(message),
+    let capture_result = match received {
+        Ok(Ok(result)) => result,
         Ok(Err(mpsc::RecvTimeoutError::Timeout)) => {
             Err("Facebook did not finish loading the public album within 210 seconds.".into())
         }
@@ -612,6 +715,67 @@ async fn capture_facebook_album(
             Err("Facebook photo capture was cancelled.".into())
         }
         Err(_) => Err("The Facebook photo capture could not finish.".into()),
+    };
+
+    match capture_result {
+        Ok(facebook_capture::CaptureOutcome::Photos(manifest)) => {
+            let registered_at = Instant::now();
+            if let Ok(mut captures) = state.facebook_captures.lock() {
+                if let Some(session) = captures.get_mut(&capture_id) {
+                    session.created = registered_at;
+                }
+            }
+            let result = FacebookCaptureResult {
+                capture_id: capture_id.clone(),
+                title: manifest.title.clone(),
+                photo_count: manifest.photos.len(),
+                media_kind: "photo",
+            };
+            state
+                .facebook_manifests
+                .lock()
+                .map_err(|_| "The Facebook photo manifest registry is unavailable.")?
+                .insert(
+                    capture_id.clone(),
+                    (source.trim().to_string(), manifest, registered_at),
+                );
+            let captures = Arc::clone(&state.facebook_captures);
+            let manifests = Arc::clone(&state.facebook_manifests);
+            let expiry_capture_id = capture_id;
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(600));
+                let expired = captures.lock().ok().and_then(|mut sessions| {
+                    let is_expired = sessions.get(&expiry_capture_id).is_some_and(|session| {
+                        session.created.elapsed() >= Duration::from_secs(600)
+                            && !session.in_use.load(Ordering::Relaxed)
+                    });
+                    is_expired
+                        .then(|| sessions.remove(&expiry_capture_id))
+                        .flatten()
+                });
+                if let Some(session) = expired {
+                    let _ = session.window.close();
+                    clean_facebook_capture_profile(&session.profile);
+                }
+                if let Ok(mut values) = manifests.lock() {
+                    values.remove(&expiry_capture_id);
+                }
+            });
+            Ok(result)
+        }
+        Ok(facebook_capture::CaptureOutcome::Video(title)) => {
+            close_facebook_capture_session(&state.facebook_captures, &capture_id);
+            Ok(FacebookCaptureResult {
+                capture_id,
+                title,
+                photo_count: 0,
+                media_kind: "video",
+            })
+        }
+        Err(message) => {
+            close_facebook_capture_session(&state.facebook_captures, &capture_id);
+            Err(message)
+        }
     }
 }
 
@@ -620,15 +784,20 @@ fn cancel_facebook_album(state: State<'_, AppState>, capture_id: String) -> Resu
     if !valid_capture_id(&capture_id) {
         return Err("The Facebook capture session is invalid.".into());
     }
-    let window = state
+    let session = state
         .facebook_captures
         .lock()
         .map_err(|_| "The Facebook capture registry is unavailable.")?
         .remove(&capture_id);
-    if let Some(window) = window {
-        window
+    if let Some(session) = session {
+        session
+            .window
             .close()
             .map_err(|error| format!("Could not cancel Facebook capture: {error}"))?;
+        clean_facebook_capture_profile(&session.profile);
+    }
+    if let Ok(mut manifests) = state.facebook_manifests.lock() {
+        manifests.remove(&capture_id);
     }
     Ok(())
 }
@@ -858,18 +1027,16 @@ fn cancel_social_post_photos(state: State<'_, AppState>, capture_id: String) -> 
 fn start_conversion(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    mut request: ConversionRequest,
+    request: ConversionRequest,
 ) -> Result<String, String> {
+    if request.facebook_capture_id.is_some() && request.social_capture_id.is_some() {
+        return Err("Use only one public photo capture for a conversion.".into());
+    }
     if !state
-        .facebook_captures
+        .social_captures
         .lock()
-        .map_err(|_| "The Facebook capture registry is unavailable.")?
+        .map_err(|_| "The public photo capture registry is unavailable.")?
         .is_empty()
-        || !state
-            .social_captures
-            .lock()
-            .map_err(|_| "The public photo capture registry is unavailable.")?
-            .is_empty()
     {
         return Err("Finish or cancel the current photo capture first.".into());
     }
@@ -881,7 +1048,39 @@ fn start_conversion(
     {
         return Err("A conversion is already running.".into());
     }
-    let facebook_manifest = if let Some(capture_id) = request.facebook_capture_id.take() {
+    let facebook_capture_id = request.facebook_capture_id.clone();
+    let facebook_session = {
+        let captures = state
+            .facebook_captures
+            .lock()
+            .map_err(|_| "The Facebook capture registry is unavailable.")?;
+        if let Some(capture_id) = facebook_capture_id.as_deref() {
+            if !valid_capture_id(capture_id)
+                || captures.len() != 1
+                || !captures.contains_key(capture_id)
+            {
+                return Err(
+                    "The Facebook photo capture has expired. Capture the album again.".into(),
+                );
+            }
+            let session = captures
+                .get(capture_id)
+                .cloned()
+                .ok_or_else(|| "The Facebook guest session has expired.".to_string())?;
+            if session.created.elapsed() >= Duration::from_secs(600)
+                || session.in_use.load(Ordering::Relaxed)
+            {
+                return Err("The Facebook guest session has expired or is already in use.".into());
+            }
+            Some((capture_id.to_owned(), session))
+        } else {
+            if !captures.is_empty() {
+                return Err("Finish or cancel the current Facebook photo capture first.".into());
+            }
+            None
+        }
+    };
+    let facebook_manifest = if let Some(capture_id) = facebook_capture_id.as_deref() {
         if !valid_capture_id(&capture_id) {
             return Err("The Facebook photo capture has expired. Capture the album again.".into());
         }
@@ -889,7 +1088,8 @@ fn start_conversion(
             .facebook_manifests
             .lock()
             .map_err(|_| "The Facebook photo manifest registry is unavailable.")?
-            .remove(&capture_id)
+            .get(capture_id)
+            .cloned()
             .ok_or_else(|| {
                 "The Facebook photo capture has expired. Capture the album again.".to_string()
             })?;
@@ -906,7 +1106,9 @@ fn start_conversion(
         }
         Some(ready.1)
     } else {
-        if facebook_capture::validate_post_url(&request.source).is_ok() {
+        if facebook_capture::validate_post_url(&request.source).is_ok()
+            && !facebook_capture::is_video_conversion_intent(&request.category, &request.format)
+        {
             return Err("Capture the public Facebook album before starting its download.".into());
         }
         None
@@ -954,15 +1156,58 @@ fn start_conversion(
         &request.source,
         request.browser_capture_path.as_deref(),
     );
-    {
-        let mut active_job = active_job_slot
+
+    if let Some((capture_id, expected_session)) = &facebook_session {
+        let captures = state
+            .facebook_captures
             .lock()
-            .map_err(|_| "The conversion registry is unavailable.")?;
-        if active_job.is_some() {
-            return Err("A conversion is already running.".into());
+            .map_err(|_| "The Facebook capture registry is unavailable.")?;
+        let current = captures
+            .get(capture_id)
+            .ok_or_else(|| "The Facebook guest session has expired.".to_string())?;
+        if current.created != expected_session.created
+            || current.created.elapsed() >= Duration::from_secs(600)
+            || current.in_use.load(Ordering::Relaxed)
+        {
+            return Err("The Facebook guest session has expired or is already in use.".into());
         }
-        *active_job = Some(job_id.clone());
+        current.in_use.store(true, Ordering::Relaxed);
     }
+
+    let retry_manifest = facebook_manifest.clone();
+    let mut active_job = match active_job_slot.lock() {
+        Ok(value) => value,
+        Err(_) => {
+            if let Some((_, session)) = &facebook_session {
+                session.in_use.store(false, Ordering::Relaxed);
+            }
+            return Err("The conversion registry is unavailable.".into());
+        }
+    };
+    if active_job.is_some() {
+        if let Some((_, session)) = &facebook_session {
+            session.in_use.store(false, Ordering::Relaxed);
+        }
+        return Err("A conversion is already running.".into());
+    }
+    *active_job = Some(job_id.clone());
+    drop(active_job);
+    if let Some(capture_id) = facebook_capture_id.as_deref() {
+        if let Ok(mut manifests) = state.facebook_manifests.lock() {
+            manifests.remove(capture_id);
+        }
+    }
+    let facebook_refresh = facebook_capture_id.as_ref().map(|capture_id| {
+        let captures = Arc::clone(&state.facebook_captures);
+        let capture_id = capture_id.clone();
+        Arc::new(move |request_id: &str, photo_id: &str| {
+            refresh_facebook_candidates(&captures, &capture_id, request_id, photo_id)
+        }) as process::FacebookRefreshHandler
+    });
+    let captures_for_worker = Arc::clone(&state.facebook_captures);
+    let manifests_for_worker = Arc::clone(&state.facebook_manifests);
+    let completed_facebook_capture_id = facebook_capture_id.clone();
+    let source_for_retry = request.source.trim().to_owned();
     if let Err(error) = start_engine_conversion(
         app,
         job_id.clone(),
@@ -974,6 +1219,7 @@ fn start_conversion(
         ConversionSlots {
             child: child_slot,
             cancel: cancel_slot,
+            facebook_refresh,
         },
         move |_code, _cancelled| {
             if let Ok(mut value) = child_slot_for_worker.lock() {
@@ -987,11 +1233,27 @@ fn start_conversion(
                     *value = None;
                 }
             }
+            if let Some(capture_id) = completed_facebook_capture_id.as_deref() {
+                close_facebook_capture_session(&captures_for_worker, capture_id);
+                if let Ok(mut manifests) = manifests_for_worker.lock() {
+                    manifests.remove(capture_id);
+                }
+            }
         },
     ) {
         if let Ok(mut active_job) = active_job_slot.lock() {
             if active_job.as_deref() == Some(job_id.as_str()) {
                 *active_job = None;
+            }
+        }
+        if let (Some(capture_id), Some(manifest)) = (facebook_capture_id, retry_manifest) {
+            if let Ok(captures) = state.facebook_captures.lock() {
+                if let Some(session) = captures.get(&capture_id) {
+                    session.in_use.store(false, Ordering::Relaxed);
+                    if let Ok(mut manifests) = state.facebook_manifests.lock() {
+                        manifests.insert(capture_id, (source_for_retry, manifest, Instant::now()));
+                    }
+                }
             }
         }
         return Err(error);
@@ -1731,6 +1993,15 @@ mod tests {
     }
 
     #[test]
+    fn facebook_refresh_ids_are_strictly_bounded() {
+        assert!(valid_refresh_request_id("0123456789abcdef0123456789abcdef"));
+        assert!(!valid_refresh_request_id("0123456789abcdef"));
+        assert!(valid_facebook_photo_id("123456789"));
+        assert!(!valid_facebook_photo_id("123"));
+        assert!(!valid_facebook_photo_id("12abc6789"));
+    }
+
+    #[test]
     fn settings_default_is_project_local() {
         assert!(paths::default_output_dir().ends_with("converted"));
     }
@@ -1810,6 +2081,7 @@ mod tests {
             use_gpu: false,
             save_cover: true,
             save_metadata: true,
+            allow_png_fallback: false,
             retries: 2,
             playlist_indexes: None,
             browser_session: None,

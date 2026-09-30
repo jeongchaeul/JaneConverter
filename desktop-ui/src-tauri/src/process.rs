@@ -5,13 +5,31 @@ use crate::model::{
 use crate::paths::{find_python, packaged_engine, prepare_command, project_root};
 use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use tauri::Emitter;
+
+pub type FacebookRefreshHandler =
+    Arc<dyn Fn(&str, &str) -> Result<Vec<String>, String> + Send + Sync>;
+
+const FACEBOOK_REFRESH_PREFIX: &str = "__JANE_FB_REFRESH__";
+
+fn parse_facebook_refresh_request(line: &str) -> Option<(String, String)> {
+    let request = line.strip_prefix(FACEBOOK_REFRESH_PREFIX)?;
+    let (request_id, photo_id) = request.split_once('\t')?;
+    if request_id.len() != 32
+        || !request_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || !(5..=30).contains(&photo_id.len())
+        || !photo_id.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    Some((request_id.to_owned(), photo_id.to_owned()))
+}
 
 pub fn progress_from_line(line: &str) -> Option<f32> {
     let start = line.find('[')?;
@@ -46,6 +64,8 @@ pub fn forward_output<R: Read + Send + 'static>(
     app: tauri::AppHandle,
     job_id: String,
     failure_detail: Option<Arc<Mutex<Option<String>>>>,
+    facebook_stdin: Option<Arc<Mutex<ChildStdin>>>,
+    facebook_refresh: Option<FacebookRefreshHandler>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut buf_reader = BufReader::new(reader);
@@ -77,6 +97,36 @@ pub fn forward_output<R: Read + Send + 'static>(
 
             let message = String::from_utf8_lossy(&line_buf).trim().to_owned();
             if message.is_empty() {
+                continue;
+            }
+            if message.starts_with(FACEBOOK_REFRESH_PREFIX) {
+                if let (Some((request_id, photo_id)), Some(stdin), Some(refresh)) = (
+                    parse_facebook_refresh_request(&message),
+                    facebook_stdin.as_ref(),
+                    facebook_refresh.as_ref(),
+                ) {
+                    let urls = refresh(&request_id, &photo_id).unwrap_or_default();
+                    if let Ok(mut input) = stdin.lock() {
+                        let response = serde_json::json!({
+                            "requestId": request_id,
+                            "urls": urls.into_iter().take(4).collect::<Vec<_>>(),
+                        });
+                        if serde_json::to_writer(&mut *input, &response).is_ok() {
+                            let _ = input.write_all(b"\n");
+                            let _ = input.flush();
+                        }
+                    }
+                    emit_event(
+                        &app,
+                        ConverterEvent {
+                            job_id: job_id.clone(),
+                            kind: "log".into(),
+                            message: "Refreshing an expired Facebook photo rendition in the active guest session.".into(),
+                            progress: None,
+                            output: None,
+                        },
+                    );
+                }
                 continue;
             }
             if let Some(detail) = failure_detail_from_line(&message) {
@@ -167,6 +217,9 @@ pub fn build_conversion_args_with_capture(
     if request.normalize {
         args.push("--normalize".into());
     }
+    if request.allow_png_fallback && request.format == "source" && request.category == "Image" {
+        args.push("--allow-lossless-png-recovery".into());
+    }
     if let Some(browser) = browser
         .or_else(|| request.browser_session.clone())
         .filter(|value| !value.trim().is_empty())
@@ -186,6 +239,9 @@ pub fn build_conversion_args_with_capture(
     }
     if has_facebook_manifest {
         args.push("--facebook-photo-manifest-stdin".into());
+        if let Some(capture_id) = request.facebook_capture_id.as_ref() {
+            args.extend(["--facebook-capture-id".into(), capture_id.clone()]);
+        }
     }
     if request.social_capture_id.is_some() {
         args.push("--social-photo-manifest-stdin".into());
@@ -226,6 +282,7 @@ fn normalize_browser_session_arg(value: &str) -> Result<String, String> {
 pub struct ConversionSlots {
     pub child: Arc<Mutex<Option<Arc<Mutex<Child>>>>>,
     pub cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+    pub facebook_refresh: Option<FacebookRefreshHandler>,
 }
 
 pub fn start_conversion(
@@ -275,15 +332,22 @@ pub fn start_conversion(
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not start the Python engine: {error}"))?;
+    let mut facebook_stdin = None;
     if let Some(manifest_json) = manifest_json {
         let mut input = child.stdin.take().ok_or_else(|| {
             "The Python engine did not accept the captured photo list.".to_string()
         })?;
-        if let Err(error) = input.write_all(&manifest_json) {
+        if let Err(error) = input
+            .write_all(&manifest_json)
+            .and_then(|()| input.write_all(b"\n"))
+        {
             terminate_child(&mut child);
             return Err(format!(
                 "Could not pass the captured photo list to the local engine: {error}"
             ));
+        }
+        if has_facebook_manifest {
+            facebook_stdin = Some(Arc::new(Mutex::new(input)));
         }
     }
     let stdout = child.stdout.take();
@@ -299,14 +363,24 @@ pub fn start_conversion(
         .lock()
         .map_err(|_| "The cancellation slot is unavailable.")? = Some(Arc::clone(&cancel));
     let failure_detail = Arc::new(Mutex::new(None));
-    let stdout_thread =
-        stdout.map(|reader| forward_output(reader, app.clone(), job_id.clone(), None));
+    let stdout_thread = stdout.map(|reader| {
+        forward_output(
+            reader,
+            app.clone(),
+            job_id.clone(),
+            None,
+            facebook_stdin,
+            slots.facebook_refresh.clone(),
+        )
+    });
     let stderr_thread = stderr.map(|reader| {
         forward_output(
             reader,
             app.clone(),
             job_id.clone(),
             Some(Arc::clone(&failure_detail)),
+            None,
+            None,
         )
     });
     emit_event(
@@ -456,6 +530,26 @@ mod tests {
     }
 
     #[test]
+    fn facebook_refresh_protocol_accepts_only_bounded_ids() {
+        assert_eq!(
+            parse_facebook_refresh_request(
+                "__JANE_FB_REFRESH__0123456789abcdef0123456789abcdef\t123456789"
+            ),
+            Some((
+                "0123456789abcdef0123456789abcdef".into(),
+                "123456789".into()
+            ))
+        );
+        assert!(
+            parse_facebook_refresh_request("__JANE_FB_REFRESH__not-a-request\t123456789").is_none()
+        );
+        assert!(parse_facebook_refresh_request(
+            "__JANE_FB_REFRESH__0123456789abcdef0123456789abcdef\tbad"
+        )
+        .is_none());
+    }
+
+    #[test]
     fn extracts_engine_failure_without_traceback_noise() {
         assert_eq!(
             failure_detail_from_line(
@@ -479,7 +573,7 @@ mod tests {
 
     #[test]
     fn normalizes_display_browser_label_for_python_cli() {
-        let request = ConversionRequest {
+        let mut request = ConversionRequest {
             source: "https://example.com/private-media".into(),
             output_dir: "out".into(),
             category: "Video".into(),
@@ -491,6 +585,7 @@ mod tests {
             use_gpu: false,
             save_cover: true,
             save_metadata: true,
+            allow_png_fallback: false,
             retries: 2,
             playlist_indexes: None,
             browser_session: Some("Chrome".into()),
@@ -505,6 +600,43 @@ mod tests {
             .position(|value| value == "--browser-session")
             .expect("browser session flag should be forwarded");
         assert_eq!(args[flag + 1], "chrome");
+        request.category = "Image".into();
+        request.format = "source".into();
+        request.allow_png_fallback = true;
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        assert!(args.contains(&"--allow-lossless-png-recovery".to_string()));
+    }
+
+    #[test]
+    fn facebook_manifest_forwards_its_session_id_to_the_engine() {
+        let request = ConversionRequest {
+            source: "https://www.facebook.com/groups/42/permalink/123456/".into(),
+            output_dir: "out".into(),
+            category: "Image".into(),
+            format: "source".into(),
+            bitrate: "original".into(),
+            sample_rate: 48000,
+            resolution: "original".into(),
+            normalize: false,
+            use_gpu: false,
+            save_cover: true,
+            save_metadata: true,
+            allow_png_fallback: false,
+            retries: 2,
+            playlist_indexes: None,
+            browser_session: None,
+            browser_capture_path: None,
+            facebook_capture_id: Some("01234567-89ab-cdef-0123-456789abcdef".into()),
+            social_capture_id: None,
+        };
+        let args = build_conversion_args_with_capture(&request, None, None, true).unwrap();
+
+        let flag = args
+            .iter()
+            .position(|value| value == "--facebook-capture-id")
+            .expect("the refresh callback needs the active capture id");
+        assert_eq!(args[flag + 1], "01234567-89ab-cdef-0123-456789abcdef");
+        assert!(args.contains(&"--facebook-photo-manifest-stdin".into()));
     }
 
     #[test]
@@ -526,6 +658,7 @@ mod tests {
             use_gpu: false,
             save_cover: true,
             save_metadata: true,
+            allow_png_fallback: false,
             retries: 2,
             playlist_indexes: None,
             browser_session: None,
@@ -559,6 +692,7 @@ mod tests {
             use_gpu: false,
             save_cover: true,
             save_metadata: true,
+            allow_png_fallback: false,
             retries: 2,
             playlist_indexes: None,
             browser_session: None,

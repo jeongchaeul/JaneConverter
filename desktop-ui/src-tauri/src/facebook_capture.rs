@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use url::Url;
 
-use crate::model::FacebookPhoto;
+use crate::model::{FacebookPhoto, FacebookPhotoManifest};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,7 +19,15 @@ pub struct PageMessage {
     #[serde(default)]
     pub expected_count: Option<usize>,
     #[serde(default)]
+    pub count_source: String,
+    #[serde(default)]
+    pub end_confirmed: bool,
+    #[serde(default)]
+    pub count_conflict: bool,
+    #[serde(default)]
     pub sequence: usize,
+    #[serde(default)]
+    pub request_id: String,
     #[serde(default)]
     pub photos: Vec<FacebookPhoto>,
 }
@@ -28,6 +36,41 @@ pub struct PageMessage {
 pub struct CaptureAccumulator {
     pub title: String,
     pub photos: BTreeMap<String, FacebookPhoto>,
+    pub order: Vec<String>,
+}
+
+impl CaptureAccumulator {
+    pub fn add_photo(&mut self, photo: FacebookPhoto) {
+        if !self.photos.contains_key(&photo.id) {
+            self.order.push(photo.id.clone());
+        }
+        let Some(existing) = self.photos.get_mut(&photo.id) else {
+            self.photos.insert(photo.id.clone(), photo);
+            return;
+        };
+        let mut candidates = vec![existing.url.clone(), photo.url.clone()];
+        candidates.extend(existing.alternates.iter().cloned());
+        candidates.extend(photo.alternates);
+        if photo.width > existing.width {
+            existing.url = photo.url;
+            existing.width = photo.width;
+        }
+        let mut seen = std::collections::HashSet::new();
+        candidates.retain(|url| url != &existing.url && seen.insert(url.clone()));
+        existing.alternates = candidates.into_iter().take(3).collect();
+    }
+
+    pub fn ordered_photos(&self) -> Vec<FacebookPhoto> {
+        self.order
+            .iter()
+            .filter_map(|id| self.photos.get(id).cloned())
+            .collect()
+    }
+}
+
+pub enum CaptureOutcome {
+    Photos(FacebookPhotoManifest),
+    Video(String),
 }
 
 pub fn validate_post_url(value: &str) -> Result<Url, String> {
@@ -45,6 +88,31 @@ pub fn validate_post_url(value: &str) -> Result<Url, String> {
         return Err("Paste a public Facebook post link to capture its photos.".into());
     }
     Ok(url)
+}
+
+pub fn is_video_conversion_intent(category: &str, format: &str) -> bool {
+    category.eq_ignore_ascii_case("video")
+        && matches!(
+            format.to_ascii_lowercase().as_str(),
+            "source"
+                | "original"
+                | "mp4"
+                | "mkv"
+                | "webm"
+                | "mov"
+                | "avi"
+                | "flv"
+                | "m4v"
+                | "ts"
+                | "m2ts"
+                | "mpeg"
+                | "mpg"
+                | "vob"
+                | "3gp"
+                | "wmv"
+                | "asf"
+                | "gif"
+        )
 }
 
 pub fn is_facebook_navigation(value: &str) -> bool {
@@ -74,6 +142,59 @@ pub fn message_from_title(title: &str, nonce: &str) -> Option<PageMessage> {
     serde_json::from_slice(&bytes).ok()
 }
 
+pub fn refreshed_candidate_urls(message: &PageMessage, expected_photo_id: &str) -> Vec<String> {
+    if message.kind != "refresh" || message.photos.len() != 1 {
+        return Vec::new();
+    }
+    let photo = &message.photos[0];
+    if photo.id != expected_photo_id || !validate_photo_url(&photo.url) {
+        return Vec::new();
+    }
+    let mut urls = vec![photo.url.clone()];
+    urls.extend(
+        photo
+            .alternates
+            .iter()
+            .filter(|url| validate_photo_url(url))
+            .cloned(),
+    );
+    let mut seen = std::collections::HashSet::new();
+    urls.retain(|url| seen.insert(url.clone()));
+    urls.truncate(4);
+    urls
+}
+
+pub fn validate_completion(message: &PageMessage, received_count: usize) -> Result<(), String> {
+    if !message.end_confirmed
+        || message.count_conflict
+        || !matches!(
+            message.count_source.as_str(),
+            "page-count" | "viewer-end" | "grid-end"
+        )
+    {
+        return Err(
+            "Facebook did not provide consistent count and end evidence. No partial album was saved."
+                .into(),
+        );
+    }
+    let Some(expected_count) = message.expected_count else {
+        return Err(
+            "Facebook did not confirm the album's full photo count. No partial album was saved."
+                .into(),
+        );
+    };
+    if expected_count != message.count
+        || received_count != message.count
+        || !(2..=500).contains(&message.count)
+    {
+        return Err(format!(
+            "Facebook reported {} photos, expected {}, and delivered {}. No partial album was saved.",
+            message.count, expected_count, received_count
+        ));
+    }
+    Ok(())
+}
+
 pub fn initialization_script(nonce: &str) -> String {
     let nonce_json = serde_json::to_string(nonce).expect("nonce is a string");
     format!(
@@ -85,11 +206,13 @@ pub fn initialization_script(nonce: &str) -> String {
   const captureModeKey = "janeFacebookCaptureMode";
   const albumSetKey = "janeFacebookAlbumSet";
   const scannedIdsKey = "janeFacebookScannedPhotoIds";
+  const pendingRefreshKey = "janeFacebookPendingRenditionRefresh";
+  const refreshFunctionKey = "__JANE_FACEBOOK_REFRESH__" + nonce;
   const attemptsKey = "janeFacebookCaptureAttempts";
   const startedAtKey = "janeFacebookCaptureStartedAt";
   const viewerImageKey = "janeFacebookViewerImageUrl";
   const MAX_PHOTOS = 500;
-  const MAX_ATTEMPTS = 180;
+  const MAX_ATTEMPTS = 1800;
   const MAX_CAPTURE_MS = 180000;
   const VIEWER_POLL_MS = 250;
   const BOTTOM_PROBE_INTERVAL = 4;
@@ -102,6 +225,8 @@ pub fn initialization_script(nonce: &str) -> String {
   let unchanged = 0;
   let previousCount = 0;
   let expectedCount = Number(sessionStorage.getItem(expectedCountKey)) || 0;
+  let countSource = sessionStorage.getItem("janeFacebookCountSource") || "";
+  let countConflict = sessionStorage.getItem("janeFacebookCountConflict") === "true";
   let attempts = Number(sessionStorage.getItem(attemptsKey)) || 0;
   const startedAt = Number(sessionStorage.getItem(startedAtKey)) || Date.now();
   sessionStorage.setItem(startedAtKey, String(startedAt));
@@ -113,11 +238,29 @@ pub fn initialization_script(nonce: &str) -> String {
   let pending = [];
   let nextSequence = 0;
   let awaitingSequence = 0;
+  let endConfirmed = false;
+  let lastRelevantMutationAt = Date.now();
+  let scheduledScan = 0;
+  const scheduleScan = (delay = 100) => {{
+    if (finished || scheduledScan) return;
+    scheduledScan = setTimeout(() => {{ scheduledScan = 0; scan(); }}, delay);
+  }};
   const send = (value) => {{
     const bytes = new TextEncoder().encode(JSON.stringify(value));
     let binary = "";
     for (const byte of bytes) binary += String.fromCharCode(byte);
     document.title = prefix + btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  }};
+  window[refreshFunctionKey] = (requestId, photoId) => {{
+    if (!/^[a-f0-9]{{32}}$/i.test(requestId || "") || !/^[0-9]{{5,30}}$/.test(photoId || "")) return false;
+    const albumSet = sessionStorage.getItem(albumSetKey) || new URL(location.href).searchParams.get("set") || "";
+    if (!albumSet.startsWith("pcb.")) return false;
+    sessionStorage.setItem(pendingRefreshKey, JSON.stringify({{requestId,photoId}}));
+    const target = new URL("/photo/", location.href);
+    target.searchParams.set("fbid", photoId);
+    target.searchParams.set("set", albumSet);
+    location.replace(target.href);
+    return true;
   }};
   const readPageTitle = () => {{
     const current = document.title || "";
@@ -147,8 +290,7 @@ pub fn initialization_script(nonce: &str) -> String {
     const sources = [
       {{value: readPageTitle(), includeUnqualifiedCounts: !onAlbumPage}},
       {{value: document.querySelector('meta[property="og:title"]')?.content || "", includeUnqualifiedCounts: !onAlbumPage}},
-      {{value: document.querySelector('meta[property="og:description"]')?.content || "", includeUnqualifiedCounts: !onAlbumPage}},
-      {{value: document.body?.innerText || "", includeUnqualifiedCounts: !onAlbumPage}}
+      {{value: document.querySelector('meta[property="og:description"]')?.content || "", includeUnqualifiedCounts: !onAlbumPage}}
     ];
     for (const heading of document.querySelectorAll('h1, h2, [role="heading"]')) {{
       sources.push({{value: heading.innerText || "", includeUnqualifiedCounts: !onAlbumPage}});
@@ -158,18 +300,19 @@ pub fn initialization_script(nonce: &str) -> String {
         .filter(Boolean).join(" ");
       if (/photo|image|picture/i.test(label)) sources.push({{value: label, includeUnqualifiedCounts: false}});
     }}
-    let expected = sources.reduce((largest, source) => Math.max(
-      largest,
+    const exactCounts = new Set(sources.map((source) =>
       photoCountFromText(source.value, source.includeUnqualifiedCounts)
-    ), 0);
-    const galleryLinks = Array.from(document.querySelectorAll('a[href*="fbid="]'));
+    ).filter(Boolean));
+    const exact = exactCounts.size === 1 ? [...exactCounts][0] : 0;
+    let lowerBound = 0;
+    const galleryLinks = Array.from(document.querySelectorAll('a[href*="fbid="][href*="set=pcb."]'));
     if (galleryLinks.length === 4 || galleryLinks.length === 5) {{
       const overlayText = (galleryLinks[galleryLinks.length - 1].innerText || "")
         .replace(/\s+/g, "").trim();
       const remaining = /^\+(\d{{1,3}})$/.exec(overlayText);
-      if (remaining) expected = Math.max(expected, galleryLinks.length + Number(remaining[1]) - 1);
+      if (remaining) lowerBound = galleryLinks.length + Number(remaining[1]) - 1;
     }}
-    return expected;
+    return {{count:Math.max(exact,lowerBound),source:exact ? "page-count" : lowerBound ? "overlay-minimum" : "",conflict:exactCounts.size > 1 || (exact > 0 && lowerBound > exact)}};
   }};
   const isCdn = (value) => {{
     try {{ const host = new URL(value, location.href).hostname.toLowerCase(); return host.endsWith(".fbcdn.net") || host === "fbcdn.net" || host.endsWith(".fbsbx.com") || host === "fbsbx.com"; }} catch (_) {{ return false; }}
@@ -184,7 +327,9 @@ pub fn initialization_script(nonce: &str) -> String {
       if (parts[0] && isCdn(parts[0])) candidates.push({{url: parts[0], width: parseInt(parts[1] || "0", 10) || 0}});
     }}
     candidates.sort((a, b) => b.width - a.width);
-    return candidates[0] || null;
+    if (!candidates.length) return null;
+    const unique = [...new Set(candidates.map((candidate) => candidate.url))];
+    return {{...candidates[0], alternates:unique.filter((url) => url !== candidates[0].url).slice(0,3)}};
   }};
   const hasVisiblePublicPhoto = () => {{
     if (new URL(location.href).pathname.toLowerCase().includes("/photo"))
@@ -193,6 +338,15 @@ pub fn initialization_script(nonce: &str) -> String {
       const rect = image.getBoundingClientRect();
       return rect.width >= 80 && rect.height >= 80 && chooseImage(image);
     }});
+  }};
+  const hasVideoPost = () => {{
+    const root = document.querySelector('[role="article"], article, main') || document;
+    const visibleVideo = Array.from(root.querySelectorAll('video')).some((video) => {{
+      const rect = video.getBoundingClientRect();
+      return rect.width >= 160 && rect.height >= 90
+        && (video.currentSrc || video.readyState > 0 || video.poster);
+    }});
+    return visibleVideo || !!document.querySelector('meta[property="og:video"], meta[property="og:video:url"]');
   }};
   const closeGuestPrompt = () => {{
     // Facebook also labels the photo viewer's close button "Close". Only
@@ -295,7 +449,7 @@ pub fn initialization_script(nonce: &str) -> String {
       }}
     }}
     if (!candidate || !/^[0-9]{{5,30}}$/.test(photoId)) return null;
-    return {{id:photoId,url:candidate.selected.url,width:candidate.selected.width}};
+    return {{id:photoId,url:candidate.selected.url,width:candidate.selected.width,alternates:candidate.selected.alternates}};
   }};
   const findNextPhotoUrl = () => {{
     const hasPhotosFrom = Array.from(document.querySelectorAll("a"))
@@ -360,14 +514,56 @@ pub fn initialization_script(nonce: &str) -> String {
     return true;
   }};
   const scan = () => {{
+    const refreshText = sessionStorage.getItem(pendingRefreshKey) || "";
+    if (refreshText) {{
+      let refresh = null;
+      try {{ refresh = JSON.parse(refreshText); }} catch (_) {{}}
+      if (!refresh || !/^[a-f0-9]{{32}}$/i.test(refresh.requestId || "")
+        || !/^[0-9]{{5,30}}$/.test(refresh.photoId || "")) {{
+        sessionStorage.removeItem(pendingRefreshKey);
+        return;
+      }}
+      const page = new URL(location.href);
+      if (!page.pathname.toLowerCase().includes("/photo")
+        || page.searchParams.get("fbid") !== refresh.photoId) {{
+        const albumSet = sessionStorage.getItem(albumSetKey) || page.searchParams.get("set") || "";
+        if (!albumSet.startsWith("pcb.")) {{
+          sessionStorage.removeItem(pendingRefreshKey);
+          send({{kind:"refresh",requestId:refresh.requestId,photos:[]}});
+          return;
+        }}
+        const target = new URL("/photo/", location.href);
+        target.searchParams.set("fbid", refresh.photoId);
+        target.searchParams.set("set", albumSet);
+        location.replace(target.href);
+        return;
+      }}
+      const refreshedPhoto = findCurrentViewerPhoto();
+      if (refreshedPhoto && refreshedPhoto.id === refresh.photoId) {{
+        sessionStorage.removeItem(pendingRefreshKey);
+        finished = true;
+        send({{kind:"refresh",requestId:refresh.requestId,photos:[refreshedPhoto]}});
+        return;
+      }}
+      scheduleScan(VIEWER_POLL_MS);
+      return;
+    }}
     if (finished) return;
     attempts += 1;
     sessionStorage.setItem(attemptsKey, String(attempts));
     if (awaitingSequence && window[ackKey] === awaitingSequence) awaitingSequence = 0;
     closeGuestPrompt();
     let captureMode = sessionStorage.getItem(captureModeKey) || "";
-    if (captureMode !== "viewer" || !expectedCount)
-      expectedCount = Math.max(expectedCount, discoverExpectedPhotoCount());
+    if (captureMode !== "viewer" || !expectedCount) {{
+      const evidence = discoverExpectedPhotoCount();
+      if (evidence.conflict || (countSource === "page-count" && evidence.source === "page-count" && expectedCount && evidence.count !== expectedCount)) countConflict = true;
+      if (evidence.count > expectedCount || (evidence.source === "page-count" && countSource !== "page-count")) {{
+        expectedCount = evidence.count;
+        countSource = evidence.source;
+      }}
+      sessionStorage.setItem("janeFacebookCountConflict", String(countConflict));
+      sessionStorage.setItem("janeFacebookCountSource", countSource);
+    }}
     if (expectedCount) sessionStorage.setItem(expectedCountKey, String(expectedCount));
     if (Date.now() - startedAt >= MAX_CAPTURE_MS
       || (captureMode !== "viewer" && attempts >= MAX_ATTEMPTS)) {{
@@ -376,6 +572,11 @@ pub fn initialization_script(nonce: &str) -> String {
         ? `Facebook exposed only ${{scanned.size}} of ${{expectedCount}} public album photos before the capture timed out. No partial album was saved.`
         : `Facebook did not confirm the public album was complete after finding ${{scanned.size}} photos. No partial album was saved.`;
       send({{kind:"error",error}});
+      return;
+    }}
+    if (scanned.size > MAX_PHOTOS) {{
+      finished = true;
+      send({{kind:"error",error:"Facebook exposed more than the 500-photo capture limit. No partial album was saved."}});
       return;
     }}
     if (location.pathname.toLowerCase().includes("/login")) {{
@@ -404,7 +605,7 @@ pub fn initialization_script(nonce: &str) -> String {
         sessionStorage.setItem(scannedIdsKey, JSON.stringify(Array.from(scanned)));
         if (expectedCount) sessionStorage.setItem(expectedCountKey, String(expectedCount));
         startPhoto.anchor.click();
-        setTimeout(scan, VIEWER_POLL_MS);
+        scheduleScan(VIEWER_POLL_MS);
         return;
       }}
       if (!onAlbumPage) {{
@@ -419,12 +620,17 @@ pub fn initialization_script(nonce: &str) -> String {
           return;
         }}
       }}
+      if (attempts >= 3 && !startPhoto && !findAlbumSet() && hasVideoPost()) {{
+        finished = true;
+        send({{kind:"video",title:pageTitle()}});
+        return;
+      }}
     }}
     if (captureMode === "viewer") {{
       if (!location.pathname.toLowerCase().includes("/photo")) {{
         const startPhoto = findAlbumStartPhoto();
         if (startPhoto && hasVisiblePublicPhoto()) startPhoto.anchor.click();
-        setTimeout(scan, VIEWER_POLL_MS);
+        scheduleScan(VIEWER_POLL_MS);
         return;
       }}
       const savedTitle = sessionStorage.getItem("janeFacebookCaptureTitle");
@@ -433,7 +639,7 @@ pub fn initialization_script(nonce: &str) -> String {
       if (currentPhoto) {{
         if (navigatingFromId === currentPhoto.id
           || (!scanned.has(currentPhoto.id) && currentPhoto.url === lastViewerImageUrl)) {{
-          setTimeout(scan, VIEWER_POLL_MS);
+          scheduleScan(VIEWER_POLL_MS);
           return;
         }}
         navigatingFromId = "";
@@ -444,25 +650,37 @@ pub fn initialization_script(nonce: &str) -> String {
           sessionStorage.setItem(viewerImageKey, lastViewerImageUrl);
           pending.push(currentPhoto);
         }}
+        if (scanned.size === previousCount) unchanged += 1;
+        else unchanged = 0;
+        previousCount = scanned.size;
         if (pending.length && awaitingSequence === 0) {{
           awaitingSequence = ++nextSequence;
           send({{kind:"photos",sequence:awaitingSequence,photos:pending.splice(0,1),title}});
         }}
-        const reachedExpectedCount = expectedCount > 0 && scanned.size === expectedCount;
-        if (reachedExpectedCount && pending.length === 0 && awaitingSequence === 0) {{
-          finished = true;
-          send({{kind:"done",count:scanned.size,expectedCount,title}});
-          return;
-        }}
-        if (pending.length === 0 && awaitingSequence === 0 && expectedCount > scanned.size) {{
+        if (pending.length === 0 && awaitingSequence === 0) {{
           const nextPhotoUrl = findNextPhotoUrl();
           if (nextPhotoUrl === "clicked") {{
             navigatingFromId = currentPhoto.id;
-            setTimeout(scan, VIEWER_POLL_MS);
+            scheduleScan(VIEWER_POLL_MS);
             return;
           }}
           if (nextPhotoUrl) {{
-            location.replace(nextPhotoUrl);
+            const nextId = new URL(nextPhotoUrl).searchParams.get("fbid") || "";
+            if (nextId && scanned.has(nextId)) endConfirmed = true;
+            else {{ location.replace(nextPhotoUrl); return; }}
+          }}
+          if (!nextPhotoUrl && unchanged >= 3 && Date.now() - lastRelevantMutationAt >= 2500)
+            endConfirmed = true;
+          if (endConfirmed && !countConflict && scanned.size >= 2
+            && expectedCount > 0
+            && (countSource !== "page-count" || scanned.size === expectedCount)
+            && scanned.size >= expectedCount) {{
+            if (countSource !== "page-count") {{
+              expectedCount = scanned.size;
+              countSource = "viewer-end";
+            }}
+            finished = true;
+            send({{kind:"done",count:scanned.size,expectedCount,countSource,endConfirmed,countConflict,title}});
             return;
           }}
         }}
@@ -479,7 +697,7 @@ pub fn initialization_script(nonce: &str) -> String {
         const selected = image && chooseImage(image);
         if (!selected) continue;
         scanned.add(photoId);
-        pending.push({{id:photoId,url:selected.url,width:selected.width}});
+        pending.push({{id:photoId,url:selected.url,width:selected.width,alternates:selected.alternates}});
       }}
       if (scanned.size) sessionStorage.setItem(scannedIdsKey, JSON.stringify(Array.from(scanned)));
       if (pending.length && awaitingSequence === 0) {{
@@ -507,18 +725,44 @@ pub fn initialization_script(nonce: &str) -> String {
         if (isDocumentScroller) window.scrollTo(0, probeTop);
         else scroller.scrollTop = probeTop;
       }}
-      const reachedExpectedCount = expectedCount > 0 && scanned.size === expectedCount;
-      if (reachedExpectedCount && pending.length === 0 && awaitingSequence === 0) {{
+      endConfirmed = atBottom && !expanded && unchanged >= BOTTOM_PROBE_INTERVAL
+        && Date.now() - lastRelevantMutationAt >= 2500;
+      if (endConfirmed && !countConflict && pending.length === 0 && awaitingSequence === 0
+        && scanned.size >= 2 && expectedCount > 0 && scanned.size >= expectedCount
+        && (countSource !== "page-count" || scanned.size === expectedCount)) {{
+        if (countSource !== "page-count") {{
+          expectedCount = scanned.size;
+          countSource = "grid-end";
+        }}
         finished = true;
-        if (scanned.size >= 2) send({{kind:"done",count:scanned.size,expectedCount,title}});
-        else send({{kind:"error",error:"No multi-photo album was visible to a logged-out visitor."}});
+        send({{kind:"done",count:scanned.size,expectedCount,countSource,endConfirmed,countConflict,title}});
         return;
       }}
     }}
-    setTimeout(scan, captureMode === "viewer" ? VIEWER_POLL_MS : 1000);
+    if (awaitingSequence) scheduleScan(VIEWER_POLL_MS);
   }};
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => setTimeout(scan, 1000), {{once:true}});
-  else setTimeout(scan, 1000);
+  const observe = () => {{
+    const observer = new MutationObserver(() => {{
+      lastRelevantMutationAt = Date.now();
+      scheduleScan(100);
+    }});
+    observer.observe(document.body, {{childList:true,subtree:true,attributes:true,attributeFilter:["src","srcset","href","aria-label"]}});
+    window.addEventListener("popstate", () => scheduleScan(100));
+    window.addEventListener("hashchange", () => scheduleScan(100));
+    window.addEventListener("load", () => scheduleScan(100), true);
+    for (const name of ["pushState", "replaceState"]) {{
+      const original = history[name];
+      history[name] = function(...args) {{
+        const result = original.apply(this, args);
+        scheduleScan(100);
+        return result;
+      }};
+    }}
+    setInterval(() => scheduleScan(100), 1000);
+    scheduleScan(100);
+  }};
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", observe, {{once:true}});
+  else observe();
 }})();"#
     )
 }
@@ -528,11 +772,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn album_order_survives_id_deduplication_and_better_renditions() {
+        let mut captured = CaptureAccumulator::default();
+        for (id, width) in [("30", 640), ("10", 640), ("30", 1080), ("20", 640)] {
+            captured.add_photo(FacebookPhoto {
+                id: id.into(),
+                url: format!("https://scontent.fbcdn.net/{id}-{width}.jpg"),
+                width,
+                alternates: Vec::new(),
+            });
+        }
+        let photos = captured.ordered_photos();
+        assert_eq!(
+            photos
+                .iter()
+                .map(|photo| photo.id.as_str())
+                .collect::<Vec<_>>(),
+            ["30", "10", "20"]
+        );
+        assert_eq!(photos[0].width, 1080);
+    }
+
+    #[test]
     fn only_facebook_post_links_are_accepted() {
         assert!(validate_post_url("https://www.facebook.com/share/p/abc123/").is_ok());
         assert!(validate_post_url("https://www.facebook.com/groups/42/permalink/123/").is_ok());
         assert!(validate_post_url("http://www.facebook.com/share/p/abc123/").is_err());
         assert!(validate_post_url("https://example.com/posts/123").is_err());
+    }
+
+    #[test]
+    fn direct_video_conversion_requires_a_video_intent_and_container() {
+        assert!(is_video_conversion_intent("Video", "mp4"));
+        assert!(is_video_conversion_intent("Video", "source"));
+        assert!(!is_video_conversion_intent("Image", "mp4"));
+        assert!(!is_video_conversion_intent("Video", "mp3"));
     }
 
     #[test]
@@ -558,17 +832,60 @@ mod tests {
     }
 
     #[test]
+    fn rendition_refresh_messages_keep_the_request_and_photo_identity() {
+        let encoded = URL_SAFE_NO_PAD.encode(
+            br#"{"kind":"refresh","requestId":"0123456789abcdef0123456789abcdef","photos":[{"id":"123456789","url":"https://scontent.fbcdn.net/photo.jpg","width":1200,"alternates":[]}]}"#,
+        );
+        let title = format!("__JANE_FACEBOOK_CAPTURE__session-1__{encoded}");
+        let message = message_from_title(&title, "session-1").unwrap();
+        assert_eq!(message.kind, "refresh");
+        assert_eq!(message.request_id, "0123456789abcdef0123456789abcdef");
+        assert_eq!(message.photos[0].id, "123456789");
+        assert!(validate_photo_url(&message.photos[0].url));
+        assert_eq!(
+            refreshed_candidate_urls(&message, "123456789"),
+            ["https://scontent.fbcdn.net/photo.jpg"]
+        );
+        assert!(refreshed_candidate_urls(&message, "987654321").is_empty());
+    }
+
+    #[test]
+    fn album_completion_requires_matching_count_acknowledged_items_and_end_evidence() {
+        let mut message: PageMessage = serde_json::from_value(serde_json::json!({
+            "kind": "done",
+            "count": 3,
+            "expectedCount": 3,
+            "countSource": "page-count",
+            "endConfirmed": true
+        }))
+        .unwrap();
+        assert!(validate_completion(&message, 3).is_ok());
+        assert!(validate_completion(&message, 2).is_err());
+        message.end_confirmed = false;
+        assert!(validate_completion(&message, 3).is_err());
+        message.end_confirmed = true;
+        message.count_conflict = true;
+        assert!(validate_completion(&message, 3).is_err());
+        message.count_conflict = false;
+        message.expected_count = Some(4);
+        assert!(validate_completion(&message, 3).is_err());
+    }
+
+    #[test]
     fn remote_capture_script_has_no_tauri_command_bridge() {
         let script = initialization_script("session-1");
         assert!(!script.contains("__TAURI__"));
         assert!(!script.contains("fetch("));
         assert!(script.contains("__JANE_FACEBOOK_CAPTURE__"));
         assert!(script.contains("__JANE_FACEBOOK_ACK__"));
+        assert!(script.contains("janeFacebookPendingRenditionRefresh"));
+        assert!(script.contains("__JANE_FACEBOOK_REFRESH__"));
+        assert!(script.contains("kind:\"refresh\""));
         assert!(script.contains("pending.splice(0,2)"));
         assert!(script.contains("awaitingSequence === 0"));
         assert!(script.contains("findAlbumScroller"));
         assert!(script.contains("discoverExpectedPhotoCount"));
-        assert!(script.contains("const MAX_ATTEMPTS = 180"));
+        assert!(script.contains("const MAX_ATTEMPTS = 1800"));
         assert!(script.contains("const BOTTOM_PROBE_INTERVAL = 4"));
         assert!(script.contains("clickPhotoExpansionControl"));
         assert!(script.contains("expectedCount > scanned.size"));

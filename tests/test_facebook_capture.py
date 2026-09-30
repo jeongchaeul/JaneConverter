@@ -40,14 +40,15 @@ class _Response:
 
 
 class _Session:
-    def __init__(self, response_type: str = "image/jpeg"):
+    def __init__(self, response_type: str = "image/jpeg", body: bytes | None = None):
         self.headers = {}
         self.response_type = response_type
+        self.body = body if body is not None else _jpeg_bytes()
         self.requested = []
 
     def get(self, url: str, **_kwargs):
         self.requested.append(url)
-        return _Response(url, _jpeg_bytes(), self.response_type)
+        return _Response(url, self.body, self.response_type)
 
     def close(self):
         return None
@@ -149,12 +150,152 @@ def test_manifest_never_follows_redirects_outside_facebook_cdn(tmp_path, monkeyp
     assert session.requested == ["https://scontent-1.xx.fbcdn.net/high.jpg"]
 
 
-def test_failed_image_validation_removes_staging_without_partial_album(tmp_path, monkeypatch):
+def test_response_label_does_not_override_decoded_image_format(tmp_path, monkeypatch):
     session = _Session(response_type="text/html")
     monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session)
 
-    with pytest.raises(RuntimeError, match="unsupported image type"):
+    result = facebook_capture.download_facebook_photo_manifest(_manifest(), str(tmp_path))
+
+    assert result["photo_count"] == 2
+    assert len(list((tmp_path / "Public album").glob("*.jpg"))) == 2
+
+
+def test_failed_image_validation_removes_staging_without_partial_album(tmp_path, monkeypatch):
+    session = _Session(response_type="image/jpeg", body=b"<html>not a photo</html>")
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session)
+
+    with pytest.raises(RuntimeError, match="could not be downloaded or decoded"):
         facebook_capture.download_facebook_photo_manifest(_manifest(), str(tmp_path))
 
     assert not list(tmp_path.glob(".facebook-album-*"))
     assert not (tmp_path / "Public album").exists()
+
+
+def test_expired_rendition_uses_observed_alternate_in_same_album(tmp_path, monkeypatch):
+    class RecoveringSession(_Session):
+        def get(self, url: str, **kwargs):
+            if url.endswith("high.jpg"):
+                self.requested.append(url)
+                return _Response(url, b"expired", "text/html")
+            return super().get(url, **kwargs)
+
+    session = RecoveringSession()
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session)
+    manifest = _manifest()
+    result = facebook_capture.download_facebook_photo_manifest(manifest, str(tmp_path))
+
+    assert result["photo_count"] == 2
+    assert session.requested[:2] == [
+        "https://scontent-1.xx.fbcdn.net/high.jpg",
+        "https://scontent-1.xx.fbcdn.net/low.jpg",
+    ]
+
+
+def test_expired_renditions_refresh_once_from_the_active_capture(tmp_path, monkeypatch):
+    class RefreshingSession(_Session):
+        def get(self, url: str, **kwargs):
+            self.requested.append(url)
+            if "refreshed.jpg" not in url and not url.endswith("second.jpg"):
+                return _Response(url, b"expired", "text/html")
+            return _Response(url, _jpeg_bytes())
+
+    session = RefreshingSession()
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session)
+    refresh_requests = []
+
+    def refresh(photo_id: str) -> list[str]:
+        refresh_requests.append(photo_id)
+        return [f"https://scontent-1.xx.fbcdn.net/{photo_id}-refreshed.jpg"]
+
+    result = facebook_capture.download_facebook_photo_manifest(
+        _manifest(),
+        str(tmp_path),
+        refresh_candidates=refresh,
+    )
+
+    assert result["photo_count"] == 2
+    assert refresh_requests == ["123456"]
+    assert session.requested[:3] == [
+        "https://scontent-1.xx.fbcdn.net/high.jpg",
+        "https://scontent-1.xx.fbcdn.net/low.jpg",
+        "https://scontent-1.xx.fbcdn.net/123456-refreshed.jpg",
+    ]
+
+
+def test_rendition_refresh_ignores_urls_outside_facebook_cdn(tmp_path, monkeypatch):
+    class RefreshingSession(_Session):
+        def get(self, url: str, **kwargs):
+            self.requested.append(url)
+            if "refreshed.jpg" in url or url.endswith("second.jpg"):
+                return _Response(url, _jpeg_bytes())
+            return _Response(url, b"expired", "text/html")
+
+    session = RefreshingSession()
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session)
+
+    result = facebook_capture.download_facebook_photo_manifest(
+        _manifest(),
+        str(tmp_path),
+        refresh_candidates=lambda _photo_id: [
+            "https://example.test/forbidden.jpg",
+            "https://scontent-1.xx.fbcdn.net/refreshed.jpg",
+        ],
+    )
+
+    assert result["photo_count"] == 2
+    assert "https://example.test/forbidden.jpg" not in session.requested
+    assert "https://scontent-1.xx.fbcdn.net/refreshed.jpg" in session.requested
+
+
+def test_rendition_refresh_is_bounded_across_the_album(tmp_path, monkeypatch):
+    class RefreshingSession(_Session):
+        def get(self, url: str, **kwargs):
+            self.requested.append(url)
+            if "refreshed.jpg" in url:
+                return _Response(url, _jpeg_bytes())
+            if url.endswith("photo-8.jpg"):
+                return _Response(url, b"expired", "text/html")
+            return _Response(url, b"expired", "text/html")
+
+    session = RefreshingSession()
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session)
+    manifest = {
+        "title": "Bounded refresh",
+        "photos": [
+            {"id": str(100000 + index), "url": f"https://scontent.xx.fbcdn.net/photo-{index}.jpg"}
+            for index in range(facebook_capture.MAX_RENDITION_REFRESHES + 1)
+        ],
+    }
+    refreshed = []
+
+    def refresh(photo_id: str) -> list[str]:
+        refreshed.append(photo_id)
+        return [f"https://scontent.xx.fbcdn.net/{photo_id}-refreshed.jpg"]
+
+    with pytest.raises(RuntimeError, match="No partial album was saved"):
+        facebook_capture.download_facebook_photo_manifest(
+            manifest,
+            str(tmp_path),
+            refresh_candidates=refresh,
+        )
+
+    assert len(refreshed) == facebook_capture.MAX_RENDITION_REFRESHES
+    assert not (tmp_path / "Bounded refresh").exists()
+    assert not list(tmp_path.glob(".facebook-album-*"))
+
+
+def test_second_photo_failure_never_publishes_the_first(tmp_path, monkeypatch):
+    class PartialSession(_Session):
+        def get(self, url: str, **kwargs):
+            if url.endswith("second.jpg"):
+                self.requested.append(url)
+                return _Response(url, b"expired", "image/jpeg")
+            return super().get(url, **kwargs)
+
+    session = PartialSession()
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session)
+    with pytest.raises(RuntimeError, match="No partial album was saved"):
+        facebook_capture.download_facebook_photo_manifest(_manifest(), str(tmp_path))
+
+    assert not (tmp_path / "Public album").exists()
+    assert not list(tmp_path.glob(".facebook-album-*"))

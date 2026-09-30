@@ -225,6 +225,8 @@ def process_conversion(
     browser_media_path: Optional[str] = None,
     facebook_photo_manifest: Optional[Dict[str, Any]] = None,
     social_photo_manifest: Optional[Dict[str, Any]] = None,
+    facebook_refresh_candidates: Optional[Callable[[str], list[str]]] = None,
+    allow_lossless_png_recovery: bool = False,
 ) -> str:
     """
     Orchestrates downloading/extracting stream, embedding cover art, exporting credits,
@@ -283,6 +285,7 @@ def process_conversion(
             abort_event=abort_event,
             target_format=photo_format,
             quality=bitrate if photo_format else "best",
+            refresh_candidates=facebook_refresh_candidates,
         )
         report(1.0, f"Downloaded all {album['photo_count']} public Facebook photos.")
         print("\n" + "=" * 60)
@@ -318,7 +321,7 @@ def process_conversion(
 
     print("=" * 60)
     print("[*] JANECONVERTER PIPELINE")
-    print(f"Source: {source}")
+    print(f"Source: {'Online media' if is_url(source) else 'Local file'}")
     print(f"Target Format: {target_format.upper()}")
     print(f"Output Directory: {output_dir}")
     print(f"Hardware Acceleration: {active_gpu} [{gpu_desc}]")
@@ -411,7 +414,8 @@ def process_conversion(
             metadata=metadata,
             cover_path=cover_path if save_cover_art else None,
             abort_event=abort_event,
-            progress_callback=report
+            progress_callback=report,
+            allow_lossless_png_recovery=allow_lossless_png_recovery,
         )
 
         report(1.0, f"Ready! File exported to: {os.path.basename(result_path)}")
@@ -609,6 +613,7 @@ def process_playlist_conversion(
                     shutil.rmtree(track_work_dir, ignore_errors=True)
                 raise
 
+        conversion_started = False
         try:
             stream_info = _retry_operation(fetch_attempt, f"Track #{idx} download", max_retries)
 
@@ -649,6 +654,7 @@ def process_playlist_conversion(
             if stream_info.get("description"):
                 metadata["comment"] = stream_info["description"][:1000]
 
+            conversion_started = True
             result_path = _retry_operation(
                 lambda: convert_media(
                     input_path=input_media,
@@ -667,7 +673,7 @@ def process_playlist_conversion(
                     progress_callback=item_progress_hook
                 ),
                 f"Track #{idx} conversion",
-                max_retries
+                0  # convert_media already selects and bounds distinct recovery methods
             )
 
             converted_files.append(result_path)
@@ -683,7 +689,7 @@ def process_playlist_conversion(
                 "index": idx,
                 "title": raw_title,
                 "error": str(e),
-                "attempts": max_retries + 1,
+                "attempts": 1 if conversion_started else max_retries + 1,
             })
             consecutive_failures += 1
             print(f"[!] Error converting track #{idx} '{raw_title}': {e}")
@@ -856,6 +862,7 @@ def main():
     parser.add_argument("--normalize", "-n", action="store_true", help="Apply EBU R128 loudness normalization")
     parser.add_argument("--resolution", default="original", help="Video resolution (original, 4k, 1440p, 1080p, 720p, 480p)")
     parser.add_argument("--no-gpu", action="store_true", help="Disable hardware GPU acceleration (use multi-core CPU libx264)")
+    parser.add_argument("--allow-lossless-png-recovery", action="store_true", help="If source image validation fails, allow a validated PNG output and show the format change")
     parser.add_argument("--keep-temp", action="store_true", help="Keep intermediate downloaded stream files in temp directory")
     parser.add_argument("--playlist", "-p", action="store_true", help="Force treat input source as playlist")
     parser.add_argument("--list-playlist", action="store_true", help="List playlist entries for a graphical frontend and exit")
@@ -878,6 +885,7 @@ def main():
     )
     parser.add_argument("--browser-media-path", help=argparse.SUPPRESS)
     parser.add_argument("--facebook-photo-manifest-stdin", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--facebook-capture-id", help=argparse.SUPPRESS)
     parser.add_argument("--social-photo-manifest-stdin", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-update", action="store_true", help="Skip the read-only yt-dlp update availability check on startup")
     parser.add_argument("--check-updates", action="store_true", help=argparse.SUPPRESS)
@@ -903,14 +911,14 @@ def main():
         if args.playlist or args.list_playlist:
             parser.error("Facebook photo manifests cannot be combined with playlist mode.")
         try:
-            facebook_photo_manifest = json.load(sys.stdin)
+            facebook_photo_manifest = json.loads(sys.stdin.readline())
         except (json.JSONDecodeError, OSError) as error:
             parser.error(f"Could not read the Facebook photo manifest: {error}")
     if args.social_photo_manifest_stdin:
         if args.playlist or args.list_playlist or facebook_photo_manifest is not None:
             parser.error("Social photo manifests cannot be combined with playlist mode or Facebook photo manifests.")
         try:
-            social_photo_manifest = json.load(sys.stdin)
+            social_photo_manifest = json.loads(sys.stdin.readline())
         except (json.JSONDecodeError, OSError) as error:
             parser.error(f"Could not read the social photo manifest: {error}")
     if args.check_engine_updates:
@@ -1001,6 +1009,30 @@ def main():
             sys.exit(1)
     else:
         args.browser_session = normalize_browser_session(args.browser_session)
+        refresh_callback = None
+        if facebook_photo_manifest is not None and args.facebook_capture_id:
+            def request_facebook_refresh(photo_id: str) -> list[str]:
+                request_id = uuid.uuid4().hex
+                print(
+                    f"__JANE_FB_REFRESH__{request_id}\t{photo_id}",
+                    flush=True,
+                )
+                response_line = sys.stdin.readline()
+                if not response_line:
+                    return []
+                try:
+                    response = json.loads(response_line)
+                except json.JSONDecodeError:
+                    return []
+                if not isinstance(response, dict) or response.get("requestId") != request_id:
+                    return []
+                urls = response.get("urls")
+                if not isinstance(urls, list):
+                    return []
+                return [url for url in urls[:4] if isinstance(url, str)]
+
+            refresh_callback = request_facebook_refresh
+
         process_conversion(
             source=args.source,
             output_dir=args.output,
@@ -1019,6 +1051,8 @@ def main():
             browser_media_path=args.browser_media_path,
             facebook_photo_manifest=facebook_photo_manifest,
             social_photo_manifest=social_photo_manifest,
+            facebook_refresh_candidates=refresh_callback,
+            allow_lossless_png_recovery=args.allow_lossless_png_recovery,
         )
 
 if __name__ == "__main__":

@@ -466,6 +466,7 @@ pub fn settings_get_internal() -> ConverterSettings {
         use_gpu: parse_bool(&values, "use_gpu", gpu_available),
         save_cover: parse_bool(&values, "save_cover", true),
         save_metadata: parse_bool(&values, "save_metadata", true),
+        allow_png_fallback: parse_bool(&values, "allow_png_fallback", false),
         retries: values
             .get("retries")
             .and_then(|value| value.parse().ok())
@@ -500,6 +501,14 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
         (
             "save_metadata",
             if settings.save_metadata {
+                "true"
+            } else {
+                "false"
+            },
+        ),
+        (
+            "allow_png_fallback",
+            if settings.allow_png_fallback {
                 "true"
             } else {
                 "false"

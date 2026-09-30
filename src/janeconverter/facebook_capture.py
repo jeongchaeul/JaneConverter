@@ -21,10 +21,14 @@ MAX_IMAGE_BYTES = 100 * 1024 * 1024
 MAX_ALBUM_BYTES = 2 * 1024 * 1024 * 1024
 PHOTO_ID_RE = re.compile(r"^[0-9]{5,30}$")
 IMAGE_EXTENSIONS = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
+    "JPEG": ".jpg",
+    "PNG": ".png",
+    "WEBP": ".webp",
+    "GIF": ".gif",
+    "AVIF": ".avif",
 }
+MAX_RENDITIONS = 4
+MAX_RENDITION_REFRESHES = 8
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 MAX_REDIRECTS = 5
 
@@ -75,6 +79,7 @@ def download_facebook_photo_manifest(
     abort_event: Optional[Any] = None,
     target_format: Optional[str] = None,
     quality: str = "best",
+    refresh_candidates: Optional[Callable[[str], list[str]]] = None,
 ) -> dict[str, Any]:
     """Download every unique, guest-visible photo in a validated browser manifest."""
     if not isinstance(manifest, dict):
@@ -95,10 +100,20 @@ def download_facebook_photo_manifest(
         photo = {
             "url": _public_photo_url(item.get("url")),
             "width": max(0, min(int(item.get("width", 0)), 20_000)),
+            "alternates": [
+                _public_photo_url(url) for url in item.get("alternates", [])[:MAX_RENDITIONS - 1]
+            ] if isinstance(item.get("alternates", []), list) else [],
         }
         existing = photos.get(photo_id)
-        if existing is None or photo["width"] > existing["width"]:
+        if existing is None:
             photos[photo_id] = photo
+        else:
+            candidates = [existing["url"], photo["url"], *existing["alternates"], *photo["alternates"]]
+            if photo["width"] > existing["width"]:
+                existing["url"], existing["width"] = photo["url"], photo["width"]
+            existing["alternates"] = [
+                url for url in dict.fromkeys(candidates) if url != existing["url"]
+            ][:MAX_RENDITIONS - 1]
 
     if len(photos) < 2:
         raise RuntimeError("Facebook exposed fewer than two unique photos.")
@@ -115,53 +130,95 @@ def download_facebook_photo_manifest(
         target_dir = os.path.join(parent, f"{title} ({suffix})")
         suffix += 1
 
+    supported_formats = set(Image.registered_extensions().values())
+    accept = "image/webp,image/png,image/jpeg,image/gif"
+    if "AVIF" in supported_formats:
+        accept = "image/avif," + accept
     session = requests.Session()
     session.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
         ),
-        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Accept": accept,
     })
     staging_dir = tempfile.mkdtemp(prefix=".facebook-album-", dir=parent)
     total_bytes = 0
+    remaining_refreshes = MAX_RENDITION_REFRESHES
+    refreshed_photo_ids: set[str] = set()
 
     def report(progress: float, message: str) -> None:
         if progress_callback:
             progress_callback(progress, message)
 
     try:
-        for index, photo in enumerate(photos.values(), start=1):
+        for index, (photo_id, photo) in enumerate(photos.items(), start=1):
             if abort_event and abort_event.is_set():
                 raise KeyboardInterrupt("Facebook photo download aborted by user.")
             report(0.05 + 0.9 * ((index - 1) / len(photos)), f"Downloading Facebook photo {index} of {len(photos)}...")
-            with _get_public_photo(session, photo["url"]) as response:
-                response.raise_for_status()
-                _public_photo_url(response.url)
-                content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
-                extension = IMAGE_EXTENSIONS.get(content_type)
-                if not extension:
-                    raise RuntimeError(f"Facebook returned an unsupported image type for photo {index}.")
-                length = response.headers.get("Content-Length")
-                if length and int(length) > MAX_IMAGE_BYTES:
-                    raise RuntimeError(f"Facebook photo {index} is larger than the 100 MB per-image limit.")
-
-                image_path = os.path.join(staging_dir, f"{title}_{index:03d}{extension}")
-                image_bytes = 0
-                with open(image_path, "wb") as image_file:
-                    for chunk in response.iter_content(chunk_size=256 * 1024):
-                        if not chunk:
-                            continue
-                        image_bytes += len(chunk)
-                        total_bytes += len(chunk)
-                        if image_bytes > MAX_IMAGE_BYTES:
+            candidates = list(dict.fromkeys([photo["url"], *photo["alternates"]]))[:MAX_RENDITIONS]
+            attempted: set[str] = set()
+            last_error: Optional[BaseException] = None
+            while True:
+                candidate = next((url for url in candidates if url not in attempted), None)
+                if candidate is None:
+                    if (
+                        refresh_candidates is not None
+                        and remaining_refreshes > 0
+                        and photo_id not in refreshed_photo_ids
+                    ):
+                        remaining_refreshes -= 1
+                        refreshed_photo_ids.add(photo_id)
+                        refreshed = refresh_candidates(photo_id)
+                        if not isinstance(refreshed, list):
+                            raise RuntimeError("Facebook returned an invalid rendition refresh response.")
+                        fresh_urls = []
+                        for url in refreshed[:MAX_RENDITIONS]:
+                            try:
+                                fresh_urls.append(_public_photo_url(url))
+                            except (TypeError, ValueError):
+                                continue
+                        candidates.extend(url for url in fresh_urls if url not in candidates)
+                        continue
+                    raise RuntimeError(
+                        f"Facebook photo {index} could not be downloaded or decoded from its available renditions. No partial album was saved."
+                    ) from last_error
+                attempted.add(candidate)
+                image_path = os.path.join(staging_dir, f"{title}_{index:03d}.download")
+                try:
+                    with _get_public_photo(session, candidate) as response:
+                        response.raise_for_status()
+                        _public_photo_url(response.url)
+                        length = response.headers.get("Content-Length")
+                        if length and int(length) > MAX_IMAGE_BYTES:
                             raise RuntimeError(f"Facebook photo {index} is larger than the 100 MB per-image limit.")
-                        if total_bytes > MAX_ALBUM_BYTES:
-                            raise RuntimeError("The Facebook album exceeds the 2 GB total download limit.")
-                        image_file.write(chunk)
-                with Image.open(image_path) as image:
-                    image.verify()
-                convert_image_format(image_path, target_format, quality)
+                        image_bytes = 0
+                        with open(image_path, "wb") as image_file:
+                            for chunk in response.iter_content(chunk_size=256 * 1024):
+                                if abort_event and abort_event.is_set():
+                                    raise KeyboardInterrupt("Facebook photo download aborted by user.")
+                                if not chunk:
+                                    continue
+                                image_bytes += len(chunk)
+                                total_bytes += len(chunk)
+                                if image_bytes > MAX_IMAGE_BYTES:
+                                    raise RuntimeError(f"Facebook photo {index} is larger than the 100 MB per-image limit.")
+                                if total_bytes > MAX_ALBUM_BYTES:
+                                    raise RuntimeError("The Facebook album exceeds the 2 GB total download limit.")
+                                image_file.write(chunk)
+                    with Image.open(image_path) as image:
+                        extension = IMAGE_EXTENSIONS.get(image.format or "")
+                        if not extension or image.width < 1 or image.height < 1:
+                            raise ValueError("unsupported image format")
+                        image.verify()
+                    verified_path = os.path.splitext(image_path)[0] + extension
+                    os.replace(image_path, verified_path)
+                    convert_image_format(verified_path, target_format, quality)
+                    break
+                except (requests.RequestException, OSError, ValueError) as error:
+                    last_error = error
+                    if os.path.exists(image_path):
+                        os.remove(image_path)
 
         os.replace(staging_dir, target_dir)
     except requests.RequestException as error:
