@@ -113,6 +113,19 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
+  it("offers image source PNG recovery only as an explicit advanced choice", async () => {
+    const view = renderView(undefined, undefined, undefined, null, undefined, { category: "Image", format: "source" });
+    expect(view.container.textContent).not.toContain("Allow PNG recovery");
+    const advanced = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.includes("Advanced settings"));
+    await act(async () => { advanced?.click(); await Promise.resolve(); });
+    const recovery = Array.from(view.container.querySelectorAll("label")).find((item) => item.textContent?.includes("Allow PNG recovery"));
+    expect(recovery?.textContent).toContain("show the format change");
+    await act(async () => { recovery?.querySelector("input")?.click(); await Promise.resolve(); });
+    expect(view.onSettings).toHaveBeenCalledWith(expect.objectContaining({ allowPngFallback: true }));
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
   it("unselects a preset and restores the prior manual settings", async () => {
     const view = renderView();
     const presetButton = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Studio Master");
@@ -212,6 +225,7 @@ describe("Converter account access feedback", () => {
       captureId: "12345678-1234-1234-1234-123456789abc",
       title: "Public album",
       photoCount: 9,
+      mediaKind: "photo",
     });
     const view = renderView(undefined, undefined, onStart);
     const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
@@ -221,7 +235,7 @@ describe("Converter account access feedback", () => {
       setter?.call(input, source);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent === "Download all photos");
+    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
 
     await act(async () => {
       button?.click();
@@ -231,6 +245,116 @@ describe("Converter account access feedback", () => {
     expect(bridge.captureFacebookAlbum).toHaveBeenCalledWith(source, expect.any(String));
     expect(onStart).toHaveBeenCalledWith(source, undefined, "12345678-1234-1234-1234-123456789abc");
 
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("releases the Facebook guest session if conversion cannot start", async () => {
+    const source = "https://www.facebook.com/share/p/1EpX6FjAuC/";
+    const onStart = vi.fn().mockResolvedValue(false);
+    bridge.captureFacebookAlbum.mockReset();
+    bridge.captureFacebookAlbum.mockResolvedValue({
+      captureId: "12345678-1234-1234-1234-123456789abc",
+      title: "Public album",
+      photoCount: 2,
+      mediaKind: "photo",
+    });
+    bridge.cancelFacebookAlbum.mockReset().mockResolvedValue(undefined);
+    const view = renderView(undefined, undefined, onStart);
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, source);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
+    await act(async () => {
+      button?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onStart).toHaveBeenCalledWith(source, undefined, "12345678-1234-1234-1234-123456789abc");
+    expect(bridge.cancelFacebookAlbum).toHaveBeenCalledWith(expect.any(String));
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("routes a Facebook video-only post through the existing video extractor", async () => {
+    const source = "https://www.facebook.com/share/p/video-post/";
+    const onStart = vi.fn().mockResolvedValue(undefined);
+    bridge.captureFacebookAlbum.mockReset();
+    bridge.captureFacebookAlbum.mockResolvedValue({
+      captureId: "12345678-1234-1234-1234-123456789abc",
+      title: "Public video",
+      photoCount: 0,
+      mediaKind: "video",
+    });
+    const view = renderView(undefined, undefined, onStart);
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, source);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
+    await act(async () => { button?.click(); await Promise.resolve(); });
+    expect(bridge.captureFacebookAlbum).toHaveBeenCalledWith(source, expect.any(String));
+    expect(onStart).toHaveBeenCalledWith(source);
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("sends an Instagram reel URL to video conversion when the video preset is selected", async () => {
+    const source = "https://www.instagram.com/p/DdwWRyTRMut/";
+    const onStart = vi.fn().mockResolvedValue(undefined);
+    bridge.captureFacebookAlbum.mockReset();
+    const view = renderView(undefined, undefined, onStart, null, vi.fn(), {
+      category: "Video",
+      format: "mp4",
+      bitrate: "balanced",
+      resolution: "1080p",
+    });
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, source);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
+    await act(async () => { button?.click(); await Promise.resolve(); });
+    expect(onStart).toHaveBeenCalledWith(source, undefined);
+    expect(bridge.captureFacebookAlbum).not.toHaveBeenCalled();
+    expect(view.onStatus).toHaveBeenCalledWith("Sending this Instagram post to the video converter...");
+    expect(button?.textContent?.trim()).toBe("Convert media");
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("sends a Facebook post to video conversion when the video preset is selected", async () => {
+    const source = "https://www.facebook.com/share/p/1EfkMDVBB1/";
+    const onStart = vi.fn().mockResolvedValue(undefined);
+    bridge.captureFacebookAlbum.mockReset();
+    const view = renderView(undefined, undefined, onStart, null, vi.fn(), {
+      category: "Video",
+      format: "mp4",
+      bitrate: "balanced",
+      resolution: "1080p",
+    });
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, source);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
+    await act(async () => { button?.click(); await Promise.resolve(); });
+    expect(onStart).toHaveBeenCalledWith(source, undefined);
+    expect(bridge.captureFacebookAlbum).not.toHaveBeenCalled();
+    expect(view.onStatus).toHaveBeenCalledWith("Sending this Facebook post to the video converter...");
+    expect(button?.textContent?.trim()).toBe("Convert media");
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });

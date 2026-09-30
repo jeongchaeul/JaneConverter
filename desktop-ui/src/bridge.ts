@@ -47,6 +47,7 @@ export interface ConverterSettings {
   useGpu: boolean;
   saveCover: boolean;
   saveMetadata: boolean;
+  allowPngFallback?: boolean;
   retries: number;
 }
 
@@ -82,6 +83,7 @@ export interface FacebookCaptureResult {
   captureId: string;
   title: string;
   photoCount: number;
+  mediaKind: "photo" | "video";
 }
 
 export interface SocialCaptureResult {
@@ -198,6 +200,7 @@ const demoSettings: ConverterSettings = {
   useGpu: false,
   saveCover: true,
   saveMetadata: true,
+  allowPngFallback: false,
   retries: 2,
 };
 

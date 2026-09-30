@@ -216,7 +216,7 @@ export function ConverterView({
   progress: number;
   status: string;
   onSettings: (next: ConverterSettings) => void;
-  onStart: (source: string, playlistIndexes?: string, facebookCaptureId?: string, socialCaptureId?: string) => Promise<void>;
+  onStart: (source: string, playlistIndexes?: string, facebookCaptureId?: string, socialCaptureId?: string) => Promise<void | boolean>;
   onCancel: () => Promise<void>;
   onCreateAccess: (source: string) => Promise<AccessStatus>;
   onClearAccess: () => Promise<void>;
@@ -238,7 +238,6 @@ export function ConverterView({
   const facebookPostLink = isFacebookPostLink(source);
   const [socialCaptureBusy, setSocialCaptureBusy] = useState(false);
   const socialCaptureIdRef = useRef<string | null>(null);
-  const socialPlatform = socialPhotoPlatform(source);
   // Queue and completion state
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueRunning, setQueueRunning] = useState(false);
@@ -665,26 +664,48 @@ export function ConverterView({
       return;
     }
     const trimmedSource = source.trim();
+    const photoPlatform = socialPhotoPlatform(trimmedSource);
+    const videoIntent = activeCategory === "Video" && isVideo;
+    if (videoIntent && (isFacebookPostLink(trimmedSource) || photoPlatform === "instagram")) {
+      const platformLabel = isFacebookPostLink(trimmedSource) ? "Facebook" : "Instagram";
+      onStatus(`Sending this ${platformLabel} post to the video converter...`);
+      await onStart(trimmedSource, indexes);
+      return;
+    }
     if (isFacebookPostLink(trimmedSource)) {
       const captureId = crypto.randomUUID();
       facebookCaptureIdRef.current = captureId;
       setFacebookCaptureBusy(true);
       onStatus("Reading the public Facebook post in a hidden guest session...");
+      let sessionTransferredToConversion = false;
       try {
         const capture = await bridge.captureFacebookAlbum(trimmedSource, captureId);
-        onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
-        await onStart(trimmedSource, undefined, capture.captureId);
+        let started: void | boolean;
+        if (capture.mediaKind === "video") {
+          onStatus("This Facebook post contains video. Starting the video conversion...");
+          started = await onStart(trimmedSource);
+        } else {
+          onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
+          started = await onStart(trimmedSource, undefined, capture.captureId);
+        }
+        sessionTransferredToConversion = started !== false;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (/cancelled|canceled/i.test(message)) onStatus(message);
         else onError(message);
       } finally {
+        if (!sessionTransferredToConversion) {
+          try {
+            await bridge.cancelFacebookAlbum(captureId);
+          } catch {
+            // Preserve the original conversion error; the capture expires automatically.
+          }
+        }
         facebookCaptureIdRef.current = null;
         setFacebookCaptureBusy(false);
       }
       return;
     }
-    const photoPlatform = socialPhotoPlatform(trimmedSource);
     if (photoPlatform) {
       const captureId = crypto.randomUUID();
       socialCaptureIdRef.current = captureId;
@@ -1223,6 +1244,16 @@ export function ConverterView({
                     disabled={hardwareAccelerationDisabled}
                   />
                 </div>
+                {isImage && isSourceFormat && (
+                  <div className="mt-3 max-w-md">
+                    <Toggle
+                      checked={settings.allowPngFallback ?? false}
+                      onChange={(allowPngFallback) => update({ allowPngFallback })}
+                      label="Allow PNG recovery"
+                      hint="If the original image cannot be validated, save a lossless PNG instead and show the format change. The source stays untouched."
+                    />
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -1329,17 +1360,7 @@ export function ConverterView({
                 className="primary-button flex h-9.5 flex-1 items-center justify-center gap-2 px-4 text-xs font-semibold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Play className="size-3.5 fill-current" />
-                {socialCaptureBusy
-                  ? `Finding ${socialPlatform ? socialPhotoPlatformLabel(socialPlatform) : "social"} photos...`
-                  : facebookCaptureBusy
-                  ? "Finding Facebook photos..."
-                  : running
-                  ? "Conversion running"
-                  : queue.length > 0
-                  ? `Convert queue (${queue.filter((q) => q.status === "queued").length} remaining)`
-                  : facebookPostLink || socialPlatform
-                  ? "Download all photos"
-                  : "Convert media"}
+                Convert media
               </button>
               {(running || facebookCaptureBusy || socialCaptureBusy) && (
                 <button type="button" onClick={() => facebookCaptureBusy ? void cancelFacebookCapture() : socialCaptureBusy ? void cancelSocialPhotoCapture() : void onCancel()} className="danger-button flex h-9.5 items-center gap-1.5 px-3 text-xs">

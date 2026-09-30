@@ -22,6 +22,7 @@ const defaultSettings: ConverterSettings = {
   useGpu: false,
   saveCover: true,
   saveMetadata: true,
+  allowPngFallback: false,
   retries: 2,
 };
 
@@ -215,7 +216,7 @@ export default function App() {
     void bridge.settingsSave(next).catch((error) => errorMessage(error instanceof Error ? error.message : String(error)));
   }
 
-  async function start(source: string, playlistIndexes?: string, facebookCaptureId?: string, socialCaptureId?: string) {
+  async function start(source: string, playlistIndexes?: string, facebookCaptureId?: string, socialCaptureId?: string): Promise<boolean> {
     try {
       const normalizedSource = source.trim();
       const accessSource = access.source?.trim() || "";
@@ -227,11 +228,13 @@ export default function App() {
       setProgress(.02);
       setStatus("Starting conversion...");
       setActiveView("console");
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setFailure({ title: "Conversion could not start", message, suggestLossless: false });
       activeJobSuggestLosslessRef.current = false;
       statusMessage(message);
+      return false;
     }
   }
 
