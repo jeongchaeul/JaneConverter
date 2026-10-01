@@ -83,6 +83,7 @@ pub struct SocialCaptureResult {
     pub capture_id: String,
     pub title: String,
     pub photo_count: usize,
+    pub media_kind: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]

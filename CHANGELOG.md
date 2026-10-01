@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.2.7] - 2026-10-01 - Instagram Photo, Carousel & Video Capture Fixes
+
+### Fixed
+- Detected downloaded social photos from verified image bytes (including Multi-Picture Object / Ultra HDR JPEGs, GIF, BMP, TIFF, and AVIF) rather than relying solely on CDN `Content-Type` headers, and kept two-frame `MPO` gain-map JPEGs as single-frame PNGs.
+- Supported username-prefixed Instagram post and Reel links (`/{username}/p/{shortcode}/` and `/{username}/reel/{shortcode}/`), filtered out comment stickers/GIFs and footer post grids, and preserved multi-photo carousel `<ul>` slide tracks.
+- Automatically handed off video-only social posts and Reels from the photo capture flow to the video conversion pipeline.
+- Added backdrop blur (`backdrop-blur-md`) and an opaque surface to the conversion error dialog so console output behind the modal does not bleed through.
+
 ## [2.2.6] - 2026-09-29 - FFmpeg Conversion Fallback Fix
 
 ### Added

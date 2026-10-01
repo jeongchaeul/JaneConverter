@@ -14,6 +14,8 @@ const bridge = vi.hoisted(() => ({
   isConvertedLibraryPath: vi.fn().mockResolvedValue(false),
   captureFacebookAlbum: vi.fn(),
   cancelFacebookAlbum: vi.fn(),
+  captureSocialPostPhotos: vi.fn(),
+  cancelSocialPostPhotos: vi.fn(),
 }));
 
 vi.mock("../bridge", () => ({ bridge }));
@@ -302,15 +304,21 @@ describe("Converter account access feedback", () => {
     const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
     await act(async () => { button?.click(); await Promise.resolve(); });
     expect(bridge.captureFacebookAlbum).toHaveBeenCalledWith(source, expect.any(String));
-    expect(onStart).toHaveBeenCalledWith(source);
+    expect(onStart).toHaveBeenCalledWith(source, undefined, undefined, undefined, "video");
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });
 
-  it("sends an Instagram reel URL to video conversion when the video preset is selected", async () => {
+  it("inspects an Instagram /p/ post and routes to video conversion when video is detected", async () => {
     const source = "https://www.instagram.com/p/DdwWRyTRMut/";
     const onStart = vi.fn().mockResolvedValue(undefined);
-    bridge.captureFacebookAlbum.mockReset();
+    bridge.captureSocialPostPhotos.mockReset();
+    bridge.captureSocialPostPhotos.mockResolvedValue({
+      captureId: "12345678-1234-1234-1234-123456789abc",
+      title: "Instagram video post",
+      photoCount: 0,
+      mediaKind: "video",
+    });
     const view = renderView(undefined, undefined, onStart, null, vi.fn(), {
       category: "Video",
       format: "mp4",
@@ -325,10 +333,40 @@ describe("Converter account access feedback", () => {
     });
     const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
     await act(async () => { button?.click(); await Promise.resolve(); });
-    expect(onStart).toHaveBeenCalledWith(source, undefined);
-    expect(bridge.captureFacebookAlbum).not.toHaveBeenCalled();
-    expect(view.onStatus).toHaveBeenCalledWith("Sending this Instagram post to the video converter...");
+    expect(bridge.captureSocialPostPhotos).toHaveBeenCalledWith(source, expect.any(String));
+    expect(onStart).toHaveBeenCalledWith(source, undefined, undefined, undefined, "video");
+    expect(view.onStatus).toHaveBeenCalledWith("This Instagram post contains video. Starting the video conversion...");
     expect(button?.textContent?.trim()).toBe("Convert media");
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("captures photos from a username-prefixed Instagram /p/ post even when Preserve Quality (Video/source) is active", async () => {
+    const source = "https://www.instagram.com/justinaxiecl/p/DFMyvpiSgxW/";
+    const onStart = vi.fn().mockResolvedValue(undefined);
+    bridge.captureSocialPostPhotos.mockReset();
+    bridge.captureSocialPostPhotos.mockResolvedValue({
+      captureId: "12345678-1234-1234-1234-123456789abc",
+      title: "Carousel post",
+      photoCount: 5,
+      mediaKind: "photo",
+    });
+    const view = renderView(undefined, undefined, onStart, null, vi.fn(), {
+      category: "Video",
+      format: "source",
+      bitrate: "best",
+      resolution: "original",
+    });
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, source);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
+    await act(async () => { button?.click(); await Promise.resolve(); });
+    expect(bridge.captureSocialPostPhotos).toHaveBeenCalledWith(source, expect.any(String));
+    expect(onStart).toHaveBeenCalledWith(source, undefined, undefined, "12345678-1234-1234-1234-123456789abc");
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });

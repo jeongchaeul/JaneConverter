@@ -22,10 +22,13 @@ MAX_ALBUM_BYTES = 2 * 1024 * 1024 * 1024
 PHOTO_ID_RE = re.compile(r"^[0-9]{5,30}$")
 IMAGE_EXTENSIONS = {
     "JPEG": ".jpg",
+    "MPO": ".jpg",
     "PNG": ".png",
     "WEBP": ".webp",
     "GIF": ".gif",
     "AVIF": ".avif",
+    "BMP": ".bmp",
+    "TIFF": ".tif",
 }
 MAX_RENDITIONS = 4
 MAX_RENDITION_REFRESHES = 8

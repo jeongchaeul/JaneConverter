@@ -849,7 +849,8 @@ async fn capture_social_post_photos(
     fs::create_dir(&profile)
         .map_err(|error| format!("Could not create a temporary guest session: {error}"))?;
 
-    let (sender, receiver) = mpsc::channel::<Result<SocialPhotoManifest, String>>();
+    let (sender, receiver) =
+        mpsc::channel::<Result<social_photo_capture::CaptureOutcome, String>>();
     let accumulator = Arc::new(Mutex::new(
         social_photo_capture::CaptureAccumulator::default(),
     ));
@@ -921,14 +922,28 @@ async fn capture_social_post_photos(
                             ));
                         }
                         let title = if !message.title.is_empty() { message.title } else { collected.title.clone() };
-                        Ok(social_photo_capture::manifest(
-                            platform_for_title,
-                            title,
-                            collected.photos.clone(),
+                        Ok(social_photo_capture::CaptureOutcome::Photos(
+                            social_photo_capture::manifest(
+                                platform_for_title,
+                                title,
+                                collected.photos.clone(),
+                            ),
                         ))
                     });
                     let _ = sender_for_title.send(result);
                     let _ = window.close();
+                }
+                "video" => {
+                    let has_photos = accumulator_for_title
+                        .lock()
+                        .map(|collected| !collected.photos.is_empty())
+                        .unwrap_or(true);
+                    if !has_photos {
+                        let title = message.title.chars().take(500).collect();
+                        let _ = sender_for_title
+                            .send(Ok(social_photo_capture::CaptureOutcome::Video(title)));
+                        let _ = window.close();
+                    }
                 }
                 "no_photos" if platform_for_title == social_photo_capture::SocialPlatform::Twitter => {
                     let _ = sender_for_title.send(Err("NO_PUBLIC_PHOTOS".into()));
@@ -973,11 +988,12 @@ async fn capture_social_post_photos(
     clean_social_capture_profile(&profile);
 
     match received {
-        Ok(Ok(Ok(manifest))) => {
+        Ok(Ok(Ok(social_photo_capture::CaptureOutcome::Photos(manifest)))) => {
             let result = SocialCaptureResult {
                 capture_id: capture_id.clone(),
                 title: manifest.title.clone(),
                 photo_count: manifest.photos.len(),
+                media_kind: "photo",
             };
             state
                 .social_manifests
@@ -993,6 +1009,12 @@ async fn capture_social_post_photos(
                 );
             Ok(result)
         }
+        Ok(Ok(Ok(social_photo_capture::CaptureOutcome::Video(title)))) => Ok(SocialCaptureResult {
+            capture_id,
+            title,
+            photo_count: 0,
+            media_kind: "video",
+        }),
         Ok(Ok(Err(message))) => Err(message),
         Ok(Err(mpsc::RecvTimeoutError::Timeout)) => Err(format!(
             "{} did not finish showing its public photos within 90 seconds.",

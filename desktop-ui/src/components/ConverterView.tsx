@@ -77,12 +77,24 @@ function socialPhotoPlatformLabel(platform: SocialPhotoPlatform): string {
   return SOCIAL_PHOTO_PLATFORM_LABELS[platform];
 }
 
+function isInstagramVideoRoute(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.toLowerCase();
+    if (!(host === "instagram.com" || host.endsWith(".instagram.com"))) return false;
+    return /^\/(?:[^/]+\/)?reels?\/[^/]+\/?$/.test(path);
+  } catch {
+    return false;
+  }
+}
+
 function socialPhotoPlatform(value: string): SocialPhotoPlatform | null {
   try {
     const url = new URL(value.trim());
     const host = url.hostname.toLowerCase();
     const path = url.pathname.toLowerCase();
-    if ((host === "instagram.com" || host === "www.instagram.com") && /^\/p\/[^/]+\/?$/.test(path)) return "instagram";
+    if ((host === "instagram.com" || host.endsWith(".instagram.com")) && /^\/(?:(?!(?:accounts|explore|stories|direct|about|developer)\/)[^/]+\/)?(?:p|reels?)\/[^/]+\/?$/.test(path)) return "instagram";
     if ((host === "x.com" || host === "www.x.com" || host === "twitter.com" || host === "www.twitter.com") && /\/status\/\d+/.test(path)) return "twitter";
     if ((host === "tiktok.com" || host.endsWith(".tiktok.com")) && (/\/photo\/\d+/.test(path) || path.startsWith("/t/") || path.startsWith("/share/photo/"))) return "tiktok";
     if ((host === "reddit.com" || host.endsWith(".reddit.com")) && (/\/comments\//.test(path) || path.startsWith("/gallery/"))) return "reddit";
@@ -216,7 +228,7 @@ export function ConverterView({
   progress: number;
   status: string;
   onSettings: (next: ConverterSettings) => void;
-  onStart: (source: string, playlistIndexes?: string, facebookCaptureId?: string, socialCaptureId?: string) => Promise<void | boolean>;
+  onStart: (source: string, playlistIndexes?: string, facebookCaptureId?: string, socialCaptureId?: string, detectedMediaKind?: "photo" | "video") => Promise<void | boolean>;
   onCancel: () => Promise<void>;
   onCreateAccess: (source: string) => Promise<AccessStatus>;
   onClearAccess: () => Promise<void>;
@@ -665,8 +677,8 @@ export function ConverterView({
     }
     const trimmedSource = source.trim();
     const photoPlatform = socialPhotoPlatform(trimmedSource);
-    const videoIntent = activeCategory === "Video" && isVideo;
-    if (videoIntent && (isFacebookPostLink(trimmedSource) || photoPlatform === "instagram")) {
+    const explicitVideoFormat = activeCategory === "Video" && isVideo && !isSourceFormat;
+    if (explicitVideoFormat && (isFacebookPostLink(trimmedSource) || isInstagramVideoRoute(trimmedSource))) {
       const platformLabel = isFacebookPostLink(trimmedSource) ? "Facebook" : "Instagram";
       onStatus(`Sending this ${platformLabel} post to the video converter...`);
       await onStart(trimmedSource, indexes);
@@ -683,7 +695,7 @@ export function ConverterView({
         let started: void | boolean;
         if (capture.mediaKind === "video") {
           onStatus("This Facebook post contains video. Starting the video conversion...");
-          started = await onStart(trimmedSource);
+          started = await onStart(trimmedSource, indexes, undefined, undefined, "video");
         } else {
           onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
           started = await onStart(trimmedSource, undefined, capture.captureId);
@@ -707,6 +719,11 @@ export function ConverterView({
       return;
     }
     if (photoPlatform) {
+      if (photoPlatform === "instagram" && isInstagramVideoRoute(trimmedSource)) {
+        onStatus("Sending this Instagram post to the video converter...");
+        await onStart(trimmedSource, indexes, undefined, undefined, "video");
+        return;
+      }
       const captureId = crypto.randomUUID();
       socialCaptureIdRef.current = captureId;
       setSocialCaptureBusy(true);
@@ -714,13 +731,18 @@ export function ConverterView({
       onStatus(`Reading the public ${platformLabel} post in a hidden guest session...`);
       try {
         const capture = await bridge.captureSocialPostPhotos(trimmedSource, captureId);
-        onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
-        await onStart(trimmedSource, undefined, undefined, capture.captureId);
+        if (capture.mediaKind === "video") {
+          onStatus(`This ${platformLabel} post contains video. Starting the video conversion...`);
+          await onStart(trimmedSource, indexes, undefined, undefined, "video");
+        } else {
+          onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
+          await onStart(trimmedSource, undefined, undefined, capture.captureId);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (photoPlatform === "twitter" && message === "NO_PUBLIC_PHOTOS") {
           onStatus("No X/Twitter photos found. Passing the post to the standard media downloader...");
-          await onStart(trimmedSource, indexes);
+          await onStart(trimmedSource, indexes, undefined, undefined, "video");
         } else if (/cancelled|canceled/i.test(message)) {
           onStatus(message);
         } else {

@@ -20,9 +20,14 @@ MAX_PHOTOS = 500
 MAX_IMAGE_BYTES = 100 * 1024 * 1024
 MAX_ALBUM_BYTES = 2 * 1024 * 1024 * 1024
 IMAGE_EXTENSIONS = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
+    "JPEG": ".jpg",
+    "MPO": ".jpg",
+    "PNG": ".png",
+    "WEBP": ".webp",
+    "GIF": ".gif",
+    "AVIF": ".avif",
+    "BMP": ".bmp",
+    "TIFF": ".tif",
 }
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 MAX_REDIRECTS = 5
@@ -156,16 +161,12 @@ def download_social_photo_manifest(
             with _get_photo(session, photo["url"], platform_key) as response:
                 response.raise_for_status()
                 _media_url(response.url, platform_key)
-                content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
-                extension = IMAGE_EXTENSIONS.get(content_type)
-                if not extension:
-                    raise RuntimeError(f"{platform} returned an unsupported image type for photo {index}.")
                 length = response.headers.get("Content-Length")
                 if length and int(length) > MAX_IMAGE_BYTES:
                     raise RuntimeError(f"{platform} photo {index} is larger than the 100 MB per-image limit.")
-                image_path = os.path.join(staging_dir, f"{title}_{index:03d}{extension}")
+                download_path = os.path.join(staging_dir, f"{title}_{index:03d}.download")
                 image_bytes = 0
-                with open(image_path, "wb") as image_file:
+                with open(download_path, "wb") as image_file:
                     for chunk in response.iter_content(chunk_size=256 * 1024):
                         if not chunk:
                             continue
@@ -176,8 +177,16 @@ def download_social_photo_manifest(
                         if total_bytes > MAX_ALBUM_BYTES:
                             raise RuntimeError(f"The {platform} post exceeds the 2 GB total download limit.")
                         image_file.write(chunk)
-                with Image.open(image_path) as image:
-                    image.verify()
+                try:
+                    with Image.open(download_path) as image:
+                        extension = IMAGE_EXTENSIONS.get(image.format or "")
+                        if not extension:
+                            raise RuntimeError(f"{platform} returned an unsupported image format for photo {index}.")
+                        image.verify()
+                except (OSError, ValueError) as error:
+                    raise RuntimeError(f"{platform} returned a non-image response for photo {index}.") from error
+                image_path = os.path.join(staging_dir, f"{title}_{index:03d}{extension}")
+                os.replace(download_path, image_path)
                 convert_image_format(image_path, target_format, quality)
         os.replace(staging_dir, target_dir)
     except requests.RequestException as error:

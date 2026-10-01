@@ -90,6 +90,7 @@ export interface SocialCaptureResult {
   captureId: string;
   title: string;
   photoCount: number;
+  mediaKind?: "photo" | "video";
 }
 
 export interface ConverterEvent {

@@ -112,7 +112,7 @@ def convert_image_format(
         source_info = dict(source.info)
         source_mode = source.mode
         frame_count = getattr(source, "n_frames", 1)
-        preserve_frames = frame_count > 1 and pillow_format in _ANIMATED_FORMATS
+        preserve_frames = frame_count > 1 and source_format in _ANIMATED_FORMATS and pillow_format in _ANIMATED_FORMATS
         frame_total = frame_count if preserve_frames else 1
         frames = []
         durations = []

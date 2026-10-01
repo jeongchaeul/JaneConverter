@@ -27,7 +27,7 @@ describe("Application shell", () => {
     container.remove();
   });
 
-  it("shows an engine failure and the image preset suggestion without opening Console", async () => {
+  it("shows a photo download failure without suggesting another preset", async () => {
     let deliverEvent: ((event: ConverterEvent) => void) | undefined;
     vi.spyOn(bridge, "settingsGet").mockResolvedValue({
       outputDir: "converted", fetchedDir: "fetched", category: "Image", format: "source",
@@ -59,7 +59,8 @@ describe("Application shell", () => {
     const dialog = container.querySelector('[role="alertdialog"]');
     expect(dialog?.textContent).toContain("Conversion failed");
     expect(dialog?.textContent).toContain("unsupported image type for photo 21");
-    expect(dialog?.textContent).toContain("Image → Lossless Image");
+    expect(dialog?.textContent).toContain("photo download failed before conversion");
+    expect(dialog?.textContent).not.toContain("Image → Lossless Image");
 
     await act(async () => { root.unmount(); });
     container.remove();

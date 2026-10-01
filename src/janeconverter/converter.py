@@ -1170,8 +1170,8 @@ def _convert_media_impl(
         _, in_ext = os.path.splitext(input_path)
         actual_ext = in_ext.lower().lstrip(".") or "media"
         image_extensions = {
-            "JPEG": "jpg", "PNG": "png", "WEBP": "webp", "GIF": "gif",
-            "TIFF": "tif", "BMP": "bmp",
+            "JPEG": "jpg", "MPO": "jpg", "PNG": "png", "WEBP": "webp", "GIF": "gif",
+            "AVIF": "avif", "TIFF": "tif", "BMP": "bmp",
         }
         try:
             from PIL import Image

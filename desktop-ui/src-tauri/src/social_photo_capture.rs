@@ -71,9 +71,24 @@ pub fn validate_post_url(value: &str) -> Result<(SocialPlatform, Url), String> {
     })?;
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
     let path = url.path().to_ascii_lowercase();
+    let instagram_segments = path
+        .trim_matches('/')
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
     let instagram = (host == "instagram.com" || host.ends_with(".instagram.com"))
-        && path.starts_with("/p/")
-        && path.trim_matches('/').split('/').count() == 2;
+        && match instagram_segments.as_slice() {
+            ["p" | "reel" | "reels", shortcode] => !shortcode.is_empty(),
+            [username, "p" | "reel" | "reels", shortcode] => {
+                !username.is_empty()
+                    && !shortcode.is_empty()
+                    && !matches!(
+                        *username,
+                        "accounts" | "explore" | "stories" | "direct" | "about" | "developer"
+                    )
+            }
+            _ => false,
+        };
     let twitter_host = matches!(
         host.as_str(),
         "x.com" | "www.x.com" | "twitter.com" | "www.twitter.com"
@@ -233,7 +248,8 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
   }};
   const isCdn = (value) => {{
     try {{
-      const host = new URL(value, location.href).hostname.toLowerCase();
+      const parsed = new URL(value, location.href);
+      const host = parsed.hostname.toLowerCase();
       const suffixes = {{
         instagram: ["fbcdn.net", "fbsbx.com", "cdninstagram.com"],
         twitter: ["pbs.twimg.com"],
@@ -242,8 +258,27 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
         tumblr: ["media.tumblr.com"],
         pinterest: ["pinimg.com"]
       }}[platform] || [];
-      return suffixes.some(suffix => host === suffix || host.endsWith("." + suffix));
+      if (!suffixes.some(suffix => host === suffix || host.endsWith("." + suffix))) return false;
+      if (platform === "instagram") {{
+        const lowerUrl = parsed.href.toLowerCase();
+        if (host.startsWith("static.") || parsed.pathname.toLowerCase().includes("/rsrc.php")) return false;
+        if (lowerUrl.includes("giphy.com") || lowerUrl.includes("/giphy") || parsed.pathname.toLowerCase().endsWith(".gif")) return false;
+        if (/\/s(?:150x150|100x100|64x64|40x40|32x32)\b/i.test(lowerUrl)) return false;
+      }}
+      return true;
     }} catch (_) {{ return false; }}
+  }};
+  const isInstagramCommentOrChromeImage = (image, container) => {{
+    if (platform !== "instagram") return false;
+    const alt = (image.getAttribute("alt") || "").trim();
+    if (/profile picture|avatar|giphy|sticker/i.test(alt)) return true;
+    for (let el = image.parentElement; el && el !== container && el !== document.body; el = el.parentElement) {{
+      if (el.tagName === "HEADER") return true;
+      if (el.tagName === "UL" && el.querySelector('a[href*="/c/"]')) return true;
+      const role = el.getAttribute("role") || "";
+      if (role === "complementary") return true;
+    }}
+    return false;
   }};
   const chooseImage = (image) => {{
     const candidates = [];
@@ -257,6 +292,13 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
     }}
     candidates.sort((a, b) => b.width - a.width);
     return candidates[0] || null;
+  }};
+  const isPostCandidateImage = (image, container) => {{
+    if (isInstagramCommentOrChromeImage(image, container)) return false;
+    const rect = image.getBoundingClientRect();
+    const minSize = platform === "instagram" ? 220 : 120;
+    if (rect.width < minSize || rect.height < minSize) return false;
+    return chooseImage(image);
   }};
   const imageId = (value) => {{
     try {{
@@ -315,25 +357,34 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
   const postContainer = () => {{
     const articles = Array.from(document.querySelectorAll("article"));
     if (platform === "instagram") {{
-      const postId = location.pathname.match(/^\/p\/([^/]+)\/?$/i)?.[1];
+      const postId = location.pathname.match(/\/(?:p|reels?)\/([^/]+)\/?$/i)?.[1];
       const permalink = postId && Array.from(document.querySelectorAll("a[href]")).find(anchor => {{
-        try {{ return new URL(anchor.href, location.href).pathname.match(/\/p\/([^/]+)\/?$/i)?.[1] === postId; }}
+        try {{ return new URL(anchor.href, location.href).pathname.match(/\/(?:p|reels?)\/([^/]+)\/?$/i)?.[1] === postId; }}
         catch (_) {{ return false; }}
       }});
       if (permalink) {{
-        for (let container = permalink.parentElement; container && container !== document.body; container = container.parentElement) {{
-          const hasPublicPostImage = Array.from(container.querySelectorAll("img")).some(image => {{
-            const rect = image.getBoundingClientRect();
-            return rect.width >= 120 && rect.height >= 120 && chooseImage(image);
-          }});
+        for (let container = permalink.parentElement; container && container !== document.body && container.tagName !== "MAIN"; container = container.parentElement) {{
+          const hasPublicPostImage = Array.from(container.querySelectorAll("img")).some(image => !!isPostCandidateImage(image, container));
           if (hasPublicPostImage) return container;
         }}
       }}
       const legacyPost = articles[0] || document.querySelector('[role="dialog"]');
-      if (legacyPost && Array.from(legacyPost.querySelectorAll("img")).some(image => {{
-        const rect = image.getBoundingClientRect();
-        return rect.width >= 120 && rect.height >= 120 && chooseImage(image);
+      if (legacyPost && Array.from(legacyPost.querySelectorAll("img, video")).some(media => {{
+        if (media.tagName === "VIDEO") {{
+          const rect = media.getBoundingClientRect();
+          return rect.width >= 220 && rect.height >= 220;
+        }}
+        return !!isPostCandidateImage(media, legacyPost);
       }})) return legacyPost;
+      if (permalink) {{
+        for (let container = permalink.parentElement; container && container !== document.body && container.tagName !== "MAIN"; container = container.parentElement) {{
+          const hasPublicPostVideo = Array.from(container.querySelectorAll("video")).some(video => {{
+            const rect = video.getBoundingClientRect();
+            return rect.width >= 220 && rect.height >= 220;
+          }});
+          if (hasPublicPostVideo) return container;
+        }}
+      }}
       return null;
     }}
     if (platform === "pinterest") {{
@@ -353,14 +404,34 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
     const matching = articles.find(article => !statusId || Array.from(article.querySelectorAll('a[href*="/status/"]')).some(link => link.href.includes("/status/" + statusId)));
     return matching || articles[0] || document.querySelector('[role="dialog"]') || document;
   }};
+  const hasVideoPost = () => {{
+    if (platform === "instagram" && /^\/(?:[^/]+\/)?reels?\//i.test(location.pathname)) return true;
+    const container = postContainer();
+    const visibleVideo = !!container && Array.from(container.querySelectorAll("video")).some((video) => {{
+      const rect = video.getBoundingClientRect();
+      return rect.width >= 220 && rect.height >= 220 && (video.currentSrc || video.src || video.readyState > 0 || video.poster);
+    }});
+    return visibleVideo || !!document.querySelector('meta[property="og:video"], meta[property="og:video:url"]');
+  }};
   const collectPhotos = () => {{
     const container = postContainer();
     if (!container) return;
-    for (const image of container.querySelectorAll("img")) {{
-      const rect = image.getBoundingClientRect();
-      if (rect.width < 120 || rect.height < 120) continue;
-      const selected = chooseImage(image);
+    const images = Array.from(container.querySelectorAll("img"));
+    const candidates = [];
+    for (const image of images) {{
+      const selected = isPostCandidateImage(image, container);
       if (!selected) continue;
+      const rect = image.getBoundingClientRect();
+      candidates.push({{image, selected, area: rect.width * rect.height, width: rect.width}});
+    }}
+    if (platform === "instagram" && candidates.length > 1) {{
+      const maxWidth = Math.max(...candidates.map(item => item.width));
+      // Filter out smaller auxiliary thumbnails or comment stickers when the main post image is present
+      const filtered = candidates.filter(item => item.width >= maxWidth * 0.65);
+      candidates.length = 0;
+      candidates.push(...filtered);
+    }}
+    for (const {{selected}} of candidates) {{
       const id = imageId(selected.url);
       if (!id) continue;
       const existing = photos.get(id);
@@ -409,6 +480,10 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
     }}
     collectPhotos();
     const title = pageTitle();
+    if (!photos.size && !pending.length && attempts >= 3 && hasVideoPost()) {{
+      sendFinal({{kind:"video",count:0,title,platform}});
+      return;
+    }}
     if (pending.length && !waiting) {{ flush(title); }}
     const currentCount = photos.size;
     if (currentCount === lastCount) unchanged = Math.min(unchanged + 1, 20);
@@ -445,6 +520,7 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
     }}
     if (attempts >= noPhotoWait && settled && !waiting && !pending.length) {{
       if (photos.size) sendFinal({{kind:"done",count:photos.size,title,platform}});
+      else if (hasVideoPost()) sendFinal({{kind:"video",count:0,title,platform}});
       else if (platform === "twitter") sendFinal({{kind:"no_photos",count:0,title,platform}});
       else sendFinal({{kind:"error",error:"No public " + platformLabel + " photos were visible in this post."}});
       return;
@@ -467,6 +543,24 @@ mod tests {
 
     #[test]
     fn collection_links_are_limited_to_supported_public_routes() {
+        assert_eq!(
+            validate_post_url("https://www.instagram.com/p/Dd4-rBKT4Zk/")
+                .unwrap()
+                .0,
+            SocialPlatform::Instagram
+        );
+        assert_eq!(
+            validate_post_url("https://www.instagram.com/justinaxiecl/p/DFMyvpiSgxW/")
+                .unwrap()
+                .0,
+            SocialPlatform::Instagram
+        );
+        assert_eq!(
+            validate_post_url("https://www.instagram.com/justinaxiecl/reel/DFMyvpiSgxW/")
+                .unwrap()
+                .0,
+            SocialPlatform::Instagram
+        );
         assert_eq!(
             validate_post_url("https://www.tiktok.com/@creator/photo/123")
                 .unwrap()
@@ -586,6 +680,11 @@ mod tests {
             assert!(script.contains("collection exceeds the 500-photo capture limit"));
         }
     }
+}
+
+pub enum CaptureOutcome {
+    Photos(SocialPhotoManifest),
+    Video(String),
 }
 
 pub fn manifest(

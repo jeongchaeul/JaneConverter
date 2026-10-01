@@ -14,6 +14,28 @@ def _webp_bytes() -> bytes:
     return stream.getvalue()
 
 
+def _jpeg_bytes() -> bytes:
+    image = Image.new("RGB", (8, 8), color=(35, 90, 160))
+    stream = io.BytesIO()
+    image.save(stream, format="JPEG")
+    return stream.getvalue()
+
+
+def _avif_bytes() -> bytes:
+    image = Image.new("RGB", (8, 8), color=(35, 90, 160))
+    stream = io.BytesIO()
+    image.save(stream, format="AVIF")
+    return stream.getvalue()
+
+
+def _mpo_bytes() -> bytes:
+    primary = Image.new("RGB", (8, 8), color=(35, 90, 160))
+    gain_map = Image.new("RGB", (4, 4), color=(120, 120, 120))
+    stream = io.BytesIO()
+    primary.save(stream, format="MPO", save_all=True, append_images=[gain_map])
+    return stream.getvalue()
+
+
 class _Response:
     def __init__(self, url: str, body: bytes, content_type: str = "image/webp"):
         self.url = url
@@ -89,6 +111,75 @@ def test_source_format_keeps_original_webp_social_photo(tmp_path, monkeypatch):
     assert [path.suffix for path in saved] == [".webp"]
     with Image.open(saved[0]) as image:
         assert image.format == "WEBP"
+
+
+def test_valid_photo_with_unexpected_content_type_still_converts_to_png(tmp_path, monkeypatch):
+    class _UnexpectedTypeSession(_Session):
+        def get(self, url: str, **_kwargs):
+            return _Response(url, _jpeg_bytes(), "application/octet-stream")
+
+    monkeypatch.setattr(social_photo_capture.requests, "Session", _UnexpectedTypeSession)
+
+    result = social_photo_capture.download_social_photo_manifest(
+        _manifest(), str(tmp_path), target_format="png",
+    )
+
+    saved = list((tmp_path / "Public post").glob("*"))
+    assert result["photo_count"] == 1
+    assert [path.suffix for path in saved] == [".png"]
+    with Image.open(saved[0]) as image:
+        assert image.format == "PNG"
+
+
+def test_avif_photo_converts_to_png(tmp_path, monkeypatch):
+    class _AvifSession(_Session):
+        def get(self, url: str, **_kwargs):
+            return _Response(url, _avif_bytes(), "image/avif")
+
+    monkeypatch.setattr(social_photo_capture.requests, "Session", _AvifSession)
+
+    social_photo_capture.download_social_photo_manifest(_manifest(), str(tmp_path), target_format="png")
+
+    saved = list((tmp_path / "Public post").glob("*"))
+    assert [path.suffix for path in saved] == [".png"]
+    with Image.open(saved[0]) as image:
+        assert image.format == "PNG"
+
+
+def test_mpo_photo_saves_as_jpg_and_converts_to_single_frame_png(tmp_path, monkeypatch):
+    class _MpoSession(_Session):
+        def get(self, url: str, **_kwargs):
+            return _Response(url, _mpo_bytes(), "image/jpeg")
+
+    monkeypatch.setattr(social_photo_capture.requests, "Session", _MpoSession)
+
+    social_photo_capture.download_social_photo_manifest(_manifest(), str(tmp_path), target_format="source")
+    saved_source = list((tmp_path / "Public post").glob("*"))
+    assert [path.suffix for path in saved_source] == [".jpg"]
+
+    social_photo_capture.download_social_photo_manifest(_manifest(), str(tmp_path), target_format="png")
+    saved_png = list((tmp_path / "Public post (2)").glob("*"))
+    assert [path.suffix for path in saved_png] == [".png"]
+    with Image.open(saved_png[0]) as image:
+        assert image.format == "PNG"
+        assert getattr(image, "n_frames", 1) == 1
+        assert image.size == (8, 8)
+
+
+def test_non_image_response_does_not_publish_a_photo(tmp_path, monkeypatch):
+    class _HtmlSession(_Session):
+        def get(self, url: str, **_kwargs):
+            return _Response(url, b"<html>Log in to view this photo</html>", "text/html")
+
+    monkeypatch.setattr(social_photo_capture.requests, "Session", _HtmlSession)
+
+    try:
+        social_photo_capture.download_social_photo_manifest(_manifest(), str(tmp_path), target_format="png")
+    except RuntimeError as error:
+        assert "non-image response" in str(error)
+    else:
+        raise AssertionError("HTML response was accepted as a photo")
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_conversion_passes_selected_image_format_to_social_downloader(tmp_path, monkeypatch):
