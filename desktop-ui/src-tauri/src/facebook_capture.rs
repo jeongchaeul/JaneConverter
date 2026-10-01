@@ -233,6 +233,7 @@ pub fn initialization_script(nonce: &str) -> String {
   let lastPauseTick = 0;
   let lastViewerImageUrl = sessionStorage.getItem(viewerImageKey) || "";
   let navigatingFromId = "";
+  let currentPageScannedId = "";
   let expansionClicks = 0;
   let lastExpansionClickAttempt = 0;
   let finished = false;
@@ -408,18 +409,21 @@ pub fn initialization_script(nonce: &str) -> String {
         if (set && set.startsWith("pcb.")) return set;
       }} catch (_) {{}}
     }}
+    return "";
+  }};
+  const findPostAlbumSet = () => {{
+    const domSet = findAlbumSet();
+    if (domSet) return domSet;
     for (const script of document.scripts) {{
       const text = script.textContent || "";
       if (!text.includes("pcb.")) continue;
       const match = /(?:"mediaset_token"\s*:\s*"|[?&]set=)(pcb\.[0-9]{{5,30}})/.exec(text);
       if (match) return match[1];
     }}
-    if (document.querySelector('a[href*="fbid="]')) {{
-      const pathMatch = /\/(?:permalink|posts)\/([0-9]{{5,30}})/.exec(location.pathname);
-      if (pathMatch) return "pcb." + pathMatch[1];
-      const storyId = new URL(location.href).searchParams.get("story_fbid") || "";
-      if (/^[0-9]{{5,30}}$/.test(storyId)) return "pcb." + storyId;
-    }}
+    const pathMatch = /\/(?:permalink|posts)\/([0-9]{{5,30}})/.exec(location.pathname);
+    if (pathMatch) return "pcb." + pathMatch[1];
+    const storyId = new URL(location.href).searchParams.get("story_fbid") || "";
+    if (/^[0-9]{{5,30}}$/.test(storyId)) return "pcb." + storyId;
     return "";
   }};
   const normalizeFacebookUrl = (value) => {{
@@ -434,7 +438,7 @@ pub fn initialization_script(nonce: &str) -> String {
     }} catch (_) {{ return ""; }}
   }};
   const findAlbumStartPhoto = () => {{
-    const pageSet = new URL(location.href).searchParams.get("set") || findAlbumSet() || "";
+    const pageSet = new URL(location.href).searchParams.get("set") || findPostAlbumSet() || "";
     for (const anchor of document.querySelectorAll('a[href*="fbid="]')) {{
       try {{
         const href = new URL(anchor.href, location.href);
@@ -452,19 +456,39 @@ pub fn initialization_script(nonce: &str) -> String {
         }}
       }} catch (_) {{}}
     }}
+    if (pageSet.startsWith("pcb.")) {{
+      for (const script of document.scripts) {{
+        const text = script.textContent || "";
+        if (!text.includes("fbid=") && !text.includes("all_subattachments")) continue;
+        const hrefMatch = /photo\.php\?fbid=([0-9]{{5,30}})&(?:amp;)?set=((?:pcb|gm|a)\.[0-9]{{5,30}})/.exec(text);
+        const subMatch = !hrefMatch && /"all_subattachments"\s*:\s*\{{[\s\S]{{0,1200}}?"__typename"\s*:\s*"Photo"[\s\S]{{0,1200}}?"id"\s*:\s*"([0-9]{{5,30}})"/.exec(text);
+        const photoId = hrefMatch ? hrefMatch[1] : (subMatch ? subMatch[1] : "");
+        if (photoId) {{
+          const photoUrl = new URL("/photo/", location.href);
+          photoUrl.searchParams.set("fbid", photoId);
+          photoUrl.searchParams.set("set", pageSet);
+          return {{anchor: null, url: photoUrl.href, needsDirectNavigation: true}};
+        }}
+      }}
+    }}
     return "";
   }};
   const findScriptViewerPhoto = (expectedId) => {{
     if (!/^[0-9]{{5,30}}$/.test(expectedId || "")) return null;
+    const nodePattern = new RegExp(`(?:"__isNode"|"__typename")\\s*:\\s*"Photo"\\s*,\\s*"id"\\s*:\\s*"${{expectedId}}"[\\s\\S]{{0,800}}?"image"\\s*:\\s*\\{{([^}}]+)\\}}`);
     for (const script of document.scripts) {{
       const text = script.textContent || "";
-      if (!text.includes(expectedId) || !text.includes("currMedia")) continue;
-      const pattern = new RegExp(`"currMedia"\\s*:\\s*\\{{"__typename"\\s*:\\s*"Photo"[^}}]*?"id"\\s*:\\s*"${{expectedId}}"[\\s\\S]{{0,1200}}?"image"\\s*:\\s*\\{{"uri"\\s*:\\s*"([^"]+)"(?:\\s*,\\s*"width"\\s*:\\s*(\\d+))?`);
-      const match = pattern.exec(text);
+      if (!text.includes(expectedId) || (!text.includes("currMedia") && !text.includes("__isNode"))) continue;
+      const match = nodePattern.exec(text);
       if (match) {{
-        const decodedUrl = match[1].replace(/\\u0025/g, "%").replace(/\\u0026/g, "&").replace(/\\\//g, "/");
-        if (isCdn(decodedUrl)) {{
-          return {{id: expectedId, url: decodedUrl, width: Number(match[2] || "1080") || 1080, alternates: []}};
+        const imgBlock = match[1];
+        const uriMatch = /"uri"\s*:\s*"([^"]+)"/.exec(imgBlock);
+        const widthMatch = /"width"\s*:\s*(\d+)/.exec(imgBlock);
+        if (uriMatch) {{
+          const decodedUrl = uriMatch[1].replace(/\\u0025/g, "%").replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+          if (isCdn(decodedUrl)) {{
+            return {{id: expectedId, url: decodedUrl, width: Number(widthMatch ? widthMatch[1] : "1080") || 1080, alternates: []}};
+          }}
         }}
       }}
     }}
@@ -526,12 +550,11 @@ pub fn initialization_script(nonce: &str) -> String {
     if (labelledNext?.href) return normalizeFacebookUrl(labelledNext.href);
     if (labelledNext) {{ labelledNext.click(); return "clicked"; }}
     if (/^[0-9]{{5,30}}$/.test(currentId)) {{
-      const albumSet = sessionStorage.getItem(albumSetKey) || new URL(location.href).searchParams.get("set") || findAlbumSet();
+      const albumSet = sessionStorage.getItem(albumSetKey) || new URL(location.href).searchParams.get("set") || findPostAlbumSet();
       for (const script of document.scripts) {{
         const text = script.textContent || "";
-        if (!text.includes(currentId) || !text.includes("nextMediaAfterNodeId")) continue;
-        const pattern = new RegExp(`"currMedia"\\s*:\\s*\\{{"__typename"\\s*:\\s*"Photo"[^}}]*?"id"\\s*:\\s*"${{currentId}}"[\\s\\S]{{0,2500}}?"nextMediaAfterNodeId"\\s*:\\s*\\{{"__typename"\\s*:\\s*"Photo"\\s*,\\s*"id"\\s*:\\s*"([0-9]{{5,30}})"`);
-        const match = pattern.exec(text);
+        if (!text.includes("nextMediaAfterNodeId")) continue;
+        const match = /"nextMediaAfterNodeId"\s*:\s*\{{\s*"__typename"\s*:\s*"Photo"\s*,\s*"id"\s*:\s*"([0-9]{{5,30}})"/.exec(text);
         if (match && match[1] && match[1] !== currentId) {{
           const nextUrl = new URL("/photo/", location.href);
           nextUrl.searchParams.set("fbid", match[1]);
@@ -669,14 +692,14 @@ pub fn initialization_script(nonce: &str) -> String {
     if (captureMode === "") {{
       sessionStorage.setItem("janeFacebookCaptureTitle", pageTitle());
       const startPhoto = findAlbumStartPhoto();
-      if (startPhoto && hasVisiblePublicPhoto()) {{
+      if (startPhoto && (startPhoto.needsDirectNavigation || hasVisiblePublicPhoto())) {{
         const photoUrl = new URL(startPhoto.url);
         const albumSet = photoUrl.searchParams.get("set") || "";
         if (albumSet.startsWith("pcb.")) sessionStorage.setItem(albumSetKey, albumSet);
         sessionStorage.setItem(captureModeKey, "viewer");
         sessionStorage.setItem(scannedIdsKey, JSON.stringify(Array.from(scanned)));
         if (expectedCount) sessionStorage.setItem(expectedCountKey, String(expectedCount));
-        if (startPhoto.needsDirectNavigation) {{
+        if (startPhoto.needsDirectNavigation || !startPhoto.anchor) {{
           location.replace(startPhoto.url);
           return;
         }}
@@ -696,7 +719,7 @@ pub fn initialization_script(nonce: &str) -> String {
           return;
         }}
       }}
-      if (attempts >= 3 && !startPhoto && !findAlbumSet() && hasVideoPost()) {{
+      if (attempts >= 3 && !startPhoto && !findPostAlbumSet() && hasVideoPost()) {{
         finished = true;
         send({{kind:"video",title:pageTitle()}});
         return;
@@ -705,8 +728,8 @@ pub fn initialization_script(nonce: &str) -> String {
     if (captureMode === "viewer") {{
       if (!location.pathname.toLowerCase().includes("/photo")) {{
         const startPhoto = findAlbumStartPhoto();
-        if (startPhoto && hasVisiblePublicPhoto()) {{
-          if (startPhoto.needsDirectNavigation) {{
+        if (startPhoto && (startPhoto.needsDirectNavigation || hasVisiblePublicPhoto())) {{
+          if (startPhoto.needsDirectNavigation || !startPhoto.anchor) {{
             location.replace(startPhoto.url);
             return;
           }}
@@ -724,9 +747,11 @@ pub fn initialization_script(nonce: &str) -> String {
           scheduleScan(VIEWER_POLL_MS);
           return;
         }}
-        const wrappedAround = scanned.has(currentPhoto.id);
+        const isNewPhotoForPage = currentPageScannedId !== currentPhoto.id;
+        const wrappedAround = isNewPhotoForPage && scanned.has(currentPhoto.id);
         navigatingFromId = "";
-        if (!wrappedAround) {{
+        if (!wrappedAround && isNewPhotoForPage) {{
+          currentPageScannedId = currentPhoto.id;
           scanned.add(currentPhoto.id);
           sessionStorage.setItem(scannedIdsKey, JSON.stringify(Array.from(scanned)));
           lastViewerImageUrl = currentPhoto.url;
@@ -747,6 +772,7 @@ pub fn initialization_script(nonce: &str) -> String {
             const nextPhotoUrl = findNextPhotoUrl();
             if (nextPhotoUrl === "clicked") {{
               navigatingFromId = currentPhoto.id;
+              currentPageScannedId = "";
               scheduleScan(VIEWER_POLL_MS);
               return;
             }}

@@ -209,6 +209,7 @@ export interface JaneBridge {
   discardFetchedMedia(path: string): Promise<void>;
   clearAccessLink(): Promise<void>;
   relaunch(): Promise<void>;
+  notifyAttention(): Promise<void>;
   checkUpdates(): Promise<UpdateCheckResult>;
   installUpdate(): Promise<void>;
 }
@@ -272,6 +273,7 @@ const demoBridge: JaneBridge = {
   async discardFetchedMedia() {},
   async clearAccessLink() {},
   async relaunch() {},
+  async notifyAttention() {},
   async checkUpdates() { return { message: "Preview mode: update checks are available in the desktop build." }; },
   async installUpdate() {},
 };
@@ -317,6 +319,7 @@ const tauriBridge: JaneBridge = {
   discardFetchedMedia: (path) => invoke<void>("discard_fetched_media", { path }),
   clearAccessLink: () => invoke<void>("clear_access_link"),
   relaunch: () => invoke<void>("relaunch"),
+  notifyAttention: () => invoke<void>("notify_attention"),
   checkUpdates: () => invoke<UpdateCheckResult>("check_updates"),
   installUpdate: () => invoke<void>("install_update"),
 };

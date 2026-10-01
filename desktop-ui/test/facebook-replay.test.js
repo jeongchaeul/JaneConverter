@@ -10,7 +10,9 @@ const captureScript = rust.slice(start + 3, end)
   .replace("{nonce_json}", '"fixture"')
   .replaceAll("{{", "{")
   .replaceAll("}}", "}")
-  .replaceAll("location.replace(target.href);", "window.__JANE_NAVIGATE__(target.href);");
+  .replaceAll("location.replace(target.href);", "window.__JANE_NAVIGATE__(target.href);")
+  .replaceAll("location.replace(startPhoto.url);", "window.__JANE_NAVIGATE__(startPhoto.url);")
+  .replaceAll("location.replace(nextPhotoUrl);", "window.__JANE_NAVIGATE__(nextPhotoUrl);");
 const prefix = "__JANE_FACEBOOK_CAPTURE__fixture__";
 
 function replay(html, path, mode = "") {
@@ -161,3 +163,35 @@ test("rendition refresh reads the requested photo again in the same guest page",
     photos: [{ id: "111111", url: "https://scontent.fbcdn.net/refreshed.jpg" }],
   });
 });
+
+test("public group permalink navigates directly to photo viewer and walks currMedia JSON", async () => {
+  const groupHtml = `<!doctype html><html><head><title>Public Group Post</title></head><body>
+    <script type="application/json">{"mediaset_token":"pcb.1846379669854104","all_subattachments":{"count":2,"nodes":[{"media":{"__typename":"Photo","id":"111111111"}},{"media":{"__typename":"Photo","id":"222222222"}}]}}</script>
+  </body></html>`;
+  const session = replay(groupHtml, "/groups/678282096663873/permalink/1846379669854104/");
+  sessions.push(session);
+  await session.advance(150);
+
+  expect(session.window.location.pathname).toBe("/photo/");
+  expect(session.window.location.search).toBe("?fbid=111111111&set=pcb.1846379669854104");
+  expect(session.window.sessionStorage.getItem("janeFacebookCaptureMode")).toBe("viewer");
+
+  const viewer1Html = `<!doctype html><html><head><title>Public Group Post</title></head><body>
+    <script type="application/json">{"currMedia":{"__typename":"Photo","container_story":{"id":"story1","nested":{"a":1}},"__isNode":"Photo","id":"111111111","image":{"uri":"https:\\/\\/scontent.fbcdn.net\\/photo1.jpg","width":1080,"height":1080},"creation_story":{"id":"story2","deep":{"b":2}},"nextMediaAfterNodeId":{"__typename":"Photo","id":"222222222"}}}</script>
+  </body></html>`;
+  const viewer1 = replay(viewer1Html, "/photo/?fbid=111111111&set=pcb.1846379669854104", "viewer");
+  sessions.push(viewer1);
+  viewer1.window.sessionStorage.setItem("janeFacebookExpectedCount", "2");
+  viewer1.window.sessionStorage.setItem("janeFacebookAlbumSet", "pcb.1846379669854104");
+  await viewer1.advance(150);
+
+  expect(viewer1.message()).toMatchObject({
+    kind: "photos",
+    sequence: 1,
+    photos: [{ id: "111111111", url: "https://scontent.fbcdn.net/photo1.jpg" }],
+  });
+  viewer1.window.__JANE_FACEBOOK_ACK__fixture = 1;
+  await viewer1.advance(350);
+  expect(viewer1.window.location.search).toBe("?fbid=222222222&set=pcb.1846379669854104");
+});
+

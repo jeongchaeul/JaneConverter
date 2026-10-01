@@ -8,7 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [2.2.7] - 2026-10-01 - Conversion Recovery, Library History, Adaptive GPU & Social Capture Hardening
 
 ### Added
-- Added a conversion completion **Success Modal** showing output format and quality summary, elapsed conversion time, automatic fallback notes, and instant **Play / Open file** and **Open folder** actions.
+- Added a conversion completion **Success Modal** showing output format and quality summary, elapsed conversion time, automatic fallback notes, and instant **Play / Open file** and **Open folder** actions, paired with host taskbar attention/glow notifications (`FlashWindowEx` / `request_user_attention`) whenever an operation finishes or fails.
+- Added live **Pause / Resume** and **Abort** controls in the Converter and Console views for active conversions and social photo captures, and persisted Converter state across tab switches.
 - Added a **Conversion History** tab in the Converted Library alongside **Explorer** and **Recent**, recording conversion duration, preset, output format/quality, status, and fallback notes with per-item and bulk clear controls.
 - Added an **Adaptive GPU Acceleration** toggle and status panel in **Settings** that explains automatic GPU video encoding (`MP4`, `MKV`, `MOV`), automatic GPU bypass for *Preserve Quality (Source)*, audio, and images, and multi-core CPU fallback.
 - Added bounded, policy-aware media conversion recovery (`src/janeconverter/recovery.py`) across `source-preserve`, `image-pillow` to `image-ffmpeg-frame`, optional lossless `PNG` fallback for non-standard source images, `stream-copy` to `gpu-transcode` to `cpu-transcode`, and `cover-normalized` artwork recovery.
@@ -26,7 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Detected downloaded social photos from verified image bytes (including Multi-Picture Object / Ultra HDR JPEGs, GIF, BMP, TIFF, and AVIF) rather than relying solely on CDN `Content-Type` headers, and kept two-frame `MPO` gain-map JPEGs as single-frame PNGs.
 - Supported username-prefixed Instagram post and Reel links (`/{username}/p/{shortcode}/` and `/{username}/reel/{shortcode}/`), filtered out comment stickers/GIFs and footer post grids, and preserved multi-photo carousel `<ul>` slide tracks.
 - Automatically handed off video-only social posts and Reels from the photo capture flow to the video conversion pipeline, and respected user-selected Video presets on social URLs.
-- Hardened Facebook album viewer traversal, photo-set completeness checks, and login-wall/sign-in overlay dismissal across public social photo capture paths.
+- Hardened Facebook album and public Group post photo viewer traversal (`pcb.<post_id>` set synthesis, `all_subattachments` and `currMedia` JSON extraction across nested `container_story`/`creation_story` payloads, `nextMediaAfterNodeId` pagination, and accurate wrap-around detection), photo-set completeness checks, and login-wall/sign-in overlay dismissal across public social photo capture paths.
 - Fixed MP3 and audio stream validation so embedded cover art (`attached_pic` video stream) does not falsely fail audio-only validation or trigger unnecessary recovery retries.
 - Added backdrop blur (`backdrop-blur-md`) and an opaque surface to the conversion error dialog so console output behind the modal does not bleed through.
 

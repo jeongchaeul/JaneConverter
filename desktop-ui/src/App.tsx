@@ -201,6 +201,7 @@ export default function App() {
 
   useEffect(() => {
     if (!failure) return;
+    void bridge.notifyAttention();
     failureCloseRef.current?.focus();
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setFailure(null);
@@ -211,6 +212,7 @@ export default function App() {
 
   useEffect(() => {
     if (!success) return;
+    void bridge.notifyAttention();
     successCloseRef.current?.focus();
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSuccess(null);

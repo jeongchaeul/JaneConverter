@@ -84,6 +84,7 @@ describe("Application shell", () => {
     vi.spyOn(bridge, "startConversion").mockResolvedValue("job-success");
     const openFileSpy = vi.spyOn(bridge, "openFile").mockResolvedValue();
     const openPathSpy = vi.spyOn(bridge, "openPath").mockResolvedValue();
+    const notifyAttentionSpy = vi.spyOn(bridge, "notifyAttention").mockResolvedValue();
 
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -112,6 +113,7 @@ describe("Application shell", () => {
       });
     });
 
+    expect(notifyAttentionSpy).toHaveBeenCalledTimes(1);
     const dialog = container.querySelector('[role="dialog"]');
     expect(dialog?.textContent).toContain("Success");
     expect(dialog?.textContent).toContain("sample.png");

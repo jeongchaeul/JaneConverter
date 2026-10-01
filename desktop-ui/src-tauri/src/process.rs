@@ -41,8 +41,62 @@ pub fn progress_from_line(line: &str) -> Option<f32> {
         .map(|value| (value / 100.0).clamp(0.0, 1.0))
 }
 
+#[cfg(target_os = "windows")]
+fn flash_windows_taskbar(window: &tauri::WebviewWindow) {
+    #[repr(C)]
+    struct FlashwInfo {
+        cb_size: u32,
+        hwnd: isize,
+        dw_flags: u32,
+        u_count: u32,
+        dw_timeout: u32,
+    }
+    extern "system" {
+        fn FlashWindowEx(pfwi: *const FlashwInfo) -> i32;
+        fn GetForegroundWindow() -> isize;
+    }
+    const FLASHW_ALL: u32 = 0x0000_0003;
+    const FLASHW_TIMERNOFG: u32 = 0x0000_000C;
+
+    if let Ok(hwnd) = window.hwnd() {
+        let raw_hwnd = hwnd.0 as isize;
+        if raw_hwnd != 0 {
+            // SAFETY: FlashWindowEx and GetForegroundWindow are standard Win32 user32 functions;
+            // raw_hwnd is a valid top-level window handle owned by Tauri.
+            unsafe {
+                let is_foreground = GetForegroundWindow() == raw_hwnd;
+                let info = FlashwInfo {
+                    cb_size: std::mem::size_of::<FlashwInfo>() as u32,
+                    hwnd: raw_hwnd,
+                    dw_flags: if is_foreground {
+                        FLASHW_ALL
+                    } else {
+                        FLASHW_ALL | FLASHW_TIMERNOFG
+                    },
+                    u_count: if is_foreground { 3 } else { u32::MAX },
+                    dw_timeout: 0,
+                };
+                let _ = FlashWindowEx(&info);
+            }
+        }
+    }
+}
+
+pub fn notify_user_attention(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
+        #[cfg(target_os = "windows")]
+        flash_windows_taskbar(&window);
+    }
+}
+
 pub fn emit_event(app: &tauri::AppHandle, event: ConverterEvent) {
+    let should_notify = matches!(event.kind.as_str(), "finished" | "failed");
     let _ = app.emit("converter-event", event);
+    if should_notify {
+        notify_user_attention(app);
+    }
 }
 
 fn failure_detail_from_line(line: &str) -> Option<String> {

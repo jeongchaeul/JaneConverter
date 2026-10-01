@@ -16,7 +16,7 @@ use paths::{
     prepare_command, project_root, set_data_root, settings_get_internal, write_settings,
 };
 use process::{
-    emit_event, load_playlist as load_playlist_engine, set_child_paused,
+    emit_event, load_playlist as load_playlist_engine, notify_user_attention, set_child_paused,
     start_conversion as start_engine_conversion, terminate_child, ConversionSlots,
 };
 use rfd::FileDialog;
@@ -2242,6 +2242,11 @@ async fn install_update(
     Ok(())
 }
 
+#[tauri::command]
+fn notify_attention(app: tauri::AppHandle) {
+    notify_user_attention(&app);
+}
+
 pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "updater")]
@@ -2288,6 +2293,7 @@ pub fn run() {
             discard_fetched_media,
             clear_access_link,
             relaunch,
+            notify_attention,
             check_updates,
             install_update
         ])
