@@ -5,12 +5,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [2.2.7] - 2026-10-01 - Instagram Photo, Carousel & Video Capture Fixes
+## [2.2.7] - 2026-10-01 - Conversion Recovery, Library History, Adaptive GPU & Social Capture Hardening
+
+### Added
+- Added a conversion completion **Success Modal** showing output format and quality summary, elapsed conversion time, automatic fallback notes, and instant **Play / Open file** and **Open folder** actions.
+- Added a **Conversion History** tab in the Converted Library alongside **Explorer** and **Recent**, recording conversion duration, preset, output format/quality, status, and fallback notes with per-item and bulk clear controls.
+- Added an **Adaptive GPU Acceleration** toggle and status panel in **Settings** that explains automatic GPU video encoding (`MP4`, `MKV`, `MOV`), automatic GPU bypass for *Preserve Quality (Source)*, audio, and images, and multi-core CPU fallback.
+- Added bounded, policy-aware media conversion recovery (`src/janeconverter/recovery.py`) across `source-preserve`, `image-pillow` to `image-ffmpeg-frame`, optional lossless `PNG` fallback for non-standard source images, `stream-copy` to `gpu-transcode` to `cpu-transcode`, and `cover-normalized` artwork recovery.
+- Added signed per-commit desktop updates via the rolling `continuous` GitHub release (Windows signed NSIS setup `.exe`, Linux `.AppImage`, and macOS app bundles) while disabling unsigned legacy installer downloads.
+- Added expanded multi-format conversion support across Audio (`opus`, `aiff`, `aif`, `alac`, `ac3`, `mp2`, `wma`, `caf`, `au`), Video (`avi`, `flv`, `m4v`, `ts`, `m2ts`, `mpeg`, `mpg`, `vob`, `3gp`, `wmv`, `asf`), and Images (`jfif`, `bmp`, `tif`, `tiff`, `gif`, `ico`, `tga`, `ppm`, `pgm`, `pbm`, including animated GIF, APNG, and WebP preservation).
+- Added adaptive Browser Bridge story sequence learning (`browser-extension/adaptation.js`) with a 14-day structural preference store and popup reset control.
+- Added `packaging/smoke_test_engine.py` packaged engine conversion smoke tests, `FFMPEG-SOURCE-INFO.txt` provenance, bundled `yt-dlp-ejs` runtime support, and pinned FFmpeg release asset SHA-256 digests across consumer release builds.
+
+### Changed
+- Coordinated desktop storage paths (`%APPDATA%\JaneConverter` on Windows with automatic migration from legacy `%LOCALAPPDATA%` installs, cleaned Windows extended-length `\\?\` paths, and explicit UTF-8 subprocess environment variables) and hardened Browser Bridge loopback session lifecycle and diagnostics.
+- Converted the playlist track selector (`PlaylistDialog`) into a native modal `<dialog>` with focus restoration and Escape-key dismissal.
+- Accelerated media transcoding with fast-seek input handling, multi-threaded decoding/encoding, and atomic no-clobber staged file publication (`_publish_staged_file`).
 
 ### Fixed
 - Detected downloaded social photos from verified image bytes (including Multi-Picture Object / Ultra HDR JPEGs, GIF, BMP, TIFF, and AVIF) rather than relying solely on CDN `Content-Type` headers, and kept two-frame `MPO` gain-map JPEGs as single-frame PNGs.
 - Supported username-prefixed Instagram post and Reel links (`/{username}/p/{shortcode}/` and `/{username}/reel/{shortcode}/`), filtered out comment stickers/GIFs and footer post grids, and preserved multi-photo carousel `<ul>` slide tracks.
-- Automatically handed off video-only social posts and Reels from the photo capture flow to the video conversion pipeline.
+- Automatically handed off video-only social posts and Reels from the photo capture flow to the video conversion pipeline, and respected user-selected Video presets on social URLs.
+- Hardened Facebook album viewer traversal, photo-set completeness checks, and login-wall/sign-in overlay dismissal across public social photo capture paths.
+- Fixed MP3 and audio stream validation so embedded cover art (`attached_pic` video stream) does not falsely fail audio-only validation or trigger unnecessary recovery retries.
 - Added backdrop blur (`backdrop-blur-md`) and an opaque surface to the conversion error dialog so console output behind the modal does not bleed through.
 
 ## [2.2.6] - 2026-09-29 - FFmpeg Conversion Fallback Fix

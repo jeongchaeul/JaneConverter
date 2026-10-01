@@ -187,6 +187,9 @@ BUILT_ENGINE="$PYINSTALLER_ROOT/dist/JaneConverterEngine"
   exit 1
 }
 cp -a -- "$BUILT_ENGINE/." "$RUNTIME_ENGINE/"
+if [[ -d "$RUNTIME_ENGINE/_internal/yt_dlp_ejs" ]]; then
+  find "$RUNTIME_ENGINE/_internal/yt_dlp_ejs" -type f -name '*.py' -delete
+fi
 install -m 0755 -- "$FFMPEG_PATH" "$RUNTIME_BIN/ffmpeg"
 install -m 0755 -- "$FFPROBE_PATH" "$RUNTIME_BIN/ffprobe"
 install -m 0755 -- "$NODE_PATH" "$RUNTIME_BIN/node"

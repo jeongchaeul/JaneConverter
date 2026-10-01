@@ -141,6 +141,10 @@ if (-not (Test-Path -LiteralPath (Join-Path $builtEngine "JaneConverterEngine.ex
     throw "PyInstaller did not produce the expected onedir engine."
 }
 Copy-Item -Path (Join-Path $builtEngine "*") -Destination $runtimeEngine -Recurse -Force
+$ytDlpEjsDir = Join-Path $runtimeEngine "_internal\yt_dlp_ejs"
+if (Test-Path -LiteralPath $ytDlpEjsDir) {
+    Get-ChildItem -LiteralPath $ytDlpEjsDir -Recurse -Force -File -Filter "*.py" | Remove-Item -Force
+}
 Copy-Item -LiteralPath $ffmpeg -Destination (Join-Path $runtimeBin "ffmpeg.exe")
 Copy-Item -LiteralPath $ffprobe -Destination (Join-Path $runtimeBin "ffprobe.exe")
 Copy-Item -LiteralPath $node -Destination (Join-Path $runtimeBin "node.exe")

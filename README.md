@@ -27,15 +27,17 @@ JaneConverter downloads and converts media through a sleek Tauri desktop app or 
 - **Comprehensive Multi-Format Processing**:
   - **Audio outputs**: WAV, FLAC, MP3, AAC/M4A, OGG, Opus, AIFF, ALAC, AC3, MP2, WMA, CAF, and AU.
   - **Video outputs**: MP4, MKV, WebM, MOV, AVI, FLV, M4V, TS/M2TS, MPEG/MPG/VOB, 3GP, WMV/ASF, and GIF.
-  - **Image outputs**: JPG/JPEG/JFIF, PNG, WebP, BMP, TIFF, GIF, ICO, TGA, and portable PBM/PGM/PPM.
-  - **Inputs**: Common audio, video, and still-image files are detected by extension, including JFIF, TIFF, AVIF, and HEIF/HEIC. The actual files a build can decode depend on its bundled FFmpeg and Pillow support.
-- **Audiophile-Grade Sound Engine**: 64-bit float SoX resampler (`soxr`, precision 28, cutoff 0.99), EBU R128 loudness normalization (`-14 LUFS`), and post-conversion `ffprobe` stream validation to prevent corrupt, 0-byte completions.
-- **Instant Stream Copy Remuxing**: Zero-loss container conversion (`-c copy`) when underlying codecs match, with automatic safety fallback to transcode when audio normalization or filters are requested.
-- **Drag-and-Drop & Batch Queue**: Drag local media files or web links directly into the converter. Dropping multiple files automatically populates the sequential batch queue with live per-item progress, cancel, and retry controls.
-- **1-Click Intent Presets**: Goal-oriented presets including *Preserve Quality (raw stream without re-encoding)*, *Studio Master (32-bit WAV)*, *Universal Music (320k MP3)*, *Lossless FLAC (24-bit)*, *Universal Video (1080p MP4)*, and *Lossless Image (PNG)*. Presets are optional; users can choose **No preset** to customize parameters manually.
-- **Hardware Acceleration**: NVIDIA NVENC, AMD AMF, Intel QSV, and Linux VAAPI with multi-core CPU fallback.
-- **Online Extraction**: yt-dlp-powered media extraction, playlist selection, public Spotify and Apple Music catalog matching, and parallel fragment downloading where the source supports it.
-- **Air-Gapped Browser Bridge**: Optional local companion extension to capture active media from authenticated browser pages without ever exporting or reading cookies, session tokens, or passwords.
+  - **Image outputs**: JPG/JPEG/JFIF, PNG, WebP, BMP, TIFF, GIF, ICO, TGA, and portable PBM/PGM/PPM (including animated GIF, APNG, and WebP preservation).
+  - **Inputs**: Common audio, video, and still-image files are detected by extension and verified by magic bytes (including Multi-Picture Object / Ultra HDR JPEGs, JFIF, TIFF, AVIF, and HEIF/HEIC). The actual files a build can decode depend on its bundled FFmpeg and Pillow support.
+- **Audiophile-Grade Sound Engine**: 64-bit float SoX resampler (`soxr`, precision 28, cutoff 0.99), EBU R128 loudness normalization (`-14 LUFS`), cover-art stream handling (`attached_pic` aware), and post-conversion `ffprobe` stream validation to prevent corrupt, 0-byte completions.
+- **Instant Stream Copy & Bounded Recovery**: Zero-loss container conversion (`-c copy`) when underlying codecs match, paired with a bounded, policy-aware recovery engine (`stream-copy` -> `gpu-transcode` -> `cpu-transcode`, `image-pillow` -> `image-ffmpeg-frame`, cover-art normalization fallback, and optional lossless `PNG` recovery when `Preserve Quality` encounters non-standard source image encodings).
+- **Adaptive GPU Acceleration**: Dedicated **Adaptive GPU Acceleration** control in Settings supporting NVIDIA NVENC, AMD AMF, Intel QSV, and Linux VAAPI. Automatically accelerates video encoding (`MP4`, `MKV`, `MOV`), bypasses the GPU for *Preserve Quality (Source)*, audio, and images so source streams stay untouched, and falls back to multi-core CPU encoding when a codec is unsupported by hardware.
+- **Drag-and-Drop, Batch Queue & Completion Summary**: Drag local media files or web links directly into the converter. Dropping multiple files populates the sequential batch queue with live per-item progress, cancel, and retry controls, followed by a completion summary modal with output format/quality details, elapsed time, fallback notes, and one-click **Play / Open file** and **Open folder** actions.
+- **Converted Library & Conversion History**: Browse exports across **Explorer**, **Recent**, and **Conversion History** tabs with **All**, **Audios**, **Videos**, **Images**, and **Metadata** filters, thumbnail and cover-art previews, per-item conversion duration badges, and native file drag-and-drop into external applications.
+- **1-Click Intent Presets**: Goal-oriented presets grouped under Audio, Video, and Image tabs, including *Preserve Quality (raw stream without re-encoding)*, *Studio Master (32-bit WAV)*, *Universal Music (320k MP3)*, *Lossless FLAC (24-bit)*, *Universal Video (1080p MP4)*, *Studio Cinematic (Original MKV)*, and *Lossless Image (PNG)*. Clicking an active preset again clears it, and the **Advanced settings** switch unlocks manual parameter customization.
+- **Online Extraction & Smart Social Routing**: yt-dlp-powered media extraction (with bundled `yt-dlp-ejs`), native modal playlist track selection, public Spotify and Apple Music catalog matching, parallel fragment downloading, and automatic handoff from social photo capture to the video conversion pipeline when a link points to a Reel or video post.
+- **Air-Gapped Browser Bridge**: Optional local companion extension to capture active media (**Capture current media**, **Collect mode**, **Network Compatibility Mode**, and adaptive **Story sequence** capture) from authenticated browser pages without ever exporting or reading cookies, session tokens, or passwords.
+- **Signed In-App Updates**: Cryptographically signed desktop update packages via the rolling `continuous` release feed and tagged releases, with automatic GitHub Atom feed fallback when unauthenticated API requests are rate-limited.
 
 ## Platform Coverage and Verification
 
@@ -81,12 +83,12 @@ These extensions are recognized when adding local files. Decoding depends on the
 
 Download the matching artifact from the [latest release](https://github.com/jeongchaeul/JaneConverter/releases/latest):
 
-- Windows x64 installer: `JaneConverter-<version>-windows-x64-setup.exe`
+- Windows x64 installer (supports signed in-app updates): `JaneConverter-<version>-windows-x64-setup.exe`
 - Windows x64 portable: `JaneConverter-<version>-windows-x64-portable.zip`
-- Linux x86_64 AppImage with in-app updates: `JaneConverter-<version>-linux-x86_64.AppImage`
+- Linux x86_64 AppImage (supports signed in-app updates): `JaneConverter-<version>-linux-x86_64.AppImage`
 - Linux x86_64 portable: `JaneConverter-<version>-linux-x86_64.tar.gz`
-- macOS Apple Silicon: `JaneConverter-<version>-macos-arm64.dmg`
-- macOS Intel: `JaneConverter-<version>-macos-x86_64.dmg`
+- macOS Apple Silicon (supports signed in-app updates): `JaneConverter-<version>-macos-arm64.dmg`
+- macOS Intel (supports signed in-app updates): `JaneConverter-<version>-macos-x86_64.dmg`
 
 Python, FFmpeg, FFprobe, and Node.js are bundled. Windows requires WebView2. Linux requires WebKitGTK 4.1 and standard GTK desktop libraries. macOS builds are architecture-specific, not universal binaries.
 
@@ -96,19 +98,19 @@ Launch `JaneConverter.exe` on Windows or `./JaneConverter/JaneConverter` from th
 
 The macOS app is only ad-hoc signed, and the DMGs are not Developer ID signed or notarized. Gatekeeper may block the first launch. In Finder, Control-click JaneConverter, choose **Open**, then confirm **Open**. Only bypass the warning after verifying the checksum and release source.
 
-Application data is stored in the OS user-data directory. Set `JANECONVERTER_DATA_DIR` to override it.
+Application data is stored in the OS user-data directory (`%APPDATA%\JaneConverter` on Windows, with automatic migration from legacy `%LOCALAPPDATA%` installs). You can relocate the data root in **Settings** > **Application data folder** or set `JANECONVERTER_DATA_DIR` to override it.
 
 ## Usage
 
-Paste a supported URL or choose a local file (or drag and drop files / links directly into the source box), select your desired output settings or 1-click preset, then start the conversion. The desktop app includes playlist selection, a sequential batch queue, a converted-library browser, live logs, diagnostics, and instant abort controls.
+Paste a supported URL or choose a local file (or drag and drop files / links directly into the source box), select your desired output settings or 1-click preset, then start the conversion. The desktop app includes playlist selection, a sequential batch queue, a converted-library browser (**Explorer**, **Recent**, and **Conversion History**), a hardware & pipeline monitor, custom theme and accent colors, live logs, diagnostics, and instant abort controls.
 
 ### Public Facebook photo posts
 
-Paste a public Facebook post link and choose **Download all photos**. JaneConverter reads the post in a separate, hidden temporary guest WebView, collects the photo URLs Facebook renders for logged-out visitors, then passes that short-lived list directly to the local engine. Photos are validated and saved in a grouped folder under `Images/Facebook`, where the library lists image files alongside audio and video. JaneConverter does not use the normal browser profile, a browser extension, saved login cookies, or a remote download service. Facebook page scripts run in the temporary WebView and make the requests needed to display the post. The temporary profile is removed after capture. Posts that require sign-in or do not expose a complete photo set are stopped without saving a partial album.
+Paste a public Facebook post link and choose **Download all photos**. JaneConverter reads the post in a separate, hidden temporary guest WebView, dismisses login-wall overlays, collects the photo URLs Facebook renders for logged-out visitors, then passes that short-lived list directly to the local engine. Photos are validated by image bytes and saved in a grouped folder under `Images/Facebook`, where the library lists image files alongside audio and video. If a post is video-only or the user selected a Video preset, JaneConverter automatically hands the URL off to the video conversion pipeline. JaneConverter does not use the normal browser profile, a browser extension, saved login cookies, or a remote download service. The temporary profile is removed after capture. Posts that require sign-in or do not expose a complete photo set are stopped without saving a partial album.
 
 ### Public Instagram and X/Twitter photo posts
 
-Paste a public Instagram post or X/Twitter post link and choose **Download all photos**. JaneConverter uses a separate, hidden temporary guest WebView to collect the photos the post exposes to logged-out visitors, then downloads them locally into grouped folders under `Images/Instagram` or `Images/Twitter`. Instagram carousel slides are opened in sequence. Posts that require sign-in or do not expose photos to logged-out visitors cannot be captured; X/Twitter posts without photos continue through the standard media downloader. No normal browser profile, saved login cookies, browser extension, or remote download service is used.
+Paste a public Instagram post/Reel (`/{username}/p/{shortcode}/`, `/p/{shortcode}/`, `/{username}/reel/{shortcode}/`, or `/reel/{shortcode}/`) or X/Twitter post link and choose **Download all photos**. JaneConverter uses a separate, hidden temporary guest WebView to collect the photos the post exposes to logged-out visitors, filtering out comment stickers/GIFs and footer post grids while preserving multi-photo carousel `<ul>` slide tracks. Downloaded images (including two-frame Multi-Picture Object / Ultra HDR JPEGs) are validated by magic bytes and saved into grouped folders under `Images/Instagram` or `Images/Twitter`. Posts or Reels that contain video instead of photos automatically switch to the video conversion pipeline. No normal browser profile, saved login cookies, browser extension, or remote download service is used.
 
 ### Other public photo collections
 
@@ -118,14 +120,14 @@ JaneConverter does not sign in, bypass private-content gates, or read browser co
 
 Spotify and Apple Music links provide public catalog metadata matching. JaneConverter does not download protected DRM-subscription audio directly.
 
-Browser-captured files appear in the **Fetched Media.** tab and are saved in the configured fetched-media folder. The default is a `fetched` folder beside the converted library; clearing access ends the browser session without deleting those files. Each item supports **Open file**, **Open path**, **Use for conversion**, and **Discard**.
+Browser-captured files appear in the **Fetched media.** tab and are saved in the configured fetched-media folder. The default is a `fetched` folder beside the converted library; clearing access ends the browser session without deleting those files. Each item supports **Open file**, **Open path**, **Use for conversion**, and **Discard**.
 
 ## Browser Extension (Local Installation Guide)
 
-The **JaneConverter Browser Bridge** is an optional companion extension that lets you capture active audio and video streams from browser tabs directly into the JaneConverter desktop inbox.
+The **JaneConverter Browser Bridge** is an optional companion extension that lets you capture active audio, video, and story media from browser tabs directly into the JaneConverter desktop inbox. It supports **Capture current media**, **Collect mode** (for continuous story advancing), **Network Compatibility Mode** (tab-scoped network response capture), and experimental **Story sequence** capture with 14-day local structural adaptation.
 
 > [!NOTE]
-> **Privacy First & Air-Gapped**: The extension is strictly local and runs entirely on your machine. It **never** reads, exports, or stores your cookies, login tokens, browsing history, or passwords. It only forwards direct media stream URLs to your local JaneConverter instance via an authenticated local loopback token.
+> **Privacy First & Air-Gapped**: The extension is strictly local and runs entirely on your machine. It **never** reads, exports, or stores your cookies, login tokens, browsing history, or passwords. It only forwards direct media stream URLs or user-selected media bytes to your local JaneConverter instance via an authenticated local loopback token.
 
 Because the extension is a local power-user tool and not distributed through the Chrome Web Store or Firefox Add-ons, install it manually in **under 60 seconds**:
 
@@ -146,9 +148,8 @@ Because the extension is a local power-user tool and not distributed through the
    - Select the `browser-extension` folder from Step 1.
 5. **Pin & Connect**:
    - Pin the JaneConverter icon to your browser extensions toolbar.
-   - In the JaneConverter desktop app, click **Create Access Link** on the **Fetched Media.** tab (or go to **Settings** > **Browser Bridge**) to generate a pairing token.
-   - Click the extension icon in your browser to complete one-click pairing.
-   - Any video or audio stream captured in your browser can now be sent straight to your desktop queue!
+   - In the JaneConverter desktop app, click **Create access link** on the **Converter** or **Fetched media.** tab to generate a pairing session.
+   - Confirm access in your browser, then open the extension popup from the toolbar to capture media straight to your desktop queue.
 
 ## Command line
 
@@ -187,10 +188,12 @@ The Python backend uses the `src/janeconverter/` package. Its supported entry po
 `src/janeconverter/version.py` is the canonical application version. Set it and synchronize all desktop metadata with one command:
 
 ```bash
-uv run --locked python packaging/set_version.py 2.0.1-alpha
+uv run --locked python packaging/set_version.py 2.2.7
 ```
 
 Run the command without a version to resynchronize from the canonical value, or pass `--check` to verify metadata without writing. The optional Browser Bridge is independently versioned and is not changed by this tool.
+
+Consumer builds bundle the frozen `JaneConverterEngine` (`onedir` with `yt-dlp-ejs`), `FFMPEG-BUILD-INFO.txt`, and `FFMPEG-SOURCE-INFO.txt`, and run `packaging/smoke_test_engine.py` to verify local audio/video/image conversion before packaging.
 
 Windows x64:
 
@@ -210,7 +213,7 @@ macOS arm64 or x86_64 must be built natively on the matching architecture. Insta
 ./packaging/build_macos.sh --ffmpeg /opt/ffmpeg/ffmpeg --ffprobe /opt/ffmpeg/ffprobe --node "$(command -v node)"
 ```
 
-Tagged `v*` releases are built and published by GitHub Actions. The release workflow uses GPL FFmpeg builds, so distributors must preserve the required notices and satisfy the corresponding source obligations.
+Tagged `v*` releases and rolling `continuous` updater feeds are built and published by GitHub Actions with pinned FFmpeg asset SHA-256 digests. The release workflow uses GPL FFmpeg builds, so distributors must preserve the required notices and satisfy the corresponding source obligations.
 
 ## Legal
 
