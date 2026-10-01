@@ -16,7 +16,11 @@ permissions:
   contents: read
 
 jobs:
+  validate:
+    uses: ./.github/workflows/ci.yml
+
   windows-x64:
+    needs: validate
     runs-on: windows-latest
     env:
       JANECONVERTER_BUILD_COMMIT: ${{ github.sha }}
@@ -53,14 +57,13 @@ jobs:
         id: ffmpeg
         shell: pwsh
         run: |
-          $name = "ffmpeg-master-latest-win64-gpl.zip"
-          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$name"
+          $tag = "autobuild-2026-09-30-13-08"
+          $name = "ffmpeg-N-127021-ge0c94b2d1c-win64-gpl.zip"
+          $expected = "85c4a4636b93d681a07588ffa6f1d8f5c064d9c3fb0622066662906b6fd718a1"
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/$tag/$name"
           Invoke-WebRequest -Uri $url -OutFile $name
-          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/checksums.sha256" -OutFile checksums.sha256
-          $checksumLine = Get-Content checksums.sha256 | Where-Object { $_ -match [regex]::Escape($name) } | Select-Object -First 1
-          $expected = ([regex]::Match($checksumLine, '[a-fA-F0-9]{64}')).Value.ToLowerInvariant()
           $actual = (Get-FileHash -Algorithm SHA256 $name).Hash.ToLowerInvariant()
-          if (-not $expected -or $actual -ne $expected) { throw "FFmpeg SHA256 verification failed." }
+          if ($actual -ne $expected) { throw "FFmpeg SHA256 verification failed." }
           Expand-Archive -LiteralPath $name -DestinationPath ffmpeg-static
           $ffmpeg = (Get-ChildItem ffmpeg-static -Recurse -Filter ffmpeg.exe -File | Select-Object -First 1).FullName
           $ffprobe = (Get-ChildItem ffmpeg-static -Recurse -Filter ffprobe.exe -File | Select-Object -First 1).FullName
@@ -100,6 +103,7 @@ jobs:
             dist/JaneConverter-Browser-Bridge-*.zip
 
   linux-x86_64:
+    needs: validate
     runs-on: ubuntu-22.04
     env:
       JANECONVERTER_BUILD_COMMIT: ${{ github.sha }}
@@ -139,14 +143,13 @@ jobs:
         id: ffmpeg
         run: |
           set -euo pipefail
-          name=ffmpeg-master-latest-linux64-gpl.tar.xz
-          url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$name"
+          tag=autobuild-2026-09-30-13-08
+          name=ffmpeg-N-127021-ge0c94b2d1c-linux64-gpl.tar.xz
+          expected=3a2a94e704752287833604501a79505c2319ad1d8b2f5577c63f2b1b7a6f2b66
+          url="https://github.com/BtbN/FFmpeg-Builds/releases/download/$tag/$name"
           curl --fail --location --retry 3 --output "$name" "$url"
-          curl --fail --location --retry 3 --output checksums.sha256 \
-            https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/checksums.sha256
-          expected="$(awk -v name="$name" '$2 == name || $2 == "*" name {print tolower($1); exit}' checksums.sha256)"
           actual="$(sha256sum "$name" | cut -d' ' -f1)"
-          test -n "$expected" && test "$actual" = "$expected"
+          test "$actual" = "$expected"
           mkdir ffmpeg-static
           tar -xJf "$name" -C ffmpeg-static
           ffmpeg="$(find "$PWD/ffmpeg-static" -type f -name ffmpeg -perm -111 -print -quit)"
@@ -185,6 +188,7 @@ jobs:
             dist/JaneConverter-*-linux-x86_64.AppImage.sig
 
   macos:
+    needs: validate
     name: macos-${{ matrix.arch }}
     strategy:
       fail-fast: false
@@ -290,7 +294,7 @@ jobs:
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/bootstrap-v2.2.6-') || (github.event_name == 'workflow_dispatch' && inputs.existing_release_tag != '')
-    needs: [windows-x64, linux-x86_64, macos]
+    needs: [validate, windows-x64, linux-x86_64, macos]
     runs-on: ubuntu-22.04
     permissions:
       contents: write

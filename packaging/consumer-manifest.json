@@ -6,7 +6,7 @@
     "macos": "JaneConverter.app"
   },
   "private_runtime": "resources/runtime",
-  "documents": ["LICENSE"],
+  "documents": ["LICENSE", "THIRD-PARTY-NOTICES.md", "FFMPEG-BUILD-INFO.txt", "FFMPEG-SOURCE-INFO.txt"],
   "engine": {
     "directory": "engine",
     "windows": "JaneConverterEngine.exe",

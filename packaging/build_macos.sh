@@ -173,6 +173,7 @@ mkdir -p -- "$RUNTIME_ENGINE" "$RUNTIME_BIN" "$PYINSTALLER_ROOT/spec"
 
 echo "Building the frozen engine (onedir)..."
 uv run --locked pyinstaller --noconfirm --clean --onedir --contents-directory _internal \
+  --collect-all yt_dlp_ejs \
   --name JaneConverterEngine \
   --paths "$REPO_ROOT/src" \
   --distpath "$PYINSTALLER_ROOT/dist" \
@@ -190,6 +191,13 @@ install -m 0755 -- "$FFMPEG_PATH" "$RUNTIME_BIN/ffmpeg"
 install -m 0755 -- "$FFPROBE_PATH" "$RUNTIME_BIN/ffprobe"
 install -m 0755 -- "$NODE_PATH" "$RUNTIME_BIN/node"
 install -m 0644 -- "$REPO_ROOT/LICENSE" "$STAGING_ROOT/LICENSE"
+install -m 0644 -- "$REPO_ROOT/packaging/THIRD-PARTY-NOTICES.md" "$STAGING_ROOT/THIRD-PARTY-NOTICES.md"
+cat > "$STAGING_ROOT/FFMPEG-SOURCE-INFO.txt" <<'EOF'
+FFmpeg package: eugeneware/ffmpeg-static b6.1.1
+FFmpeg package source: https://github.com/eugeneware/ffmpeg-static/tree/b6.1.1
+FFmpeg source repository: https://git.ffmpeg.org/ffmpeg.git
+EOF
+"$FFMPEG_PATH" -version > "$STAGING_ROOT/FFMPEG-BUILD-INFO.txt"
 xattr -dr com.apple.quarantine "$STAGING_ROOT" 2>/dev/null || true
 
 if find "$RUNTIME_ROOT" -type f \( \
@@ -209,7 +217,10 @@ while IFS= read -r -d '' candidate; do
   fi
 done < <(find "$RUNTIME_ROOT" -type f -print0)
 
-"$RUNTIME_ENGINE/JaneConverterEngine" --version >/dev/null
+uv run --locked python "$REPO_ROOT/packaging/smoke_test_engine.py" \
+  --engine "$RUNTIME_ENGINE/JaneConverterEngine" \
+  --runtime-bin "$RUNTIME_BIN" \
+  --work-directory "$PYINSTALLER_ROOT/smoke"
 "$RUNTIME_BIN/ffmpeg" -version >/dev/null
 "$RUNTIME_BIN/ffprobe" -version >/dev/null
 "$RUNTIME_BIN/node" --version >/dev/null
@@ -218,6 +229,9 @@ TAURI_CONFIG="$BUILD_ROOT/tauri.release.json"
 export JANECONVERTER_RELEASE_VERSION="$TAURI_VERSION"
 export JANECONVERTER_RUNTIME_ROOT="$RUNTIME_ROOT"
 export JANECONVERTER_STAGED_LICENSE="$STAGING_ROOT/LICENSE"
+export JANECONVERTER_STAGED_NOTICES="$STAGING_ROOT/THIRD-PARTY-NOTICES.md"
+export JANECONVERTER_STAGED_FFMPEG_INFO="$STAGING_ROOT/FFMPEG-BUILD-INFO.txt"
+export JANECONVERTER_STAGED_FFMPEG_SOURCE_INFO="$STAGING_ROOT/FFMPEG-SOURCE-INFO.txt"
 export JANECONVERTER_TAURI_CONFIG="$TAURI_CONFIG"
 export JANECONVERTER_ENABLE_UPDATER="$ENABLE_UPDATER"
 export JANECONVERTER_UPDATER_ONLY="$UPDATER_ONLY"
@@ -237,6 +251,9 @@ config["bundle"]["targets"] = ["app"] if os.environ.get("JANECONVERTER_UPDATER_O
 config["bundle"]["resources"] = {
     os.environ["JANECONVERTER_RUNTIME_ROOT"]: "runtime",
     os.environ["JANECONVERTER_STAGED_LICENSE"]: "LICENSE",
+    os.environ["JANECONVERTER_STAGED_NOTICES"]: "THIRD-PARTY-NOTICES.md",
+    os.environ["JANECONVERTER_STAGED_FFMPEG_INFO"]: "FFMPEG-BUILD-INFO.txt",
+    os.environ["JANECONVERTER_STAGED_FFMPEG_SOURCE_INFO"]: "FFMPEG-SOURCE-INFO.txt",
 }
 config["bundle"].setdefault("macOS", {})["signingIdentity"] = "-"
 if os.environ["JANECONVERTER_ENABLE_UPDATER"] == "1":

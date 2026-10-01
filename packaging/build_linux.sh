@@ -146,6 +146,7 @@ mkdir -p -- "$RUNTIME_ENGINE" "$RUNTIME_BIN" "$PYINSTALLER_ROOT/spec"
 
 echo "Building the frozen engine (onedir)..."
 uv run --locked pyinstaller --noconfirm --clean --onedir --contents-directory _internal \
+  --collect-all yt_dlp_ejs \
   --name JaneConverterEngine \
   --paths "$REPO_ROOT/src" \
   --distpath "$PYINSTALLER_ROOT/dist" \
@@ -163,7 +164,18 @@ install -m 0755 -- "$FFMPEG_PATH" "$RUNTIME_BIN/ffmpeg"
 install -m 0755 -- "$FFPROBE_PATH" "$RUNTIME_BIN/ffprobe"
 install -m 0755 -- "$NODE_PATH" "$RUNTIME_BIN/node"
 install -m 0644 -- "$REPO_ROOT/LICENSE" "$PAYLOAD_ROOT/LICENSE"
-"$RUNTIME_ENGINE/JaneConverterEngine" --version >/dev/null
+install -m 0644 -- "$REPO_ROOT/packaging/THIRD-PARTY-NOTICES.md" "$PAYLOAD_ROOT/THIRD-PARTY-NOTICES.md"
+cat > "$PAYLOAD_ROOT/FFMPEG-SOURCE-INFO.txt" <<'EOF'
+FFmpeg source revision: ge0c94b2d1c
+FFmpeg source: https://github.com/FFmpeg/FFmpeg/tree/ge0c94b2d1c
+BtbN build source: https://github.com/BtbN/FFmpeg-Builds/tree/autobuild-2026-09-30-13-08
+BtbN release: https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-09-30-13-08
+EOF
+"$FFMPEG_PATH" -version > "$PAYLOAD_ROOT/FFMPEG-BUILD-INFO.txt"
+uv run --locked python "$REPO_ROOT/packaging/smoke_test_engine.py" \
+  --engine "$RUNTIME_ENGINE/JaneConverterEngine" \
+  --runtime-bin "$RUNTIME_BIN" \
+  --work-directory "$PYINSTALLER_ROOT/smoke"
 
 if find "$RUNTIME_ROOT" -type f \( \
   -name 'JaneConverterPython*' -o -name 'JaneConverterNative*' -o \
@@ -176,6 +188,9 @@ fi
 TAURI_CONFIG="$BUILD_ROOT/tauri.release.json"
 export JANECONVERTER_RUNTIME_ROOT="$RUNTIME_ROOT"
 export JANECONVERTER_STAGED_LICENSE="$PAYLOAD_ROOT/LICENSE"
+export JANECONVERTER_STAGED_NOTICES="$PAYLOAD_ROOT/THIRD-PARTY-NOTICES.md"
+export JANECONVERTER_STAGED_FFMPEG_INFO="$PAYLOAD_ROOT/FFMPEG-BUILD-INFO.txt"
+export JANECONVERTER_STAGED_FFMPEG_SOURCE_INFO="$PAYLOAD_ROOT/FFMPEG-SOURCE-INFO.txt"
 write_tauri_config() {
   local config_mode="$1"
   export JANECONVERTER_RELEASE_VERSION="$TAURI_VERSION"
@@ -200,6 +215,9 @@ if mode == "updater":
     config["bundle"]["resources"] = {
         os.environ["JANECONVERTER_RUNTIME_ROOT"]: "runtime",
         os.environ["JANECONVERTER_STAGED_LICENSE"]: "LICENSE",
+        os.environ["JANECONVERTER_STAGED_NOTICES"]: "THIRD-PARTY-NOTICES.md",
+        os.environ["JANECONVERTER_STAGED_FFMPEG_INFO"]: "FFMPEG-BUILD-INFO.txt",
+        os.environ["JANECONVERTER_STAGED_FFMPEG_SOURCE_INFO"]: "FFMPEG-SOURCE-INFO.txt",
     }
     config.setdefault("plugins", {})["updater"] = {
         "pubkey": os.environ["JANECONVERTER_UPDATER_PUBKEY"],

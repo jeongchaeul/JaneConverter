@@ -26,7 +26,12 @@ def test_manifest_defines_one_ui_engine_and_toolset():
         "macos": "JaneConverter.app",
     }
     assert manifest["private_runtime"] == "resources/runtime"
-    assert manifest["documents"] == ["LICENSE"]
+    assert manifest["documents"] == [
+        "LICENSE",
+        "THIRD-PARTY-NOTICES.md",
+        "FFMPEG-BUILD-INFO.txt",
+        "FFMPEG-SOURCE-INFO.txt",
+    ]
     assert manifest["engine"]["pyinstaller_mode"] == "onedir"
     assert manifest["engine"]["support_directory"] == "_internal"
     assert manifest["tools"]["windows"] == [
@@ -52,6 +57,7 @@ def test_windows_build_stages_one_private_runtime_for_both_outputs():
     script = read("packaging/build_consumer.ps1")
 
     assert "--onedir" in script
+    assert "--collect-all yt_dlp_ejs" in script
     assert "--onefile" not in script
     assert '"resources\\runtime"' in script
     assert '"engine"' in script and '"bin"' in script
@@ -59,7 +65,8 @@ def test_windows_build_stages_one_private_runtime_for_both_outputs():
     assert "windows-x64-setup.exe" in script
     assert "windows-x64-portable.zip" in script
     assert "installMode = \"currentUser\"" in script
-    assert '"Frozen engine smoke test"' in script
+    assert '"Packaged engine conversion smoke test"' in script
+    assert "FFMPEG-SOURCE-INFO.txt" in script
     assert "installerHooks" not in script
     for obsolete in ("Program.cs", "JaneConverterPython.exe", "JaneConverterNative.exe"):
         assert script.count(obsolete) == 1  # rejection list only
@@ -126,7 +133,8 @@ def test_linux_build_keeps_portable_tarball_and_can_build_updater_appimage():
     assert "--onedir" in script
     assert "linux-x86_64.tar.gz" in script
     assert "install -m 0755" in script
-    assert '"$RUNTIME_ENGINE/JaneConverterEngine" --version' in script
+    assert 'uv run --locked python "$REPO_ROOT/packaging/smoke_test_engine.py"' in script
+    assert '--engine "$RUNTIME_ENGINE/JaneConverterEngine"' in script
     assert "--enable-updater" in script
     assert "--updater-only" in script
     assert 'UPDATER_ARTIFACT="$OUTPUT_DIR/JaneConverter-$VERSION-linux-x86_64.AppImage"' in script
@@ -215,8 +223,9 @@ def test_release_workflow_builds_and_publishes_all_agreed_platforms():
         assert checksum in workflow
     assert "bash packaging/build_macos.sh" in workflow
     assert "macos-${{ matrix.arch }}.dmg.sha256" in workflow
-    assert "needs: [windows-x64, linux-x86_64, macos]" in workflow
-    assert "checksums.sha256" in workflow
+    assert "uses: ./.github/workflows/ci.yml" in workflow
+    assert "needs: [validate, windows-x64, linux-x86_64, macos]" in workflow
+    assert "checksums.sha256" not in workflow
     assert "actions/upload-artifact@v4" in workflow
     assert "actions/download-artifact@v4" in workflow
     assert "gh release create" in workflow
@@ -232,6 +241,35 @@ def test_frozen_engine_entrypoint_calls_installed_package_cli():
 
     assert "from janeconverter.cli import main" in entrypoint
     assert "run_converter.py" not in entrypoint
+
+
+def test_each_consumer_build_runs_a_packaged_local_conversion_smoke_test():
+    for path in (
+        "packaging/build_consumer.ps1",
+        "packaging/build_linux.sh",
+        "packaging/build_macos.sh",
+    ):
+        script = read(path)
+        assert "smoke_test_engine.py" in script
+        assert "--runtime-bin" in script
+
+
+def test_release_workflows_pin_ffmpeg_asset_digests():
+    for path in (
+        ".github/workflows/release.yml",
+        ".github/workflows/continuous-updates.yml",
+    ):
+        workflow = read(path)
+        assert "85c4a4636b93d681a07588ffa6f1d8f5c064d9c3fb0622066662906b6fd718a1" in workflow
+        assert "3a2a94e704752287833604501a79505c2319ad1d8b2f5577c63f2b1b7a6f2b66" in workflow
+        assert "checksums.sha256" not in workflow
+
+
+def test_packaging_records_ffmpeg_build_and_source_provenance():
+    notices = read("packaging/THIRD-PARTY-NOTICES.md")
+    assert "complete corresponding source" in notices
+    assert "FFMPEG-SOURCE-INFO.txt" in notices
+    assert "yt-dlp-ejs" in notices
 
 
 def test_browser_bridge_archive_matches_the_source_extension():

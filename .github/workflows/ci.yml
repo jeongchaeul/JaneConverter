@@ -6,6 +6,7 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   tests:
@@ -72,6 +73,8 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: desktop-ui/package-lock.json
+      - name: Test Browser Bridge
+        run: node --test browser-extension/test/*.test.js
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -84,7 +87,7 @@ jobs:
         run: npm ci
       - name: Run frontend tests
         working-directory: desktop-ui
-        run: npm test -- --run
+        run: npm run test
       - name: Build frontend
         working-directory: desktop-ui
         run: npm run build

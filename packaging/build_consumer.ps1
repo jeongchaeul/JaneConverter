@@ -128,6 +128,7 @@ Write-Host "Building the frozen engine (onedir)..." -ForegroundColor Cyan
 $engineDist = Join-Path $pyinstallerRoot "dist"
 Invoke-Checked {
     & $uv run --locked pyinstaller --noconfirm --clean --onedir --contents-directory _internal `
+        --collect-all yt_dlp_ejs `
         --name JaneConverterEngine `
         --paths (Join-Path $repoRoot "src") `
         --distpath $engineDist `
@@ -144,6 +145,15 @@ Copy-Item -LiteralPath $ffmpeg -Destination (Join-Path $runtimeBin "ffmpeg.exe")
 Copy-Item -LiteralPath $ffprobe -Destination (Join-Path $runtimeBin "ffprobe.exe")
 Copy-Item -LiteralPath $node -Destination (Join-Path $runtimeBin "node.exe")
 Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination (Join-Path $payloadRoot "LICENSE")
+Copy-Item -LiteralPath (Join-Path $repoRoot "packaging\THIRD-PARTY-NOTICES.md") -Destination (Join-Path $payloadRoot "THIRD-PARTY-NOTICES.md")
+$ffmpegSourceInfo = Join-Path $payloadRoot "FFMPEG-SOURCE-INFO.txt"
+@(
+    "FFmpeg source revision: ge0c94b2d1c"
+    "FFmpeg source: https://github.com/FFmpeg/FFmpeg/tree/ge0c94b2d1c"
+    "BtbN build source: https://github.com/BtbN/FFmpeg-Builds/tree/autobuild-2026-09-30-13-08"
+    "BtbN release: https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-09-30-13-08"
+) | Set-Content -LiteralPath $ffmpegSourceInfo -Encoding utf8
+& $ffmpeg -version | Set-Content -LiteralPath (Join-Path $payloadRoot "FFMPEG-BUILD-INFO.txt") -Encoding utf8
 
 $extensionFolder = Join-Path $payloadRoot "browser-extension"
 New-Item -ItemType Directory -Path $extensionFolder -Force | Out-Null
@@ -152,7 +162,14 @@ Copy-Item -Path (Join-Path $repoRoot "browser-extension\*.js") -Destination $ext
 Copy-Item -Path (Join-Path $repoRoot "browser-extension\*.html") -Destination $extensionFolder
 Copy-Item -LiteralPath (Join-Path $repoRoot "browser-extension\README.md") -Destination $extensionFolder
 
-Invoke-Checked { & (Join-Path $runtimeEngine "JaneConverterEngine.exe") --version | Out-Null } "Frozen engine smoke test"
+$engineSmokeArguments = @(
+    "--engine", (Join-Path $runtimeEngine "JaneConverterEngine.exe"),
+    "--runtime-bin", $runtimeBin,
+    "--work-directory", (Join-Path $pyinstallerRoot "smoke")
+)
+Invoke-Checked {
+    & $uv run --locked python (Join-Path $repoRoot "packaging\smoke_test_engine.py") @engineSmokeArguments
+} "Packaged engine conversion smoke test"
 
 $forbiddenRuntimeNames = @("JaneConverterPython.exe", "JaneConverterNative.exe", "Program.cs", "pip.exe", "npm.exe", "cargo.exe", "rustc.exe")
 foreach ($name in $forbiddenRuntimeNames) {
@@ -173,6 +190,10 @@ $baseConfig.bundle.targets = @("nsis")
 $baseConfig.bundle | Add-Member -MemberType NoteProperty -Name resources -Value ([ordered]@{
     $runtimeRoot = "runtime"
     $extensionFolder = "browser-extension"
+    (Join-Path $payloadRoot "LICENSE") = "LICENSE"
+    (Join-Path $payloadRoot "THIRD-PARTY-NOTICES.md") = "THIRD-PARTY-NOTICES.md"
+    (Join-Path $payloadRoot "FFMPEG-BUILD-INFO.txt") = "FFMPEG-BUILD-INFO.txt"
+    $ffmpegSourceInfo = "FFMPEG-SOURCE-INFO.txt"
 }) -Force
 if ($enableUpdater) {
     $baseConfig.bundle | Add-Member -MemberType NoteProperty -Name createUpdaterArtifacts -Value $true -Force
