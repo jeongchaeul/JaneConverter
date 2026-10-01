@@ -142,4 +142,76 @@ describe("Application shell", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("keeps Convert media disabled across tab switches and supports Pause/Resume and Abort while a Facebook photo capture is running", async () => {
+    let rejectCapture: ((err: Error) => void) | undefined;
+    vi.spyOn(bridge, "settingsGet").mockResolvedValue({
+      outputDir: "converted", fetchedDir: "fetched", category: "Image", format: "png",
+      bitrate: "best", sampleRate: 48000, resolution: "original", normalize: false,
+      useGpu: false, saveCover: true, saveMetadata: true, retries: 2,
+    });
+    vi.spyOn(bridge, "subscribe").mockResolvedValue(() => {});
+    vi.spyOn(bridge, "captureFacebookAlbum").mockImplementation(
+      () => new Promise((_resolve, reject) => { rejectCapture = reject; }),
+    );
+    const cancelFbSpy = vi.spyOn(bridge, "cancelFacebookAlbum").mockImplementation(async () => {
+      rejectCapture?.(new Error("Facebook photo capture cancelled."));
+    });
+    const pauseSpy = vi.spyOn(bridge, "pauseConversion").mockResolvedValue();
+    const resumeSpy = vi.spyOn(bridge, "resumeConversion").mockResolvedValue();
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => { root.render(<App />); });
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="Source media URL or local path"]');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "https://www.facebook.com/share/p/1CM6D95MyA/");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const convertBtn = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Convert media"));
+    await act(async () => {
+      convertBtn?.click();
+      await Promise.resolve();
+    });
+
+    expect(convertBtn?.disabled).toBe(true);
+
+    // Switch to Console tab and back to Converter tab
+    const consoleNav = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Console"));
+    await act(async () => { consoleNav?.click(); await Promise.resolve(); });
+
+    const converterNav = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Converter"));
+    await act(async () => { converterNav?.click(); await Promise.resolve(); });
+
+    // Convert button must still be disabled after switching tabs
+    expect(convertBtn?.disabled).toBe(true);
+
+    // Pause and Resume
+    const pauseBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Pause operation"]');
+    expect(pauseBtn).not.toBeNull();
+    await act(async () => { pauseBtn?.click(); await Promise.resolve(); });
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+
+    const resumeBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Resume operation"]');
+    expect(resumeBtn).not.toBeNull();
+    await act(async () => { resumeBtn?.click(); await Promise.resolve(); });
+    expect(resumeSpy).toHaveBeenCalledTimes(1);
+
+    // Abort operation
+    const abortBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Abort operation"]');
+    expect(abortBtn).not.toBeNull();
+    await act(async () => { abortBtn?.click(); await Promise.resolve(); });
+    expect(cancelFbSpy).toHaveBeenCalledTimes(1);
+
+    // Once aborted, Convert media becomes clickable again
+    expect(convertBtn?.disabled).toBe(false);
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });
+

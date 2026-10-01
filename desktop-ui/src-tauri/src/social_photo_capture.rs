@@ -463,6 +463,10 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
   }};
   const scan = () => {{
     if (finished) return;
+    if (window.__JANE_CAPTURE_PAUSED__) {{
+      setTimeout(scan, 300);
+      return;
+    }}
     attempts += 1;
     if (waiting && window[ackKey] === waiting) {{
       waiting = 0;

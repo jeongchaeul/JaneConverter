@@ -1,13 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Check, Clipboard, Filter, Layers, Play, Search, TerminalSquare, Trash2, X } from "lucide-react";
+import { ArrowDown, Check, Clipboard, Filter, Layers, Pause, Play, Search, Square, TerminalSquare, Trash2, X } from "lucide-react";
 import type { ConverterEvent } from "../bridge";
 
 export function ConsoleView({
   events,
+  running = false,
+  paused = false,
+  onPauseToggle,
+  onAbort,
   onClear,
   onStatus,
 }: {
   events: ConverterEvent[];
+  running?: boolean;
+  paused?: boolean;
+  onPauseToggle?: () => Promise<void> | void;
+  onAbort?: () => Promise<void> | void;
   onClear: () => void;
   onStatus: (message: string) => void;
 }) {
@@ -119,6 +127,29 @@ export function ConsoleView({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {(running || paused) && (
+            <>
+              {onPauseToggle && (
+                <button
+                  type="button"
+                  onClick={() => void onPauseToggle()}
+                  className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-300 hover:text-amber-200"
+                >
+                  {paused ? <Play size={13} className="fill-current" /> : <Pause size={13} />}
+                  {paused ? "Resume" : "Pause"}
+                </button>
+              )}
+              {onAbort && (
+                <button
+                  type="button"
+                  onClick={() => void onAbort()}
+                  className="danger-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                >
+                  <Square size={12} /> Abort
+                </button>
+              )}
+            </>
+          )}
           <button
             type="button"
             onClick={() => {

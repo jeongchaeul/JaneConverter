@@ -175,7 +175,135 @@ pub fn forward_output<R: Read + Send + 'static>(
     })
 }
 
+#[cfg(target_os = "windows")]
+mod win_suspend {
+    use std::collections::{HashSet, VecDeque};
+    use std::ffi::c_void;
+
+    const TH32CS_SNAPPROCESS: u32 = 0x0000_0002;
+    const PROCESS_SUSPEND_RESUME: u32 = 0x0800;
+    const INVALID_HANDLE_VALUE: *mut c_void = -1isize as *mut c_void;
+
+    #[repr(C)]
+    struct PROCESSENTRY32W {
+        dw_size: u32,
+        cnt_usage: u32,
+        th32_process_id: u32,
+        th32_default_heap_id: usize,
+        th32_module_id: u32,
+        cnt_threads: u32,
+        th32_parent_process_id: u32,
+        pc_pri_class_base: i32,
+        dw_flags: u32,
+        sz_exe_file: [u16; 260],
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateToolhelp32Snapshot(dw_flags: u32, th32_process_id: u32) -> *mut c_void;
+        fn Process32FirstW(h_snapshot: *mut c_void, lppe: *mut PROCESSENTRY32W) -> i32;
+        fn Process32NextW(h_snapshot: *mut c_void, lppe: *mut PROCESSENTRY32W) -> i32;
+        fn OpenProcess(
+            dw_desired_access: u32,
+            b_inherit_handle: i32,
+            dw_process_id: u32,
+        ) -> *mut c_void;
+        fn CloseHandle(h_object: *mut c_void) -> i32;
+    }
+
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtSuspendProcess(process_handle: *mut c_void) -> i32;
+        fn NtResumeProcess(process_handle: *mut c_void) -> i32;
+    }
+
+    fn collect_process_tree(root_pid: u32) -> Vec<u32> {
+        let mut relations = Vec::new();
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snapshot != INVALID_HANDLE_VALUE && !snapshot.is_null() {
+                let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+                entry.dw_size = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+                if Process32FirstW(snapshot, &mut entry) != 0 {
+                    loop {
+                        relations.push((entry.th32_process_id, entry.th32_parent_process_id));
+                        if Process32NextW(snapshot, &mut entry) == 0 {
+                            break;
+                        }
+                    }
+                }
+                CloseHandle(snapshot);
+            }
+        }
+        let mut result = Vec::new();
+        let mut seen = HashSet::new();
+        let mut queue = VecDeque::new();
+        seen.insert(root_pid);
+        queue.push_back(root_pid);
+        while let Some(pid) = queue.pop_front() {
+            result.push(pid);
+            for &(child_pid, parent_pid) in &relations {
+                if parent_pid == pid && seen.insert(child_pid) {
+                    queue.push_back(child_pid);
+                }
+            }
+        }
+        result
+    }
+
+    pub fn set_process_tree_paused(root_pid: u32, paused: bool) -> Result<(), String> {
+        let mut pids = collect_process_tree(root_pid);
+        if !paused {
+            pids.reverse();
+        }
+        let mut any_succeeded = false;
+        for pid in pids {
+            unsafe {
+                let handle = OpenProcess(PROCESS_SUSPEND_RESUME, 0, pid);
+                if !handle.is_null() {
+                    let status = if paused {
+                        NtSuspendProcess(handle)
+                    } else {
+                        NtResumeProcess(handle)
+                    };
+                    if status >= 0 {
+                        any_succeeded = true;
+                    }
+                    CloseHandle(handle);
+                }
+            }
+        }
+        if any_succeeded {
+            Ok(())
+        } else {
+            Err("Could not update the conversion process state.".into())
+        }
+    }
+}
+
+pub fn set_child_paused(child: &mut Child, paused: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        win_suspend::set_process_tree_paused(child.id(), paused)
+    }
+    #[cfg(unix)]
+    {
+        let process_group = format!("-{}", child.id());
+        let signal = if paused { "-STOP" } else { "-CONT" };
+        let status = Command::new("kill")
+            .args([signal, "--", &process_group])
+            .status()
+            .map_err(|error| format!("Could not signal conversion process: {error}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("Could not update the conversion process state.".into())
+        }
+    }
+}
+
 pub fn terminate_child(child: &mut Child) {
+    let _ = set_child_paused(child, false);
     #[cfg(target_os = "windows")]
     {
         let pid_text = child.id().to_string();

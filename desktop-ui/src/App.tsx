@@ -137,6 +137,9 @@ export default function App() {
   const [access, setAccess] = useState<AccessStatus>({ active: false, link: "", browser: "", source: null, bridgeConnected: false });
   const [selectedCapture, setSelectedCapture] = useState<FetchedMedia | null>(null);
   const [jobId, setJobId] = useState("");
+  const [paused, setPaused] = useState(false);
+  const [captureBusy, setCaptureBusy] = useState(false);
+  const cancelCaptureRef = useRef<(() => Promise<void>) | null>(null);
   const activeJobRef = useRef("");
   const activeJobSuggestLosslessRef = useRef(false);
   const activeJobContextRef = useRef<ActiveJobContext | null>(null);
@@ -418,6 +421,7 @@ export default function App() {
           activeJobSuggestLosslessRef.current = false;
           activeJobContextRef.current = null;
           setJobId("");
+          setPaused(false);
         }
       }
     }).then((unlisten) => { cleanup = unlisten; });
@@ -509,6 +513,7 @@ export default function App() {
       const nextJob = await bridge.startConversion({ ...effectiveSettings, source, playlistIndexes, browserSession, browserCapturePath: !normalizedSource ? selectedCapture?.path : undefined, facebookCaptureId, socialCaptureId });
       activeJobRef.current = nextJob;
       setJobId(nextJob);
+      setPaused(false);
       setProgress(.02);
       setStatus("Starting conversion...");
       setActiveView("console");
@@ -523,7 +528,31 @@ export default function App() {
     }
   }
 
+  async function pauseToggle() {
+    if (!jobId && !captureBusy) return;
+    try {
+      if (paused) {
+        await bridge.resumeConversion(jobId || undefined);
+        setPaused(false);
+      } else {
+        await bridge.pauseConversion(jobId || undefined);
+        setPaused(true);
+      }
+    } catch (error) {
+      errorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function cancel() {
+    setPaused(false);
+    if (cancelCaptureRef.current) {
+      try {
+        await cancelCaptureRef.current();
+      } catch (error) {
+        errorMessage(error instanceof Error ? error.message : String(error));
+      }
+      if (!jobId) return;
+    }
     if (!jobId) return;
     try { await bridge.cancelConversion(jobId); setStatus("Aborting conversion..."); }
     catch (error) { errorMessage(error instanceof Error ? error.message : String(error)); }
@@ -558,17 +587,16 @@ export default function App() {
     }
   }
 
-  const content = activeView === "converter"
-    ? <ConverterView settings={settings} runtime={runtime} events={events} access={access} selectedCapture={selectedCapture} running={Boolean(jobId)} progress={progress} status={status} onSettings={updateSettings} onStart={start} onCancel={cancel} onCreateAccess={createAccess} onClearAccess={clearAccess} onStatus={statusMessage} onError={errorMessage} />
-    : activeView === "fetched"
-      ? <FetchedMediaView access={access} settings={settings} onSettings={updateSettings} onSelect={(item) => { setSelectedCapture(item); setActiveView("converter"); statusMessage(item.name + " selected and ready to convert."); }} onDiscard={(item) => { if (selectedCapture?.path === item.path) setSelectedCapture(null); }} onStatus={statusMessage} />
-      : activeView === "library"
-      ? <LibraryView settings={settings} onSettings={updateSettings} onStatus={statusMessage} history={history} conversionTimings={conversionTimings} onClearHistory={handleClearHistory} onRemoveHistoryItem={handleRemoveHistoryItem} />
-      : activeView === "hardware"
-        ? <HardwarePipelineView runtime={runtime} settings={settings} active={Boolean(jobId)} progress={progress} progressMessage={status} />
-      : activeView === "console"
-        ? <ConsoleView events={events} onClear={() => setEvents([])} onStatus={statusMessage} />
-        : (
+  const secondaryContent = activeView === "fetched"
+    ? <FetchedMediaView access={access} settings={settings} onSettings={updateSettings} onSelect={(item) => { setSelectedCapture(item); setActiveView("converter"); statusMessage(item.name + " selected and ready to convert."); }} onDiscard={(item) => { if (selectedCapture?.path === item.path) setSelectedCapture(null); }} onStatus={statusMessage} />
+    : activeView === "library"
+    ? <LibraryView settings={settings} onSettings={updateSettings} onStatus={statusMessage} history={history} conversionTimings={conversionTimings} onClearHistory={handleClearHistory} onRemoveHistoryItem={handleRemoveHistoryItem} />
+    : activeView === "hardware"
+      ? <HardwarePipelineView runtime={runtime} settings={settings} active={Boolean(jobId) || captureBusy} progress={progress} progressMessage={status} />
+    : activeView === "console"
+      ? <ConsoleView events={events} running={Boolean(jobId) || captureBusy} paused={paused} onPauseToggle={pauseToggle} onAbort={cancel} onClear={() => setEvents([])} onStatus={statusMessage} />
+      : activeView === "settings"
+        ? (
           <SettingsView
             runtime={runtime}
             settings={settings}
@@ -580,7 +608,8 @@ export default function App() {
             onResetColors={handleResetColors}
             onStatus={statusMessage}
           />
-        );
+        )
+        : null;
 
   return (
     <div
@@ -601,15 +630,43 @@ export default function App() {
       <Sidebar activeView={activeView} onChange={setActiveView} />
       <div className="relative flex min-w-0 flex-1 flex-col h-full overflow-hidden">
         <main className={`min-h-0 flex-1 px-8 py-6 ${activeView === "console" ? "flex flex-col overflow-hidden" : "overflow-y-auto"}`}>
-          <motion.div
-            key={activeView}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.2 }}
-            className={activeView === "console" ? "flex flex-col flex-1 min-h-0 h-full" : ""}
-          >
-            {content}
-          </motion.div>
+          <div className={activeView === "converter" ? "block" : "hidden"}>
+            <ConverterView
+              settings={settings}
+              runtime={runtime}
+              events={events}
+              access={access}
+              selectedCapture={selectedCapture}
+              running={Boolean(jobId)}
+              paused={paused}
+              progress={progress}
+              status={status}
+              onSettings={updateSettings}
+              onStart={start}
+              onCancel={cancel}
+              onPauseToggle={pauseToggle}
+              onCaptureBusyChange={(busy, cancelFn) => {
+                setCaptureBusy(busy);
+                cancelCaptureRef.current = cancelFn ?? null;
+                if (!busy && !activeJobRef.current) setPaused(false);
+              }}
+              onCreateAccess={createAccess}
+              onClearAccess={clearAccess}
+              onStatus={statusMessage}
+              onError={errorMessage}
+            />
+          </div>
+          {activeView !== "converter" && (
+            <motion.div
+              key={activeView}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+              className={activeView === "console" ? "flex flex-col flex-1 min-h-0 h-full" : ""}
+            >
+              {secondaryContent}
+            </motion.div>
+          )}
         </main>
       </div>
       {success && (
@@ -714,6 +771,10 @@ export default function App() {
             <div className="mt-4 rounded-xl border border-white/[0.08] bg-white/[0.035] p-3 text-xs leading-relaxed text-zinc-300">
               {/returned (?:a non-image response|an unsupported image (?:type|format)) for photo \d+/i.test(failure.message)
                 ? "The photo download failed before conversion. Retry the link when the public post is accessible."
+                : /already running/i.test(failure.message)
+                ? "Wait for the active operation to complete, or click Abort to stop it before starting a new conversion."
+                : /timed out|capture|guest session|no public photos/i.test(failure.message)
+                ? "Verify the post link is publicly viewable, or use Account Access with the Browser Capture extension if the post requires sign-in."
                 : failure.suggestLossless
                 ? <>Try <strong className="text-white">Image → Lossless Image</strong> in Converter, then run the conversion again.</>
                 : "Review the message above and try again. If the conversion format is the problem, choose another compatible preset."}

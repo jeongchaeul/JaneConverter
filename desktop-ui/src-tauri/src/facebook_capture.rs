@@ -185,7 +185,7 @@ pub fn validate_completion(message: &PageMessage, received_count: usize) -> Resu
     };
     if expected_count != message.count
         || received_count != message.count
-        || !(2..=500).contains(&message.count)
+        || !(1..=500).contains(&message.count)
     {
         return Err(format!(
             "Facebook reported {} photos, expected {}, and delivered {}. No partial album was saved.",
@@ -228,8 +228,9 @@ pub fn initialization_script(nonce: &str) -> String {
   let countSource = sessionStorage.getItem("janeFacebookCountSource") || "";
   let countConflict = sessionStorage.getItem("janeFacebookCountConflict") === "true";
   let attempts = Number(sessionStorage.getItem(attemptsKey)) || 0;
-  const startedAt = Number(sessionStorage.getItem(startedAtKey)) || Date.now();
+  let startedAt = Number(sessionStorage.getItem(startedAtKey)) || Date.now();
   sessionStorage.setItem(startedAtKey, String(startedAt));
+  let lastPauseTick = 0;
   let lastViewerImageUrl = sessionStorage.getItem(viewerImageKey) || "";
   let navigatingFromId = "";
   let expansionClicks = 0;
@@ -305,12 +306,23 @@ pub fn initialization_script(nonce: &str) -> String {
     ).filter(Boolean));
     const exact = exactCounts.size === 1 ? [...exactCounts][0] : 0;
     let lowerBound = 0;
-    const galleryLinks = Array.from(document.querySelectorAll('a[href*="fbid="][href*="set=pcb."]'));
+    const galleryLinks = Array.from(document.querySelectorAll('a[href*="fbid="][href*="set=pcb."], a[href*="fbid="][href*="set=gm."]'));
     if (galleryLinks.length === 4 || galleryLinks.length === 5) {{
       const overlayText = (galleryLinks[galleryLinks.length - 1].innerText || "")
         .replace(/\s+/g, "").trim();
       const remaining = /^\+(\d{{1,3}})$/.exec(overlayText);
       if (remaining) lowerBound = galleryLinks.length + Number(remaining[1]) - 1;
+    }}
+    if (!onAlbumPage && !location.pathname.toLowerCase().includes("/photo")) {{
+      for (const script of document.scripts) {{
+        const text = script.textContent || "";
+        if (!text.includes("all_subattachments")) continue;
+        const match = /"all_subattachments"\s*:\s*\{{\s*"count"\s*:\s*(\d{{1,3}})/.exec(text);
+        if (match) {{
+          const count = Number(match[1]);
+          if (count >= 1 && count <= MAX_PHOTOS) lowerBound = Math.max(lowerBound, count);
+        }}
+      }}
     }}
     return {{count:Math.max(exact,lowerBound),source:exact ? "page-count" : lowerBound ? "overlay-minimum" : "",conflict:exactCounts.size > 1 || (exact > 0 && lowerBound > exact)}};
   }};
@@ -387,12 +399,26 @@ pub fn initialization_script(nonce: &str) -> String {
     }}
   }};
   const findAlbumSet = () => {{
+    const currentSet = new URL(location.href).searchParams.get("set") || "";
+    if (currentSet.startsWith("pcb.")) return currentSet;
     for (const anchor of document.querySelectorAll('a[href*="fbid="]')) {{
       try {{
         const href = new URL(anchor.href, location.href);
         const set = href.searchParams.get("set");
         if (set && set.startsWith("pcb.")) return set;
       }} catch (_) {{}}
+    }}
+    for (const script of document.scripts) {{
+      const text = script.textContent || "";
+      if (!text.includes("pcb.")) continue;
+      const match = /(?:"mediaset_token"\s*:\s*"|[?&]set=)(pcb\.[0-9]{{5,30}})/.exec(text);
+      if (match) return match[1];
+    }}
+    if (document.querySelector('a[href*="fbid="]')) {{
+      const pathMatch = /\/(?:permalink|posts)\/([0-9]{{5,30}})/.exec(location.pathname);
+      if (pathMatch) return "pcb." + pathMatch[1];
+      const storyId = new URL(location.href).searchParams.get("story_fbid") || "";
+      if (/^[0-9]{{5,30}}$/.test(storyId)) return "pcb." + storyId;
     }}
     return "";
   }};
@@ -408,23 +434,41 @@ pub fn initialization_script(nonce: &str) -> String {
     }} catch (_) {{ return ""; }}
   }};
   const findAlbumStartPhoto = () => {{
-    const pageSet = new URL(location.href).searchParams.get("set") || "";
+    const pageSet = new URL(location.href).searchParams.get("set") || findAlbumSet() || "";
     for (const anchor of document.querySelectorAll('a[href*="fbid="]')) {{
       try {{
         const href = new URL(anchor.href, location.href);
         const photoId = href.searchParams.get("fbid") || "";
-        const set = href.searchParams.get("set") || pageSet;
-        if (/^[0-9]{{5,30}}$/.test(photoId) && set.startsWith("pcb.")) {{
+        const rawSet = href.searchParams.get("set") || "";
+        const set = rawSet.startsWith("pcb.") ? rawSet : (pageSet.startsWith("pcb.") ? pageSet : rawSet);
+        if (/^[0-9]{{5,30}}$/.test(photoId) && (set.startsWith("pcb.") || set.startsWith("gm.") || set.startsWith("a."))) {{
           const normalized = normalizeFacebookUrl(href.href);
           if (normalized) {{
-            const photoUrl = new URL(normalized);
-            if (!photoUrl.searchParams.has("set")) photoUrl.searchParams.set("set", set);
-            return {{anchor, url:photoUrl.href}};
+            const photoUrl = new URL("/photo/", normalized);
+            photoUrl.searchParams.set("fbid", photoId);
+            if (set) photoUrl.searchParams.set("set", set);
+            return {{anchor, url:photoUrl.href, needsDirectNavigation: rawSet !== set}};
           }}
         }}
       }} catch (_) {{}}
     }}
     return "";
+  }};
+  const findScriptViewerPhoto = (expectedId) => {{
+    if (!/^[0-9]{{5,30}}$/.test(expectedId || "")) return null;
+    for (const script of document.scripts) {{
+      const text = script.textContent || "";
+      if (!text.includes(expectedId) || !text.includes("currMedia")) continue;
+      const pattern = new RegExp(`"currMedia"\\s*:\\s*\\{{"__typename"\\s*:\\s*"Photo"[^}}]*?"id"\\s*:\\s*"${{expectedId}}"[\\s\\S]{{0,1200}}?"image"\\s*:\\s*\\{{"uri"\\s*:\\s*"([^"]+)"(?:\\s*,\\s*"width"\\s*:\\s*(\\d+))?`);
+      const match = pattern.exec(text);
+      if (match) {{
+        const decodedUrl = match[1].replace(/\\u0025/g, "%").replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+        if (isCdn(decodedUrl)) {{
+          return {{id: expectedId, url: decodedUrl, width: Number(match[2] || "1080") || 1080, alternates: []}};
+        }}
+      }}
+    }}
+    return null;
   }};
   const findCurrentViewerPhoto = () => {{
     const pageUrl = new URL(location.href);
@@ -448,8 +492,10 @@ pub fn initialization_script(nonce: &str) -> String {
         catch (_) {{}}
       }}
     }}
-    if (!candidate || !/^[0-9]{{5,30}}$/.test(photoId)) return null;
-    return {{id:photoId,url:candidate.selected.url,width:candidate.selected.width,alternates:candidate.selected.alternates}};
+    if (candidate && /^[0-9]{{5,30}}$/.test(photoId)) {{
+      return {{id:photoId,url:candidate.selected.url,width:candidate.selected.width,alternates:candidate.selected.alternates}};
+    }}
+    return findScriptViewerPhoto(photoId);
   }};
   const findNextPhotoUrl = () => {{
     const hasPhotosFrom = Array.from(document.querySelectorAll("a"))
@@ -479,6 +525,21 @@ pub fn initialization_script(nonce: &str) -> String {
       ].filter(Boolean).join(" ")));
     if (labelledNext?.href) return normalizeFacebookUrl(labelledNext.href);
     if (labelledNext) {{ labelledNext.click(); return "clicked"; }}
+    if (/^[0-9]{{5,30}}$/.test(currentId)) {{
+      const albumSet = sessionStorage.getItem(albumSetKey) || new URL(location.href).searchParams.get("set") || findAlbumSet();
+      for (const script of document.scripts) {{
+        const text = script.textContent || "";
+        if (!text.includes(currentId) || !text.includes("nextMediaAfterNodeId")) continue;
+        const pattern = new RegExp(`"currMedia"\\s*:\\s*\\{{"__typename"\\s*:\\s*"Photo"[^}}]*?"id"\\s*:\\s*"${{currentId}}"[\\s\\S]{{0,2500}}?"nextMediaAfterNodeId"\\s*:\\s*\\{{"__typename"\\s*:\\s*"Photo"\\s*,\\s*"id"\\s*:\\s*"([0-9]{{5,30}})"`);
+        const match = pattern.exec(text);
+        if (match && match[1] && match[1] !== currentId) {{
+          const nextUrl = new URL("/photo/", location.href);
+          nextUrl.searchParams.set("fbid", match[1]);
+          if (albumSet) nextUrl.searchParams.set("set", albumSet);
+          return nextUrl.href;
+        }}
+      }}
+    }}
     return "";
   }};
   const findAlbumScroller = () => {{
@@ -514,6 +575,17 @@ pub fn initialization_script(nonce: &str) -> String {
     return true;
   }};
   const scan = () => {{
+    if (window.__JANE_CAPTURE_PAUSED__) {{
+      const now = Date.now();
+      if (lastPauseTick > 0) {{
+        startedAt += Math.max(0, now - lastPauseTick);
+        sessionStorage.setItem(startedAtKey, String(startedAt));
+      }}
+      lastPauseTick = now;
+      scheduleScan(VIEWER_POLL_MS);
+      return;
+    }}
+    lastPauseTick = 0;
     const refreshText = sessionStorage.getItem(pendingRefreshKey) || "";
     if (refreshText) {{
       let refresh = null;
@@ -604,6 +676,10 @@ pub fn initialization_script(nonce: &str) -> String {
         sessionStorage.setItem(captureModeKey, "viewer");
         sessionStorage.setItem(scannedIdsKey, JSON.stringify(Array.from(scanned)));
         if (expectedCount) sessionStorage.setItem(expectedCountKey, String(expectedCount));
+        if (startPhoto.needsDirectNavigation) {{
+          location.replace(startPhoto.url);
+          return;
+        }}
         startPhoto.anchor.click();
         scheduleScan(VIEWER_POLL_MS);
         return;
@@ -629,7 +705,13 @@ pub fn initialization_script(nonce: &str) -> String {
     if (captureMode === "viewer") {{
       if (!location.pathname.toLowerCase().includes("/photo")) {{
         const startPhoto = findAlbumStartPhoto();
-        if (startPhoto && hasVisiblePublicPhoto()) startPhoto.anchor.click();
+        if (startPhoto && hasVisiblePublicPhoto()) {{
+          if (startPhoto.needsDirectNavigation) {{
+            location.replace(startPhoto.url);
+            return;
+          }}
+          startPhoto.anchor.click();
+        }}
         scheduleScan(VIEWER_POLL_MS);
         return;
       }}
@@ -642,8 +724,9 @@ pub fn initialization_script(nonce: &str) -> String {
           scheduleScan(VIEWER_POLL_MS);
           return;
         }}
+        const wrappedAround = scanned.has(currentPhoto.id);
         navigatingFromId = "";
-        if (!scanned.has(currentPhoto.id)) {{
+        if (!wrappedAround) {{
           scanned.add(currentPhoto.id);
           sessionStorage.setItem(scannedIdsKey, JSON.stringify(Array.from(scanned)));
           lastViewerImageUrl = currentPhoto.url;
@@ -658,23 +741,26 @@ pub fn initialization_script(nonce: &str) -> String {
           send({{kind:"photos",sequence:awaitingSequence,photos:pending.splice(0,1),title}});
         }}
         if (pending.length === 0 && awaitingSequence === 0) {{
-          const nextPhotoUrl = findNextPhotoUrl();
-          if (nextPhotoUrl === "clicked") {{
-            navigatingFromId = currentPhoto.id;
-            scheduleScan(VIEWER_POLL_MS);
-            return;
-          }}
-          if (nextPhotoUrl) {{
-            const nextId = new URL(nextPhotoUrl).searchParams.get("fbid") || "";
-            if (nextId && scanned.has(nextId)) endConfirmed = true;
-            else {{ location.replace(nextPhotoUrl); return; }}
-          }}
-          if (!nextPhotoUrl && unchanged >= 3 && Date.now() - lastRelevantMutationAt >= 2500)
+          if (wrappedAround && scanned.size >= 1) {{
             endConfirmed = true;
-          if (endConfirmed && !countConflict && scanned.size >= 2
-            && expectedCount > 0
-            && (countSource !== "page-count" || scanned.size === expectedCount)
-            && scanned.size >= expectedCount) {{
+          }} else {{
+            const nextPhotoUrl = findNextPhotoUrl();
+            if (nextPhotoUrl === "clicked") {{
+              navigatingFromId = currentPhoto.id;
+              scheduleScan(VIEWER_POLL_MS);
+              return;
+            }}
+            if (nextPhotoUrl) {{
+              const nextId = new URL(nextPhotoUrl).searchParams.get("fbid") || "";
+              if (nextId && scanned.has(nextId)) endConfirmed = true;
+              else {{ location.replace(nextPhotoUrl); return; }}
+            }}
+            if (!nextPhotoUrl && unchanged >= 3 && Date.now() - lastRelevantMutationAt >= 2500)
+              endConfirmed = true;
+          }}
+          if (endConfirmed && !countConflict && scanned.size >= 1
+            && (expectedCount === 0 || scanned.size >= expectedCount)
+            && (countSource !== "page-count" || scanned.size === expectedCount)) {{
             if (countSource !== "page-count") {{
               expectedCount = scanned.size;
               countSource = "viewer-end";
@@ -728,7 +814,7 @@ pub fn initialization_script(nonce: &str) -> String {
       endConfirmed = atBottom && !expanded && unchanged >= BOTTOM_PROBE_INTERVAL
         && Date.now() - lastRelevantMutationAt >= 2500;
       if (endConfirmed && !countConflict && pending.length === 0 && awaitingSequence === 0
-        && scanned.size >= 2 && expectedCount > 0 && scanned.size >= expectedCount
+        && scanned.size >= 2 && (expectedCount === 0 || scanned.size >= expectedCount)
         && (countSource !== "page-count" || scanned.size === expectedCount)) {{
         if (countSource !== "page-count") {{
           expectedCount = scanned.size;

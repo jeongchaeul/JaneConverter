@@ -20,6 +20,7 @@ import {
   LoaderCircle,
   LockKeyhole,
   Music2,
+  Pause,
   Play,
   RefreshCw,
   RotateCcw,
@@ -209,11 +210,14 @@ export function ConverterView({
   access,
   selectedCapture,
   running,
+  paused = false,
   progress,
   status,
   onSettings,
   onStart,
   onCancel,
+  onPauseToggle,
+  onCaptureBusyChange,
   onCreateAccess,
   onClearAccess,
   onStatus,
@@ -225,11 +229,14 @@ export function ConverterView({
   access: AccessStatus;
   selectedCapture?: FetchedMedia | null;
   running: boolean;
+  paused?: boolean;
   progress: number;
   status: string;
   onSettings: (next: ConverterSettings) => void;
   onStart: (source: string, playlistIndexes?: string, facebookCaptureId?: string, socialCaptureId?: string, detectedMediaKind?: "photo" | "video") => Promise<void | boolean>;
   onCancel: () => Promise<void>;
+  onPauseToggle?: () => Promise<void> | void;
+  onCaptureBusyChange?: (busy: boolean, cancelCapture?: (() => Promise<void>) | null) => void;
   onCreateAccess: (source: string) => Promise<AccessStatus>;
   onClearAccess: () => Promise<void>;
   onStatus: (message: string) => void;
@@ -250,6 +257,8 @@ export function ConverterView({
   const facebookPostLink = isFacebookPostLink(source);
   const [socialCaptureBusy, setSocialCaptureBusy] = useState(false);
   const socialCaptureIdRef = useRef<string | null>(null);
+  const [localPaused, setLocalPaused] = useState(false);
+  const effectivePaused = paused || localPaused;
   // Queue and completion state
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueRunning, setQueueRunning] = useState(false);
@@ -257,6 +266,7 @@ export function ConverterView({
   const [completedItem, setCompletedItem] = useState<{ name: string; path?: string } | null>(null);
   const [copiedCompleted, setCopiedCompleted] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const isOperationActive = running || effectivePaused || facebookCaptureBusy || socialCaptureBusy || queueRunning;
 
   const capturedCategory = selectedCapture?.mediaKind
     ? selectedCapture.mediaKind === "image"
@@ -353,13 +363,24 @@ export function ConverterView({
           })
         );
       }
+    } else if (lastEvent.kind === "cancelled") {
+      if (queueRunning) {
+        setQueueRunning(false);
+        const abortedIdx = activeQueueIndexRef.current;
+        activeQueueIndexRef.current = -1;
+        if (abortedIdx >= 0) {
+          setQueue((curr) =>
+            curr.map((item, idx) => (idx === abortedIdx && item.status === "converting" ? { ...item, status: "queued", progress: 0 } : item))
+          );
+        }
+      }
     }
   }, [lastEvent, queueRunning, settings.outputDir]);
 
   // Sequential queue runner
   useEffect(() => {
     if (!queueRunning) return;
-    if (running) return;
+    if (running || effectivePaused) return;
 
     const nextIdx = queue.findIndex((item) => item.status === "queued");
     if (nextIdx === -1) {
@@ -375,7 +396,7 @@ export function ConverterView({
     );
     const targetItem = queue[nextIdx];
     void onStart(targetItem.source);
-  }, [queueRunning, running, queue, onStart, onStatus]);
+  }, [queueRunning, running, effectivePaused, queue, onStart, onStatus]);
 
   const update = (patch: Partial<ConverterSettings>) => {
     presetBaselineRef.current = null;
@@ -706,7 +727,7 @@ export function ConverterView({
         if (/cancelled|canceled/i.test(message)) onStatus(message);
         else onError(message);
       } finally {
-        if (!sessionTransferredToConversion) {
+        if (!sessionTransferredToConversion && facebookCaptureIdRef.current === captureId) {
           try {
             await bridge.cancelFacebookAlbum(captureId);
           } catch {
@@ -760,9 +781,10 @@ export function ConverterView({
   async function cancelFacebookCapture() {
     const captureId = facebookCaptureIdRef.current;
     if (!captureId) return;
+    facebookCaptureIdRef.current = null;
     try {
       await bridge.cancelFacebookAlbum(captureId);
-      onStatus("Facebook photo capture cancelled.");
+      onStatus("Facebook photo capture aborted.");
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
     }
@@ -773,11 +795,62 @@ export function ConverterView({
     if (!captureId) return;
     try {
       await bridge.cancelSocialPostPhotos(captureId);
-      onStatus("Public photo capture cancelled.");
+      onStatus("Public photo capture aborted.");
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
     }
   }
+
+  async function handlePauseToggle() {
+    if (!isOperationActive) return;
+    if (onPauseToggle) {
+      await onPauseToggle();
+      return;
+    }
+    try {
+      if (effectivePaused) {
+        await bridge.resumeConversion();
+        setLocalPaused(false);
+        onStatus("Resumed conversion.");
+      } else {
+        await bridge.pauseConversion();
+        setLocalPaused(true);
+        onStatus("Paused conversion.");
+      }
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleAbort() {
+    setLocalPaused(false);
+    if (queueRunning) {
+      setQueueRunning(false);
+      const abortedIdx = activeQueueIndexRef.current;
+      activeQueueIndexRef.current = -1;
+      if (abortedIdx >= 0) {
+        setQueue((curr) =>
+          curr.map((item, idx) => (idx === abortedIdx && item.status === "converting" ? { ...item, status: "queued", progress: 0 } : item))
+        );
+      }
+    }
+    if (facebookCaptureBusy) {
+      await cancelFacebookCapture();
+    }
+    if (socialCaptureBusy) {
+      await cancelSocialPhotoCapture();
+    }
+    if (running) {
+      await onCancel();
+    } else if (!facebookCaptureBusy && !socialCaptureBusy) {
+      onStatus("Operation aborted.");
+    }
+  }
+
+  useEffect(() => {
+    const busy = facebookCaptureBusy || socialCaptureBusy || queueRunning;
+    onCaptureBusyChange?.(busy, busy ? handleAbort : null);
+  }, [facebookCaptureBusy, socialCaptureBusy, queueRunning]);
 
   function applyPreset(preset: IntentPreset) {
     if (selectedPresetId === preset.id) {
@@ -873,27 +946,27 @@ export function ConverterView({
           <input
             aria-label="Source media URL or local path"
             value={source}
-            disabled={facebookCaptureBusy || socialCaptureBusy}
+            disabled={isOperationActive}
             onChange={(event) => handleSourceInput(event.target.value)}
             onDragOver={handleDragOver}
             onDrop={handleDropEvent}
             placeholder="Paste a media or Facebook post link, or drop local files..."
-            className="field min-w-0 flex-1 px-3.5 py-3 text-sm placeholder:text-zinc-700"
+            className="field min-w-0 flex-1 px-3.5 py-3 text-sm placeholder:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
           />
-          <button type="button" onClick={() => void paste()} className="subtle-button flex items-center gap-2 px-3 text-xs">
+          <button type="button" disabled={isOperationActive} onClick={() => void paste()} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50">
             <Clipboard className="size-3.5" /> Paste
           </button>
-          <button type="button" onClick={() => void browseFile()} className="subtle-button flex items-center gap-2 px-3 text-xs">
+          <button type="button" disabled={isOperationActive} onClick={() => void browseFile()} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50">
             <FilePlus2 className="size-3.5" /> Browse
           </button>
-          <button type="button" onClick={() => void browseBatch()} className="subtle-button flex items-center gap-2 px-3 text-xs">
+          <button type="button" disabled={isOperationActive} onClick={() => void browseBatch()} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50">
             <Files className="size-3.5" /> Batch
           </button>
           <button
             type="button"
-            disabled={loadingPlaylist || running}
+            disabled={loadingPlaylist || isOperationActive}
             onClick={() => void loadPlaylist()}
-            className="subtle-button flex items-center gap-2 px-3 text-xs disabled:opacity-50"
+            className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50"
           >
             <ListMusic className="size-3.5" /> {loadingPlaylist ? "Loading..." : "Playlist tracks"}
           </button>
@@ -1377,29 +1450,45 @@ export function ConverterView({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                disabled={running || facebookCaptureBusy || socialCaptureBusy || (queue.length > 0 && queueRunning)}
+                disabled={isOperationActive}
                 onClick={() => void convert()}
                 className="primary-button flex h-9.5 flex-1 items-center justify-center gap-2 px-4 text-xs font-semibold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Play className="size-3.5 fill-current" />
                 Convert media
               </button>
-              {(running || facebookCaptureBusy || socialCaptureBusy) && (
-                <button type="button" onClick={() => facebookCaptureBusy ? void cancelFacebookCapture() : socialCaptureBusy ? void cancelSocialPhotoCapture() : void onCancel()} className="danger-button flex h-9.5 items-center gap-1.5 px-3 text-xs">
-                  <Square className="size-3" /> {facebookCaptureBusy || socialCaptureBusy ? "Cancel" : "Abort"}
-                </button>
+              {isOperationActive && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void handlePauseToggle()}
+                    className="subtle-button flex h-9.5 items-center gap-1.5 px-3 text-xs font-medium text-amber-300 hover:text-amber-200"
+                    aria-label={effectivePaused ? "Resume operation" : "Pause operation"}
+                  >
+                    {effectivePaused ? <Play className="size-3 fill-current" /> : <Pause className="size-3" />}
+                    {effectivePaused ? "Resume" : "Pause"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleAbort()}
+                    className="danger-button flex h-9.5 items-center gap-1.5 px-3 text-xs"
+                    aria-label="Abort operation"
+                  >
+                    <Square className="size-3" /> Abort
+                  </button>
+                </>
               )}
             </div>
 
             {/* High-visibility progress bar & percentage */}
             <div className="mt-2">
               <div className="flex items-center justify-between gap-2 text-[11px]">
-                <span className={`truncate ${running ? "text-zinc-200 font-medium" : "text-zinc-500"}`}>
-                  {status || "Ready to convert"}
+                <span className={`truncate ${isOperationActive ? "text-zinc-200 font-medium" : "text-zinc-500"}`}>
+                  {effectivePaused ? `Paused — ${status || "Operation paused"}` : status || "Ready to convert"}
                 </span>
                 <span
                   className="shrink-0 font-mono font-bold text-xs"
-                  style={{ color: running ? "var(--accent-color, #ec4899)" : "#71717a" }}
+                  style={{ color: isOperationActive ? "var(--accent-color, #ec4899)" : "#71717a" }}
                 >
                   {Math.round(progress * 100)}%
                 </span>
@@ -1418,8 +1507,8 @@ export function ConverterView({
               {lastEvent && (
                 <div className="mt-1 flex items-center gap-1.5 text-[10px] text-zinc-500 truncate">
                   <RefreshCw
-                    className={`size-2.5 shrink-0 ${running ? "animate-spin" : ""}`}
-                    style={running ? { color: "var(--accent-color, #ec4899)" } : undefined}
+                    className={`size-2.5 shrink-0 ${isOperationActive && !effectivePaused ? "animate-spin" : ""}`}
+                    style={isOperationActive ? { color: "var(--accent-color, #ec4899)" } : undefined}
                   />
                   <span className="truncate">Engine: {lastEvent.message}</span>
                 </div>

@@ -187,6 +187,8 @@ export interface JaneBridge {
   cancelFacebookAlbum(captureId: string): Promise<void>;
   captureSocialPostPhotos(source: string, captureId: string): Promise<SocialCaptureResult>;
   cancelSocialPostPhotos(captureId: string): Promise<void>;
+  pauseConversion(jobId?: string): Promise<void>;
+  resumeConversion(jobId?: string): Promise<void>;
   cancelConversion(jobId: string): Promise<void>;
   loadPlaylist(source: string): Promise<PlaylistCatalog>;
   subscribe(listener: (event: ConverterEvent) => void): Promise<UnlistenFn>;
@@ -248,6 +250,8 @@ const demoBridge: JaneBridge = {
   async cancelFacebookAlbum() {},
   async captureSocialPostPhotos() { return { captureId: "", title: "", photoCount: 0 }; },
   async cancelSocialPostPhotos() {},
+  async pauseConversion() {},
+  async resumeConversion() {},
   async cancelConversion() {},
   async loadPlaylist() { return { title: "Preview playlist", items: [] }; },
   async subscribe() { return () => {}; },
@@ -291,6 +295,8 @@ const tauriBridge: JaneBridge = {
   cancelFacebookAlbum: (captureId) => invoke<void>("cancel_facebook_album", { captureId }),
   captureSocialPostPhotos: (source, captureId) => invoke<SocialCaptureResult>("capture_social_post_photos", { source, captureId }),
   cancelSocialPostPhotos: (captureId) => invoke<void>("cancel_social_post_photos", { captureId }),
+  pauseConversion: (jobId) => invoke<void>("pause_conversion", { jobId }),
+  resumeConversion: (jobId) => invoke<void>("resume_conversion", { jobId }),
   cancelConversion: (jobId) => invoke<void>("cancel_conversion", { jobId }),
   loadPlaylist: (source) => invoke<PlaylistCatalog>("load_playlist", { source }),
   subscribe: (listener) => listen<ConverterEvent>("converter-event", (event) => listener(event.payload)),

@@ -7,7 +7,7 @@ mod process;
 mod social_photo_capture;
 
 use model::{
-    AccessDiagnostic, AccessStatus, ConversionRequest, FacebookCaptureResult,
+    AccessDiagnostic, AccessStatus, ConversionRequest, ConverterEvent, FacebookCaptureResult,
     FacebookPhotoManifest, FetchedMedia, HardwareSnapshot, LibraryEntry, RuntimeInfo,
     SocialCaptureResult, SocialPhotoManifest,
 };
@@ -16,8 +16,8 @@ use paths::{
     prepare_command, project_root, set_data_root, settings_get_internal, write_settings,
 };
 use process::{
-    load_playlist as load_playlist_engine, start_conversion as start_engine_conversion,
-    terminate_child, ConversionSlots,
+    emit_event, load_playlist as load_playlist_engine, set_child_paused,
+    start_conversion as start_engine_conversion, terminate_child, ConversionSlots,
 };
 use rfd::FileDialog;
 use std::fs;
@@ -106,6 +106,7 @@ fn is_newer_updater_build(current: &str, latest: &str) -> bool {
 pub struct AppState {
     active_child: Arc<Mutex<Option<Arc<Mutex<std::process::Child>>>>>,
     active_cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+    active_paused: Arc<AtomicBool>,
     active_job: Arc<Mutex<Option<String>>>,
     storage_operation: Arc<Mutex<()>>,
     sequence: Arc<AtomicU64>,
@@ -127,6 +128,7 @@ impl Default for AppState {
         Self {
             active_child: Arc::new(Mutex::new(None)),
             active_cancel: Arc::new(Mutex::new(None)),
+            active_paused: Arc::new(AtomicBool::new(false)),
             active_job: Arc::new(Mutex::new(None)),
             storage_operation: Arc::new(Mutex::new(())),
             sequence: Arc::new(AtomicU64::new(1)),
@@ -505,6 +507,65 @@ fn close_facebook_capture_session(
     }
 }
 
+fn close_idle_facebook_captures(
+    captures: &Arc<Mutex<std::collections::HashMap<String, FacebookCaptureSession>>>,
+    keep_capture_id: Option<&str>,
+) {
+    let removed = captures.lock().ok().map(|mut values| {
+        let keys: Vec<String> = values
+            .iter()
+            .filter(|(id, session)| {
+                keep_capture_id != Some(id.as_str()) && !session.in_use.load(Ordering::Relaxed)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        keys.into_iter()
+            .filter_map(|key| values.remove(&key))
+            .collect::<Vec<_>>()
+    });
+    for session in removed.unwrap_or_default() {
+        let _ = session.window.close();
+        clean_facebook_capture_profile(&session.profile);
+    }
+}
+
+fn close_all_social_captures(
+    captures: &Arc<Mutex<std::collections::HashMap<String, WebviewWindow>>>,
+) {
+    let removed = captures
+        .lock()
+        .ok()
+        .map(|mut values| values.drain().map(|(_, window)| window).collect::<Vec<_>>());
+    for window in removed.unwrap_or_default() {
+        let _ = window.close();
+    }
+}
+
+fn recv_with_pause<T>(
+    receiver: &mpsc::Receiver<T>,
+    timeout: Duration,
+    paused: &AtomicBool,
+) -> Result<T, mpsc::RecvTimeoutError> {
+    let step = Duration::from_millis(250);
+    let mut active_elapsed = Duration::ZERO;
+    loop {
+        match receiver.recv_timeout(step) {
+            Ok(value) => return Ok(value),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(mpsc::RecvTimeoutError::Disconnected);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if !paused.load(Ordering::Relaxed) {
+                    active_elapsed += step;
+                    if active_elapsed >= timeout {
+                        return Err(mpsc::RecvTimeoutError::Timeout);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn clean_facebook_capture_profile(path: &Path) {
     let Ok(temp_root) = fs::canonicalize(std::env::temp_dir()) else {
         return;
@@ -575,21 +636,15 @@ async fn capture_facebook_album(
         );
     }
 
+    state.active_paused.store(false, Ordering::Relaxed);
     state
         .facebook_manifests
         .lock()
         .map_err(|_| "The Facebook photo manifest registry is unavailable.")?
         .retain(|_, (_, _, created)| created.elapsed() < Duration::from_secs(600));
 
-    {
-        let captures = state
-            .facebook_captures
-            .lock()
-            .map_err(|_| "The Facebook capture registry is unavailable.")?;
-        if !captures.is_empty() {
-            return Err("A Facebook photo capture is already running.".into());
-        }
-    }
+    close_idle_facebook_captures(&state.facebook_captures, None);
+    close_all_social_captures(&state.social_captures);
 
     let sequence = state.sequence.fetch_add(1, Ordering::Relaxed);
     let nonce = format!("{}-{sequence}", paths::now_stamp());
@@ -748,10 +803,12 @@ async fn capture_facebook_album(
             },
         );
 
+    let paused_flag = Arc::clone(&state.active_paused);
     let received = tauri::async_runtime::spawn_blocking(move || {
-        receiver.recv_timeout(Duration::from_secs(210))
+        recv_with_pause(&receiver, Duration::from_secs(210), &paused_flag)
     })
     .await;
+    state.active_paused.store(false, Ordering::Relaxed);
     let capture_result = match received {
         Ok(Ok(result)) => result,
         Ok(Err(mpsc::RecvTimeoutError::Timeout)) => {
@@ -830,6 +887,7 @@ fn cancel_facebook_album(state: State<'_, AppState>, capture_id: String) -> Resu
     if !valid_capture_id(&capture_id) {
         return Err("The Facebook capture session is invalid.".into());
     }
+    state.active_paused.store(false, Ordering::Relaxed);
     let session = state
         .facebook_captures
         .lock()
@@ -869,24 +927,14 @@ async fn capture_social_post_photos(
             "Finish or cancel the current conversion before starting a photo capture.".into(),
         );
     }
+    state.active_paused.store(false, Ordering::Relaxed);
     state
         .social_manifests
         .lock()
         .map_err(|_| "The public photo manifest registry is unavailable.")?
         .retain(|_, (_, _, created)| created.elapsed() < Duration::from_secs(600));
-    if !state
-        .social_captures
-        .lock()
-        .map_err(|_| "The public photo capture registry is unavailable.")?
-        .is_empty()
-        || !state
-            .facebook_captures
-            .lock()
-            .map_err(|_| "The Facebook photo capture registry is unavailable.")?
-            .is_empty()
-    {
-        return Err("Another public photo capture is already running.".into());
-    }
+    close_all_social_captures(&state.social_captures);
+    close_idle_facebook_captures(&state.facebook_captures, None);
 
     let sequence = state.sequence.fetch_add(1, Ordering::Relaxed);
     let nonce = format!("{}-{sequence}", paths::now_stamp());
@@ -1023,10 +1071,12 @@ async fn capture_social_post_photos(
         .map_err(|_| "The public photo capture registry is unavailable.")?
         .insert(capture_id.clone(), window.clone());
 
+    let paused_flag = Arc::clone(&state.active_paused);
     let received = tauri::async_runtime::spawn_blocking(move || {
-        receiver.recv_timeout(Duration::from_secs(90))
+        recv_with_pause(&receiver, Duration::from_secs(90), &paused_flag)
     })
     .await;
+    state.active_paused.store(false, Ordering::Relaxed);
     if let Ok(mut captures) = state.social_captures.lock() {
         captures.remove(&capture_id);
     }
@@ -1078,6 +1128,7 @@ fn cancel_social_post_photos(state: State<'_, AppState>, capture_id: String) -> 
     if !valid_capture_id(&capture_id) {
         return Err("The photo capture session is invalid.".into());
     }
+    state.active_paused.store(false, Ordering::Relaxed);
     let window = state
         .social_captures
         .lock()
@@ -1100,14 +1151,7 @@ fn start_conversion(
     if request.facebook_capture_id.is_some() && request.social_capture_id.is_some() {
         return Err("Use only one public photo capture for a conversion.".into());
     }
-    if !state
-        .social_captures
-        .lock()
-        .map_err(|_| "The public photo capture registry is unavailable.")?
-        .is_empty()
-    {
-        return Err("Finish or cancel the current photo capture first.".into());
-    }
+    close_all_social_captures(&state.social_captures);
     if state
         .active_child
         .lock()
@@ -1116,17 +1160,16 @@ fn start_conversion(
     {
         return Err("A conversion is already running.".into());
     }
+    state.active_paused.store(false, Ordering::Relaxed);
     let facebook_capture_id = request.facebook_capture_id.clone();
+    close_idle_facebook_captures(&state.facebook_captures, facebook_capture_id.as_deref());
     let facebook_session = {
         let captures = state
             .facebook_captures
             .lock()
             .map_err(|_| "The Facebook capture registry is unavailable.")?;
         if let Some(capture_id) = facebook_capture_id.as_deref() {
-            if !valid_capture_id(capture_id)
-                || captures.len() != 1
-                || !captures.contains_key(capture_id)
-            {
+            if !valid_capture_id(capture_id) || !captures.contains_key(capture_id) {
                 return Err(
                     "The Facebook photo capture has expired. Capture the album again.".into(),
                 );
@@ -1142,9 +1185,6 @@ fn start_conversion(
             }
             Some((capture_id.to_owned(), session))
         } else {
-            if !captures.is_empty() {
-                return Err("Finish or cancel the current Facebook photo capture first.".into());
-            }
             None
         }
     };
@@ -1217,6 +1257,7 @@ fn start_conversion(
     let child_slot_for_worker = Arc::clone(&child_slot);
     let cancel_slot_for_worker = Arc::clone(&cancel_slot);
     let active_job_for_worker = Arc::clone(&active_job_slot);
+    let paused_for_worker = Arc::clone(&state.active_paused);
     let completed_job_id = job_id.clone();
     let browser = request.browser_session.clone();
     let capture_path = active_capture_path(
@@ -1306,6 +1347,7 @@ fn start_conversion(
             facebook_refresh,
         },
         move |_code, _cancelled| {
+            paused_for_worker.store(false, Ordering::Relaxed);
             if let Ok(mut value) = child_slot_for_worker.lock() {
                 *value = None;
             }
@@ -1345,6 +1387,92 @@ fn start_conversion(
     Ok(job_id)
 }
 
+fn set_active_operation_paused(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    job_id: Option<&str>,
+    paused: bool,
+) -> Result<(), String> {
+    let active_job = state
+        .active_job
+        .lock()
+        .map_err(|_| "The conversion registry is unavailable.")?
+        .clone();
+    if let Some(requested_job) = job_id.map(str::trim).filter(|id| !id.is_empty()) {
+        if active_job.is_some() && !job_is_active(active_job.as_deref(), requested_job) {
+            return Err("That conversion is no longer active.".into());
+        }
+    }
+    let child = state
+        .active_child
+        .lock()
+        .map_err(|_| "The conversion registry is unavailable.")?
+        .clone();
+    let mut updated_any = false;
+    if let Some(child) = child {
+        let mut guard = child
+            .lock()
+            .map_err(|_| "The conversion process is unavailable.")?;
+        set_child_paused(&mut guard, paused)?;
+        updated_any = true;
+    }
+    let pause_script = if paused {
+        "window.__JANE_CAPTURE_PAUSED__ = true;"
+    } else {
+        "window.__JANE_CAPTURE_PAUSED__ = false;"
+    };
+    if let Ok(captures) = state.facebook_captures.lock() {
+        for session in captures.values() {
+            let _ = session.window.eval(pause_script);
+            updated_any = true;
+        }
+    }
+    if let Ok(captures) = state.social_captures.lock() {
+        for window in captures.values() {
+            let _ = window.eval(pause_script);
+            updated_any = true;
+        }
+    }
+    state.active_paused.store(paused, Ordering::Relaxed);
+    if updated_any {
+        if let Some(active_id) = active_job {
+            emit_event(
+                app,
+                ConverterEvent {
+                    job_id: active_id,
+                    kind: "status".into(),
+                    message: if paused {
+                        "Operation paused.".into()
+                    } else {
+                        "Operation resumed.".into()
+                    },
+                    progress: None,
+                    output: None,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn pause_conversion(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    job_id: Option<String>,
+) -> Result<(), String> {
+    set_active_operation_paused(&app, &state, job_id.as_deref(), true)
+}
+
+#[tauri::command]
+fn resume_conversion(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    job_id: Option<String>,
+) -> Result<(), String> {
+    set_active_operation_paused(&app, &state, job_id.as_deref(), false)
+}
+
 #[tauri::command]
 fn cancel_conversion(state: State<'_, AppState>, job_id: String) -> Result<(), String> {
     if job_id.trim().is_empty() {
@@ -1358,6 +1486,7 @@ fn cancel_conversion(state: State<'_, AppState>, job_id: String) -> Result<(), S
     if !job_is_active(active_job.as_deref(), &job_id) {
         return Err("That conversion is no longer active.".into());
     }
+    state.active_paused.store(false, Ordering::Relaxed);
     let cancel = state
         .active_cancel
         .lock()
@@ -2138,6 +2267,8 @@ pub fn run() {
             capture_social_post_photos,
             cancel_social_post_photos,
             start_conversion,
+            pause_conversion,
+            resume_conversion,
             cancel_conversion,
             load_playlist,
             scan_library,
