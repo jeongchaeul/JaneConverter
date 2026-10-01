@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import time
+import unicodedata
 import urllib.parse
 from typing import Optional, Dict, Any, Callable
 import json
@@ -56,29 +57,52 @@ def is_url(path_or_url: str) -> bool:
     except Exception:
         return False
 
+def clean_windows_path(path: str) -> str:
+    """Strip extended-length Windows verbatim prefixes (\\\\?\\) for standard Win32/Explorer compatibility."""
+    if not isinstance(path, str):
+        return ""
+    trimmed = path.strip()
+    if trimmed.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + trimmed[8:]
+    if trimmed.startswith("\\\\?\\"):
+        return trimmed[4:]
+    return trimmed
+
+
 WINDOWS_RESERVED_NAMES = {
     "CON", "PRN", "AUX", "NUL",
     *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
 }
 
+_UNICODE_BIDI_AND_FORMAT_RE = re.compile(
+    r"[\u200b\u200e\u200f\u202a-\u202e\u2060-\u206f\u061c\ufeff]"
+)
+
+
 def sanitize_filename(name: str, max_length: int = 100) -> str:
     """Cleans illegal Windows filesystem characters, control characters, and reserved device names."""
     if not name:
         return "media_file"
     name = "".join(
-        character for character in name if not 0xD800 <= ord(character) <= 0xDFFF
+        character for character in str(name) if not 0xD800 <= ord(character) <= 0xDFFF
     )
     if not name:
         return "media_file"
-    cleaned = re.sub(r'[\\/*?:"<>|]', '_', name)
-    cleaned = re.sub(r'[\x00-\x1f\x7f]', '', cleaned)
+    cleaned = unicodedata.normalize("NFC", name)
+    cleaned = _UNICODE_BIDI_AND_FORMAT_RE.sub("", cleaned)
+    cleaned = "".join(
+        ch for ch in cleaned
+        if unicodedata.category(ch) != "Cf" or ch in ("\u200c", "\u200d")
+    )
+    cleaned = re.sub(r'[\\/*?:"<>|]', '_', cleaned)
+    cleaned = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-    cleaned = cleaned.strip(" .")
+    cleaned = cleaned.strip(" .\u200c\u200d")
     if cleaned.upper().split(".")[0] in WINDOWS_RESERVED_NAMES:
         cleaned = f"_{cleaned}"
     if len(cleaned) > max_length:
-        cleaned = cleaned[:max_length].rstrip(" .")
+        cleaned = cleaned[:max_length].rstrip(" .\u200c\u200d")
     return cleaned or "media_file"
 
 
@@ -105,10 +129,16 @@ def identify_source_type(url_or_path: str) -> str:
         return "tiktok"
     if matches("twitter.com", "x.com"):
         return "twitter"
+    if matches("instagram.com", "instagr.am"):
+        return "instagram"
     if matches("facebook.com", "fb.watch"):
         return "facebook"
     if matches("reddit.com"):
         return "reddit"
+    if matches("tumblr.com"):
+        return "tumblr"
+    if matches("pinterest.com", "pin.it"):
+        return "pinterest"
     if matches("twitch.tv"):
         return "twitch"
     return "generic_url"
@@ -674,7 +704,6 @@ def fetch_media_stream(
         # direct VP9 rendition at the same resolution.
         "format_sort": ["res", "fps", "proto:https", "br"],
         "js_runtimes": {"node": {"path": None}},
-        "remote_components": ["ejs:github"],
         "progress_hooks": [progress_hook]
     }
     if ffmpeg_bin and (os.path.isfile(ffmpeg_bin) or shutil.which(ffmpeg_bin)):
@@ -724,6 +753,28 @@ def fetch_media_stream(
                     if os.path.exists(candidate):
                         downloaded_file = candidate
                         break
+
+            if not os.path.exists(downloaded_file) and os.path.isdir(output_dir):
+                stream_exts = {".mp4", ".mkv", ".webm", ".mov", ".m4a", ".mp3", ".opus", ".aac", ".ogg", ".avi", ".wav", ".flac"}
+                fresh_candidates = []
+                for entry in os.scandir(output_dir):
+                    if not entry.is_file():
+                        continue
+                    _, ext = os.path.splitext(entry.name)
+                    if ext.lower() not in stream_exts:
+                        continue
+                    abs_candidate = os.path.abspath(entry.path)
+                    try:
+                        stat = entry.stat()
+                    except OSError:
+                        continue
+                    prev = preexisting_stream_files.get(abs_candidate)
+                    if prev and (stat.st_size, stat.st_mtime_ns) == prev:
+                        continue
+                    fresh_candidates.append((stat.st_mtime_ns, entry.path))
+                if fresh_candidates:
+                    fresh_candidates.sort(reverse=True)
+                    downloaded_file = fresh_candidates[0][1]
 
             if not os.path.exists(downloaded_file):
                 raise FileNotFoundError(f"Downloaded stream file not found at: {downloaded_file}")
@@ -898,8 +949,7 @@ def fetch_playlist_entries(
         "no_warnings": True,
         "skip_download": True,
         "noplaylist": False,
-        "js_runtimes": {"node": {"path": None}},
-        "remote_components": ["ejs:github"]
+        "js_runtimes": {"node": {"path": None}}
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

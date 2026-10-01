@@ -12,7 +12,7 @@ from typing import Any, Callable, Optional
 import requests
 from PIL import Image
 
-from .extractor import sanitize_filename
+from .extractor import clean_windows_path, sanitize_filename
 from .image_format import convert_image_format
 
 
@@ -49,6 +49,23 @@ def _public_photo_url(value: Any) -> str:
     ):
         raise ValueError("Facebook returned a photo link outside its public media CDN.")
     return value
+
+
+def _photo_width(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        raise ValueError("Facebook returned an invalid photo width.")
+    if isinstance(value, int):
+        width = value
+    elif isinstance(value, str) and value.isdecimal():
+        try:
+            width = int(value)
+        except ValueError as error:
+            raise ValueError("Facebook returned an invalid photo width.") from error
+    else:
+        raise ValueError("Facebook returned an invalid photo width.")
+    return max(0, min(width, 20_000))
 
 
 def _get_public_photo(session: requests.Session, url: str) -> requests.Response:
@@ -102,7 +119,7 @@ def download_facebook_photo_manifest(
             raise ValueError("Facebook returned an invalid photo identifier.")
         photo = {
             "url": _public_photo_url(item.get("url")),
-            "width": max(0, min(int(item.get("width", 0)), 20_000)),
+            "width": _photo_width(item.get("width", 0)),
             "alternates": [
                 _public_photo_url(url) for url in item.get("alternates", [])[:MAX_RENDITIONS - 1]
             ] if isinstance(item.get("alternates", []), list) else [],
@@ -122,10 +139,10 @@ def download_facebook_photo_manifest(
         raise RuntimeError("Facebook exposed fewer than two unique photos.")
 
     raw_title = manifest.get("title")
-    title = sanitize_filename(raw_title if isinstance(raw_title, str) else "")
+    title = sanitize_filename(raw_title if isinstance(raw_title, str) else "", max_length=60)
     if title == "media_file":
         title = "Facebook Post"
-    parent = os.path.abspath(output_dir)
+    parent = os.path.abspath(clean_windows_path(output_dir))
     os.makedirs(parent, exist_ok=True)
     target_dir = os.path.join(parent, title)
     suffix = 2

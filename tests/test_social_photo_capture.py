@@ -227,3 +227,81 @@ def test_new_photo_sources_use_their_own_library_folders(tmp_path):
     for platform, folder in (("tiktok", "TikTok"), ("reddit", "Reddit"), ("tumblr", "Tumblr"), ("pinterest", "Pinterest")):
         path = cli.media_library_folder(str(tmp_path), "source", platform, "Images")
         assert path.endswith(f"Images/{folder}") or path.endswith(f"Images\\{folder}")
+
+
+def test_instagram_and_collection_urls_route_to_platform_library_folders(tmp_path):
+    from janeconverter.extractor import identify_source_type
+
+    assert identify_source_type("https://www.instagram.com/p/DFMyvpiSgxW/") == "instagram"
+    assert identify_source_type("https://www.instagram.com/reel/DFMyvpiSgxW/") == "instagram"
+    assert identify_source_type("https://instagr.am/p/DFMyvpiSgxW/") == "instagram"
+    assert identify_source_type("https://www.tumblr.com/blog/123456/post") == "tumblr"
+    assert identify_source_type("https://www.pinterest.com/pin/123456/") == "pinterest"
+    assert identify_source_type("https://pin.it/abc123") == "pinterest"
+
+    video_folder = cli.media_library_folder(
+        f"\\\\?\\{tmp_path}",
+        "mp4",
+        identify_source_type("https://www.instagram.com/reel/DFMyvpiSgxW/"),
+        "Videos",
+    )
+    assert not video_folder.startswith("\\\\?\\")
+    assert video_folder.endswith("Videos/Instagram") or video_folder.endswith("Videos\\Instagram")
+
+
+def test_sanitize_filename_preserves_multilingual_scripts_and_strips_rtl_bidi_marks():
+    from janeconverter.extractor import sanitize_filename
+
+    arabic_wrapped = "\u200f\u202bفيديو انستغرام رائع جدًا...\u202c\u200f"
+    assert sanitize_filename(arabic_wrapped) == "فيديو انستغرام رائع جدًا"
+
+    multilingual = "\u200eالعربية • 한국어 노래 • 日本語の曲 • 中文 • Русский...\u200f"
+    assert sanitize_filename(multilingual) == "العربية • 한국어 노래 • 日本語の曲 • 中文 • Русский"
+
+
+def test_arabic_instagram_photo_post_exports_to_clean_library_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(social_photo_capture.requests, "Session", _Session)
+
+    manifest = {
+        "platform": "instagram",
+        "title": "\u200fلحظات جميلة من القاهرة...\u200f",
+        "photos": [
+            {"id": "photo_1", "url": "https://scontent.cdninstagram.com/photo.webp", "width": 1080},
+        ],
+    }
+    photo_folder = cli.media_library_folder(f"\\\\?\\{tmp_path}", "source", "instagram", "Images")
+    result = social_photo_capture.download_social_photo_manifest(
+        manifest,
+        photo_folder,
+        target_format="source",
+    )
+
+    assert not result["folder_path"].startswith("\\\\?\\")
+    assert result["title"] == "لحظات جميلة من القاهرة"
+    saved = list((tmp_path / "Images" / "Instagram" / "لحظات جميلة من القاهرة").glob("*"))
+    assert len(saved) == 1
+    assert saved[0].name == "لحظات جميلة من القاهرة_001.webp"
+
+
+def test_probe_media_streams_decodes_utf8_arabic_metadata(tmp_path, monkeypatch):
+    from janeconverter import converter
+
+    media_file = tmp_path / "arabic.mp3"
+    media_file.write_bytes(b"ID3")
+    captured_kwargs = {}
+
+    class _Completed:
+        returncode = 0
+        stdout = '{"streams":[{"codec_type":"audio"}],"format":{"tags":{"title":"فيديو رائع \\u200f"}}}'
+
+    def fake_run(*_args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return _Completed()
+
+    monkeypatch.setattr(converter.subprocess, "run", fake_run)
+    probed = converter.probe_media_streams(str(media_file))
+
+    assert captured_kwargs.get("encoding") == "utf-8"
+    assert captured_kwargs.get("errors") == "replace"
+    assert probed is not None
+    assert probed["format"]["tags"]["title"].startswith("فيديو رائع")

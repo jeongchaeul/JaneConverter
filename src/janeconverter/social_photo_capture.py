@@ -12,7 +12,7 @@ from typing import Any, Callable, Optional
 import requests
 from PIL import Image
 
-from .extractor import sanitize_filename
+from .extractor import clean_windows_path, sanitize_filename
 from .image_format import convert_image_format
 
 
@@ -63,6 +63,24 @@ def _media_url(value: Any, platform: str) -> str:
     ):
         raise ValueError(f"{platform} returned a photo link outside its public media CDN.")
     return value
+
+
+def _photo_width(value: Any, platform: str) -> int:
+    label = PLATFORM_LABELS[platform]
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        raise ValueError(f"{label} returned an invalid photo width.")
+    if isinstance(value, int):
+        width = value
+    elif isinstance(value, str) and value.isdecimal():
+        try:
+            width = int(value)
+        except ValueError as error:
+            raise ValueError(f"{label} returned an invalid photo width.") from error
+    else:
+        raise ValueError(f"{label} returned an invalid photo width.")
+    return max(0, min(width, 20_000))
 
 
 def _get_photo(session: requests.Session, url: str, platform: str) -> requests.Response:
@@ -118,7 +136,7 @@ def download_social_photo_manifest(
             raise ValueError(f"{platform} returned an invalid photo identifier.")
         photo = {
             "url": _media_url(item.get("url"), platform_key),
-            "width": max(0, min(int(item.get("width", 0)), 20_000)),
+            "width": _photo_width(item.get("width", 0), platform_key),
         }
         existing = photos.get(photo_id)
         if existing is None or photo["width"] > existing["width"]:
@@ -127,10 +145,10 @@ def download_social_photo_manifest(
         raise RuntimeError(f"No {platform} photos were available to download.")
 
     raw_title = manifest.get("title")
-    title = sanitize_filename(raw_title if isinstance(raw_title, str) else "")
+    title = sanitize_filename(raw_title if isinstance(raw_title, str) else "", max_length=60)
     if title == "media_file":
         title = f"{platform} Post"
-    parent = os.path.abspath(output_dir)
+    parent = os.path.abspath(clean_windows_path(output_dir))
     os.makedirs(parent, exist_ok=True)
     target_dir = os.path.join(parent, title)
     suffix = 2

@@ -165,7 +165,6 @@ def get_app_data_dir() -> str:
     # Portable installs keep exports, settings, logs, and scratch files beside
     # JaneConverter. This is the normal path and avoids silently consuming C:.
     if _writable_directory(BASE_DIR):
-        migrate_legacy_app_data(LEGACY_APP_DATA_DIR, BASE_DIR)
         return BASE_DIR
 
     # Protected install locations (for example Program Files) need a writable
@@ -174,9 +173,18 @@ def get_app_data_dir() -> str:
     if app_data:
         candidate = os.path.join(app_data, "JaneConverter")
         if _writable_directory(candidate):
-            migrate_legacy_app_data(LEGACY_APP_DATA_DIR, candidate)
             return candidate
     return os.path.join(tempfile.gettempdir(), "JaneConverter")
+
+
+def initialize_app_data() -> None:
+    """Validate the selected store and migrate legacy data during CLI startup."""
+    if not _writable_directory(APP_DATA_DIR):
+        if os.environ.get("JANECONVERTER_DATA_DIR", "").strip():
+            raise OSError(f"JANECONVERTER_DATA_DIR is not writable: {APP_DATA_DIR}")
+        raise OSError(f"JaneConverter's application data folder is not writable: {APP_DATA_DIR}")
+    if not os.environ.get("JANECONVERTER_DATA_DIR", "").strip():
+        migrate_legacy_app_data(LEGACY_APP_DATA_DIR, APP_DATA_DIR)
 
 
 APP_DATA_DIR = get_app_data_dir()

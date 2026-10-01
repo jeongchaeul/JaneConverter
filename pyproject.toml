@@ -14,7 +14,7 @@ dependencies = [
     "pillow>=10.0.0,<13",
     "psutil>=5.9.0,<8",
     "requests>=2.31.0,<3",
-    "yt-dlp>=2025.1.0,<2027",
+    "yt-dlp[default]>=2025.1.0,<2027",
 ]
 
 [project.scripts]

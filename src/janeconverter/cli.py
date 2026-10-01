@@ -26,7 +26,7 @@ for _stream in (sys.stdin, sys.stdout, sys.stderr):
         pass
 
 from .extractor import (
-    is_url, sanitize_filename, fetch_media_stream,
+    is_url, sanitize_filename, clean_windows_path, fetch_media_stream,
     is_playlist_url, fetch_playlist_entries, download_and_convert_thumbnail, format_duration,
     identify_source_type,
 )
@@ -37,9 +37,9 @@ from .converter import (
     SUPPORTED_VIDEO_FORMATS,
     get_best_hardware_encoder
 )
-from .updater import check_for_engine_updates, check_for_repo_updates, download_application_update
+from .updater import check_for_engine_updates, check_for_repo_updates
 from .version import __version__
-from .paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR
+from .paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, initialize_app_data
 from .auth import normalize_browser_session
 from .facebook_capture import download_facebook_photo_manifest
 from .social_photo_capture import MEDIA_HOSTS as SOCIAL_PHOTO_MEDIA_HOSTS, download_social_photo_manifest
@@ -55,6 +55,7 @@ def media_library_folder(
     content_category: Optional[str] = None,
 ) -> str:
     """Return the organized library folder for a converted item."""
+    output_dir = clean_windows_path(output_dir)
     normalized_format = target_format.lower().strip(".")
     category = str(content_category or "").strip().lower()
     if category == "audio":
@@ -106,7 +107,7 @@ def _unique_directory_path(parent: str, name: str) -> str:
 def _metadata_folder(parent: str, source: str, title: str) -> str:
     """Give each single export an isolated metadata directory."""
     token = hashlib.sha256(f"{source}\0{title}".encode("utf-8", errors="replace")).hexdigest()[:10]
-    return os.path.join(parent, "metadata", f"{sanitize_filename(title)}_{token}")
+    return os.path.join(parent, "metadata", f"{sanitize_filename(title, max_length=60)}_{token}")
 
 
 def playlist_source_type(selected_entries: list) -> str:
@@ -204,6 +205,10 @@ def write_credits_file(output_path: str, meta: Dict[str, Any]) -> str:
         f.write(content)
     return output_path
 
+
+def _warn_optional_output(label: str, error: Exception) -> None:
+    print(f"[!] {label} could not be saved ({type(error).__name__}).")
+
 def process_conversion(
     source: str,
     output_dir: Optional[str] = None,
@@ -245,6 +250,7 @@ def process_conversion(
 
     if not output_dir:
         output_dir = DEFAULT_CONVERTED_DIR
+    output_dir = clean_windows_path(output_dir)
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(DEFAULT_TEMP_DIR, exist_ok=True)
     estimated_size = 0
@@ -366,26 +372,29 @@ def process_conversion(
             try:
                 shutil.copy2(cover_path, standalone_cover)
                 print(f"[+] Saved cover art: {os.path.basename(standalone_cover)}")
-            except Exception:
-                pass
+            except OSError as exc:
+                _warn_optional_output("Standalone cover art", exc)
 
         # Save metadata text file if requested
         if save_metadata:
             meta_path = os.path.join(metadata_dir, f"{safe_title}_info.txt")
-            write_credits_file(meta_path, {
-                "title": title,
-                "artist": artist,
-                "album": album,
-                "year": year,
-                "source_url": source,
-                "platform": stream_info.get("platform") or stream_info.get("source_type", ""),
-                "duration": stream_info.get("duration", 0),
-                "duration_str": stream_info.get("duration_str", ""),
-                "description": description,
-                "tags": stream_info.get("tags", []),
-                "categories": stream_info.get("categories", [])
-            })
-            print(f"[+] Saved metadata: {os.path.basename(meta_path)}")
+            try:
+                write_credits_file(meta_path, {
+                    "title": title,
+                    "artist": artist,
+                    "album": album,
+                    "year": year,
+                    "source_url": source,
+                    "platform": stream_info.get("platform") or stream_info.get("source_type", ""),
+                    "duration": stream_info.get("duration", 0),
+                    "duration_str": stream_info.get("duration_str", ""),
+                    "description": description,
+                    "tags": stream_info.get("tags", []),
+                    "categories": stream_info.get("categories", [])
+                })
+                print(f"[+] Saved metadata: {os.path.basename(meta_path)}")
+            except (OSError, TypeError, ValueError) as exc:
+                _warn_optional_output("Media credits", exc)
 
         # Stage 2: Transcode & Cover Art Embedding
         if target_format in ("source", "original"):
@@ -501,6 +510,7 @@ def process_playlist_conversion(
 
     if not output_dir:
         output_dir = DEFAULT_CONVERTED_DIR
+    output_dir = clean_windows_path(output_dir)
     ensure_free_disk_space(output_dir)
 
     active_gpu = use_gpu if use_gpu is not None else use_nvenc
@@ -511,7 +521,7 @@ def process_playlist_conversion(
 
     source_type = source_type or playlist_source_type(selected_entries)
     organized_output_dir = media_library_folder(output_dir, target_format, source_type, content_category)
-    safe_folder = sanitize_filename(playlist_title) or "Playlist_Media"
+    safe_folder = sanitize_filename(playlist_title, max_length=60) or "Playlist_Media"
     playlist_dir = _unique_directory_path(organized_output_dir, safe_folder)
     metadata_dir = os.path.join(playlist_dir, "metadata")
     os.makedirs(playlist_dir, exist_ok=True)
@@ -556,7 +566,10 @@ def process_playlist_conversion(
     if save_cover_art and not os.path.exists(playlist_cover_dest):
         first_thumb = next((e.get("thumbnail") for e in selected_entries if e.get("thumbnail")), None)
         if first_thumb:
-            download_and_convert_thumbnail(first_thumb, playlist_cover_dest)
+            try:
+                download_and_convert_thumbnail(first_thumb, playlist_cover_dest)
+            except Exception as exc:
+                _warn_optional_output("Playlist cover art", exc)
 
     converted_files = []
     failed_files = []
@@ -626,13 +639,13 @@ def process_playlist_conversion(
                 track_jpg = os.path.join(metadata_dir, f"{ordered_filename}.jpg")
                 try:
                     shutil.copy2(stream_info["thumbnail_path"], track_jpg)
-                except Exception:
-                    pass
+                except OSError as exc:
+                    _warn_optional_output(f"Track #{idx} cover art", exc)
                 if not os.path.exists(playlist_cover_dest):
                     try:
                         shutil.copy2(stream_info["thumbnail_path"], playlist_cover_dest)
-                    except Exception:
-                        pass
+                    except OSError as exc:
+                        _warn_optional_output("Playlist cover art", exc)
 
             # Save per-track credits even when the provider has no description;
             # the file still records title, artist, source, and duration.
@@ -640,8 +653,8 @@ def process_playlist_conversion(
                 track_credits = os.path.join(metadata_dir, f"{ordered_filename}_credits.txt")
                 try:
                     write_credits_file(track_credits, stream_info)
-                except Exception:
-                    pass
+                except (OSError, TypeError, ValueError) as exc:
+                    _warn_optional_output(f"Track #{idx} credits", exc)
 
             metadata = {
                 "title": clean_title,
@@ -732,8 +745,8 @@ def process_playlist_conversion(
             with open(summary_credits_path, "w", encoding="utf-8") as f:
                 f.write("\n".join(pl_lines))
             print(f"[+] Exported playlist summary: {os.path.basename(summary_credits_path)}")
-        except Exception:
-            pass
+        except (OSError, TypeError, ValueError) as exc:
+            _warn_optional_output("Playlist credits summary", exc)
 
     if save_metadata:
         try:
@@ -890,10 +903,6 @@ def main():
     parser.add_argument("--no-update", action="store_true", help="Skip the read-only yt-dlp update availability check on startup")
     parser.add_argument("--check-updates", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--check-engine-updates", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--download-update", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--update-url", help=argparse.SUPPRESS)
-    parser.add_argument("--update-checksum-url", help=argparse.SUPPRESS)
-    parser.add_argument("--update-version", help=argparse.SUPPRESS)
     parser.add_argument("--hardware-snapshot-json", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--hardware-target-pid", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--version", action="version", version=f"JaneConverter {__version__}")
@@ -930,23 +939,17 @@ def main():
             "repo": check_for_repo_updates(),
         }))
         return
-    if args.download_update:
-        result = download_application_update({
-            "has_update": True,
-            "latest_version": args.update_version,
-            "installer_url": args.update_url,
-            "installer_checksum_url": args.update_checksum_url,
-        })
-        print(json.dumps(result))
-        if not result.get("success"):
-            sys.exit(1)
-        return
     if not args.source:
         parser.error("the following arguments are required: --source/-s")
     args.format, args.bitrate = validate_cli_args(args, parser)
 
     if args.list_playlist and not is_url(args.source):
         parser.error("--list-playlist requires a URL.")
+
+    try:
+        initialize_app_data()
+    except OSError as error:
+        parser.error(str(error))
 
     if not args.no_update:
         engine_info = check_for_engine_updates()

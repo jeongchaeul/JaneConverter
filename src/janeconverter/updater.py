@@ -6,9 +6,6 @@ import os
 import re
 import sys
 import subprocess
-import hashlib
-import shutil
-import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
@@ -45,6 +42,8 @@ def _run_git_cmd(args: list, timeout: float = 10.0) -> subprocess.CompletedProce
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
         creationflags=no_window
     )
@@ -292,81 +291,12 @@ def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
     )
 
 
-def cleanup_update_cache() -> None:
-    """Clean up any temporary directories left behind by previous update downloads."""
-    temp_root = Path(tempfile.gettempdir())
-    for prefix in ("janeconverter-update-", "janecoverter-update-"):
-        try:
-            for item in temp_root.glob(f"{prefix}*"):
-                if item.is_dir():
-                    shutil.rmtree(item, ignore_errors=True)
-        except OSError:
-            pass
-
-
 def download_application_update(info: Dict[str, Any], timeout_seconds: float = 60.0) -> Dict[str, Any]:
-    """Download and verify an explicitly requested Windows application update.
-
-    The read-only release check never calls this function. The desktop app invokes
-    it only after the user chooses ``Update now``. The installer is returned to the
-    caller after SHA-256 verification; launching it remains a separate desktop
-    operation so the user always has an explicit choice before the app closes.
-    """
-    if not isinstance(info, dict) or not info.get("has_update"):
-        return {"success": False, "error": "No application update is available."}
-
-    installer_url = _trusted_release_url(info.get("installer_url"))
-    checksum_url = _trusted_release_url(info.get("installer_checksum_url"))
-    if not installer_url or not checksum_url:
-        return {"success": False, "error": "The published update is missing a trusted installer or checksum."}
-
-    installer_name = Path(urlparse(installer_url).path).name
-    if not installer_name.lower().endswith(".exe"):
-        return {"success": False, "error": "The published update is not a Windows installer."}
-
-    cleanup_update_cache()
-    temp_dir = Path(tempfile.mkdtemp(prefix="janeconverter-update-"))
-    installer_path = temp_dir / installer_name
-    headers = {
-        "Accept": "application/octet-stream",
-        "User-Agent": f"JaneConverter/{__version__}",
-    }
-    try:
-        response = requests.get(installer_url, headers=headers, stream=True, timeout=max(5.0, float(timeout_seconds)))
-        if response.status_code != 200:
-            raise RuntimeError(f"Installer download returned HTTP {response.status_code}.")
-        with installer_path.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    handle.write(chunk)
-        close_response = getattr(response, "close", None)
-        if callable(close_response):
-            close_response()
-
-        checksum_response = requests.get(
-            checksum_url,
-            headers={**headers, "Accept": "text/plain"},
-            timeout=max(5.0, float(timeout_seconds)),
-        )
-        if checksum_response.status_code != 200:
-            raise RuntimeError(f"Installer checksum download returned HTTP {checksum_response.status_code}.")
-        checksum_match = re.search(r"\b([a-fA-F0-9]{64})\b", checksum_response.text)
-        if not checksum_match:
-            raise RuntimeError("The published installer checksum was not valid SHA-256 text.")
-        expected_checksum = checksum_match.group(1).lower()
-        actual_checksum = hashlib.sha256(installer_path.read_bytes()).hexdigest().lower()
-        if actual_checksum != expected_checksum:
-            raise RuntimeError("The downloaded installer failed its SHA-256 integrity check.")
-    except Exception as error:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        return {"success": False, "error": str(error)}
-
-    latest_version = str(info.get("latest_version") or "latest")
+    """Reject the retired unsigned installer download path."""
+    del info, timeout_seconds
     return {
-        "success": True,
-        "version": latest_version,
-        "installer_path": str(installer_path),
-        "message": f"JaneConverter v{latest_version} was downloaded and verified.",
+        "success": False,
+        "error": "Unsigned installer downloads are disabled. Use the signed desktop updater or install the release manually.",
     }
 
 def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
@@ -494,6 +424,8 @@ def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=120.0,
                 creationflags=no_window
             )
@@ -598,7 +530,7 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None,
 
     try:
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             text=True, timeout=120.0, creationflags=no_window)
+                             text=True, encoding="utf-8", errors="replace", timeout=120.0, creationflags=no_window)
         if res.returncode == 0:
             log(f"Engine successfully updated to v{target_version}.")
             return True

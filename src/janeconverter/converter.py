@@ -13,6 +13,7 @@ import threading
 import subprocess
 import json
 import tempfile
+import unicodedata
 from dataclasses import replace
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
@@ -149,7 +150,7 @@ def probe_media_duration(input_path: str) -> Optional[float]:
             [get_ffprobe_binary(), "-v", "error", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", input_path],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            text=True, timeout=15.0, creationflags=no_window
+            text=True, encoding="utf-8", errors="replace", timeout=15.0, creationflags=no_window
         )
         if res.returncode == 0 and res.stdout.strip():
             return float(res.stdout.strip())
@@ -178,6 +179,8 @@ def probe_media_streams(input_path: str) -> Optional[Dict[str, Any]]:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15.0,
             creationflags=no_window,
         )
@@ -295,7 +298,9 @@ def validate_output_intent(
             for key, value in tags.items()
         }
         for key, value in intent.metadata:
-            if output_tags.get(key.lower(), "").strip() != value.strip():
+            actual = unicodedata.normalize("NFC", output_tags.get(key.lower(), "")).strip()
+            expected = unicodedata.normalize("NFC", str(value)).strip()
+            if actual != expected:
                 raise RuntimeError("ValidationFailed: requested media metadata was not retained.")
     audio = next((stream for stream in output_streams if stream.get("codec_type") == "audio"), None)
     video = next((stream for stream in output_streams if stream.get("codec_type") == "video"
@@ -306,6 +311,14 @@ def validate_output_intent(
         source_audio = next((stream for stream in source_streams if stream.get("codec_type") == "audio"), None)
         if source_audio and source_audio.get("channels") and audio.get("channels") != source_audio.get("channels"):
             raise RuntimeError("ValidationFailed: the output audio channel count changed.")
+        try:
+            source_duration = float(source.get("format", {}).get("duration") or 0)
+            output_duration = float(output.get("format", {}).get("duration") or 0)
+        except (TypeError, ValueError):
+            source_duration = output_duration = 0
+        if source_duration > 0 and output_duration > 0:
+            if abs(source_duration - output_duration) > max(0.5, source_duration * 0.02):
+                raise RuntimeError("ValidationFailed: the output audio duration changed unexpectedly.")
         if intent.sample_rate and str(audio.get("sample_rate")) != str(intent.sample_rate):
             raise RuntimeError("ValidationFailed: the output audio sample rate changed.")
         quality = intent.quality.lower().strip()
@@ -320,7 +333,8 @@ def validate_output_intent(
                 raise RuntimeError("ValidationFailed: the requested WAV bit depth was not produced.")
         if target == "flac" and quality in {"16-bit", "16", "24-bit", "24"}:
             expected_depth = 24 if quality.startswith("24") else 16
-            if str(audio.get("bits_per_raw_sample")) != str(expected_depth):
+            actual_depth = audio.get("bits_per_raw_sample") or audio.get("bits_per_sample")
+            if str(actual_depth) != str(expected_depth):
                 raise RuntimeError("ValidationFailed: the requested FLAC bit depth was not produced.")
         if intent.cover_required and target in {"mp3", "flac", "m4a", "aac"}:
             if not any(stream.get("disposition", {}).get("attached_pic") for stream in output_streams):
@@ -539,6 +553,28 @@ def get_unique_target_path(directory: str, filename: str) -> str:
             return candidate
         counter += 1
 
+
+def _publish_staged_file(staged_path: str, output_dir: str, filename: str) -> str:
+    """Atomically publish a staged file without replacing a concurrent output."""
+    stem, extension = os.path.splitext(filename)
+    candidate = os.path.join(output_dir, filename)
+    counter = 0
+    while True:
+        try:
+            if os.name == "nt":
+                # Windows rename is same-volume and fails when the destination
+                # already exists, including on filesystems without hard links.
+                os.rename(staged_path, candidate)
+            else:
+                # POSIX rename replaces existing files. A same-volume hard link
+                # gives atomic no-clobber publication instead.
+                os.link(staged_path, candidate)
+        except FileExistsError:
+            counter += 1
+            candidate = os.path.join(output_dir, f"{stem}_{counter}{extension}")
+            continue
+        return candidate
+
 def get_host_gpus() -> list:
     """
     Discovers all physical and integrated GPUs on the host system.
@@ -570,7 +606,7 @@ def get_host_gpus() -> list:
     elif sys.platform.startswith("linux"):
         try:
             no_win = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            res = subprocess.run(["lspci"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2.0, creationflags=no_win)
+            res = subprocess.run(["lspci"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=2.0, creationflags=no_win)
             if res.returncode == 0:
                 for line in res.stdout.splitlines():
                     if any(k in line.lower() for k in ["vga", "3d", "display"]):
@@ -584,7 +620,7 @@ def get_host_gpus() -> list:
     elif sys.platform == "darwin":
         try:
             no_win = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            res = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2.0, creationflags=no_win)
+            res = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=2.0, creationflags=no_win)
             if res.returncode == 0 and "apple" in res.stdout.lower():
                 gpus.append(f"{res.stdout.strip()} (GPU)")
         except Exception:
@@ -1636,12 +1672,11 @@ def convert_media(
         validate_image_intent(input_path, staged_path, effective_target)
         if abort_event and abort_event.is_set():
             raise KeyboardInterrupt("Conversion aborted by user.")
-        final_path = get_unique_target_path(output_dir, os.path.basename(staged_path))
         for attempt in range(5):
             if abort_event and abort_event.is_set():
                 raise KeyboardInterrupt("Conversion aborted by user.")
             try:
-                os.replace(staged_path, final_path)
+                final_path = _publish_staged_file(staged_path, output_dir, os.path.basename(staged_path))
                 break
             except PermissionError as error:
                 if getattr(error, "winerror", None) not in (32, 33) or attempt == 4:

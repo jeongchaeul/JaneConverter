@@ -192,45 +192,15 @@ def test_published_release_check_falls_back_to_atom_feed_on_api_403(monkeypatch)
     assert requested[1][1]["headers"]["Accept"] == "application/atom+xml"
 
 
-def test_application_update_downloads_and_verifies_the_installer(monkeypatch, tmp_path):
-    installer_bytes = b"trusted installer bytes"
-    checksum = __import__("hashlib").sha256(installer_bytes).hexdigest()
+def test_unsigned_legacy_application_update_download_is_disabled(monkeypatch):
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("the retired unsigned installer path must not make network requests")
 
-    class FakeResponse:
-        def __init__(self, body):
-            self.status_code = 200
-            self.body = body
+    monkeypatch.setattr(updater.requests, "get", fail_if_called)
+    result = updater.download_application_update({"has_update": True})
 
-        def iter_content(self, chunk_size=65536):
-            del chunk_size
-            yield self.body
-
-        @property
-        def text(self):
-            return self.body.decode("utf-8")
-
-        @property
-        def content(self):
-            return self.body
-
-    def fake_get(url, **kwargs):
-        del kwargs
-        if url.endswith(".sha256"):
-            return FakeResponse(f"{checksum}  JaneConverter-2.3.0-windows-x64-setup.exe\n".encode())
-        return FakeResponse(installer_bytes)
-
-    monkeypatch.setattr(updater.requests, "get", fake_get)
-    monkeypatch.setattr(updater.tempfile, "mkdtemp", lambda prefix: str(tmp_path))
-
-    result = updater.download_application_update({
-        "has_update": True,
-        "latest_version": "2.3.0",
-        "installer_url": "https://github.com/janecerys/JaneConverter/releases/download/v2.3.0/JaneConverter-2.3.0-windows-x64-setup.exe",
-        "installer_checksum_url": "https://github.com/janecerys/JaneConverter/releases/download/v2.3.0/JaneConverter-2.3.0-windows-x64-setup.exe.sha256",
-    })
-
-    assert result["success"] is True
-    assert Path(result["installer_path"]).read_bytes() == installer_bytes
+    assert result["success"] is False
+    assert "Unsigned installer downloads are disabled" in result["error"]
 
 
 def test_non_git_snapshot_uses_published_release_check(monkeypatch):

@@ -103,11 +103,19 @@ def convert_image_format(
     with Image.open(image_path) as source:
         source_format = source.format
         if (
-            output_path is None
-            and source_format == pillow_format
+            source_format == pillow_format
             and source_extension == extension
         ):
-            return image_path
+            if output_path is None:
+                return image_path
+            output_dir = os.path.dirname(os.path.abspath(output_path))
+            os.makedirs(output_dir, exist_ok=True)
+            if os.path.abspath(output_path) == os.path.abspath(image_path):
+                return image_path
+            shutil.copy2(image_path, output_path)
+            if remove_source:
+                os.remove(image_path)
+            return output_path
 
         source_info = dict(source.info)
         source_mode = source.mode
@@ -133,39 +141,32 @@ def convert_image_format(
     output_dir = os.path.dirname(os.path.abspath(output_path))
     os.makedirs(output_dir, exist_ok=True)
 
-    if (
-        source_format == pillow_format
-        and source_extension == extension
-        and os.path.abspath(output_path) != os.path.abspath(image_path)
-    ):
-        shutil.copy2(image_path, output_path)
-    else:
-        quality_value = _IMAGE_QUALITY.get(str(quality).lower().strip(), 95)
-        save_options = {}
-        icc_profile = source_info.get("icc_profile")
-        if icc_profile and pillow_format in {"JPEG", "PNG", "TIFF", "WEBP"}:
-            save_options["icc_profile"] = icc_profile
+    quality_value = _IMAGE_QUALITY.get(str(quality).lower().strip(), 95)
+    save_options = {}
+    icc_profile = source_info.get("icc_profile")
+    if icc_profile and pillow_format in {"JPEG", "PNG", "TIFF", "WEBP"}:
+        save_options["icc_profile"] = icc_profile
 
-        if pillow_format == "JPEG":
-            save_options.update(quality=quality_value, optimize=True, progressive=True)
-        elif pillow_format == "PNG":
-            save_options["compress_level"] = 9
-        elif pillow_format == "WEBP":
-            save_options.update(quality=quality_value, method=6)
-        elif pillow_format == "GIF" and "transparency" in frames[0].info:
-            save_options["transparency"] = frames[0].info["transparency"]
+    if pillow_format == "JPEG":
+        save_options.update(quality=quality_value, optimize=True, progressive=True)
+    elif pillow_format == "PNG":
+        save_options["compress_level"] = 9
+    elif pillow_format == "WEBP":
+        save_options.update(quality=quality_value, method=6)
+    elif pillow_format == "GIF" and "transparency" in frames[0].info:
+        save_options["transparency"] = frames[0].info["transparency"]
 
-        if len(frames) > 1:
-            save_options["save_all"] = True
-            save_options["append_images"] = frames[1:]
-            if durations:
-                save_options["duration"] = durations
-            if pillow_format in {"GIF", "PNG", "WEBP"}:
-                save_options["loop"] = int(source_info.get("loop", 0) or 0)
-            if pillow_format == "GIF":
-                save_options["disposal"] = 2
+    if len(frames) > 1:
+        save_options["save_all"] = True
+        save_options["append_images"] = frames[1:]
+        if durations:
+            save_options["duration"] = durations
+        if pillow_format in {"GIF", "PNG", "WEBP"}:
+            save_options["loop"] = int(source_info.get("loop", 0) or 0)
+        if pillow_format == "GIF":
+            save_options["disposal"] = 2
 
-        frames[0].save(output_path, format=pillow_format, **save_options)
+    frames[0].save(output_path, format=pillow_format, **save_options)
 
     if remove_source and os.path.abspath(output_path) != os.path.abspath(image_path):
         os.remove(image_path)

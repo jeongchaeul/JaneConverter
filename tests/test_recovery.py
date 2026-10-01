@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -221,6 +222,23 @@ def test_audio_recovery_rejects_channel_loss(monkeypatch):
         converter.validate_output_intent("source", "output", replace(_intent(), target_format="mp3"))
 
 
+def test_audio_recovery_rejects_truncated_duration(monkeypatch):
+    from dataclasses import replace
+
+    source = {
+        "streams": [{"codec_type": "audio", "channels": 2, "sample_rate": "48000"}],
+        "format": {"duration": "600.0"},
+    }
+    output = {
+        "streams": [{"codec_type": "audio", "channels": 2, "sample_rate": "48000"}],
+        "format": {"duration": "10.0"},
+    }
+    monkeypatch.setattr(converter, "probe_media_streams", lambda path: source if path == "source" else output)
+
+    with pytest.raises(RuntimeError, match="audio duration changed"):
+        converter.validate_output_intent("source", "output", replace(_intent(), target_format="mp3"))
+
+
 def test_gif_recovery_rejects_changed_requested_frame_rate(monkeypatch):
     from dataclasses import replace
     output = {"streams": [{"codec_type": "video", "avg_frame_rate": "10/1"}]}
@@ -272,18 +290,18 @@ def test_image_recovery_preserves_profile_or_stops_before_bad_color_conversion(t
 def test_staged_output_waits_for_transient_windows_file_lock(tmp_path, monkeypatch):
     source = tmp_path / "photo.png"
     Image.new("RGB", (7, 5), "blue").save(source)
-    original_replace = converter.os.replace
+    publish = converter.os.rename if converter.os.name == "nt" else converter.os.link
     attempts = []
 
-    def replace_after_lock(staged_path, final_path):
+    def publish_after_lock(staged_path, final_path):
         attempts.append((staged_path, final_path))
         if len(attempts) == 1:
             error = PermissionError("file is temporarily in use")
             error.winerror = 32
             raise error
-        original_replace(staged_path, final_path)
+        publish(staged_path, final_path)
 
-    monkeypatch.setattr(converter.os, "replace", replace_after_lock)
+    monkeypatch.setattr(converter.os, "rename" if converter.os.name == "nt" else "link", publish_after_lock)
     monkeypatch.setattr(converter.time, "sleep", lambda _delay: None)
     result = converter.convert_media(str(source), str(tmp_path / "out"), "photo", "webp")
 
@@ -291,6 +309,30 @@ def test_staged_output_waits_for_transient_windows_file_lock(tmp_path, monkeypat
     assert result.endswith(".webp")
     assert (tmp_path / "out" / "photo.webp").is_file()
     assert not list((tmp_path / "out").glob(".janeconverter-convert-*"))
+
+
+def test_staged_output_does_not_replace_concurrent_target(tmp_path, monkeypatch):
+    staged = tmp_path / "staged.mp3"
+    staged.write_bytes(b"our output")
+    target = tmp_path / "song.mp3"
+    publish = converter.os.rename if converter.os.name == "nt" else converter.os.link
+    first_attempt = True
+
+    def create_racing_target_then_link(source, destination):
+        nonlocal first_attempt
+        if first_attempt:
+            first_attempt = False
+            Path(destination).write_bytes(b"another process output")
+        return publish(source, destination)
+
+    monkeypatch.setattr(
+        converter.os, "rename" if converter.os.name == "nt" else "link", create_racing_target_then_link
+    )
+    result = converter._publish_staged_file(str(staged), str(tmp_path), "song.mp3")
+
+    assert Path(result).name == "song_1.mp3"
+    assert target.read_bytes() == b"another process output"
+    assert Path(result).read_bytes() == b"our output"
 
 
 def test_recovery_output_summary_contains_properties_without_metadata(monkeypatch):
