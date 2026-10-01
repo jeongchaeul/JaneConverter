@@ -134,25 +134,6 @@ fn migrate_legacy_local_appdata(target: &Path) {
     }
 }
 
-pub fn cleanup_stale_update_installers() {
-    let temp_root = std::env::temp_dir();
-    if let Ok(entries) = fs::read_dir(&temp_root) {
-        for entry in entries.flatten() {
-            if let Ok(file_type) = entry.file_type() {
-                if file_type.is_dir() {
-                    let name = entry.file_name();
-                    let name_str = name.to_string_lossy();
-                    if name_str.starts_with("janeconverter-update-")
-                        || name_str.starts_with("janecoverter-update-")
-                    {
-                        let _ = fs::remove_dir_all(entry.path());
-                    }
-                }
-            }
-        }
-    }
-}
-
 fn user_data_root() -> PathBuf {
     #[cfg(target_os = "windows")]
     if let Some(root) = std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA")) {
@@ -192,11 +173,14 @@ fn data_root_override_path() -> PathBuf {
 pub fn data_root() -> PathBuf {
     if let Some(configured) = std::env::var_os("JANECONVERTER_DATA_DIR") {
         if !configured.is_empty() {
-            return PathBuf::from(configured);
+            let cleaned = crate::library::clean_windows_path(&configured.to_string_lossy());
+            if !cleaned.is_empty() {
+                return PathBuf::from(cleaned);
+            }
         }
     }
     if let Ok(configured) = fs::read_to_string(data_root_override_path()) {
-        let configured = configured.trim();
+        let configured = crate::library::clean_windows_path(configured.trim());
         if !configured.is_empty() {
             return PathBuf::from(configured);
         }
@@ -210,20 +194,19 @@ pub fn data_root() -> PathBuf {
 }
 
 pub fn set_data_root(path: &Path) -> io::Result<PathBuf> {
-    let target = fs::canonicalize(path)?;
-    if !target.is_dir() {
+    let canonical = fs::canonicalize(path)?;
+    if !canonical.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "The data root must be a folder.",
         ));
     }
+    let cleaned = crate::library::clean_windows_path(&canonical.display().to_string());
+    let target = PathBuf::from(&cleaned);
     if let Some(parent) = data_root_override_path().parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(
-        data_root_override_path(),
-        target.to_string_lossy().as_bytes(),
-    )?;
+    fs::write(data_root_override_path(), cleaned.as_bytes())?;
     Ok(target)
 }
 
@@ -261,6 +244,8 @@ pub fn prepare_command(command: &mut Command) {
         }
     }
     command.env("JANECONVERTER_DATA_DIR", data_root());
+    command.env("PYTHONUTF8", "1");
+    command.env("PYTHONIOENCODING", "utf-8");
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
 }
@@ -427,14 +412,18 @@ pub fn settings_get_internal() -> ConverterSettings {
     let values = read_kv();
     let output_dir = values
         .get("output_dir")
-        .filter(|value| !value.trim().is_empty())
-        .cloned()
-        .unwrap_or_else(|| default_output_dir().display().to_string());
+        .map(|value| crate::library::clean_windows_path(value))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            crate::library::clean_windows_path(&default_output_dir().display().to_string())
+        });
     let fetched_dir = values
         .get("fetched_dir")
-        .filter(|value| !value.trim().is_empty())
-        .cloned()
-        .unwrap_or_else(|| default_fetched_dir().display().to_string());
+        .map(|value| crate::library::clean_windows_path(value))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            crate::library::clean_windows_path(&default_fetched_dir().display().to_string())
+        });
     let category = match values.get("category").map(String::as_str) {
         Some("Video") => "Video",
         Some("Image") => "Image",
@@ -479,11 +468,13 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
     if let Some(parent) = settings_path().parent() {
         fs::create_dir_all(parent)?;
     }
+    let output_dir = crate::library::clean_windows_path(&settings.output_dir);
+    let fetched_dir = crate::library::clean_windows_path(&settings.fetched_dir);
     let sample_rate = settings.sample_rate.to_string();
     let retries = settings.retries.min(5).to_string();
     let body = [
-        ("output_dir", settings.output_dir.as_str()),
-        ("fetched_dir", settings.fetched_dir.as_str()),
+        ("output_dir", output_dir.as_str()),
+        ("fetched_dir", fetched_dir.as_str()),
         ("category", settings.category.as_str()),
         ("format", settings.format.as_str()),
         ("bitrate", settings.bitrate.as_str()),

@@ -321,10 +321,11 @@ export function LibraryView({
     if (action.kind === "move") {
       setMoving(true);
       try {
-        const movedTo = await bridge.moveLibrary(root, parentPath(action.destination));
+        const result = await bridge.moveLibrary(root, parentPath(action.destination));
+        const movedTo = result.destination;
         const nextSettings = { ...settings, outputDir: movedTo };
         onSettings(nextSettings);
-        onStatus("Library moved to " + movedTo + ".");
+        onStatus(result.cleanupWarning ?? ("Library moved to " + movedTo + "."));
       } catch (error) {
         onStatus(error instanceof Error ? error.message : String(error));
       } finally {

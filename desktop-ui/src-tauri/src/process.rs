@@ -183,7 +183,23 @@ pub fn terminate_child(child: &mut Child) {
             .args(["/PID", &pid_text, "/T", "/F"])
             .status();
     }
+    #[cfg(unix)]
+    {
+        let process_group = format!("-{}", child.id());
+        let _ = Command::new("kill")
+            .args(["-TERM", "--", &process_group])
+            .status();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            let _ = child.try_wait();
+            thread::sleep(Duration::from_millis(50));
+        }
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &process_group])
+            .status();
+    }
     let _ = child.kill();
+    let _ = child.wait();
 }
 
 pub fn build_conversion_args_with_capture(
@@ -348,6 +364,11 @@ pub fn start_conversion(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     prepare_command(&mut command);
     let mut child = command
         .spawn()

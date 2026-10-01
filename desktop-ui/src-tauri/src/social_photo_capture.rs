@@ -312,7 +312,7 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
     const article = document.querySelector("article");
     const text = article && article.innerText ? article.innerText.slice(0, 140) : "";
     const fallback = {{instagram:"Instagram Post",twitter:"X Post",tiktok:"TikTok Photo Post",reddit:"Reddit Gallery",tumblr:"Tumblr Photo Post",pinterest:"Pinterest Collection"}}[platform];
-    return ((meta && meta.content) || text || document.title || fallback).slice(0, 500);
+    return ((meta && meta.content) || text || document.title || fallback).slice(0, 200);
   }};
   const closeGuestPrompt = () => {{
     // Social photo viewers use the same generic close label as account
@@ -447,8 +447,9 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
   const nextButton = () => {{
     const container = postContainer();
     if (!container) return null;
-    return Array.from(container.querySelectorAll('button[aria-label], [role="button"][aria-label]'))
-      .find(button => /^(next|next photo|next image|next slide|next image \(.*\)|go to next (photo|image|slide))$/i.test(button.getAttribute("aria-label") || ""));
+    const nextLabelPattern = /^(next|next photo|next image|next slide|next image \(.*\)|go to next (photo|image|slide)|التالي|다음|次へ|下一步|下一张|下一張|siguiente|suivant|weiter|далее|avanti|próximo|ileri|berikutnya|tiếp|ถัดไป|הבא)$/i;
+    return Array.from(container.querySelectorAll('button[aria-label], [role="button"][aria-label], button._afxw'))
+      .find(button => button.classList.contains("_afxw") || nextLabelPattern.test((button.getAttribute("aria-label") || "").trim()));
   }};
   const flush = (title) => {{
     if (!pending.length || waiting) return false;
@@ -679,6 +680,24 @@ mod tests {
             assert!(script.contains("photos.size >= 500 && !waiting && !pending.length"));
             assert!(script.contains("collection exceeds the 500-photo capture limit"));
         }
+    }
+
+    #[test]
+    fn title_bridge_decodes_multibyte_arabic_and_cjk_titles() {
+        let arabic_title = "فيديو انستغرام رائع جدًا ".repeat(12);
+        assert!(arabic_title.len() > 500);
+        assert!(arabic_title.chars().count() <= 500);
+        let payload = serde_json::json!({
+            "kind": "done",
+            "platform": "instagram",
+            "count": 1,
+            "title": arabic_title,
+        });
+        let encoded = URL_SAFE_NO_PAD.encode(payload.to_string().as_bytes());
+        let doc_title = format!("__JANE_SOCIAL_PHOTO_CAPTURE__nonce-1__{encoded}");
+        let parsed = message_from_title(&doc_title, "nonce-1").expect("valid message");
+        assert_eq!(parsed.title, arabic_title);
+        assert!(parsed.title.chars().count() <= 500);
     }
 }
 

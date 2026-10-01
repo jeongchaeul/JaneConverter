@@ -75,7 +75,7 @@ describe("FetchedMediaView", () => {
     const onSettings = vi.fn();
     const onStatus = vi.fn();
     bridge.chooseFolder.mockResolvedValue("E:/Media");
-    bridge.moveFetchedFolder.mockResolvedValue("E:/Media/fetched");
+    bridge.moveFetchedFolder.mockResolvedValue({ destination: "E:/Media/fetched" });
 
     const container = document.createElement("div");
     document.body.appendChild(container);

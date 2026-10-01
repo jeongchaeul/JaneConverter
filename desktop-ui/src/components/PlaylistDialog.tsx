@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ListMusic, Search, X } from "lucide-react";
 import type { PlaylistCatalog } from "../bridge";
 
 export function PlaylistDialog({ catalog, onClose, onConfirm }: { catalog: PlaylistCatalog; onClose: () => void; onConfirm: (indexes: string) => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<number>>(() => new Set(catalog.items.map((item) => item.index)));
   const visible = useMemo(() => {
@@ -10,6 +11,17 @@ export function PlaylistDialog({ catalog, onClose, onConfirm }: { catalog: Playl
     if (!needle) return catalog.items;
     return catalog.items.filter((item) => `${item.title} ${item.artist}`.toLowerCase().includes(needle));
   }, [catalog.items, query]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previousFocus = document.activeElement;
+    dialog.showModal();
+    return () => {
+      if (dialog.open) dialog.close();
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
+  }, []);
 
   function toggle(index: number) {
     setSelected((current) => {
@@ -28,7 +40,7 @@ export function PlaylistDialog({ catalog, onClose, onConfirm }: { catalog: Playl
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Playlist track selector">
+    <dialog ref={dialogRef} className="fixed inset-0 z-50 m-auto grid max-h-[82vh] w-[calc(100%-3rem)] max-w-3xl place-items-center overflow-hidden border-0 bg-transparent p-0 text-white backdrop:bg-black/60 backdrop:backdrop-blur-sm" aria-label="Playlist track selector" onCancel={(event) => { event.preventDefault(); onClose(); }}>
       <div className="panel flex max-h-[82vh] w-full max-w-3xl flex-col overflow-hidden bg-[#090812] shadow-2xl shadow-black/50">
         <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
           <div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-xl border border-white/[0.08] bg-white/[0.03]"><ListMusic className="size-4 text-[#d75b88]" /></div><div><div className="text-sm font-medium text-white">{catalog.title}</div><div className="mt-1 text-[11px] text-zinc-600">{selected.size} of {catalog.items.length} tracks selected</div></div></div>
@@ -49,6 +61,6 @@ export function PlaylistDialog({ catalog, onClose, onConfirm }: { catalog: Playl
           <button type="button" disabled={!selected.size} onClick={() => onConfirm(Array.from(selected).sort((a, b) => a - b).join(","))} className="primary-button px-4 py-2 text-xs disabled:opacity-40">Convert selected tracks</button>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }

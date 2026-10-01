@@ -111,7 +111,7 @@ describe("Converted library", () => {
     const onSettings = vi.fn();
     const onStatus = vi.fn();
     fakeBridge.chooseFolder.mockResolvedValue("E:\\Media");
-    fakeBridge.moveLibrary.mockResolvedValue("E:\\Media\\converted");
+    fakeBridge.moveLibrary.mockResolvedValue({ destination: "E:\\Media\\converted" });
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);

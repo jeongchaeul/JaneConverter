@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use url::Url;
 
 const MAX_METADATA_BYTES: usize = 64 * 1024;
@@ -17,6 +17,9 @@ const MAX_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 const MAX_MEDIA_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_CAPTURE_ITEMS: usize = 24;
 const MAX_TOTAL_CAPTURE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_HEADER_BYTES: usize = 16 * 1024;
+const HEADER_READ_DEADLINE: Duration = Duration::from_secs(5);
+const REQUEST_READ_DEADLINE: Duration = Duration::from_secs(45);
 const BRIDGE_HEADER: &str = "x-janeconverter-bridge";
 const CAPTURE_ID_HEADER: &str = "x-janeconverter-capture-id";
 const CAPTURE_OFFSET_HEADER: &str = "x-janeconverter-capture-offset";
@@ -357,20 +360,68 @@ struct HttpRequest {
     body: Vec<u8>,
 }
 
-fn read_request(stream: &mut std::net::TcpStream) -> Result<HttpRequest, String> {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .map_err(|error| error.to_string())?;
+fn read_request(
+    stream: &mut std::net::TcpStream,
+    stop: &AtomicBool,
+) -> Result<HttpRequest, String> {
+    read_request_with_deadlines(stream, stop, HEADER_READ_DEADLINE, REQUEST_READ_DEADLINE)
+}
+
+fn read_request_with_deadlines(
+    stream: &mut std::net::TcpStream,
+    stop: &AtomicBool,
+    header_timeout: Duration,
+    request_timeout: Duration,
+) -> Result<HttpRequest, String> {
+    let started = Instant::now();
     let mut bytes = Vec::new();
     let mut header_end = None;
     let mut content_length = 0usize;
     loop {
+        if stop.load(Ordering::Relaxed) {
+            return Err("The browser bridge request was stopped.".into());
+        }
+        let deadline = started
+            + if header_end.is_some() {
+                request_timeout
+            } else {
+                header_timeout
+            };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("The browser bridge request timed out.".into());
+        }
+        stream
+            .set_read_timeout(Some(remaining.min(Duration::from_millis(100))))
+            .map_err(|error| error.to_string())?;
         let mut chunk = [0u8; 8192];
-        let read = stream.read(&mut chunk).map_err(|error| error.to_string())?;
+        let read = match stream.read(&mut chunk) {
+            Ok(read) => read,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) && Instant::now() < deadline =>
+            {
+                continue;
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
+                return Err("The browser bridge request timed out.".into());
+            }
+            Err(error) => return Err(error.to_string()),
+        };
         if read == 0 {
             break;
         }
         bytes.extend_from_slice(&chunk[..read]);
+        if header_end.is_none() && bytes.len() > MAX_HEADER_BYTES {
+            return Err("The browser bridge request headers are too large.".into());
+        }
         if bytes.len() > MAX_CHUNK_BYTES + MAX_METADATA_BYTES + 16 * 1024 {
             return Err("The browser bridge request is too large.".into());
         }
@@ -378,16 +429,34 @@ fn read_request(stream: &mut std::net::TcpStream) -> Result<HttpRequest, String>
             if let Some(position) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
                 let end = position + 4;
                 let headers = String::from_utf8_lossy(&bytes[..position]);
-                content_length = headers
+                let lengths = headers
                     .lines()
-                    .find_map(|line| {
+                    .filter_map(|line| {
                         let (name, value) = line.split_once(':')?;
                         name.trim()
                             .eq_ignore_ascii_case("content-length")
-                            .then(|| value.trim().parse::<usize>().ok())
-                            .flatten()
+                            .then_some(value.trim())
                     })
+                    .collect::<Vec<_>>();
+                if lengths.len() > 1 {
+                    return Err("The browser bridge request has ambiguous content length.".into());
+                }
+                content_length = lengths
+                    .first()
+                    .map(|value| value.parse::<usize>())
+                    .transpose()
+                    .map_err(|_| "The browser bridge request has an invalid content length.")?
                     .unwrap_or(0);
+                if headers.lines().any(|line| {
+                    line.split_once(':').is_some_and(|(name, value)| {
+                        name.trim().eq_ignore_ascii_case("transfer-encoding")
+                            && !value.trim().eq_ignore_ascii_case("identity")
+                    })
+                }) {
+                    return Err(
+                        "The browser bridge request uses an unsupported transfer encoding.".into(),
+                    );
+                }
                 if content_length > MAX_CHUNK_BYTES {
                     return Err("The browser bridge request is too large.".into());
                 }
@@ -584,13 +653,25 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((mut stream, _)) => {
-                let request = match read_request(&mut stream) {
+                let request = match read_request(&mut stream, &stop) {
                     Ok(request) => request,
+                    Err(_) if stop.load(Ordering::Relaxed) => break,
                     Err(error) => {
+                        let (status, reason) = if error.contains("timed out") {
+                            (408, "Request Timeout")
+                        } else if error.contains("headers are too large") {
+                            (431, "Request Header Fields Too Large")
+                        } else if error.contains("content length")
+                            || error.contains("transfer encoding")
+                        {
+                            (400, "Bad Request")
+                        } else {
+                            (413, "Payload Too Large")
+                        };
                         send_json(
                             &mut stream,
-                            413,
-                            "Payload Too Large",
+                            status,
+                            reason,
                             &json!({"error": error}).to_string(),
                         );
                         continue;
@@ -1345,6 +1426,15 @@ fn registered_default_browser() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{TcpListener, TcpStream};
+
+    fn connected_tcp_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener should bind");
+        let client = TcpStream::connect(listener.local_addr().expect("test address should exist"))
+            .expect("test client should connect");
+        let (server, _) = listener.accept().expect("test server should accept");
+        (server, client)
+    }
 
     #[test]
     fn http_response_uses_valid_line_endings() {
@@ -1360,6 +1450,87 @@ mod tests {
         assert!(response.contains("\r\n\r\n"));
         assert!(!response.contains(r"\r\n"));
         assert!(response.contains("JaneConverter account access"));
+    }
+
+    #[test]
+    fn slow_request_headers_obey_an_absolute_deadline() {
+        let (mut server, mut client) = connected_tcp_pair();
+        let writer = thread::spawn(move || {
+            for byte in b"GET /slow" {
+                if client.write_all(&[*byte]).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(30));
+            }
+        });
+        let stop = AtomicBool::new(false);
+        let started = Instant::now();
+        let error = read_request_with_deadlines(
+            &mut server,
+            &stop,
+            Duration::from_millis(120),
+            Duration::from_millis(300),
+        )
+        .err()
+        .expect("an incomplete slow header should time out");
+
+        assert!(error.contains("timed out"));
+        assert!(started.elapsed() < Duration::from_millis(500));
+        drop(server);
+        let _ = writer.join();
+    }
+
+    #[test]
+    fn slow_request_body_obeys_an_absolute_deadline() {
+        let (mut server, mut client) = connected_tcp_pair();
+        client
+            .write_all(b"POST /slow HTTP/1.1\r\nContent-Length: 8\r\n\r\nx")
+            .expect("test request header should be sent");
+        let writer = thread::spawn(move || {
+            for byte in b"1234567" {
+                if client.write_all(&[*byte]).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(30));
+            }
+        });
+        let stop = AtomicBool::new(false);
+        let started = Instant::now();
+        let error = read_request_with_deadlines(
+            &mut server,
+            &stop,
+            Duration::from_millis(300),
+            Duration::from_millis(120),
+        )
+        .err()
+        .expect("an incomplete slow body should time out");
+
+        assert!(error.contains("timed out"));
+        assert!(started.elapsed() < Duration::from_millis(500));
+        drop(server);
+        let _ = writer.join();
+    }
+
+    #[test]
+    fn clearing_access_stops_a_slow_incomplete_request_promptly() {
+        let root =
+            std::env::temp_dir().join(format!("janec-slow-access-{}", crate::paths::now_stamp()));
+        let server =
+            create_with_root("", 0, root.clone()).expect("local access server should start");
+        let address = Url::parse(&server.link).expect("access link should be a URL");
+        let mut client = TcpStream::connect((address.host_str().unwrap(), address.port().unwrap()))
+            .expect("test client should connect");
+        client
+            .write_all(b"GET /access/slow HTTP/1.1\r\n")
+            .expect("partial request should be sent");
+        thread::sleep(Duration::from_millis(100));
+
+        let started = Instant::now();
+        drop(server);
+
+        assert!(started.elapsed() < Duration::from_millis(500));
+        drop(client);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

@@ -150,6 +150,11 @@ export interface LibraryEntry {
   conversionMs?: number;
 }
 
+export interface MoveDirectoryResult {
+  destination: string;
+  cleanupWarning?: string | null;
+}
+
 export interface ConversionHistoryItem {
   id: string;
   timestamp: string;
@@ -191,8 +196,8 @@ export interface JaneBridge {
   clearConversionTimings(): Promise<void>;
   dragLibraryFile(path: string): Promise<void>;
   getThumbnail(root: string, path: string): Promise<string | null>;
-  moveLibrary(source: string, destinationParent: string): Promise<string>;
-  moveFetchedFolder(source: string, destinationParent: string): Promise<string>;
+  moveLibrary(source: string, destinationParent: string): Promise<MoveDirectoryResult>;
+  moveFetchedFolder(source: string, destinationParent: string): Promise<MoveDirectoryResult>;
   deleteLibraryEntry(root: string, path: string): Promise<void>;
   createAccessLink(source: string): Promise<AccessStatus>;
   accessStatus(): Promise<AccessStatus>;
@@ -252,8 +257,8 @@ const demoBridge: JaneBridge = {
   async clearConversionTimings() {},
   async dragLibraryFile() { throw new Error("Drag files into other apps from the desktop build."); },
   async getThumbnail() { return null; },
-  async moveLibrary(source) { return source; },
-  async moveFetchedFolder(source) { return source; },
+  async moveLibrary(source) { return { destination: source }; },
+  async moveFetchedFolder(source) { return { destination: source }; },
   async deleteLibraryEntry() {},
   async createAccessLink() { return { active: true, link: "Preview mode", browser: "", bridgeConnected: false }; },
   async accessStatus() { return { active: false, link: "", browser: "", bridgeConnected: false }; },
@@ -295,8 +300,8 @@ const tauriBridge: JaneBridge = {
   clearConversionTimings: () => invoke<void>("clear_conversion_timings"),
   dragLibraryFile: (path) => invoke<void>("drag_library_file", { path }),
   getThumbnail: (root, path) => invoke<string | null>("get_thumbnail", { root, path }),
-  moveLibrary: (source, destinationParent) => invoke<string>("move_library", { source, destinationParent }),
-  moveFetchedFolder: (source, destinationParent) => invoke<string>("move_fetched_folder", { source, destinationParent }),
+  moveLibrary: (source, destinationParent) => invoke<MoveDirectoryResult>("move_library", { source, destinationParent }),
+  moveFetchedFolder: (source, destinationParent) => invoke<MoveDirectoryResult>("move_fetched_folder", { source, destinationParent }),
   deleteLibraryEntry: (root, path) => invoke<void>("delete_library_entry", { root, path }),
   createAccessLink: (source) => invoke<AccessStatus>("create_access_link", { source }),
   accessStatus: () => invoke<AccessStatus>("access_status"),

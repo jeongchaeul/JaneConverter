@@ -269,7 +269,7 @@ pub fn initialization_script(nonce: &str) -> String {
   }};
   const pageTitle = () => {{
     const meta = document.querySelector('meta[property="og:title"]');
-    return (meta && meta.content) || readPageTitle() || "Facebook Post";
+    return ((meta && meta.content) || readPageTitle() || "Facebook Post").slice(0, 200);
   }};
   const photoCountFromText = (value, includeUnqualifiedCounts) => {{
     let total = 0;

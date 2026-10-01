@@ -1,6 +1,7 @@
 use crate::model::LibraryEntry;
 use crate::paths::{data_root, find_ffmpeg, now_stamp, prepare_command};
 use base64::Engine;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
@@ -23,7 +24,7 @@ fn timing_key(path: &Path) -> String {
     clean_windows_path(&path.display().to_string())
         .replace('/', "\\")
         .trim_end_matches('\\')
-        .to_ascii_lowercase()
+        .to_lowercase()
 }
 
 fn timings_file() -> PathBuf {
@@ -81,13 +82,13 @@ pub fn first_media_file_in_dir(dir: &Path) -> Option<PathBuf> {
         left.file_name()
             .unwrap_or_default()
             .to_string_lossy()
-            .to_ascii_lowercase()
+            .to_lowercase()
             .cmp(
                 &right
                     .file_name()
                     .unwrap_or_default()
                     .to_string_lossy()
-                    .to_ascii_lowercase(),
+                    .to_lowercase(),
             )
     });
     files.into_iter().next()
@@ -281,8 +282,8 @@ pub fn scan(path: &str) -> Result<Vec<LibraryEntry>, String> {
         }
     }
     result.sort_by(|left, right| {
-        (!left.is_directory, left.name.to_ascii_lowercase())
-            .cmp(&(!right.is_directory, right.name.to_ascii_lowercase()))
+        (!left.is_directory, left.name.to_lowercase())
+            .cmp(&(!right.is_directory, right.name.to_lowercase()))
     });
     Ok(result)
 }
@@ -337,12 +338,10 @@ pub fn recent(path: &str, limit: usize) -> Result<Vec<LibraryEntry>, String> {
     let mut candidates = Vec::new();
     collect_recent(&root, 0, &timings, &mut candidates)?;
     candidates.sort_by(|left, right| {
-        right.0.cmp(&left.0).then_with(|| {
-            left.1
-                .name
-                .to_ascii_lowercase()
-                .cmp(&right.1.name.to_ascii_lowercase())
-        })
+        right
+            .0
+            .cmp(&left.0)
+            .then_with(|| left.1.name.to_lowercase().cmp(&right.1.name.to_lowercase()))
     });
     Ok(candidates
         .into_iter()
@@ -415,7 +414,38 @@ fn copy_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-pub fn move_directory(source: &str, destination_parent: &str) -> Result<String, String> {
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveDirectoryResult {
+    pub destination: String,
+    pub cleanup_warning: Option<String>,
+}
+
+fn finish_cross_volume_move<F>(
+    source: &Path,
+    target: &Path,
+    remove_source: F,
+) -> MoveDirectoryResult
+where
+    F: FnOnce(&Path) -> std::io::Result<()>,
+{
+    let cleanup_warning = remove_source(source).err().map(|error| {
+        format!(
+            "The complete library is available at '{}', but JaneConverter could not fully remove the old folder '{}': {error}. Review the old folder and remove any remaining files when they are no longer in use.",
+            clean_windows_path(&target.display().to_string()),
+            clean_windows_path(&source.display().to_string()),
+        )
+    });
+    MoveDirectoryResult {
+        destination: clean_windows_path(&target.display().to_string()),
+        cleanup_warning,
+    }
+}
+
+pub fn move_directory(
+    source: &str,
+    destination_parent: &str,
+) -> Result<MoveDirectoryResult, String> {
     let source_input = PathBuf::from(source.trim());
     let source_metadata = fs::symlink_metadata(&source_input)
         .map_err(|error| format!("The current library is unavailable: {error}"))?;
@@ -436,15 +466,18 @@ pub fn move_directory(source: &str, destination_parent: &str) -> Result<String, 
         .file_name()
         .ok_or_else(|| "The current library has no usable folder name.".to_owned())?;
     let target = parent.join(name);
-    if target.exists() {
+    if fs::symlink_metadata(&target).is_ok() {
         return Err(format!(
-            "A folder named '{}' already exists at the destination.",
+            "A file or folder named '{}' already exists at the destination.",
             name.to_string_lossy()
         ));
     }
 
     if fs::rename(&source, &target).is_ok() {
-        return Ok(target.display().to_string());
+        return Ok(MoveDirectoryResult {
+            destination: clean_windows_path(&target.display().to_string()),
+            cleanup_warning: None,
+        });
     }
 
     let temporary = parent.join(format!(
@@ -460,13 +493,9 @@ pub fn move_directory(source: &str, destination_parent: &str) -> Result<String, 
         let _ = fs::remove_dir_all(&temporary);
         return Err(format!("Could not finalize the library move: {error}"));
     }
-    if let Err(error) = fs::remove_dir_all(&source) {
-        let _ = fs::remove_dir_all(&target);
-        return Err(format!(
-            "The library was not moved because the original could not be removed: {error}"
-        ));
-    }
-    Ok(target.display().to_string())
+    Ok(finish_cross_volume_move(&source, &target, |path| {
+        fs::remove_dir_all(path)
+    }))
 }
 
 fn first_preview_source(path: &Path, depth: usize) -> Option<PathBuf> {
@@ -680,5 +709,32 @@ mod tests {
         assert!(entries.iter().any(|entry| entry.name == "second.mp3"));
         assert!(entries.iter().any(|entry| entry.name == "cover.jpg"));
         fs::remove_dir_all(root).expect("clean recent test folders");
+    }
+
+    #[test]
+    fn failed_source_cleanup_preserves_the_complete_destination() {
+        let root = std::env::temp_dir().join(format!("janec-move-{}", crate::paths::now_stamp()));
+        let source = root.join("source");
+        let target = root.join("target");
+        fs::create_dir_all(&source).expect("create source folder");
+        fs::create_dir_all(&target).expect("create target folder");
+        fs::write(source.join("locked.mp3"), b"source").expect("write source file");
+        fs::write(target.join("complete.mp3"), b"complete").expect("write destination file");
+
+        let result = finish_cross_volume_move(&source, &target, |_path| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "file is in use",
+            ))
+        });
+
+        assert_eq!(
+            result.destination,
+            clean_windows_path(&target.display().to_string())
+        );
+        assert!(result.cleanup_warning.is_some());
+        assert!(target.join("complete.mp3").is_file());
+        assert!(source.join("locked.mp3").is_file());
+        fs::remove_dir_all(root).expect("clean move test folders");
     }
 }

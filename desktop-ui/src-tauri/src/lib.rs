@@ -12,9 +12,8 @@ use model::{
     SocialCaptureResult, SocialPhotoManifest,
 };
 use paths::{
-    cleanup_stale_update_installers, command_available, data_root, detect_gpu, find_ffmpeg,
-    find_python, packaged_engine, prepare_command, project_root, set_data_root,
-    settings_get_internal, write_settings,
+    command_available, data_root, detect_gpu, find_ffmpeg, find_python, packaged_engine,
+    prepare_command, project_root, set_data_root, settings_get_internal, write_settings,
 };
 use process::{
     load_playlist as load_playlist_engine, start_conversion as start_engine_conversion,
@@ -108,6 +107,7 @@ pub struct AppState {
     active_child: Arc<Mutex<Option<Arc<Mutex<std::process::Child>>>>>,
     active_cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     active_job: Arc<Mutex<Option<String>>>,
+    storage_operation: Arc<Mutex<()>>,
     sequence: Arc<AtomicU64>,
     access: Arc<Mutex<Option<access::AccessServer>>>,
     facebook_captures: Arc<Mutex<std::collections::HashMap<String, FacebookCaptureSession>>>,
@@ -128,6 +128,7 @@ impl Default for AppState {
             active_child: Arc::new(Mutex::new(None)),
             active_cancel: Arc::new(Mutex::new(None)),
             active_job: Arc::new(Mutex::new(None)),
+            storage_operation: Arc::new(Mutex::new(())),
             sequence: Arc::new(AtomicU64::new(1)),
             access: Arc::new(Mutex::new(None)),
             facebook_captures: Arc::new(Mutex::new(std::collections::HashMap::new())),
@@ -227,12 +228,43 @@ fn settings_get() -> model::ConverterSettings {
 }
 
 #[tauri::command]
-fn settings_save(settings: model::ConverterSettings) -> Result<(), String> {
+fn settings_save(
+    state: State<'_, AppState>,
+    settings: model::ConverterSettings,
+) -> Result<(), String> {
+    let _storage_guard = state
+        .storage_operation
+        .try_lock()
+        .map_err(|error| match error {
+            std::sync::TryLockError::WouldBlock => "A library move is already running.",
+            std::sync::TryLockError::Poisoned(_) => {
+                "The storage operation registry is unavailable."
+            }
+        })?;
     write_settings(&settings).map_err(|error| format!("Could not save settings: {error}"))
 }
 
 #[tauri::command]
-fn set_data_root_path(path: String) -> Result<String, String> {
+fn set_data_root_path(state: State<'_, AppState>, path: String) -> Result<String, String> {
+    let _storage_guard = state
+        .storage_operation
+        .try_lock()
+        .map_err(|error| match error {
+            std::sync::TryLockError::WouldBlock => "Another storage operation is already running.",
+            std::sync::TryLockError::Poisoned(_) => {
+                "The storage operation registry is unavailable."
+            }
+        })?;
+    if state
+        .active_job
+        .lock()
+        .map_err(|_| "The conversion registry is unavailable.")?
+        .is_some()
+    {
+        return Err(
+            "Wait for the active conversion to finish before changing the data root.".into(),
+        );
+    }
     set_data_root(PathBuf::from(path.trim()).as_path())
         .map(|value| value.display().to_string())
         .map_err(|error| format!("Could not change the data root: {error}"))
@@ -318,10 +350,10 @@ fn open_file(path: String) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", target.to_string_lossy().as_ref()]);
-        prepare_command(&mut command);
-        command.spawn().map_err(|error| error.to_string())?;
+        Command::new("explorer")
+            .arg(&target)
+            .spawn()
+            .map_err(|error| error.to_string())?;
     }
     #[cfg(target_os = "macos")]
     {
@@ -601,7 +633,7 @@ async fn capture_facebook_album(
                         let Ok(mut collected) = accumulator_for_title.lock() else {
                             return;
                         };
-                        if !message.title.is_empty() && message.title.len() <= 500 {
+                        if !message.title.is_empty() && message.title.chars().count() <= 500 {
                             collected.title.clone_from(&message.title);
                         }
                         for mut photo in message.photos {
@@ -636,7 +668,7 @@ async fn capture_facebook_album(
                                 collected.photos.len(),
                             )?;
                             let title = if !message.title.is_empty() {
-                                message.title
+                                message.title.chars().take(500).collect()
                             } else {
                                 collected.title.clone()
                             };
@@ -678,7 +710,7 @@ async fn capture_facebook_album(
                     }
                 }
                 "error" => {
-                    let message = if message.error.len() <= 400 {
+                    let message = if message.error.chars().count() <= 400 {
                         message.error
                     } else {
                         "Facebook could not show this album to a logged-out visitor.".into()
@@ -899,7 +931,7 @@ async fn capture_social_post_photos(
                         let Ok(mut collected) = accumulator_for_title.lock() else {
                             return;
                         };
-                        if !message.title.is_empty() && message.title.len() <= 500 {
+                        if !message.title.is_empty() && message.title.chars().count() <= 500 {
                             collected.title.clone_from(&message.title);
                         }
                         for photo in message.photos {
@@ -935,7 +967,7 @@ async fn capture_social_post_photos(
                                 platform_for_title.label(), message.count, collected.photos.len()
                             ));
                         }
-                        let title = if !message.title.is_empty() { message.title } else { collected.title.clone() };
+                        let title = if !message.title.is_empty() { message.title.chars().take(500).collect() } else { collected.title.clone() };
                         Ok(social_photo_capture::CaptureOutcome::Photos(
                             social_photo_capture::manifest(
                                 platform_for_title,
@@ -964,7 +996,7 @@ async fn capture_social_post_photos(
                     let _ = window.close();
                 }
                 "error" => {
-                    let error = if message.error.len() <= 400 { message.error } else {
+                    let error = if message.error.chars().count() <= 400 { message.error } else {
                         format!("{} could not show this post to a logged-out visitor.", platform_for_title.label())
                     };
                     let _ = sender_for_title.send(Err(error));
@@ -1211,6 +1243,21 @@ fn start_conversion(
     }
 
     let retry_manifest = facebook_manifest.clone();
+    let storage_guard = match state.storage_operation.try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::WouldBlock) => {
+            if let Some((_, session)) = &facebook_session {
+                session.in_use.store(false, Ordering::Relaxed);
+            }
+            return Err("A library or fetched-folder move is in progress.".into());
+        }
+        Err(std::sync::TryLockError::Poisoned(_)) => {
+            if let Some((_, session)) = &facebook_session {
+                session.in_use.store(false, Ordering::Relaxed);
+            }
+            return Err("The storage operation registry is unavailable.".into());
+        }
+    };
     let mut active_job = match active_job_slot.lock() {
         Ok(value) => value,
         Err(_) => {
@@ -1228,6 +1275,7 @@ fn start_conversion(
     }
     *active_job = Some(job_id.clone());
     drop(active_job);
+    drop(storage_guard);
     if let Some(capture_id) = facebook_capture_id.as_deref() {
         if let Ok(mut manifests) = state.facebook_manifests.lock() {
             manifests.remove(capture_id);
@@ -1410,7 +1458,28 @@ fn get_thumbnail(root: String, path: String) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn move_library(source: String, destination_parent: String) -> Result<String, String> {
+fn move_library(
+    state: State<'_, AppState>,
+    source: String,
+    destination_parent: String,
+) -> Result<library::MoveDirectoryResult, String> {
+    let _storage_guard = state
+        .storage_operation
+        .try_lock()
+        .map_err(|error| match error {
+            std::sync::TryLockError::WouldBlock => "Another storage operation is already running.",
+            std::sync::TryLockError::Poisoned(_) => {
+                "The storage operation registry is unavailable."
+            }
+        })?;
+    if state
+        .active_job
+        .lock()
+        .map_err(|_| "The conversion registry is unavailable.")?
+        .is_some()
+    {
+        return Err("Wait for the active conversion to finish before moving the library.".into());
+    }
     let mut settings = settings_get_internal();
     let configured = fs::canonicalize(settings.output_dir.trim())
         .map_err(|error| format!("The configured library is unavailable: {error}"))?;
@@ -1419,14 +1488,18 @@ fn move_library(source: String, destination_parent: String) -> Result<String, St
     if configured != requested {
         return Err("For safety, only the active converted library can be moved.".into());
     }
-    let destination = library::move_directory(&source, &destination_parent)?;
-    settings.output_dir = destination.clone();
+    write_settings(&settings).map_err(|error| {
+        format!("JaneConverter could not verify that settings are writable: {error}")
+    })?;
+    let result = library::move_directory(&source, &destination_parent)?;
+    settings.output_dir = result.destination.clone();
     write_settings(&settings).map_err(|error| {
         format!(
-            "The library moved to {destination}, but JaneConverter could not save the new location: {error}"
+            "The library moved to {}, but JaneConverter could not save the new location: {error}",
+            result.destination
         )
     })?;
-    Ok(destination)
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1434,7 +1507,24 @@ fn move_fetched_folder(
     state: State<'_, AppState>,
     source: String,
     destination_parent: String,
-) -> Result<String, String> {
+) -> Result<library::MoveDirectoryResult, String> {
+    let _storage_guard = state
+        .storage_operation
+        .try_lock()
+        .map_err(|error| match error {
+            std::sync::TryLockError::WouldBlock => "Another storage operation is already running.",
+            std::sync::TryLockError::Poisoned(_) => {
+                "The storage operation registry is unavailable."
+            }
+        })?;
+    if state
+        .active_job
+        .lock()
+        .map_err(|_| "The conversion registry is unavailable.")?
+        .is_some()
+    {
+        return Err("Wait for the active conversion to finish before moving fetched media.".into());
+    }
     if state
         .access
         .lock()
@@ -1452,18 +1542,45 @@ fn move_fetched_folder(
     if configured != requested {
         return Err("For safety, only the active fetched media folder can be moved.".into());
     }
-    let destination = library::move_directory(&source, &destination_parent)?;
-    settings.fetched_dir = destination.clone();
+    write_settings(&settings).map_err(|error| {
+        format!("JaneConverter could not verify that settings are writable: {error}")
+    })?;
+    let result = library::move_directory(&source, &destination_parent)?;
+    settings.fetched_dir = result.destination.clone();
     write_settings(&settings).map_err(|error| {
         format!(
-            "The fetched media folder moved to {destination}, but JaneConverter could not save the new location: {error}"
+            "The fetched media folder moved to {}, but JaneConverter could not save the new location: {error}",
+            result.destination
         )
     })?;
-    Ok(destination)
+    Ok(result)
 }
 
 #[tauri::command]
-fn delete_library_entry(root: String, path: String) -> Result<(), String> {
+fn delete_library_entry(
+    state: State<'_, AppState>,
+    root: String,
+    path: String,
+) -> Result<(), String> {
+    let _storage_guard = state
+        .storage_operation
+        .try_lock()
+        .map_err(|error| match error {
+            std::sync::TryLockError::WouldBlock => "Another storage operation is already running.",
+            std::sync::TryLockError::Poisoned(_) => {
+                "The storage operation registry is unavailable."
+            }
+        })?;
+    if state
+        .active_job
+        .lock()
+        .map_err(|_| "The conversion registry is unavailable.")?
+        .is_some()
+    {
+        return Err(
+            "Wait for the active conversion to finish before deleting library media.".into(),
+        );
+    }
     library::delete_inside(&root, &path)
 }
 
@@ -1541,6 +1658,25 @@ fn fetched_media_thumbnail(
 
 #[tauri::command]
 fn discard_fetched_media(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let _storage_guard = state
+        .storage_operation
+        .try_lock()
+        .map_err(|error| match error {
+            std::sync::TryLockError::WouldBlock => "Another storage operation is already running.",
+            std::sync::TryLockError::Poisoned(_) => {
+                "The storage operation registry is unavailable."
+            }
+        })?;
+    if state
+        .active_job
+        .lock()
+        .map_err(|_| "The conversion registry is unavailable.")?
+        .is_some()
+    {
+        return Err(
+            "Wait for the active conversion to finish before discarding fetched media.".into(),
+        );
+    }
     let fallback_root = settings_get_internal().fetched_dir;
     let access = state
         .access
@@ -1737,6 +1873,15 @@ fn format_update_summary(stdout: &str) -> String {
     }
 }
 
+fn disable_unsigned_installer(payload: &mut serde_json::Value) {
+    if let Some(repo) = payload
+        .get_mut("repo")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        repo.insert("installer_available".into(), serde_json::Value::Bool(false));
+    }
+}
+
 fn format_update_summary_value(payload: &serde_json::Value) -> String {
     format_update_summary(&payload.to_string())
 }
@@ -1783,6 +1928,9 @@ async fn check_updates(
     };
     if !payload.is_object() {
         payload = serde_json::json!({});
+    }
+    if !is_commit_sha(BUILD_COMMIT) {
+        disable_unsigned_installer(&mut payload);
     }
     if let Some(object) = payload.as_object_mut() {
         if is_commit_sha(BUILD_COMMIT) {
@@ -1966,7 +2114,6 @@ async fn install_update(
 }
 
 pub fn run() {
-    cleanup_stale_update_installers();
     let builder = tauri::Builder::default();
     #[cfg(feature = "updater")]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
@@ -2070,6 +2217,23 @@ mod tests {
         assert!(summary.contains("JaneConverter update available: v1.2.0 -> v1.3.0"));
         assert!(summary.contains("latest consumer installer"));
         assert!(!summary.contains("not a Git repository"));
+    }
+
+    #[test]
+    fn unsigned_build_does_not_offer_a_downloadable_installer() {
+        let mut payload = serde_json::json!({
+            "repo": {
+                "has_update": true,
+                "installer_available": true,
+                "release_url": "https://github.com/jeongchaeul/JaneConverter/releases/tag/v2.3.0"
+            }
+        });
+
+        disable_unsigned_installer(&mut payload);
+
+        assert_eq!(payload["repo"]["has_update"], true);
+        assert_eq!(payload["repo"]["installer_available"], false);
+        assert!(payload["repo"]["release_url"].is_string());
     }
 
     #[test]

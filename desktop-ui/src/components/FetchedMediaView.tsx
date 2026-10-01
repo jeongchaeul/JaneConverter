@@ -137,9 +137,10 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
     setPendingMove(null);
     setMoving(true);
     try {
-      const movedTo = await bridge.moveFetchedFolder(settings.fetchedDir, destinationParent);
+      const result = await bridge.moveFetchedFolder(settings.fetchedDir, destinationParent);
+      const movedTo = result.destination;
       onSettings({ ...settings, fetchedDir: movedTo });
-      onStatus("Fetched media folder moved to " + movedTo + ".");
+      onStatus(result.cleanupWarning ?? ("Fetched media folder moved to " + movedTo + "."));
     } catch (error) {
       onStatus(error instanceof Error ? error.message : String(error));
     } finally {

@@ -426,7 +426,10 @@ export default function App() {
 
   useEffect(() => {
     if (!access.active) return;
+    let refreshInFlight = false;
     const refreshAccess = async () => {
+      if (refreshInFlight) return;
+      refreshInFlight = true;
       try {
         const [nextAccess, diagnostics] = await Promise.all([bridge.accessStatus(), bridge.accessDiagnostics()]);
         setAccess(nextAccess);
@@ -436,10 +439,12 @@ export default function App() {
         setEvents((current) => [...current.slice(-1499), ...unseen.map((entry) => ({ jobId: "browser-session", kind: "status" as const, message: entry.message }))]);
       } catch (error) {
         statusMessage(error instanceof Error ? error.message : String(error));
+      } finally {
+        refreshInFlight = false;
       }
     };
     void refreshAccess();
-    const timer = window.setInterval(() => { void refreshAccess(); }, 700);
+    const timer = window.setInterval(() => { void refreshAccess(); }, 1500);
     return () => window.clearInterval(timer);
   }, [access.active]);
 
