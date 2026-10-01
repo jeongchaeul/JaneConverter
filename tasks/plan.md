@@ -347,3 +347,133 @@ The Graph API is permission-scoped. A user's developer app and token do not auto
 - [ ] Settings explains how to obtain an access token, checks the token's actual supported capabilities, and allows removal without exposing the credential.
 - [ ] An eligible Page collection completes through the API with every item validated and ordered; unsupported content remains on the established path.
 - [ ] Token errors, rate limits, and incomplete API responses produce clear outcomes and never publish partial albums.
+
+---
+
+## Foundation and Workflow Advantage Extension — 2026-10-02
+
+**Status:** Proposed implementation map, not implemented or runtime-verified by this planning pass. This section extends the existing roadmap in response to Jane's personal-toolkit direction. It takes priority for sequencing new work; earlier task checkmarks remain historical records, not fresh verification. Existing unfinished checks remain open. Optional Facebook API work is outside this critical path.
+
+### Product purpose and practical promise
+
+JaneConverter is Jane Cerys's local media toolkit: collect useful media from supported public pages or explicitly selected browser content, preserve context, convert when needed, and find or reuse the result later. The success measure is inconvenience removed from repeated personal tasks.
+
+No scraper can guarantee permanent access to a changing external website. The engineering target is predictable failure containment: detect changes, retain valid work, choose bounded alternatives, explain uncertainty, and recover without corrupting files or destabilizing ordinary conversion. Unsupported, expired, inaccessible, or protected media must remain explicit outcomes.
+
+### Specific workflows worth choosing JaneConverter for
+
+| Workflow | Proposed reason to choose JaneConverter | Proof required |
+| --- | --- | --- |
+| Save a public photo post or carousel | One pasted link produces the correct ordered collection, with source context and clear completeness | Validate identity, order, count/end evidence, and every output; no irrelevant assets or silent omissions |
+| Keep temporary game updates, starting with CDID | Selected stories become a dated, searchable local collection that remains useful after the story expires | Verify against the actual platform/viewer Jane uses; readable text, ordering, source context, capture method, and honest missing-item state |
+| Turn mixed saved media into usable files | Local files and fetched media share presets, quality policy, history, and understandable recovery | Check actual requested output properties, no unwanted quality changes, no overwritten originals |
+| Recover from interruptions | Closing, crashing, losing connectivity, or cancelling does not force unnecessary repetition | Interrupted work is reconciled on restart; validated items reused; missing items retried only with explicit user action |
+
+The first priority set is Facebook and Instagram photo collections, the actual CDID story viewer once its platform is identified, and representative local audio/video/image conversions. TikTok expands after these gates pass. Other sites retain honest individual support status; no blanket guarantee follows from extractor presence.
+
+### Source-backed starting point
+
+Reviewed current local v2.2.7 source, existing plans, and test definitions; no new tests or live captures were run for this map.
+
+- Conversion history records source and output settings in UI localStorage and keeps 200 rows (`desktop-ui/src/App.tsx`). It is not yet a durable catalog.
+- The native fetched-media record lacks source-page URL and dedicated capture timestamp; reopening reconstructs entries from files (`desktop-ui/src-tauri/src/model.rs`, `access.rs`).
+- Bounded conversion recovery, staged outputs, validation, GPU fallback, Unicode hardening, pause/abort, and the native single-job guard already exist. Extend these; do not replace them wholesale.
+- Facebook completion evidence and replay fixtures exist (`facebook_capture.rs`, `desktop-ui/test/facebook-replay.test.js`). Reuse the test harness and migrate one adapter at a time.
+- Story sequence remains experimental in the extension documentation. Its popup loop has a 45-second total budget and an 8-second no-new-item window; those cannot establish completion for all story sequences. Structural method preference expires after 14 days.
+- Existing CI already exercises Python, frontend, Rust, and Browser Bridge suites. Add meaningful cases to those paths rather than building a second test system.
+- The older market audit contains unsubstantiated superiority and resource-use claims. Reconcile public claims against measured evidence in the final phase.
+
+### Dependency map
+
+```mermaid
+flowchart TD
+  A["34–35: Establish workflow contracts and baseline evidence"] --> B["36–38: Durable provenance and restart-safe publication"]
+  B --> C["39–41: Shared capture contract and honest story state"]
+  C --> D["42–44: Bounded recovery, quality validation and local diagnostics"]
+  D --> E["45–47: Searchable archive and repeatable workflows"]
+  E --> F["48–50: Maintainability, packaged proof and competitor comparisons"]
+```
+
+Each task is a deliverable slice with acceptance criteria in `tasks/todo.md`. Land and verify each slice before expanding. Do not perform a broad rewrite of the converter, all platforms, and the extension together.
+
+### Foundation design
+
+**1. Durable catalog with ordinary files.** Use a small versioned local SQLite catalog, preferably owned through one native service interface. Files remain usable outside JaneConverter. Store item/job IDs, safe source permalink, source site, observed title, capture time, optional publisher-provided time with its evidence, collection ID and order, capture method, byte hash, dimensions/duration, quality facts, original/derivative relations, current path, and completion evidence. Distinguish unknown values from verified values.
+
+Persist safe user-facing provenance separately from structural adaptation preferences. Do not persist signed CDN links, access tokens, headers, or browser secrets. Preserve safe permalink parameters that establish identity; ambiguous credential-bearing URLs stay session-only. Store dates in UTC and display locally. Migration must back up existing history, tolerate malformed records and repeats, and never invent missing source links or original publication dates.
+
+**2. Recoverable job and publication records.** Give jobs explicit states: queued, discovering, transferring, validating, ready-to-publish, complete, incomplete, needs-user-action, failed, paused, cancelled. Use one authoritative state owner with attempt IDs so late worker messages cannot reverse cancellation. Persist job/item checkpoints. File renames and database transactions are not jointly atomic: journal publication intent, publish without overwriting, commit the catalog record, and reconcile interruption at each boundary. Disk full, file locks, denied access, missing drives, and interrupted moves must leave understandable recoverable states.
+
+Retain incomplete items in bounded private staging with visible cleanup controls. Preserve the default rule that an incomplete album is not published as complete. A separately chosen partial export may be added later, clearly labelled with known missing/unknown items; it is not an automatic fallback. Restart offers review/resume; it does not reopen tabs, sign in, or resume browsing silently.
+
+**3. Common capture contract with site adapters.** A shared coordinator manages attempts, validation, time/byte limits, cancellation, and progress. Site adapters identify the intended post/viewer, discover candidates, navigate within that scope, refresh expiring references, and report completion evidence. Start by wrapping Facebook's existing path without changing its successful behavior; migrate Instagram separately.
+
+Every adapter reports source identity, ordered candidates, available renditions, observations supporting completeness, and categorized failure. Shared machinery does not imply identical site navigation or one magic selector. Prefer stable semantics, media elements and explicit state changes, retaining tested site-specific fallbacks. Isolate parser failures from the conversion engine.
+
+**4. Capability-aware strategy selection.** Try eligible direct extraction or guest-page discovery first. Offer an explicit handoff to Browser Bridge if the task requires the open browser. Within approved browser capture, prefer original readable bytes; use user-enabled tab-scoped network capture when applicable; use rendered image/video only when the chosen quality policy allows it. Higher-privilege modes are never silently enabled.
+
+A rendered frame or playback recording is a different representation: label it, retain original bytes when available, and show resolution/audio/overlay limitations. For story patch notes, an optional rendered view can preserve text overlays absent from the underlying photo/video. Do not call a clean background-image download a complete patch-note capture if the update text is missing.
+
+**5. Evidence-based collection status.** Separate complete, incomplete, and unknown. A quiet page or elapsed timeout proves only that nothing new was observed. Prefer consistent expected count plus verified order, or a trustworthy end marker/navigation cycle with no conflicting evidence. Record why a collection is complete and what is unknown. For stories without an exposed total or end marker, report “captured N observed items; total unknown.” Do not assume the source account has no additional stories.
+
+**6. Bounded recovery.** Classify network interruption, rate limit, expiring media URL, changed layout, browser access requirement, unsupported media, validation failure, storage failure, and user cancellation. Transient network faults get limited backoff; respect server retry instructions. Refresh an expired rendition through the current approved page and revalidate item identity. Changed layouts use tested alternative discovery. Access restrictions prompt a clear action or stop. Cancellation, invalid input, and disk full never trigger endless retries.
+
+Reacquire expiring URLs after restart instead of treating them as permanent checkpoints. Resume byte ranges only if the server and unchanged object identity support it; otherwise restart that item while reusing already validated collection members. Apply per-item, per-collection, per-host, and global resource budgets. Limited concurrency is introduced only after correctness and cancellation gates pass.
+
+**7. Validation and identity.** Check signatures, decodability, media kind, dimensions, duration/streams where applicable, and requested conversion properties. A parser or ffprobe success alone does not prove a file is fully decodable: use decode checks in fixtures and proportionate sample/deep checks in production. Preserve alpha, animation, orientation, color information, audio, and subtitles when required by policy; reject or explain any unmet requirement.
+
+Hash bytes for exact duplicate identity. Treat perceptual similarity as a suggestion or supporting evidence, not authority to delete or merge automatically. Two patch-note images with one changed line must remain distinct. Hash large media incrementally. Catalog matching must disclose when Spotify/Apple metadata was matched to a different source and retain the actual downloaded origin.
+
+### Ordered delivery and release checkpoints
+
+| Stage | Tasks | User-visible result | Gate |
+| --- | --- | --- | --- |
+| Baseline | 34–35 | Clear support boundaries and repeatable failure cases | Reconcile conflicting completion claims; record current packaged behavior |
+| Durable foundation | 36–38 | Capture provenance survives restart; interrupted jobs are recoverable | No lost valid files, silent overwrite, or false completion in fault tests |
+| Capture reliability | 39–41 | One-link collections and selected story sessions have reliable state | Correct identity/order; unknown completeness stays unknown |
+| Recovery and quality | 42–44 | Retry only what needs retry; failures have useful actions | Bounded resource use and policy-preserving validated outputs |
+| Personal workflow advantage | 45–47 | Find CDID notes later; repeat collection/conversion tasks easily | End-to-end personal use cases work with fewer manual steps |
+| Maintenance and evidence | 48–50 | Compatibility fixes are safe and advantages demonstrable | Rollback, packaged tests and fair workflow comparison evidence |
+
+### Measurement and test policy
+
+Begin with a proposed 40-case synthetic/local replay set spanning supported collections, changed layouts, multilingual names, mixed media, expiring references, irrelevant thumbnails, near-identical patch notes, malformed media, and interruptions. Size the corpus by real failure diversity rather than test count. Add every reproduced defect to it.
+
+Measure:
+- Correct-item precision and collection completeness separately.
+- False-success count, unwanted output changes, accidental overwrite, and lost validated work.
+- Hands-on user actions, time to first usable file, total completion time, active versus paused time, and unnecessary redownload bytes.
+- Manual browser handoffs, retry count, peak resource use, and maintenance effort per supported workflow.
+
+Proposed release gates, not current results:
+- All deterministic acceptance fixtures pass; zero false-complete claims, wrong-item acceptance, silent overwrite, or unwanted quality-policy changes in that corpus.
+- Cancellation acknowledged within 2 seconds in the controlled harness and work stopped within each strategy's documented bounded shutdown limit.
+- On at least 20 fault-injected restarts across transfer, validation, publication and catalog updates, retain each validated item and publish at most once.
+- For each workflow promoted as verified, record at least 10 representative permitted live runs on two dates/build contexts when feasible, publishing the denominator, failures, access conditions, app/browser/adapter versions, and verification date. This is a minimum evidence sample, not a statistical uptime claim.
+- First comparison goal: fewer user actions for the complete task without worse correctness or output properties. Set numerical speed targets only after a baseline.
+
+Run offline fixtures on ordinary changes; live checks are explicitly initiated maintenance work using permitted examples, never a hidden recurring crawler or uploaded personal media. This plan creates no automation. External-site failure should downgrade the relevant support status and lead to a scoped fix; it should not block a critical unrelated local-converter fix. Changes that affect capture still must pass that path's own gate.
+
+### Safe maintenance and usability
+
+Use a small tested app release for compatibility fixes first. Later consider independently versioned capture components only if measured repair delays justify the packaging complexity. Such updates require verified origin, signatures, protocol compatibility, a user-visible choice, a smoke check, and rollback. Never fetch and execute arbitrary selector scripts or self-modifying code.
+
+A first-run bridge check should explain installed/connected/ready states and guide one successful capture. Store distribution and platform signing are later improvements if other users need them; they are not prerequisites for Jane's personal use. Normal controls should remain “Save collection,” “Capture what I’m viewing,” “Preserve original,” “Convert,” “Retry missing,” and “Find source,” with engine internals in optional details.
+
+Optional local OCR is particularly relevant to CDID patch-note images, but follows durable original capture. Search indexed text, show it alongside the original, and disclose uncertainty. Start with a measured script/language set; select a local dependency only after footprint, accuracy and licensing review. Do not turn OCR guesses into authoritative update text.
+
+### Competitor evidence and fair comparison
+
+Sources checked 2026-10-02:
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp): shared upstream extraction strength; feature breadth alone is not JaneConverter-specific.
+- [gallery-dl](https://github.com/mikf/gallery-dl): configurable gallery/collection downloading; use as a specialist comparison where the content is supported.
+- [Shutter Encoder](https://www.shutterencoder.com/): substantial conversion, production controls and web-video downloading; do not claim it lacks web extraction.
+- [Video DownloadHelper changelog](https://v10.downloadhelper.net/changelog): v10 is self-contained and removed its general transcoding feature; compare current behavior, not old companion-app assumptions.
+
+Run the same permitted source collection and requested output through JaneConverter and the relevant alternative, including their normal configuration. Record correctness, retained context, hands-on steps, cleanup, time, quality properties and current versions. “Not documented” or “not tested” is not “impossible.” Compare the whole chosen workflow, not every feature competitors offer. Publish a specific advantage only after the evidence supports it.
+
+### Recommended starting slice
+
+Tasks 34–38: baseline the current behavior, preserve capture provenance, migrate history safely, and make interrupted publication recoverable. These support every later feature and address the most concrete foundation gaps found in this audit. Next prove one Facebook collection path and the actual CDID story session before adding more platforms.
+
+The CDID source platform/viewer, a few representative public examples, and desired languages for optional OCR are details to resolve during the relevant task. They do not block baseline, catalog, and restart-recovery work. This request authorizes planning only; implementation is not started by this document.
