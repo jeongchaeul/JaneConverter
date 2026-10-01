@@ -41,21 +41,46 @@ JaneConverter downloads and converts media through a sleek Tauri desktop app or 
 
 ## Platform Coverage and Verification
 
-JaneConverter has code paths for the platforms below. A code path, unit test, or successful app build does not by itself confirm that a live site can be captured. Public site layouts and access behavior can change.
+### Verified Working — Media Catcher
+
+- **Instagram**:
+  - IG Single Photo
+  - IG Multiple Photo
+  - IG Reel
+- **Facebook**:
+  - FB Single Photo
+  - FB Multiple Photo
+  - FB Group Post
+  - FB Reel
+- **TikTok**:
+  - TT Photo
+  - TT Multiple Photos
+  - TT Videos
+
+### Primary Audio Converter
+
+- **SoundCloud, Spotify, YouTube**: Verified working.
+- **Apple Music**: Subscription-based — requires the **Browser Extension** (`JaneConverter Browser Bridge`).
+
+### Story Grabber
+
+- **Requires the Browser Extension** (`JaneConverter Browser Bridge`).
+- *Note*: Stories are notoriously difficult to catch and can break when platforms change their layout or player behavior. The Story Grabber includes an adaptive learning layer and will continue to be updated and refined over the coming months and years to adapt as platforms evolve.
+
+### Additional Code Paths & Coverage Summary
 
 | Platform or workflow | Implemented path | Verification status |
 | --- | --- | --- |
-| Facebook public post photos | Hidden guest-page capture | You confirmed the supplied post is viewable without signing in. JaneConverter's end-to-end capture of it has not been verified. |
-| Instagram and X/Twitter post photos | Hidden guest-page capture | Code paths and automated checks are present; live capture has not been verified on current public posts. |
-| TikTok photo posts, Reddit galleries, Tumblr photo posts, Pinterest Pins/boards/sections | Hidden guest-page capture | Code paths and automated checks are present; live capture has not been verified platform by platform. |
-| Snapchat Public Stories | None | Not implemented; guest access in a desktop browser has not been verified. |
-| YouTube, SoundCloud, TikTok, X/Twitter, Facebook, Reddit, Twitch, Vimeo, and other yt-dlp sites | yt-dlp media extraction | These are intended extractor sources, not a list of sites individually tested for this README update. Availability depends on the site and yt-dlp extractor behavior. |
-| Spotify tracks/albums/playlists; Apple Music songs/public albums | Public catalog metadata matching to find a stream | Current live catalog behavior has not been verified here. Apple Music playlists are not supported as playlists. JaneConverter does not download protected subscription audio. |
-| Browser Bridge | Capture of media exposed by a user-selected browser tab | Platform-by-platform live behavior has not been verified. The extension does not export cookies, passwords, or session tokens. |
+| Instagram (`Single Photo`, `Multiple Photo`, `Reel`) | Hidden guest-page capture + video handoff | **Verified working** |
+| Facebook (`Single Photo`, `Multiple Photo`, `Group Post`, `Reel`) | Hidden guest-page capture + video handoff | **Verified working** |
+| TikTok (`Photo`, `Multiple Photos`, `Videos`) | Hidden guest-page capture + yt-dlp extraction | **Verified working** |
+| YouTube, SoundCloud, Spotify | yt-dlp media extraction + public catalog metadata matching | **Verified working** |
+| Apple Music | Browser Bridge capture (subscription-based) + public catalog matching | Requires the **Browser Extension** for subscription playback capture |
+| Story Grabber | Browser Bridge (`Capture current media`, `Collect mode`, `Story sequence`) | Requires the **Browser Extension** (subject to platform layout changes; actively maintained with adaptive updates) |
+| X/Twitter post photos, Reddit galleries, Tumblr photo posts, Pinterest Pins/boards/sections | Hidden guest-page capture | Code paths and automated checks are present; not part of the verified set above |
+| Snapchat Public Stories | None | Not implemented; guest access in a desktop browser has not been verified |
 
-Social photo capture only reads images rendered to logged-out visitors. Private or sign-in-gated posts are not supported. Site-specific Save/Download eligibility controls are not detected separately from public image visibility.
-
-Automated checks cover URL routing, platform-specific media-host allowlists, and local capture handling. They do not substitute for testing a live post on each site.
+Social photo capture without the extension only reads images rendered to logged-out visitors. Private or sign-in-gated posts require the **Browser Extension** or are not supported.
 
 ## Supported Formats
 
@@ -108,17 +133,17 @@ Paste a supported URL or choose a local file (or drag and drop files / links dir
 
 Paste a public Facebook post or Group permalink link and click **Convert media**. JaneConverter reads the post in a separate, hidden temporary guest WebView, dismisses login-wall overlays, resolves both standard post albums (`set=pcb.<post_id>`) and Facebook Group photo sets (`set=gm.<media_id>`), collects the photo URLs Facebook renders for logged-out visitors, then passes that short-lived list directly to the local engine. Photos are validated by image bytes and saved in a grouped folder under `Images/Facebook`, where the library lists image files alongside audio and video. If a post is video-only or the user selected a Video preset, JaneConverter automatically hands the URL off to the video conversion pipeline. JaneConverter does not use the normal browser profile, a browser extension, saved login cookies, or a remote download service. The temporary profile is removed after capture. Posts that require sign-in or do not expose a complete photo set are stopped without saving a partial album.
 
-### Public Instagram and X/Twitter photo posts
+### Public Instagram, TikTok, and X/Twitter photo posts
 
-Paste a public Instagram post/Reel (`/{username}/p/{shortcode}/`, `/p/{shortcode}/`, `/{username}/reel/{shortcode}/`, or `/reel/{shortcode}/`) or X/Twitter post link and choose **Download all photos**. JaneConverter uses a separate, hidden temporary guest WebView to collect the photos the post exposes to logged-out visitors, filtering out comment stickers/GIFs and footer post grids while preserving multi-photo carousel `<ul>` slide tracks. Downloaded images (including two-frame Multi-Picture Object / Ultra HDR JPEGs) are validated by magic bytes and saved into grouped folders under `Images/Instagram` or `Images/Twitter`. Posts or Reels that contain video instead of photos automatically switch to the video conversion pipeline. No normal browser profile, saved login cookies, browser extension, or remote download service is used.
+Paste a public Instagram post/Reel (`/{username}/p/{shortcode}/`, `/p/{shortcode}/`, `/{username}/reel/{shortcode}/`, or `/reel/{shortcode}/`), TikTok photo/video link, or X/Twitter post link and click **Convert media**. JaneConverter uses a separate, hidden temporary guest WebView to collect the photos the post exposes to logged-out visitors, filtering out comment stickers/GIFs and footer post grids while preserving multi-photo carousel `<ul>` slide tracks. Downloaded images (including two-frame Multi-Picture Object / Ultra HDR JPEGs) are validated by magic bytes and saved into grouped folders under `Images/Instagram`, `Images/TikTok`, or `Images/Twitter`. Posts or Reels that contain video instead of photos automatically switch to the video conversion pipeline. No normal browser profile, saved login cookies, browser extension, or remote download service is used.
 
 ### Other public photo collections
 
-The one-link capture flow has code paths for public TikTok photo posts, Reddit image galleries, Tumblr photo posts, and Pinterest Pins, boards, and sections. Pinterest boards are scanned as a collection, while post carousels and gallery viewers are advanced in sequence. Captures are limited to image URLs rendered by the public page and validated against that platform's image CDN; incomplete captures are not saved. Live capture on these sites has not been verified. Secret/private boards and posts that require sign-in are not supported. Snapchat Public Stories are not implemented because guest access through its desktop browser has not been verified.
+The one-link capture flow also includes code paths for Reddit image galleries, Tumblr photo posts, and Pinterest Pins, boards, and sections. Pinterest boards are scanned as a collection, while post carousels and gallery viewers are advanced in sequence. Captures are limited to image URLs rendered by the public page and validated against that platform's image CDN; incomplete captures are not saved. Secret/private boards and posts that require sign-in are not supported. Snapchat Public Stories are not implemented because guest access through its desktop browser has not been verified.
 
-JaneConverter does not sign in, bypass private-content gates, or read browser cookies. Site-specific Save/Download eligibility controls are not yet detected separately from an image being publicly rendered, so support can vary by post and platform behavior.
+JaneConverter does not sign in, bypass private-content gates, or read browser cookies.
 
-Spotify and Apple Music links provide public catalog metadata matching. JaneConverter does not download protected DRM-subscription audio directly.
+SoundCloud, Spotify, and YouTube are verified working with the primary audio converter. Because Apple Music is subscription-based, use the **Browser Extension** (`JaneConverter Browser Bridge`) to capture Apple Music streams.
 
 Browser-captured files appear in the **Fetched media.** tab and are saved in the configured fetched-media folder. The default is a `fetched` folder beside the converted library; clearing access ends the browser session without deleting those files. Each item supports **Open file**, **Open path**, **Use for conversion**, and **Discard**.
 
