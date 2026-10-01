@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, X } from "lucide-react";
-import { bridge, type AccessStatus, type ConverterEvent, type ConverterSettings, type FetchedMedia, type RuntimeInfo } from "./bridge";
+import { AlertCircle, CheckCircle2, Clock, FolderOpen, Play, X } from "lucide-react";
+import { bridge, type AccessStatus, type ConversionHistoryItem, type ConverterEvent, type ConverterSettings, type FetchedMedia, type RuntimeInfo } from "./bridge";
 import { Sidebar, type ViewKey } from "./components/Sidebar";
 import { ConverterView } from "./components/ConverterView";
 import { LibraryView } from "./components/LibraryView";
@@ -9,6 +9,7 @@ import { ConsoleView } from "./components/ConsoleView";
 import { HardwarePipelineView } from "./components/HardwarePipelineView";
 import { SettingsView } from "./components/SettingsView";
 import { FetchedMediaView } from "./components/FetchedMediaView";
+import { findPresetName, formatElapsedMs } from "./options";
 
 const defaultSettings: ConverterSettings = {
   outputDir: "converted",
@@ -26,21 +27,148 @@ const defaultSettings: ConverterSettings = {
   retries: 2,
 };
 
+const HISTORY_STORAGE_KEY = "janecoverter.conversionHistory";
+const TIMINGS_STORAGE_KEY = "janecoverter.conversionTimings";
+
+function cleanDisplayPath(rawPath: string): string {
+  return rawPath.trim().replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "");
+}
+
+function normalizePathKey(rawPath: string): string {
+  return cleanDisplayPath(rawPath).replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+}
+
+function baseNameFromPath(rawPath: string): string {
+  const cleaned = cleanDisplayPath(rawPath).replace(/[\\/]+$/, "");
+  const lastSlash = Math.max(cleaned.lastIndexOf("\\"), cleaned.lastIndexOf("/"));
+  return lastSlash >= 0 ? cleaned.slice(lastSlash + 1) : cleaned;
+}
+
+function extensionFromPath(rawPath: string): string {
+  const name = baseNameFromPath(rawPath);
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot === name.length - 1) return "";
+  return name.slice(dot + 1).toUpperCase();
+}
+
+function extractExportedPathFromMessage(message: string): string | null {
+  for (const prefix of ["DONE! Exported:", "Export Directory:"]) {
+    const idx = message.indexOf(prefix);
+    if (idx >= 0) {
+      const value = cleanDisplayPath(message.slice(idx + prefix.length));
+      if (value) return value;
+    }
+  }
+  return null;
+}
+
+function detectFallbackNote(logs: string[], forcedVideoFallback: boolean): string | null {
+  for (let i = logs.length - 1; i >= 0; i -= 1) {
+    const line = logs[i];
+    const pngMatch = line.match(/Recovered from\s+([^\s]+)\s+as\s+([^\s]+)\s+using\s+(.+?)\.?$/i);
+    if (pngMatch) {
+      return `Forced fallback to ${pngMatch[2].toUpperCase()} (${pngMatch[3]}) after source format recovery.`;
+    }
+    const recoveryMatch = line.match(/Conversion complete using\s+(.+?)\s+after bounded recovery\.?$/i);
+    if (recoveryMatch) {
+      return `Forced fallback to ${recoveryMatch[1]} to complete conversion.`;
+    }
+  }
+  if (forcedVideoFallback) {
+    return "Forced fallback from Image to Video preset because the post contained video media.";
+  }
+  return null;
+}
+
+function describeOutputFormatAndQuality(
+  effectiveSettings: ConverterSettings,
+  exportPath: string,
+  fallbackNote: string | null,
+): { formatLabel: string; qualityLabel: string } {
+  const ext = extensionFromPath(exportPath);
+  if (effectiveSettings.format === "source") {
+    if (fallbackNote && /fallback to PNG/i.test(fallbackNote)) {
+      return { formatLabel: "PNG (Fallback)", qualityLabel: "Lossless Image Fallback" };
+    }
+    return {
+      formatLabel: ext ? `${ext} (Source)` : "SOURCE",
+      qualityLabel: "Source Quality",
+    };
+  }
+  const formatLabel = (ext || effectiveSettings.format || "MEDIA").toUpperCase();
+  if (effectiveSettings.category === "Image") {
+    const qualityLabel = formatLabel === "PNG" ? "Lossless" : `${effectiveSettings.bitrate.toUpperCase()} Quality`;
+    return { formatLabel, qualityLabel };
+  }
+  if (effectiveSettings.category === "Video") {
+    const res = effectiveSettings.resolution === "original" ? "Original Res" : effectiveSettings.resolution.toUpperCase();
+    return { formatLabel, qualityLabel: `${effectiveSettings.bitrate.toUpperCase()} • ${res}` };
+  }
+  const khz = `${(effectiveSettings.sampleRate / 1000).toFixed(1).replace(/\.0$/, "")}kHz`;
+  return { formatLabel, qualityLabel: `${effectiveSettings.bitrate} • ${khz}` };
+}
+
+interface ActiveJobContext {
+  startedAtMs: number;
+  source: string;
+  effectiveSettings: ConverterSettings;
+  presetName: string;
+  forcedVideoFallback: boolean;
+  logs: string[];
+  exportedPath: string;
+}
+
+interface SuccessPromptState {
+  fileName: string;
+  formatLabel: string;
+  qualityLabel: string;
+  exportPath: string;
+  elapsedMs: number;
+  fallbackNote: string | null;
+}
+
 export default function App() {
   const [activeView, setActiveView] = useState<ViewKey>("converter");
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [settings, setSettings] = useState<ConverterSettings>(defaultSettings);
+  const settingsRef = useRef<ConverterSettings>(defaultSettings);
+  settingsRef.current = settings;
   const [events, setEvents] = useState<ConverterEvent[]>([]);
   const [access, setAccess] = useState<AccessStatus>({ active: false, link: "", browser: "", source: null, bridgeConnected: false });
   const [selectedCapture, setSelectedCapture] = useState<FetchedMedia | null>(null);
   const [jobId, setJobId] = useState("");
   const activeJobRef = useRef("");
   const activeJobSuggestLosslessRef = useRef(false);
-  const [failure, setFailure] = useState<{ title: string; message: string; suggestLossless: boolean } | null>(null);
+  const activeJobContextRef = useRef<ActiveJobContext | null>(null);
+  const [failure, setFailure] = useState<{ title: string; message: string; suggestLossless: boolean; elapsedMs?: number } | null>(null);
+  const [success, setSuccess] = useState<SuccessPromptState | null>(null);
   const failureCloseRef = useRef<HTMLButtonElement>(null);
+  const successCloseRef = useRef<HTMLButtonElement>(null);
   const accessDiagnosticIds = useRef(new Set<number>());
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("Ready. Paste a link or choose a file to begin.");
+  const [history, setHistory] = useState<ConversionHistoryItem[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem(HISTORY_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as ConversionHistoryItem[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [conversionTimings, setConversionTimings] = useState<Record<string, number>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = window.localStorage.getItem(TIMINGS_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, number>) : {};
+    } catch {
+      return {};
+    }
+  });
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     if (typeof window === "undefined") return "dark";
     try {
@@ -79,6 +207,16 @@ export default function App() {
   }, [failure]);
 
   useEffect(() => {
+    if (!success) return;
+    successCloseRef.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSuccess(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [success]);
+
+  useEffect(() => {
     const root = document.documentElement;
     root.setAttribute("data-theme", theme);
     const clean = accentColor.replace("#", "");
@@ -103,6 +241,49 @@ export default function App() {
       window.localStorage.setItem("janecoverter.bgColor", bgColor);
     } catch {}
   }, [theme, accentColor, bgColor]);
+
+  function recordHistoryEntry(entry: ConversionHistoryItem) {
+    setHistory((current) => {
+      const next = [entry, ...current].slice(0, 200);
+      try {
+        window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
+
+  function recordTimingForPath(rawPath: string, elapsedMs: number) {
+    const key = normalizePathKey(rawPath);
+    if (!key) return;
+    setConversionTimings((current) => {
+      const next = { ...current, [key]: elapsedMs };
+      try {
+        window.localStorage.setItem(TIMINGS_STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
+
+  function handleRemoveHistoryItem(id: string) {
+    setHistory((current) => {
+      const next = current.filter((item) => item.id !== id);
+      try {
+        window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
+
+  function handleClearHistory() {
+    setHistory([]);
+    setConversionTimings({});
+    try {
+      window.localStorage.removeItem(HISTORY_STORAGE_KEY);
+      window.localStorage.removeItem(TIMINGS_STORAGE_KEY);
+    } catch {}
+    void bridge.clearConversionTimings().catch(() => {});
+    statusMessage("Cleared temporary conversion history and timings.");
+  }
 
   function handleAccentChange(color: string) {
     setAccentColor(color);
@@ -149,16 +330,93 @@ export default function App() {
       if (event.kind === "started" && !activeJobRef.current) {
         activeJobRef.current = event.jobId;
         setJobId(event.jobId);
+        if (!activeJobContextRef.current) {
+          activeJobContextRef.current = {
+            startedAtMs: Date.now(),
+            source: "Media source",
+            effectiveSettings: settingsRef.current,
+            presetName: findPresetName(settingsRef.current),
+            forcedVideoFallback: false,
+            logs: [],
+            exportedPath: "",
+          };
+        }
       }
       if (event.jobId && event.jobId === activeJobRef.current) {
         if (event.progress !== undefined) setProgress(event.progress);
         setStatus(event.message);
+        const ctx = activeJobContextRef.current;
+        if (ctx) {
+          if (event.message) ctx.logs.push(event.message);
+          const parsedPath = (event.output && cleanDisplayPath(event.output)) || extractExportedPathFromMessage(event.message);
+          if (parsedPath) {
+            ctx.exportedPath = parsedPath;
+          }
+        }
+        if (event.kind === "finished") {
+          const effective = ctx?.effectiveSettings ?? settingsRef.current;
+          const elapsedMs = Math.max(1, Date.now() - (ctx?.startedAtMs ?? Date.now()));
+          const exportPath = cleanDisplayPath(
+            event.output || extractExportedPathFromMessage(event.message) || ctx?.exportedPath || effective.outputDir,
+          );
+          const fallbackNote = detectFallbackNote(ctx?.logs ?? [], ctx?.forcedVideoFallback ?? false);
+          const { formatLabel, qualityLabel } = describeOutputFormatAndQuality(effective, exportPath, fallbackNote);
+          const fileName = baseNameFromPath(exportPath) || baseNameFromPath(ctx?.source || "") || "Converted media";
+          setFailure(null);
+          setSuccess({
+            fileName,
+            formatLabel,
+            qualityLabel,
+            exportPath,
+            elapsedMs,
+            fallbackNote,
+          });
+          recordTimingForPath(exportPath, elapsedMs);
+          recordHistoryEntry({
+            id: `${event.jobId}-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            source: ctx?.source || fileName,
+            fileName,
+            exportPath,
+            presetName: ctx?.presetName || findPresetName(effective),
+            formatLabel,
+            qualityLabel,
+            elapsedMs,
+            status: "succeeded",
+            fallbackNote,
+          });
+        }
         if (event.kind === "failed") {
-          setFailure({ title: "Conversion failed", message: event.message, suggestLossless: activeJobSuggestLosslessRef.current });
+          const effective = ctx?.effectiveSettings ?? settingsRef.current;
+          const elapsedMs = Math.max(1, Date.now() - (ctx?.startedAtMs ?? Date.now()));
+          const fallbackNote = detectFallbackNote(ctx?.logs ?? [], ctx?.forcedVideoFallback ?? false);
+          const { formatLabel, qualityLabel } = describeOutputFormatAndQuality(effective, ctx?.exportedPath || "", fallbackNote);
+          setSuccess(null);
+          setFailure({
+            title: "Conversion failed",
+            message: event.message,
+            suggestLossless: activeJobSuggestLosslessRef.current,
+            elapsedMs,
+          });
+          recordHistoryEntry({
+            id: `${event.jobId}-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            source: ctx?.source || "Media source",
+            fileName: baseNameFromPath(ctx?.source || "") || "Failed conversion",
+            exportPath: ctx?.exportedPath || effective.outputDir,
+            presetName: ctx?.presetName || findPresetName(effective),
+            formatLabel,
+            qualityLabel,
+            elapsedMs,
+            status: "failed",
+            fallbackNote,
+            errorMessage: event.message,
+          });
         }
         if (event.kind === "finished" || event.kind === "failed" || event.kind === "cancelled") {
           activeJobRef.current = "";
           activeJobSuggestLosslessRef.current = false;
+          activeJobContextRef.current = null;
           setJobId("");
         }
       }
@@ -222,6 +480,7 @@ export default function App() {
       const accessSource = access.source?.trim() || "";
       const browserSession = accessSource && normalizedSource && accessSource === normalizedSource ? access.browser || undefined : undefined;
       let effectiveSettings = settings;
+      let forcedVideoFallback = false;
       if (detectedMediaKind === "video" && settings.category === "Image") {
         effectiveSettings = {
           ...settings,
@@ -229,9 +488,19 @@ export default function App() {
           format: settings.format === "source" ? "source" : "mp4",
           bitrate: settings.format === "source" ? "best" : "balanced",
         };
+        forcedVideoFallback = true;
         setSettings(effectiveSettings);
       }
       activeJobSuggestLosslessRef.current = effectiveSettings.format === "source" && (effectiveSettings.category === "Image" || Boolean(facebookCaptureId || socialCaptureId));
+      activeJobContextRef.current = {
+        startedAtMs: Date.now(),
+        source: normalizedSource || selectedCapture?.name || "Media source",
+        effectiveSettings,
+        presetName: findPresetName(effectiveSettings),
+        forcedVideoFallback,
+        logs: [],
+        exportedPath: "",
+      };
       const nextJob = await bridge.startConversion({ ...effectiveSettings, source, playlistIndexes, browserSession, browserCapturePath: !normalizedSource ? selectedCapture?.path : undefined, facebookCaptureId, socialCaptureId });
       activeJobRef.current = nextJob;
       setJobId(nextJob);
@@ -243,6 +512,7 @@ export default function App() {
       const message = error instanceof Error ? error.message : String(error);
       setFailure({ title: "Conversion could not start", message, suggestLossless: false });
       activeJobSuggestLosslessRef.current = false;
+      activeJobContextRef.current = null;
       statusMessage(message);
       return false;
     }
@@ -288,7 +558,7 @@ export default function App() {
     : activeView === "fetched"
       ? <FetchedMediaView access={access} settings={settings} onSettings={updateSettings} onSelect={(item) => { setSelectedCapture(item); setActiveView("converter"); statusMessage(item.name + " selected and ready to convert."); }} onDiscard={(item) => { if (selectedCapture?.path === item.path) setSelectedCapture(null); }} onStatus={statusMessage} />
       : activeView === "library"
-      ? <LibraryView settings={settings} onSettings={updateSettings} onStatus={statusMessage} />
+      ? <LibraryView settings={settings} onSettings={updateSettings} onStatus={statusMessage} history={history} conversionTimings={conversionTimings} onClearHistory={handleClearHistory} onRemoveHistoryItem={handleRemoveHistoryItem} />
       : activeView === "hardware"
         ? <HardwarePipelineView runtime={runtime} settings={settings} active={Boolean(jobId)} progress={progress} progressMessage={status} />
       : activeView === "console"
@@ -296,6 +566,8 @@ export default function App() {
         : (
           <SettingsView
             runtime={runtime}
+            settings={settings}
+            onSettings={updateSettings}
             accentColor={accentColor}
             bgColor={bgColor}
             onAccentColorChange={handleAccentChange}
@@ -335,6 +607,85 @@ export default function App() {
           </motion.div>
         </main>
       </div>
+      {success && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/75 p-5 backdrop-blur-md">
+          <section
+            className="panel relative w-full max-w-lg p-6 shadow-2xl shadow-black/70"
+            style={{ backgroundColor: theme === "light" ? "#ffffff" : "#0b0914" }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="conversion-success-title"
+          >
+            <button
+              ref={successCloseRef}
+              type="button"
+              onClick={() => setSuccess(null)}
+              className="absolute right-4 top-4 grid size-8 place-items-center rounded-lg text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200"
+              aria-label="Close success dialog"
+            >
+              <X className="size-4" />
+            </button>
+            <div className="flex items-center gap-2 text-emerald-400">
+              <CheckCircle2 className="size-5" />
+              <span className="mono-label">Conversion complete</span>
+            </div>
+            <h2 id="conversion-success-title" className="mt-2 text-xl font-semibold text-white">
+              Success
+            </h2>
+            <div className="mt-3 space-y-2.5">
+              <div className="break-words text-sm font-medium text-white">
+                {success.fileName}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-300">
+                <span className="rounded-md border border-pink-500/30 bg-pink-500/10 px-2 py-0.5 font-mono text-pink-200">
+                  {success.formatLabel}
+                </span>
+                <span className="rounded-md border border-white/[0.10] bg-white/[0.04] px-2 py-0.5 text-zinc-300">
+                  {success.qualityLabel}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 font-mono text-zinc-400">
+                  <Clock className="size-3 text-zinc-500" />
+                  Time elapsed: {formatElapsedMs(success.elapsedMs)}
+                </span>
+              </div>
+              {success.fallbackNote && (
+                <div className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-3 py-2 text-xs leading-relaxed text-amber-200">
+                  {success.fallbackNote}
+                </div>
+              )}
+              <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3">
+                <div className="text-[10px] uppercase tracking-wider text-zinc-500">Exported to</div>
+                <div className="mt-1 break-all font-mono text-xs text-zinc-300">
+                  {success.exportPath}
+                </div>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => void bridge.openFile(success.exportPath).catch((error) => statusMessage(error instanceof Error ? error.message : String(error)))}
+                className="primary-button flex items-center gap-1.5 px-3 py-2 text-xs"
+              >
+                <Play className="size-3.5" /> Open File
+              </button>
+              <button
+                type="button"
+                onClick={() => void bridge.openPath(success.exportPath).catch((error) => statusMessage(error instanceof Error ? error.message : String(error)))}
+                className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs"
+              >
+                <FolderOpen className="size-3.5" /> Open Path
+              </button>
+              <button
+                type="button"
+                onClick={() => setSuccess(null)}
+                className="subtle-button px-3 py-2 text-xs"
+              >
+                Close
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       {failure && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/75 p-5 backdrop-blur-md">
           <section
@@ -349,7 +700,13 @@ export default function App() {
             <div className="flex items-center gap-2 text-rose-400"><AlertCircle className="size-5" /><span className="mono-label">Action needed</span></div>
             <h2 id="conversion-failure-title" className="mt-3 text-xl font-semibold text-white">{failure.title}</h2>
             <p id="conversion-failure-message" className="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-300">{failure.message}</p>
-            <div className="mt-5 rounded-xl border border-white/[0.08] bg-white/[0.035] p-3 text-xs leading-relaxed text-zinc-300">
+            {failure.elapsedMs !== undefined && (
+              <div className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 font-mono text-xs text-zinc-400">
+                <Clock className="size-3.5 text-zinc-500" />
+                Time elapsed: {formatElapsedMs(failure.elapsedMs)}
+              </div>
+            )}
+            <div className="mt-4 rounded-xl border border-white/[0.08] bg-white/[0.035] p-3 text-xs leading-relaxed text-zinc-300">
               {/returned (?:a non-image response|an unsupported image (?:type|format)) for photo \d+/i.test(failure.message)
                 ? "The photo download failed before conversion. Retry the link when the public post is accessible."
                 : failure.suggestLossless

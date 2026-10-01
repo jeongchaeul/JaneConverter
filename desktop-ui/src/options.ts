@@ -216,3 +216,39 @@ export function detectCategoryFromPath(pathOrUrl: string): Category | null {
   if (VIDEO_INPUT_EXTENSIONS.has(ext)) return "Video";
   return null;
 }
+
+export function formatElapsedMs(ms?: number | null): string {
+  if (ms === undefined || ms === null || !Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 1000) return `${Math.max(0.1, ms / 1000).toFixed(1)}s`;
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(1)}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+export function findPresetName(settings: {
+  category: Category;
+  format: string;
+  bitrate: string;
+  sampleRate: number;
+  resolution: string;
+  normalize: boolean;
+  useGpu: boolean;
+}): string {
+  if (settings.format === "source") return "Preserve Quality";
+  const matched = intentPresets.find((preset) => {
+    const categoryMatches =
+      preset.category === settings.category ||
+      (preset.category === "Audio" && settings.category === "Music");
+    return (
+      categoryMatches &&
+      preset.format === settings.format &&
+      preset.bitrate === settings.bitrate &&
+      preset.sampleRate === settings.sampleRate &&
+      preset.resolution === settings.resolution &&
+      preset.normalize === settings.normalize
+    );
+  });
+  return matched ? matched.name : "Custom";
+}

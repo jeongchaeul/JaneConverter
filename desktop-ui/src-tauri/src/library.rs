@@ -1,11 +1,120 @@
 use crate::model::LibraryEntry;
-use crate::paths::{find_ffmpeg, now_stamp, prepare_command};
+use crate::paths::{data_root, find_ffmpeg, now_stamp, prepare_command};
 use base64::Engine;
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+pub fn clean_windows_path(value: &str) -> String {
+    let trimmed = value.trim();
+    if let Some(unc) = trimmed.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else if let Some(plain) = trimmed.strip_prefix(r"\\?\") {
+        plain.to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn timing_key(path: &Path) -> String {
+    clean_windows_path(&path.display().to_string())
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_ascii_lowercase()
+}
+
+fn timings_file() -> PathBuf {
+    data_root().join("conversion_timings.json")
+}
+
+fn load_conversion_timings() -> HashMap<String, u64> {
+    let Ok(bytes) = fs::read(timings_file()) else {
+        return HashMap::new();
+    };
+    serde_json::from_slice(&bytes).unwrap_or_default()
+}
+
+pub fn record_conversion_timing(path: &Path, elapsed_ms: u64) {
+    let mut timings = load_conversion_timings();
+    timings.insert(timing_key(path), elapsed_ms);
+    if path.is_dir() {
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let child = entry.path();
+                if child.is_file() && library_file_extension(&child) && !is_metadata_path(&child) {
+                    timings.insert(timing_key(&child), elapsed_ms);
+                }
+            }
+        }
+    }
+    if timings.len() > 2000 {
+        let keys: Vec<String> = timings.keys().take(timings.len() - 2000).cloned().collect();
+        for key in keys {
+            timings.remove(&key);
+        }
+    }
+    if let Ok(serialized) = serde_json::to_vec(&timings) {
+        let _ = fs::write(timings_file(), serialized);
+    }
+}
+
+pub fn clear_conversion_timings() -> Result<(), String> {
+    let path = timings_file();
+    if path.exists() {
+        fs::remove_file(path)
+            .map_err(|error| format!("Could not clear temp conversion history: {error}"))?;
+    }
+    Ok(())
+}
+
+pub fn first_media_file_in_dir(dir: &Path) -> Option<PathBuf> {
+    let mut files: Vec<PathBuf> = fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && library_file_extension(path) && !is_metadata_path(path))
+        .collect();
+    files.sort_by(|left, right| {
+        left.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .cmp(
+                &right
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_ascii_lowercase(),
+            )
+    });
+    files.into_iter().next()
+}
+
+pub fn resolve_exported_output(raw_path: &str) -> (PathBuf, String) {
+    let clean = PathBuf::from(clean_windows_path(raw_path));
+    if clean.is_dir() {
+        let media_files: Vec<PathBuf> = fs::read_dir(&clean)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file() && library_file_extension(path) && !is_metadata_path(path)
+            })
+            .collect();
+        if media_files.len() == 1 {
+            let single = media_files.into_iter().next().unwrap();
+            let display = clean_windows_path(&single.display().to_string());
+            return (clean, display);
+        }
+    }
+    let display = clean_windows_path(&clean.display().to_string());
+    (clean, display)
+}
 
 pub fn media_extension(path: &Path) -> bool {
     matches!(
@@ -110,9 +219,9 @@ fn directory_summary(path: &Path) -> (usize, u64) {
     (count, bytes)
 }
 
-fn media_file_entry(path: &Path, bytes: u64) -> LibraryEntry {
+fn media_file_entry(path: &Path, bytes: u64, conversion_ms: Option<u64>) -> LibraryEntry {
     LibraryEntry {
-        path: path.display().to_string(),
+        path: clean_windows_path(&path.display().to_string()),
         name: path
             .file_name()
             .map(|value| value.to_string_lossy().into_owned())
@@ -126,14 +235,16 @@ fn media_file_entry(path: &Path, bytes: u64) -> LibraryEntry {
             .and_then(|value| value.to_str())
             .unwrap_or_default()
             .to_ascii_uppercase(),
+        conversion_ms,
     }
 }
 
 pub fn scan(path: &str) -> Result<Vec<LibraryEntry>, String> {
-    let root = std::path::PathBuf::from(path.trim());
+    let root = std::path::PathBuf::from(clean_windows_path(path));
     if !root.exists() {
         return Ok(Vec::new());
     }
+    let timings = load_conversion_timings();
     let mut result = Vec::new();
     for entry in fs::read_dir(&root)
         .map_err(|error| format!("Could not read the converted library: {error}"))?
@@ -142,10 +253,11 @@ pub fn scan(path: &str) -> Result<Vec<LibraryEntry>, String> {
         let child = entry.path();
         let kind = entry.file_type().map_err(|error| error.to_string())?;
         let name = entry.file_name().to_string_lossy().into_owned();
+        let conversion_ms = timings.get(&timing_key(&child)).copied();
         if kind.is_dir() {
             let (count, bytes) = directory_summary(&child);
             result.push(LibraryEntry {
-                path: child.display().to_string(),
+                path: clean_windows_path(&child.display().to_string()),
                 name,
                 is_directory: true,
                 is_playlist: child
@@ -155,6 +267,7 @@ pub fn scan(path: &str) -> Result<Vec<LibraryEntry>, String> {
                 media_count: count,
                 total_bytes: bytes,
                 extension: String::new(),
+                conversion_ms,
             });
         } else if kind.is_file() && (is_metadata_path(&child) || library_file_extension(&child)) {
             result.push(media_file_entry(
@@ -163,6 +276,7 @@ pub fn scan(path: &str) -> Result<Vec<LibraryEntry>, String> {
                     .metadata()
                     .map(|value| value.len())
                     .unwrap_or_default(),
+                conversion_ms,
             ));
         }
     }
@@ -178,6 +292,7 @@ const MAX_RECENT_DEPTH: usize = 32;
 fn collect_recent(
     path: &Path,
     depth: usize,
+    timings: &HashMap<String, u64>,
     result: &mut Vec<(SystemTime, LibraryEntry)>,
 ) -> Result<(), String> {
     if depth > MAX_RECENT_DEPTH {
@@ -193,18 +308,22 @@ fn collect_recent(
             continue;
         }
         if kind.is_dir() {
-            collect_recent(&child, depth + 1, result)?;
+            collect_recent(&child, depth + 1, timings, result)?;
         } else if kind.is_file() && library_file_extension(&child) && !is_metadata_path(&child) {
             let metadata = entry.metadata().map_err(|error| error.to_string())?;
             let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
-            result.push((modified, media_file_entry(&child, metadata.len())));
+            let conversion_ms = timings.get(&timing_key(&child)).copied();
+            result.push((
+                modified,
+                media_file_entry(&child, metadata.len(), conversion_ms),
+            ));
         }
     }
     Ok(())
 }
 
 pub fn recent(path: &str, limit: usize) -> Result<Vec<LibraryEntry>, String> {
-    let input = PathBuf::from(path.trim());
+    let input = PathBuf::from(clean_windows_path(path));
     if !input.exists() {
         return Ok(Vec::new());
     }
@@ -214,8 +333,9 @@ pub fn recent(path: &str, limit: usize) -> Result<Vec<LibraryEntry>, String> {
         return Err("The converted library path is not a folder.".into());
     }
 
+    let timings = load_conversion_timings();
     let mut candidates = Vec::new();
-    collect_recent(&root, 0, &mut candidates)?;
+    collect_recent(&root, 0, &timings, &mut candidates)?;
     candidates.sort_by(|left, right| {
         right.0.cmp(&left.0).then_with(|| {
             left.1

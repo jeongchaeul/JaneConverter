@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, ExternalLink, FolderOpen, HardDrive, Paintbrush, Palette, Pipette, RefreshCw, RotateCcw, RotateCw } from "lucide-react";
-import type { RuntimeInfo, UpdateCheckResult } from "../bridge";
+import { CheckCircle2, Cpu, ExternalLink, FolderOpen, HardDrive, Paintbrush, Palette, Pipette, RefreshCw, RotateCcw, RotateCw, ShieldCheck, Zap } from "lucide-react";
+import type { ConverterSettings, RuntimeInfo, UpdateCheckResult } from "../bridge";
 import { bridge } from "../bridge";
 
 const ACCENT_PRESETS = [
@@ -27,6 +27,8 @@ const BG_PRESETS = [
 
 export function SettingsView({
   runtime,
+  settings,
+  onSettings,
   accentColor = "#c52b68",
   bgColor = "#02000a",
   onAccentColorChange,
@@ -35,6 +37,8 @@ export function SettingsView({
   onStatus,
 }: {
   runtime: RuntimeInfo | null;
+  settings?: ConverterSettings;
+  onSettings?: (next: ConverterSettings) => void;
   accentColor?: string;
   bgColor?: string;
   onAccentColorChange?: (color: string) => void;
@@ -54,6 +58,17 @@ export function SettingsView({
   useEffect(() => {
     setDataRootPath(runtime?.dataRoot ?? "");
   }, [runtime?.dataRoot]);
+
+  function toggleAdaptiveGpu() {
+    if (!settings || !onSettings) return;
+    const nextUseGpu = !settings.useGpu;
+    onSettings({ ...settings, useGpu: nextUseGpu });
+    const nextMessage = nextUseGpu
+      ? `Adaptive GPU Acceleration enabled (${runtime?.gpuLabel || "GPU when supported, CPU otherwise"}).`
+      : "Adaptive GPU Acceleration disabled. Conversions will use CPU multi-core mode.";
+    setMessage(nextMessage);
+    onStatus(nextMessage);
+  }
 
   async function chooseDataRoot() {
     const path = await bridge.chooseFolder();
@@ -143,10 +158,81 @@ export function SettingsView({
     }
   }
 
+  const gpuEnabled = Boolean(settings?.useGpu);
+
   return (
     <div className="mx-auto max-w-[980px] space-y-5 pb-10">
       <div><div className="mono-label">Runtime and updates</div><h1 className="mt-2 text-3xl font-semibold tracking-[-.04em] text-white">Keep control of the application.</h1><p className="mt-2 text-sm text-zinc-500">{runtime?.packaged ? "Running from a production package." : "Running from a source checkout."}</p></div>
       <section className="panel p-5"><div className="flex items-center gap-2 text-sm text-zinc-200"><HardDrive size={16} className="text-zinc-500" /> Runtime readiness</div><div className="mt-4 grid gap-2 md:grid-cols-2">{[["Python", runtime?.pythonReady, runtime?.pythonPath], ["FFmpeg", runtime?.ffmpegReady, runtime?.ffmpegPath || "Required by conversion and media probing"], ["GPU", runtime?.gpuAvailable, runtime?.gpuLabel], ["Data root", true, runtime?.dataRoot]].map(([label, ready, detail]) => <div key={String(label)} className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-3"><div className="flex items-center gap-2 text-xs text-zinc-300">{ready ? <CheckCircle2 className="size-3.5 text-emerald-400" /> : <span className="size-3.5 rounded-full border border-amber-400/50" />}{label}</div><div className="mt-1 truncate font-mono text-[10px] text-zinc-700">{String(detail ?? "Checking...")}</div></div>)}</div></section>
+
+      <section className="panel space-y-4 p-5" aria-labelledby="adaptive-gpu-heading">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+              <Zap size={16} style={{ color: "var(--accent-color, #c52b68)" }} />
+              <span id="adaptive-gpu-heading">Adaptive GPU Acceleration</span>
+              <span
+                className={
+                  "rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase " +
+                  (gpuEnabled
+                    ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                    : "border-white/[0.10] bg-white/[0.03] text-zinc-400")
+                }
+              >
+                {gpuEnabled ? "Enabled" : "Disabled"}
+              </span>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
+              Universal hardware acceleration for <strong className="text-zinc-200">{runtime?.gpuLabel || "your GPU"}</strong>. When turned on, JaneConverter automatically uses your GPU whenever it speeds up a task and safely skips it when it shouldn’t be used.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={gpuEnabled}
+            aria-label="Adaptive GPU Acceleration"
+            disabled={!settings || !onSettings}
+            onClick={toggleAdaptiveGpu}
+            className={
+              "flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 " +
+              (gpuEnabled
+                ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                : "subtle-button text-zinc-200")
+            }
+          >
+            <Zap className={"size-3.5 " + (gpuEnabled ? "text-emerald-300" : "text-zinc-400")} />
+            {gpuEnabled ? "Adaptive GPU Active" : "Enable Adaptive GPU"}
+          </button>
+        </div>
+
+        <div className="grid gap-2.5 border-t border-white/[0.06] pt-3.5 md:grid-cols-3">
+          <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-300">
+              <Zap className="size-3.5 shrink-0" /> 1. Speeds up video encoding
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">
+              Uses your GPU encoder (NVENC / AMF / Quick Sync) when converting or resizing videos into <span className="font-mono text-zinc-300">MP4</span>, <span className="font-mono text-zinc-300">MKV</span>, or <span className="font-mono text-zinc-300">MOV</span>.
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-sky-300">
+              <Cpu className="size-3.5 shrink-0" /> 2. Skips when not needed
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">
+              Automatically bypasses the GPU for <strong className="text-zinc-300">Preserve Quality (Source)</strong>, audio (<span className="font-mono text-zinc-300">MP3</span>, <span className="font-mono text-zinc-300">FLAC</span>, <span className="font-mono text-zinc-300">WAV</span>), and images (<span className="font-mono text-zinc-300">PNG</span>, <span className="font-mono text-zinc-300">JPG</span>) so original files and audio stay untouched.
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-amber-300">
+              <ShieldCheck className="size-3.5 shrink-0" /> 3. Automatic CPU safety net
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">
+              If a video uses an unusual format that the GPU rejects, JaneConverter automatically switches to multi-core CPU so the conversion still finishes cleanly.
+            </p>
+          </div>
+        </div>
+      </section>
+
       <section className="panel p-5">
         <div className="flex items-center gap-2 text-sm text-zinc-200"><FolderOpen size={16} className="text-zinc-500" /> Application data folder</div>
         <p className="mt-2 text-xs leading-relaxed text-zinc-600">Choose where JaneConverter keeps its settings, fetched media, and converted-library defaults. Existing files stay where they are; the application will relaunch after you apply the new location.</p>

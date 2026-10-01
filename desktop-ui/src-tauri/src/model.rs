@@ -188,4 +188,6 @@ pub struct LibraryEntry {
     pub media_count: usize,
     pub total_bytes: u64,
     pub extension: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversion_ms: Option<u64>,
 }

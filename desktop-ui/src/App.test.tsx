@@ -7,7 +7,10 @@ import { bridge, type ConverterEvent } from "./bridge";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("Application shell", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
 
   it("suppresses the native webview context menu", async () => {
     const container = document.createElement("div");
@@ -27,7 +30,7 @@ describe("Application shell", () => {
     container.remove();
   });
 
-  it("shows a photo download failure without suggesting another preset", async () => {
+  it("shows a photo download failure with time elapsed without suggesting another preset", async () => {
     let deliverEvent: ((event: ConverterEvent) => void) | undefined;
     vi.spyOn(bridge, "settingsGet").mockResolvedValue({
       outputDir: "converted", fetchedDir: "fetched", category: "Image", format: "source",
@@ -59,8 +62,82 @@ describe("Application shell", () => {
     const dialog = container.querySelector('[role="alertdialog"]');
     expect(dialog?.textContent).toContain("Conversion failed");
     expect(dialog?.textContent).toContain("unsupported image type for photo 21");
+    expect(dialog?.textContent).toContain("Time elapsed:");
     expect(dialog?.textContent).toContain("photo download failed before conversion");
     expect(dialog?.textContent).not.toContain("Image → Lossless Image");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("shows the Success modal with file details, fallback note, elapsed time, and Open File / Open Path / Close actions", async () => {
+    let deliverEvent: ((event: ConverterEvent) => void) | undefined;
+    vi.spyOn(bridge, "settingsGet").mockResolvedValue({
+      outputDir: "D:\\JaneConverter\\converted", fetchedDir: "fetched", category: "Image", format: "source",
+      bitrate: "best", sampleRate: 48000, resolution: "original", normalize: false,
+      useGpu: false, saveCover: true, saveMetadata: true, retries: 2,
+    });
+    vi.spyOn(bridge, "subscribe").mockImplementation(async (listener) => {
+      deliverEvent = listener;
+      return () => {};
+    });
+    vi.spyOn(bridge, "startConversion").mockResolvedValue("job-success");
+    const openFileSpy = vi.spyOn(bridge, "openFile").mockResolvedValue();
+    const openPathSpy = vi.spyOn(bridge, "openPath").mockResolvedValue();
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => { root.render(<App />); });
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="Source media URL or local path"]');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "C:\\photos\\sample.avif");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const convert = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Convert media"));
+    await act(async () => { convert?.click(); await Promise.resolve(); });
+    await act(async () => {
+      deliverEvent?.({
+        jobId: "job-success",
+        kind: "log",
+        message: "[!] Recovered from AVIF as PNG using Lossless Image fallback.",
+      });
+      deliverEvent?.({
+        jobId: "job-success",
+        kind: "finished",
+        message: "Conversion finished. Your media is ready.",
+        output: "\\\\?\\D:\\JaneConverter\\converted\\Images\\Local Files\\sample.png",
+      });
+    });
+
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain("Success");
+    expect(dialog?.textContent).toContain("sample.png");
+    expect(dialog?.textContent).toContain("PNG (Fallback)");
+    expect(dialog?.textContent).toContain("Lossless Image Fallback");
+    expect(dialog?.textContent).toContain("Forced fallback to PNG");
+    expect(dialog?.textContent).toContain("Time elapsed:");
+    expect(dialog?.textContent).toContain("D:\\JaneConverter\\converted\\Images\\Local Files\\sample.png");
+
+    const openFileBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.includes("Open File"));
+    const openPathBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.includes("Open Path"));
+    const closeBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.trim() === "Close");
+
+    await act(async () => {
+      openFileBtn?.click();
+      openPathBtn?.click();
+      await Promise.resolve();
+    });
+    expect(openFileSpy).toHaveBeenCalledWith("D:\\JaneConverter\\converted\\Images\\Local Files\\sample.png");
+    expect(openPathSpy).toHaveBeenCalledWith("D:\\JaneConverter\\converted\\Images\\Local Files\\sample.png");
+
+    await act(async () => {
+      closeBtn?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
 
     await act(async () => { root.unmount(); });
     container.remove();

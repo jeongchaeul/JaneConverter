@@ -147,6 +147,22 @@ export interface LibraryEntry {
   mediaCount: number;
   totalBytes: number;
   extension: string;
+  conversionMs?: number;
+}
+
+export interface ConversionHistoryItem {
+  id: string;
+  timestamp: string;
+  source: string;
+  fileName: string;
+  exportPath: string;
+  presetName: string;
+  formatLabel: string;
+  qualityLabel: string;
+  elapsedMs: number;
+  status: "succeeded" | "failed";
+  fallbackNote?: string | null;
+  errorMessage?: string | null;
 }
 
 export interface JaneBridge {
@@ -172,6 +188,7 @@ export interface JaneBridge {
   scanLibrary(path: string): Promise<LibraryEntry[]>;
   isConvertedLibraryPath(path: string): Promise<boolean>;
   recentConversions(path: string, limit: number): Promise<LibraryEntry[]>;
+  clearConversionTimings(): Promise<void>;
   dragLibraryFile(path: string): Promise<void>;
   getThumbnail(root: string, path: string): Promise<string | null>;
   moveLibrary(source: string, destinationParent: string): Promise<string>;
@@ -232,6 +249,7 @@ const demoBridge: JaneBridge = {
   async scanLibrary() { return []; },
   async isConvertedLibraryPath() { return false; },
   async recentConversions() { return []; },
+  async clearConversionTimings() {},
   async dragLibraryFile() { throw new Error("Drag files into other apps from the desktop build."); },
   async getThumbnail() { return null; },
   async moveLibrary(source) { return source; },
@@ -274,6 +292,7 @@ const tauriBridge: JaneBridge = {
   scanLibrary: (path) => invoke<LibraryEntry[]>("scan_library", { path }),
   isConvertedLibraryPath: (path) => invoke<boolean>("is_converted_library_path", { path }),
   recentConversions: (path, limit) => invoke<LibraryEntry[]>("recent_conversions", { path, limit }),
+  clearConversionTimings: () => invoke<void>("clear_conversion_timings"),
   dragLibraryFile: (path) => invoke<void>("drag_library_file", { path }),
   getThumbnail: (root, path) => invoke<string | null>("get_thumbnail", { root, path }),
   moveLibrary: (source, destinationParent) => invoke<string>("move_library", { source, destinationParent }),

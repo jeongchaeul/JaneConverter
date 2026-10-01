@@ -307,6 +307,8 @@ def test_recovery_output_summary_contains_properties_without_metadata(monkeypatc
 
 def test_requested_audio_metadata_survives_real_conversion(tmp_path):
     source = tmp_path / "tone.wav"
+    cover = tmp_path / "cover.jpg"
+    Image.new("RGB", (64, 64), "purple").save(cover, format="JPEG")
     subprocess.run([
         converter.get_ffmpeg_binary(), "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2",
         "-ar", "48000", str(source),
@@ -314,10 +316,12 @@ def test_requested_audio_metadata_survives_real_conversion(tmp_path):
     result = converter.convert_media(
         str(source), str(tmp_path / "out"), "song", "mp3",
         metadata={"title": "Requested title", "artist": "Jane Cerys", "comment": "Converted by JaneConverter"},
+        cover_path=str(cover),
     )
     tags = converter.probe_media_streams(result)["format"]["tags"]
     assert tags["title"] == "Requested title"
     assert tags["artist"] == "Jane Cerys"
+    assert tags["comment"] == "Converted by JaneConverter"
 
 
 def test_requested_video_properties_survive_real_conversion(tmp_path, monkeypatch):

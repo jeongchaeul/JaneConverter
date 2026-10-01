@@ -808,7 +808,7 @@ export function ConverterView({
         format: preset.format,
         resolution: "original",
         normalize: false,
-        useGpu: false,
+        useGpu: settings.useGpu,
         bitrate: qualitiesFor(preset.format)[0],
       });
       setSelectedPresetId(preset.id);
@@ -823,7 +823,7 @@ export function ConverterView({
       sampleRate: preset.sampleRate,
       resolution: preset.resolution,
       normalize: preset.normalize,
-      useGpu: preset.useGpu,
+      useGpu: settings.useGpu || preset.useGpu,
     });
     setSelectedPresetId(preset.id);
     onStatus(`Applied ${preset.name} preset: ${preset.description}.`);

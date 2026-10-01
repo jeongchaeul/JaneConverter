@@ -281,10 +281,16 @@ def validate_output_intent(
     source_streams = source.get("streams", [])
     output_streams = output.get("streams", [])
     if intent.metadata:
+        non_cover_streams = [
+            stream for stream in output_streams
+            if not stream.get("disposition", {}).get("attached_pic")
+        ]
         output_tags = {
             str(key).lower(): str(value)
-            for tags in [output.get("format", {}).get("tags", {}),
-                         *(stream.get("tags", {}) for stream in output_streams)]
+            for tags in [
+                *(stream.get("tags", {}) for stream in non_cover_streams),
+                output.get("format", {}).get("tags", {}),
+            ]
             if isinstance(tags, dict)
             for key, value in tags.items()
         }

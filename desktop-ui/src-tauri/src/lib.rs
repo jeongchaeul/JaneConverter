@@ -270,15 +270,16 @@ fn choose_folder() -> Option<String> {
 
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
-    let target = PathBuf::from(path.trim());
+    let target = PathBuf::from(library::clean_windows_path(&path));
     if !target.exists() {
         return Err("That file or folder no longer exists.".into());
     }
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         let mut command = Command::new("explorer");
         if target.is_file() {
-            command.arg("/select,").arg(&target);
+            command.raw_arg(format!("/select,\"{}\"", target.display()));
         } else {
             command.arg(&target);
         }
@@ -303,9 +304,17 @@ fn open_path(path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn open_file(path: String) -> Result<(), String> {
-    let target = PathBuf::from(path.trim());
-    if !target.is_file() {
+    let initial = PathBuf::from(library::clean_windows_path(&path));
+    let target = if initial.is_dir() {
+        library::first_media_file_in_dir(&initial).unwrap_or(initial)
+    } else {
+        initial
+    };
+    if !target.exists() {
         return Err("That media file no longer exists.".into());
+    }
+    if target.is_dir() {
+        return open_path(target.display().to_string());
     }
     #[cfg(target_os = "windows")]
     {
@@ -329,6 +338,11 @@ fn open_file(path: String) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+#[tauri::command]
+fn clear_conversion_timings() -> Result<(), String> {
+    library::clear_conversion_timings()
 }
 
 #[tauri::command]
@@ -1982,6 +1996,7 @@ pub fn run() {
             scan_library,
             is_converted_library_path,
             recent_conversions,
+            clear_conversion_timings,
             drag_library_file,
             get_thumbnail,
             move_library,

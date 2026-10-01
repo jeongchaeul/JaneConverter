@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
+  CheckCircle2,
+  Clock,
   Copy,
   ExternalLink,
   FileAudio,
@@ -9,16 +11,18 @@ import {
   Folder,
   FolderInput,
   FolderOpen,
+  History,
   ImageIcon,
   Play,
   RefreshCw,
   Trash2,
   Video,
+  XCircle,
 } from "lucide-react";
 import { motion } from "framer-motion";
-import type { ConverterSettings, LibraryEntry } from "../bridge";
+import type { ConversionHistoryItem, ConverterSettings, LibraryEntry } from "../bridge";
 import { bridge } from "../bridge";
-import { detectCategoryFromPath } from "../options";
+import { detectCategoryFromPath, formatElapsedMs } from "../options";
 
 function size(value: number) {
   return value < 1024 * 1024
@@ -26,8 +30,12 @@ function size(value: number) {
     : (value / (1024 * 1024)).toFixed(1) + " MB";
 }
 
+function cleanPath(value: string) {
+  return value.trim().replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "");
+}
+
 function pathKey(value: string) {
-  return value.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+  return cleanPath(value).replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
 }
 
 function isInside(root: string, candidate: string) {
@@ -51,7 +59,7 @@ function joinPath(parent: string, name: string) {
   return parent.replace(/[\\/]+$/, "") + "\\" + name;
 }
 
-type LibrarySection = "explorer" | "recent";
+type LibrarySection = "explorer" | "recent" | "history";
 type MediaFilter = "all" | "audio" | "video" | "image" | "metadata";
 type PreviewSetter = (update: (current: Record<string, string>) => Record<string, string>) => void;
 
@@ -69,7 +77,6 @@ function isMetadataEntry(entry: LibraryEntry) {
 
 function matchesMediaFilter(entry: LibraryEntry, filter: MediaFilter) {
   if (filter === "all" || entry.isDirectory) return true;
-  const extension = entry.extension.toLowerCase();
   const inMetadataFolder = isMetadataEntry(entry);
   if (filter === "metadata") return inMetadataFolder;
   if (inMetadataFolder) return false;
@@ -97,10 +104,18 @@ export function LibraryView({
   settings,
   onSettings,
   onStatus,
+  history = [],
+  conversionTimings = {},
+  onClearHistory,
+  onRemoveHistoryItem,
 }: {
   settings: ConverterSettings;
   onSettings: (settings: ConverterSettings) => void;
   onStatus: (message: string) => void;
+  history?: ConversionHistoryItem[];
+  conversionTimings?: Record<string, number>;
+  onClearHistory?: () => void;
+  onRemoveHistoryItem?: (id: string) => void;
 }) {
   const [root, setRoot] = useState(settings.outputDir);
   const [currentPath, setCurrentPath] = useState(settings.outputDir);
@@ -121,6 +136,11 @@ export function LibraryView({
   const libraryDragActive = useRef(false);
   const suppressClickUntil = useRef(0);
 
+  function entryElapsedMs(entry: LibraryEntry): number | undefined {
+    if (entry.conversionMs !== undefined) return entry.conversionMs;
+    return conversionTimings[pathKey(entry.path)];
+  }
+
   useEffect(() => {
     if (!contextMenu) return;
     const close = () => setContextMenu(null);
@@ -140,8 +160,8 @@ export function LibraryView({
   function handleContextMenu(e: React.MouseEvent, entry: LibraryEntry) {
     e.preventDefault();
     e.stopPropagation();
-    const menuWidth = 220;
-    const menuHeight = 220;
+    const menuWidth = 230;
+    const menuHeight = 250;
     const x = Math.min(e.clientX, window.innerWidth - menuWidth - 12);
     const y = Math.min(e.clientY, window.innerHeight - menuHeight - 12);
     setContextMenu({ x, y, entry });
@@ -330,6 +350,12 @@ export function LibraryView({
     setPendingAction({ kind: "delete", entry });
   }
 
+  function handleClearTempHistory() {
+    onClearHistory?.();
+    void refresh(currentPath);
+    void refreshRecent();
+  }
+
   /*
    * Keep confirmation inside the Tauri surface so it matches the design
    * system instead of looking like a browser-owned localhost dialog.
@@ -378,7 +404,11 @@ export function LibraryView({
           <div className="mono-label">Project library</div>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-.04em] text-white">Converted media.</h1>
           <p className="mt-2 text-sm text-zinc-500">
-            {section === "recent" ? "Find recent conversions and drag a file into another app." : "Browse converted media and drag a file into another app."}
+            {section === "history"
+              ? "Review conversion history, presets, quality, elapsed time, and operation outcomes."
+              : section === "recent"
+              ? "Find recent conversions and drag a file into another app."
+              : "Browse converted media and drag a file into another app."}
           </p>
           <div className="mt-4 inline-flex rounded-xl border border-white/[0.08] bg-white/[0.025] p-1">
             <button
@@ -397,6 +427,14 @@ export function LibraryView({
             >
               Recents
             </button>
+            <button
+              type="button"
+              aria-pressed={section === "history"}
+              onClick={() => setSection("history")}
+              className={"rounded-lg px-3 py-2 text-xs transition-colors " + (section === "history" ? "bg-white/[0.09] text-white" : "text-zinc-500 hover:text-zinc-300")}
+            >
+              History
+            </button>
           </div>
           {section === "explorer" && (
             <div className="mt-2 inline-flex flex-wrap rounded-xl border border-white/[0.08] bg-white/[0.025] p-1" role="group" aria-label="Filter library by media type">
@@ -414,152 +452,273 @@ export function LibraryView({
             </div>
           )}
         </div>
-        <button type="button" onClick={() => void (section === "recent" ? refreshRecent() : refresh())} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs">
-          <RefreshCw className={"size-3.5 " + (activeLoading ? "animate-spin" : "")} /> Refresh
-        </button>
-      </motion.div>
-
-      <section className="panel space-y-3 p-4">
-        {section === "explorer" && (
-          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+        <div className="flex flex-wrap items-center gap-2">
+          {section === "history" ? (
             <button
               type="button"
-              disabled={atRoot}
-              title={atRoot ? "Already at the library root" : "Go to the parent folder"}
-              onClick={goBack}
-              className={"subtle-button flex items-center gap-2 px-3 py-2 " + (atRoot ? "cursor-not-allowed opacity-40" : "")}
+              onClick={handleClearTempHistory}
+              className="subtle-button flex items-center gap-2 px-3 py-2 text-xs text-rose-300 hover:border-rose-500/40"
             >
-              <ArrowLeft className="size-3.5" /> Back
+              <Trash2 className="size-3.5" /> Clear Temp History
             </button>
-            <span className="truncate font-mono text-[11px] text-zinc-700">{currentPath}</span>
-          </div>
-        )}
-        <div className={"flex flex-wrap items-center justify-between gap-3 " + (section === "explorer" ? "border-t border-white/[0.06] pt-3" : "")}>
-          <div>
-            <div className="text-xs text-zinc-400">Library root</div>
-            <div className="mt-1 truncate font-mono text-[11px] text-zinc-600">{root}</div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => void openPath(root)} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs">
-              <ExternalLink className="size-3.5" /> Open folder
+          ) : (
+            <button type="button" onClick={() => void (section === "recent" ? refreshRecent() : refresh())} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs">
+              <RefreshCw className={"size-3.5 " + (activeLoading ? "animate-spin" : "")} /> Refresh
             </button>
-            <button type="button" disabled={moving} onClick={() => void moveLibrary()} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-wait disabled:opacity-60">
-              <FolderInput className={"size-3.5 " + (moving ? "animate-pulse" : "")} /> {moving ? "Moving library..." : "Move library"}
-            </button>
-          </div>
+          )}
         </div>
-      </section>
+      </motion.div>
 
-      <section className="space-y-2">
-        {!visibleEntries.length && <div className="panel py-14 text-center text-sm text-zinc-600">{activeLoading ? "Scanning converted media..." : section === "recent" ? "No recent conversions found in this library." : mediaFilter === "all" ? "No converted media found in this folder." : `No ${MEDIA_FILTERS.find((filter) => filter.id === mediaFilter)?.label.toLowerCase()} found in this folder.`}</div>}
-        {visibleEntries.slice(0, 500).map((entry) => {
-          const preview = visiblePreviews[entry.path];
-          const metadata = isMetadataEntry(entry);
-          const details = entry.isDirectory
-            ? entry.mediaCount + " media item" + (entry.mediaCount === 1 ? "" : "s") + " - " + size(entry.totalBytes)
-            : entry.extension + " - " + size(entry.totalBytes);
-          return (
-            <motion.div
-              key={entry.path}
-              draggable={!entry.isDirectory && !metadata}
-              onDragStartCapture={metadata ? undefined : (event) => dragFile(event, entry)}
-              title={entry.isDirectory || metadata ? undefined : "Drag this file into another app"}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              whileHover={{ scale: 1.002 }}
-              whileTap={{ scale: 0.998 }}
-              onClick={() => {
-                if (entry.isDirectory) {
-                  navigate(entry.path);
-                }
-              }}
-              onDoubleClick={(event) => {
-                if (entry.isDirectory || (event.target instanceof Element && event.target.closest("button"))) return;
-                void openFile(entry.path);
-              }}
-              onContextMenu={(e) => handleContextMenu(e, entry)}
-              className={`panel group relative flex flex-wrap items-center gap-3 px-4 py-3 select-none transition-all duration-150 hover:border-pink-500/30 hover:bg-white/[0.04] active:bg-white/[0.06] ${entry.isDirectory ? "cursor-pointer" : "cursor-default"}`}
-            >
-              <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-white/[0.07] bg-black/15 text-zinc-500">
-                {preview ? (
-                  <img
-                    src={preview}
-                    alt=""
-                    draggable={false}
-                    className="size-full object-cover"
-                    onError={() => removePreview(entry.path)}
-                  />
-                ) : entry.isDirectory ? (
-                  <Folder className={entry.isPlaylist ? "text-[#d75b88]" : ""} size={17} />
-                ) : (
-                  mediaIcon(entry)
+      {section !== "history" && (
+        <section className="panel space-y-3 p-4">
+          {section === "explorer" && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+              <button
+                type="button"
+                disabled={atRoot}
+                title={atRoot ? "Already at the library root" : "Go to the parent folder"}
+                onClick={goBack}
+                className={"subtle-button flex items-center gap-2 px-3 py-2 " + (atRoot ? "cursor-not-allowed opacity-40" : "")}
+              >
+                <ArrowLeft className="size-3.5" /> Back
+              </button>
+              <span className="truncate font-mono text-[11px] text-zinc-700">{currentPath}</span>
+            </div>
+          )}
+          <div className={"flex flex-wrap items-center justify-between gap-3 " + (section === "explorer" ? "border-t border-white/[0.06] pt-3" : "")}>
+            <div>
+              <div className="text-xs text-zinc-400">Library root</div>
+              <div className="mt-1 truncate font-mono text-[11px] text-zinc-600">{root}</div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => void openPath(root)} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs">
+                <ExternalLink className="size-3.5" /> Open folder
+              </button>
+              <button type="button" disabled={moving} onClick={() => void moveLibrary()} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-wait disabled:opacity-60">
+                <FolderInput className={"size-3.5 " + (moving ? "animate-pulse" : "")} /> {moving ? "Moving library..." : "Move library"}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {section === "history" ? (
+        <section className="space-y-2.5">
+          {!history.length && (
+            <div className="panel py-14 text-center text-sm text-zinc-600">
+              <History className="mx-auto mb-2 size-5 text-zinc-600" />
+              No temporary conversion history recorded yet.
+            </div>
+          )}
+          {history.map((item) => {
+            const succeeded = item.status === "succeeded";
+            return (
+              <motion.div
+                key={item.id}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="panel space-y-2.5 p-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={
+                          "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium " +
+                          (succeeded
+                            ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                            : "border-rose-400/30 bg-rose-400/10 text-rose-300")
+                        }
+                      >
+                        {succeeded ? <CheckCircle2 className="size-3" /> : <XCircle className="size-3" />}
+                        {succeeded ? "Succeeded" : "Failed"}
+                      </span>
+                      <span className="truncate text-sm font-medium text-white">{item.fileName}</span>
+                    </div>
+                    <div className="mt-1 break-all font-mono text-[11px] text-zinc-500">
+                      Source: {item.source}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <span className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 text-zinc-300">
+                      Preset: {item.presetName}
+                    </span>
+                    <span className="rounded-md border border-pink-500/30 bg-pink-500/10 px-2 py-0.5 font-mono text-pink-200">
+                      {item.formatLabel}
+                    </span>
+                    <span className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 text-zinc-300">
+                      {item.qualityLabel}
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 font-mono text-zinc-400">
+                      <Clock className="size-3 text-zinc-500" />
+                      {formatElapsedMs(item.elapsedMs)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveHistoryItem?.(item.id)}
+                      className="grid size-7 place-items-center rounded-lg text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-300"
+                      aria-label={`Delete history entry for ${item.fileName}`}
+                      title={`Delete ${item.fileName} from history`}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+                {item.fallbackNote && (
+                  <div className="rounded-lg border border-amber-400/25 bg-amber-400/10 px-3 py-1.5 text-xs text-amber-200">
+                    {item.fallbackNote}
+                  </div>
                 )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm text-zinc-300 group-hover:text-white transition-colors">{entry.name}</div>
-                <div className="mt-1 text-[11px] text-zinc-600">{details}{entry.isPlaylist ? " - playlist" : ""}</div>
-                {section === "recent" && <div className="mt-1 truncate font-mono text-[10px] text-zinc-700">{parentPath(entry.path)}</div>}
-              </div>
-              {entry.isDirectory ? (
-                <button
-                  type="button"
-                  aria-label={"Open " + entry.name}
-                  onClick={(e) => {
-                    e.stopPropagation();
+                {succeeded ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] pt-2.5">
+                    <div className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500">
+                      Exported: {item.exportPath}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void openFile(item.exportPath)}
+                        className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs hover:border-pink-500/40"
+                      >
+                        <Play className="size-3 text-pink-400" /> Open File
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void openPath(item.exportPath)}
+                        className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                      >
+                        <FolderOpen className="size-3.5" /> Open Path
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  item.errorMessage && (
+                    <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                      {item.errorMessage}
+                    </div>
+                  )
+                )}
+              </motion.div>
+            );
+          })}
+        </section>
+      ) : (
+        <section className="space-y-2">
+          {!visibleEntries.length && <div className="panel py-14 text-center text-sm text-zinc-600">{activeLoading ? "Scanning converted media..." : section === "recent" ? "No recent conversions found in this library." : mediaFilter === "all" ? "No converted media found in this folder." : `No ${MEDIA_FILTERS.find((filter) => filter.id === mediaFilter)?.label.toLowerCase()} found in this folder.`}</div>}
+          {visibleEntries.slice(0, 500).map((entry) => {
+            const preview = visiblePreviews[entry.path];
+            const metadata = isMetadataEntry(entry);
+            const elapsed = entryElapsedMs(entry);
+            const details = entry.isDirectory
+              ? entry.mediaCount + " media item" + (entry.mediaCount === 1 ? "" : "s") + " - " + size(entry.totalBytes)
+              : entry.extension + " - " + size(entry.totalBytes);
+            return (
+              <motion.div
+                key={entry.path}
+                draggable={!entry.isDirectory && !metadata}
+                onDragStartCapture={metadata ? undefined : (event) => dragFile(event, entry)}
+                title={entry.isDirectory || metadata ? undefined : "Drag this file into another app"}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                whileHover={{ scale: 1.002 }}
+                whileTap={{ scale: 0.998 }}
+                onClick={() => {
+                  if (entry.isDirectory) {
                     navigate(entry.path);
-                  }}
-                  className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors hover:border-pink-500/40"
-                >
-                  <FolderOpen className="size-3.5 text-pink-400" /> Open
-                </button>
-              ) : (
-                <div className="flex flex-wrap items-center gap-2">
+                  }
+                }}
+                onDoubleClick={(event) => {
+                  if (entry.isDirectory || (event.target instanceof Element && event.target.closest("button"))) return;
+                  void openFile(entry.path);
+                }}
+                onContextMenu={(e) => handleContextMenu(e, entry)}
+                className={`panel group relative flex flex-wrap items-center gap-3 px-4 py-3 select-none transition-all duration-150 hover:border-pink-500/30 hover:bg-white/[0.04] active:bg-white/[0.06] ${entry.isDirectory ? "cursor-pointer" : "cursor-default"}`}
+              >
+                <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-white/[0.07] bg-black/15 text-zinc-500">
+                  {preview ? (
+                    <img
+                      src={preview}
+                      alt=""
+                      draggable={false}
+                      className="size-full object-cover"
+                      onError={() => removePreview(entry.path)}
+                    />
+                  ) : entry.isDirectory ? (
+                    <Folder className={entry.isPlaylist ? "text-[#d75b88]" : ""} size={17} />
+                  ) : (
+                    mediaIcon(entry)
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm text-zinc-300 group-hover:text-white transition-colors">{entry.name}</div>
+                  <div className="mt-1 text-[11px] text-zinc-600">
+                    {details}
+                    {entry.isPlaylist ? " - playlist" : ""}
+                    {elapsed !== undefined ? ` - Converted in ${formatElapsedMs(elapsed)}` : ""}
+                  </div>
+                  {section === "recent" && <div className="mt-1 truncate font-mono text-[10px] text-zinc-700">{parentPath(entry.path)}</div>}
+                </div>
+                {entry.isDirectory ? (
                   <button
                     type="button"
                     aria-label={"Open " + entry.name}
                     onClick={(e) => {
                       e.stopPropagation();
-                      void openFile(entry.path);
+                      navigate(entry.path);
                     }}
                     className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors hover:border-pink-500/40"
                   >
-                    <Play className="size-3 text-pink-400" /> Open
+                    <FolderOpen className="size-3.5 text-pink-400" /> Open
                   </button>
-                  <button
-                    type="button"
-                    aria-label={"Show " + entry.name + " in folder"}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void openPath(entry.path);
-                    }}
-                    className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
-                  >
-                    <FolderOpen className="size-3.5" /> Show file
-                  </button>
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  remove(entry);
-                }}
-                className="grid size-8 place-items-center rounded-lg text-zinc-600 transition-colors hover:bg-red-500/10 hover:text-red-300"
-                aria-label={"Delete " + entry.name}
-                title={"Delete " + entry.name}
-              >
-                <Trash2 size={14} />
-              </button>
-            </motion.div>
-          );
-        })}
-        {visibleEntries.length > 500 && <div className="text-center text-[11px] text-zinc-700">Showing the first 500 items to keep the library responsive.</div>}
-        {!activeLoading && visibleEntries.length > 0 && Object.keys(visiblePreviews).length === 0 && (
-          <div className="flex items-center justify-center gap-2 pt-2 text-[11px] text-zinc-700">
-            <ImageIcon size={13} /> Covers and previews appear when embedded artwork or a supported video frame is available.
-          </div>
-        )}
-      </section>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      aria-label={"Open " + entry.name}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void openFile(entry.path);
+                      }}
+                      className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors hover:border-pink-500/40"
+                    >
+                      <Play className="size-3 text-pink-400" /> Open
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={"Show " + entry.name + " in folder"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void openPath(entry.path);
+                      }}
+                      className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                    >
+                      <FolderOpen className="size-3.5" /> Show file
+                    </button>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    remove(entry);
+                  }}
+                  className="grid size-8 place-items-center rounded-lg text-zinc-600 transition-colors hover:bg-red-500/10 hover:text-red-300"
+                  aria-label={"Delete " + entry.name}
+                  title={"Delete " + entry.name}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </motion.div>
+            );
+          })}
+          {visibleEntries.length > 500 && <div className="text-center text-[11px] text-zinc-700">Showing the first 500 items to keep the library responsive.</div>}
+          {!activeLoading && visibleEntries.length > 0 && Object.keys(visiblePreviews).length === 0 && (
+            <div className="flex items-center justify-center gap-2 pt-2 text-[11px] text-zinc-700">
+              <ImageIcon size={13} /> Covers and previews appear when embedded artwork or a supported video frame is available.
+            </div>
+          )}
+        </section>
+      )}
 
       {contextMenu && (
         <div
@@ -569,13 +728,21 @@ export function LibraryView({
             top: `${contextMenu.y}px`,
             zIndex: 9999,
           }}
-          className="context-menu min-w-[210px] rounded-xl border border-white/[0.12] bg-[#0c0914]/95 p-1.5 shadow-2xl shadow-black/80 backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+          className="context-menu min-w-[220px] rounded-xl border border-white/[0.12] bg-[#0c0914]/95 p-1.5 shadow-2xl shadow-black/80 backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="border-b border-white/[0.06] px-3 py-2">
             <div className="truncate text-xs font-semibold text-white">{contextMenu.entry.name}</div>
             <div className="text-[10px] text-zinc-500">
               {contextMenu.entry.isDirectory ? "Folder" : `${contextMenu.entry.extension} File`}
+            </div>
+            <div className="mt-1.5 flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[11px]">
+              <span className="inline-flex items-center gap-1 text-zinc-400">
+                <Clock size={11} className="text-pink-400" /> Conversion time
+              </span>
+              <span className="font-mono text-zinc-200">
+                {formatElapsedMs(entryElapsedMs(contextMenu.entry))}
+              </span>
             </div>
           </div>
 

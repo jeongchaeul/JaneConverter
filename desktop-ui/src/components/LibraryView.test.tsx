@@ -15,6 +15,7 @@ const fakeBridge = vi.hoisted(() => ({
   getThumbnail: vi.fn(),
   recentConversions: vi.fn(),
   deleteLibraryEntry: vi.fn(),
+  clearConversionTimings: vi.fn(),
 }));
 
 vi.mock("../bridge", () => ({ bridge: fakeBridge }));
@@ -46,6 +47,7 @@ describe("Converted library", () => {
     fakeBridge.getThumbnail.mockReset();
     fakeBridge.recentConversions.mockReset();
     fakeBridge.deleteLibraryEntry.mockReset();
+    fakeBridge.clearConversionTimings.mockReset();
     fakeBridge.scanLibrary.mockResolvedValue([
       {
         path: "D:\\JaneConverter\\converted\\Music",
@@ -64,6 +66,7 @@ describe("Converted library", () => {
         mediaCount: 1,
         totalBytes: 1024,
         extension: "MP3",
+        conversionMs: 2450,
       },
     ]);
     fakeBridge.recentConversions.mockResolvedValue([]);
@@ -139,7 +142,7 @@ describe("Converted library", () => {
     container.remove();
   });
 
-  it("offers separate open and reveal actions for media files", async () => {
+  it("offers separate open and reveal actions for media files and displays conversion elapsed time in context menu", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -147,6 +150,16 @@ describe("Converted library", () => {
     await act(async () => {
       root.render(<LibraryView settings={settings} onSettings={vi.fn()} onStatus={vi.fn()} />);
     });
+
+    expect(container.textContent).toContain("Converted in 2.5s");
+
+    const fileRow = container.querySelector<HTMLElement>('[title="Drag this file into another app"]');
+    await act(async () => {
+      fileRow?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }));
+    });
+    const menu = container.querySelector(".context-menu");
+    expect(menu?.textContent).toContain("Conversion time");
+    expect(menu?.textContent).toContain("2.5s");
 
     await act(async () => {
       container.querySelector('button[aria-label="Open song.mp3"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -210,6 +223,73 @@ describe("Converted library", () => {
     expect(fakeBridge.recentConversions).toHaveBeenCalledWith(settings.outputDir, 100);
     expect(container.textContent).toContain("recent.mp4");
     expect(container.textContent).toContain("D:\\JaneConverter\\converted\\Videos\\Facebook");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("shows conversion history, deletes individual entries, and flushes all via Clear Temp History", async () => {
+    const onClearHistory = vi.fn();
+    const onRemoveHistoryItem = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <LibraryView
+          settings={settings}
+          onSettings={vi.fn()}
+          onStatus={vi.fn()}
+          onClearHistory={onClearHistory}
+          onRemoveHistoryItem={onRemoveHistoryItem}
+          history={[
+            {
+              id: "hist-1",
+              timestamp: "2026-10-01T10:00:00.000Z",
+              source: "https://www.instagram.com/p/ABC123/",
+              fileName: "photo_01.jpg",
+              exportPath: "D:\\JaneConverter\\converted\\Images\\Instagram\\photo_01.jpg",
+              presetName: "Preserve Quality",
+              formatLabel: "JPG (Source)",
+              qualityLabel: "Source Quality",
+              elapsedMs: 1800,
+              status: "succeeded",
+              fallbackNote: null,
+            },
+          ]}
+        />,
+      );
+    });
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "History")?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Succeeded");
+    expect(container.textContent).toContain("photo_01.jpg");
+    expect(container.textContent).toContain("https://www.instagram.com/p/ABC123/");
+    expect(container.textContent).toContain("Preset: Preserve Quality");
+    expect(container.textContent).toContain("JPG (Source)");
+    expect(container.textContent).toContain("Source Quality");
+    expect(container.textContent).toContain("1.8s");
+
+    const deleteItemBtn = container.querySelector('button[aria-label="Delete history entry for photo_01.jpg"]');
+    expect(deleteItemBtn).not.toBeNull();
+    await act(async () => {
+      deleteItemBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(onRemoveHistoryItem).toHaveBeenCalledWith("hist-1");
+
+    const clearBtn = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Clear Temp History"));
+    expect(clearBtn).toBeDefined();
+    await act(async () => {
+      clearBtn?.click();
+      await Promise.resolve();
+    });
+    expect(onClearHistory).toHaveBeenCalledTimes(1);
 
     await act(async () => { root.unmount(); });
     container.remove();

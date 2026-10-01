@@ -233,4 +233,59 @@ describe("Settings updates", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+  it("toggles Adaptive GPU Acceleration and shows the foolproof explanation", async () => {
+    const onSettings = vi.fn();
+    const onStatus = vi.fn();
+    const initialSettings = {
+      category: "Audio" as const,
+      format: "MP3",
+      bitrate: "320k",
+      sampleRate: 48000,
+      resolution: "original",
+      outputDir: "./converted",
+      fetchedDir: "./fetched",
+      retries: 2,
+      useGpu: false,
+      saveCover: false,
+      saveMetadata: true,
+      normalize: false,
+      cookiesBrowser: "none",
+      cookiesFile: "",
+      cookies: "",
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <SettingsView
+          runtime={{ ...sourceRuntime, gpuAvailable: true, gpuLabel: "NVIDIA GeForce RTX 5060" }}
+          settings={initialSettings}
+          onSettings={onSettings}
+          onStatus={onStatus}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("Adaptive GPU Acceleration");
+    expect(container.textContent).toContain("1. Speeds up video encoding");
+    expect(container.textContent).toContain("2. Skips when not needed");
+    expect(container.textContent).toContain("3. Automatic CPU safety net");
+
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="Adaptive GPU Acceleration"]');
+    expect(toggle).toBeDefined();
+    expect(toggle?.getAttribute("aria-checked")).toBe("false");
+
+    await act(async () => {
+      toggle?.click();
+      await Promise.resolve();
+    });
+
+    expect(onSettings).toHaveBeenCalledWith({ ...initialSettings, useGpu: true });
+    expect(onStatus).toHaveBeenCalledWith(expect.stringContaining("Adaptive GPU Acceleration enabled"));
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });

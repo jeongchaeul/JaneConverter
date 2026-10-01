@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::Emitter;
 
 pub type FacebookRefreshHandler =
@@ -59,11 +59,24 @@ fn failure_detail_from_line(line: &str) -> Option<String> {
     Some(detail.chars().take(500).collect())
 }
 
+fn exported_path_from_line(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let raw = trimmed
+        .strip_prefix("DONE! Exported:")
+        .or_else(|| trimmed.strip_prefix("Export Directory:"))?
+        .trim();
+    if raw.is_empty() {
+        return None;
+    }
+    Some(raw.to_owned())
+}
+
 pub fn forward_output<R: Read + Send + 'static>(
     reader: R,
     app: tauri::AppHandle,
     job_id: String,
     failure_detail: Option<Arc<Mutex<Option<String>>>>,
+    exported_output: Option<Arc<Mutex<Option<String>>>>,
     facebook_stdin: Option<Arc<Mutex<ChildStdin>>>,
     facebook_refresh: Option<FacebookRefreshHandler>,
 ) -> thread::JoinHandle<()> {
@@ -133,6 +146,13 @@ pub fn forward_output<R: Read + Send + 'static>(
                 if let Some(failure_detail) = &failure_detail {
                     if let Ok(mut current) = failure_detail.lock() {
                         *current = Some(detail);
+                    }
+                }
+            }
+            if let Some(exported) = exported_path_from_line(&message) {
+                if let Some(exported_output) = &exported_output {
+                    if let Ok(mut current) = exported_output.lock() {
+                        *current = Some(exported);
                     }
                 }
             }
@@ -362,13 +382,16 @@ pub fn start_conversion(
         .cancel
         .lock()
         .map_err(|_| "The cancellation slot is unavailable.")? = Some(Arc::clone(&cancel));
+    let started_at = Instant::now();
     let failure_detail = Arc::new(Mutex::new(None));
+    let exported_output = Arc::new(Mutex::new(None));
     let stdout_thread = stdout.map(|reader| {
         forward_output(
             reader,
             app.clone(),
             job_id.clone(),
             None,
+            Some(Arc::clone(&exported_output)),
             facebook_stdin,
             slots.facebook_refresh.clone(),
         )
@@ -379,6 +402,7 @@ pub fn start_conversion(
             app.clone(),
             job_id.clone(),
             Some(Arc::clone(&failure_detail)),
+            None,
             None,
             None,
         )
@@ -406,6 +430,7 @@ pub fn start_conversion(
             }
             thread::sleep(Duration::from_millis(80));
         };
+        let elapsed_ms = started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
         let cancelled = cancel.load(Ordering::Relaxed);
         let code = status.code().unwrap_or(1);
         output(code, cancelled);
@@ -414,6 +439,15 @@ pub fn start_conversion(
         }
         if let Some(thread) = stderr_thread {
             let _ = thread.join();
+        }
+        let mut resolved_output = None;
+        if !cancelled && status.success() {
+            if let Some(raw_path) = exported_output.lock().ok().and_then(|value| value.clone()) {
+                let (record_target, display_output) =
+                    crate::library::resolve_exported_output(&raw_path);
+                crate::library::record_conversion_timing(&record_target, elapsed_ms);
+                resolved_output = Some(display_output);
+            }
         }
         let (kind, message, progress) = if cancelled {
             ("cancelled", "Conversion cancelled.".to_string(), None)
@@ -439,7 +473,7 @@ pub fn start_conversion(
                 kind: kind.into(),
                 message,
                 progress,
-                output: None,
+                output: resolved_output,
             },
         );
     });

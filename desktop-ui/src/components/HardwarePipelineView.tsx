@@ -102,7 +102,7 @@ export function HardwarePipelineView({
   const stopped = !active && progress > 0 && progress < 1;
   const gpuTelemetry = current?.telemetrySource === "nvidia-smi";
   const accelerator = settings.useGpu
-    ? runtime?.gpuAvailable ? runtime.gpuLabel : "No supported GPU encoder detected; CPU mode is available"
+    ? runtime?.gpuAvailable ? `${runtime.gpuLabel} (Adaptive GPU active)` : "Adaptive GPU enabled (CPU fallback active)"
     : runtime?.gpuAvailable ? "GPU available, disabled in current settings" : "CPU multi-core mode";
   const outputPath = settings.outputDir || "—";
   const fetchedPath = settings.fetchedDir || "—";
