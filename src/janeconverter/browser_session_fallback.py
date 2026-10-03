@@ -80,19 +80,22 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
         if report:
             report(0.15, f"Sign-in required. Temporarily using your {browser.title()} session to retry.", force=True)
         jar = None
+        authenticated = None
         try:
             import yt_dlp
             with yt_dlp.YoutubeDL(options) as authenticated:
                 # yt-dlp itself reads/decrypts the browser database. Its native
                 # temporary database copy is cleaned by its context manager.
-                jar = authenticated.cookiejar
-                for cookie in list(jar):
-                    host = cookie.domain.lstrip(".").lower()
-                    if not any(host == root or host.endswith("." + root) for root in domains):
-                        jar.clear(cookie.domain, cookie.path, cookie.name)
-                    else:
-                        cookie.secure = True
-                if not len(jar):
+                jar = getattr(authenticated, "_cookiejar", None) or authenticated.cookiejar
+                if jar is not None:
+                    for cookie in list(jar):
+                        raw_domain = getattr(cookie, "domain", None) or ""
+                        host = raw_domain.lstrip(".").lower()
+                        if not host or not any(host == root or host.endswith("." + root) for root in domains):
+                            jar.clear(getattr(cookie, "domain", None), getattr(cookie, "path", None), getattr(cookie, "name", None))
+                        else:
+                            cookie.secure = True
+                if not jar or not len(jar):
                     raise BrowserSessionError(f"No usable session for this site was found in {browser.title()}. Sign in there, then retry; Browser Capture is also available.")
                 if abort_event and abort_event.is_set():
                     raise KeyboardInterrupt("Stream extraction aborted by user.")
@@ -110,4 +113,14 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
             raise BrowserSessionError(detail) from None
         finally:
             if jar is not None:
-                jar.clear()
+                try:
+                    jar.clear()
+                except Exception:
+                    pass
+            if authenticated is not None:
+                try:
+                    auth_jar = getattr(authenticated, "_cookiejar", None)
+                    if auth_jar is not None:
+                        auth_jar.clear()
+                except Exception:
+                    pass

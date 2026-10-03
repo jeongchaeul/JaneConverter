@@ -11,6 +11,8 @@ import time
 import unicodedata
 import urllib.parse
 from typing import Optional, Dict, Any, Callable
+import ipaddress
+import socket
 import json
 import requests
 import yt_dlp
@@ -205,33 +207,114 @@ def build_video_format_selector(resolution: str = "original") -> str:
         return "bv*+ba/b"
     return f"bv*[height<={max_height}]+ba/b[height<={max_height}]/best[height<={max_height}]"
 
+MAX_THUMBNAIL_BYTES = 15 * 1024 * 1024  # 15 MiB limit for cover art
+MAX_THUMBNAIL_PIXELS = 16_000_000      # 16 Megapixels decompression bomb protection
+MAX_THUMBNAIL_DIMENSION = 8192
+MAX_REDIRECTS = 5
+
+
+def _is_safe_public_url(url: str) -> bool:
+    """Verifies that URL uses http/https and does not resolve to private, loopback, or internal addresses."""
+    if not isinstance(url, str) or len(url) > 4096:
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(url.strip())
+        if parsed.scheme not in ("http", "https") or parsed.username or parsed.password:
+            return False
+        hostname = (parsed.hostname or "").strip().lower().rstrip(".")
+        if not hostname:
+            return False
+        if hostname == "localhost" or hostname.endswith((".local", ".internal", ".localhost", ".onion")):
+            return False
+        addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        if not addr_info:
+            return False
+        for _, _, _, _, sockaddr in addr_info:
+            ip_str = sockaddr[0]
+            ip = ipaddress.ip_address(ip_str)
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+                or ip.is_unspecified
+            ):
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def download_and_convert_thumbnail(thumbnail_url: str, output_path: str) -> Optional[str]:
+    """Downloads cover art or thumbnail from URL (or loads local image) and converts it to standard RGB JPEG.
+
+    Safely validates redirects, enforces streaming byte limits, prevents SSRF against private networks,
+    and protects against image decompression bombs. Returns path to converted image, or None if failed.
     """
-    Downloads cover art or thumbnail from URL (or loads local image) and converts it to standard RGB JPEG.
-    Returns path to converted image, or None if download fails.
-    """
-    if not thumbnail_url:
+    if not thumbnail_url or not output_path:
         return None
     try:
         from PIL import Image
         import io
+
+        Image.MAX_IMAGE_PIXELS = MAX_THUMBNAIL_PIXELS
+
         if is_url(thumbnail_url):
-            headers = {
+            current_url = thumbnail_url.strip()
+            session = requests.Session()
+            session.headers.update({
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
-            resp = requests.get(thumbnail_url, headers=headers, timeout=12)
-            if resp.status_code == 200 and resp.content:
-                img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+            })
+            downloaded_bytes = bytearray()
+            for _ in range(MAX_REDIRECTS + 1):
+                if not _is_safe_public_url(current_url):
+                    return None
+                resp = session.get(current_url, stream=True, timeout=12, allow_redirects=False)
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("Location")
+                    resp.close()
+                    if not location:
+                        return None
+                    current_url = urllib.parse.urljoin(current_url, location)
+                    continue
+                if resp.status_code != 200:
+                    resp.close()
+                    return None
+
+                for chunk in resp.iter_content(chunk_size=65536):
+                    if not chunk:
+                        continue
+                    downloaded_bytes.extend(chunk)
+                    if len(downloaded_bytes) > MAX_THUMBNAIL_BYTES:
+                        resp.close()
+                        return None
+                resp.close()
+                break
             else:
                 return None
-        elif os.path.exists(thumbnail_url):
-            img = Image.open(thumbnail_url).convert("RGB")
+
+            if not downloaded_bytes:
+                return None
+            img = Image.open(io.BytesIO(downloaded_bytes))
+        elif os.path.isfile(thumbnail_url):
+            if os.path.getsize(thumbnail_url) > MAX_THUMBNAIL_BYTES:
+                return None
+            img = Image.open(thumbnail_url)
         else:
             return None
 
-        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-        img.save(output_path, "JPEG", quality=95)
-        return os.path.abspath(output_path)
+        with img:
+            if img.width > MAX_THUMBNAIL_DIMENSION or img.height > MAX_THUMBNAIL_DIMENSION:
+                return None
+            if img.width * img.height > MAX_THUMBNAIL_PIXELS:
+                return None
+            converted = img.convert("RGB")
+
+        abs_out = os.path.abspath(output_path)
+        os.makedirs(os.path.dirname(abs_out), exist_ok=True)
+        converted.save(abs_out, "JPEG", quality=95)
+        return abs_out
     except Exception as e:
         print(f"[Thumbnail] Could not process cover image: {e}")
     return None

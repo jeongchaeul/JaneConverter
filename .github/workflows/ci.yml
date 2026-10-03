@@ -8,6 +8,9 @@ on:
   workflow_dispatch:
   workflow_call:
 
+permissions:
+  contents: read
+
 jobs:
   tests:
     name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
@@ -47,6 +50,9 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --locked
+
+      - name: Verify dependencies
+        run: uv pip check
 
       - name: Lint with pyflakes
         run: uv run --locked pyflakes src/janeconverter packaging/engine_entry.py
