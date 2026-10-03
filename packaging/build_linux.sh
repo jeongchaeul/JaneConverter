@@ -294,3 +294,6 @@ fi
 if ((KEEP_STAGING == 0)); then
   rm -rf -- "$BUILD_ROOT"
 fi
+
+# Build the current companion extension after the verified application payload.
+uv run --project "$REPO_ROOT" --locked python "$REPO_ROOT/packaging/build_browser_bridge.py" --output "$OUTPUT_DIR"

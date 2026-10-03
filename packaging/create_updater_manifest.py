@@ -63,6 +63,9 @@ def create_manifest(
         "notes": f"JaneConverter repository build {commit[:7]}.",
         "pub_date": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "build_commit": commit,
+        "bridge_protocol": 2,
+        "catalog_schema": 1,
+        "compatibility_notes": "Reload the Browser Bridge extension bundled with this application after updating.",
         "platforms": platforms,
     }
 

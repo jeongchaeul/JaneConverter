@@ -334,3 +334,6 @@ cp -p -- "$BUILT_DMG" "$ARTIFACT"
   shasum -a 256 "$(basename -- "$ARTIFACT")" >"$(basename -- "$ARTIFACT").sha256"
 )
 echo "Created $ARTIFACT"
+
+# Build the current companion extension after the verified application payload.
+uv run --project "$REPO_ROOT" --locked python "$REPO_ROOT/packaging/build_browser_bridge.py" --output "$OUTPUT_DIR"

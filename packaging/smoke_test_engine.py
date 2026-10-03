@@ -69,6 +69,12 @@ def main() -> int:
         else:
             engine = [sys.executable, "-m", "janeconverter.cli"]
         version = _run([*engine, "--version"], environment, work_directory)
+        compatibility = _run([*engine, "--compatibility-info"], environment, work_directory)
+        if compatibility.returncode:
+            raise RuntimeError("The packaged engine compatibility check failed.")
+        contract = json.loads(compatibility.stdout)
+        if contract.get("bridgeProtocol") != 2 or not contract.get("captureValidation") or not contract.get("extractorVersion"):
+            raise RuntimeError("The packaged engine has an incompatible Browser Bridge or extractor runtime.")
         if version.returncode != 0 or "JaneConverter" not in version.stdout:
             raise RuntimeError(
                 f"Packaged engine did not start successfully: {version.stderr.strip() or version.stdout.strip()}"
@@ -97,6 +103,9 @@ def main() -> int:
         outputs = list(output_directory.rglob("*.mp3"))
         if len(outputs) != 1 or outputs[0].stat().st_size < 1024:
             raise RuntimeError("Packaged engine did not create one non-empty MP3 output.")
+        capture = _run([*engine, "--validate-browser-capture", str(outputs[0]), "--capture-kind", "audio"], environment, work_directory)
+        if capture.returncode or not json.loads(capture.stdout).get("mimeType", "").startswith("audio/"):
+            raise RuntimeError("The packaged engine could not validate its own audio output.")
         ffprobe = shutil.which("ffprobe", path=environment["PATH"])
         if not ffprobe:
             raise RuntimeError("The packaged FFprobe executable is unavailable on the runtime path.")

@@ -285,7 +285,9 @@ def test_browser_bridge_archive_matches_the_source_extension():
 
     with zipfile.ZipFile(archives[-1]) as archive:
         names = set(archive.namelist())
-        assert names == {"manifest.json", "media-utils.js", "popup.html", "popup.js", "README.md", "collect.js", "service-worker.js", "network-capture.js", "extension-worker.js"}
+        assert names == {"manifest.json", "media-utils.js", "adaptation.js", "popup.html", "popup.js", "README.md", "collect.js", "service-worker.js", "network-capture.js", "extension-worker.js"}
+        for name in names:
+            assert archive.read(name) == (REPO_ROOT / "browser-extension" / name).read_bytes().replace(b"\r\n", b"\n")
         packaged_manifest = json.loads(archive.read("manifest.json"))
 
     assert packaged_manifest == manifest
@@ -297,6 +299,20 @@ def test_browser_bridge_archive_matches_the_source_extension():
     assert "*://*/*" not in json.dumps(packaged_manifest["optional_host_permissions"])
     assert "https://facebook.com/*" in packaged_manifest["optional_host_permissions"]
     assert "debugger" in packaged_manifest["permissions"]
+
+
+def test_browser_bridge_archive_is_independent_of_checkout_line_endings(tmp_path):
+    from runpy import run_path
+    builder = run_path(str(REPO_ROOT / "packaging" / "build_browser_bridge.py"))["build"]
+    source = tmp_path / "extension"
+    source.mkdir()
+    (source / "manifest.json").write_bytes(b'{"version":"2.0.1"}\r\n')
+    (source / "README.md").write_bytes(b"Browser Bridge\r\n")
+    (source / "worker.js").write_bytes(b"const protocol = 2;\r\n")
+    archive = builder(source, tmp_path / "output")
+    with zipfile.ZipFile(archive) as packaged:
+        assert packaged.read("worker.js") == b"const protocol = 2;\n"
+        assert packaged.read("manifest.json") == b'{"version":"2.0.1"}\n'
 
 
 def test_engine_has_a_packaged_update_check_mode():
