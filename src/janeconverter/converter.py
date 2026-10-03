@@ -14,6 +14,7 @@ import subprocess
 import json
 import re
 import tempfile
+import math
 import unicodedata
 from dataclasses import replace
 from pathlib import Path
@@ -86,10 +87,15 @@ LOUDNORM_FILTER = "loudnorm=I=-14:TP=-1.5:LRA=11"
 def build_loudnorm_filter(measured: Optional[Dict[str, str]] = None) -> str:
     """
     Builds the EBU R128 loudnorm filter.
-    When pass 1 measurements are provided, enables linear=true which scales volume
-    uniformly without dynamic compression or pumping, preserving drops and track balance.
+    Pass 1 measurements request linear processing; FFmpeg may use dynamic
+    processing when the requested peak or loudness-range target prevents it.
     """
-    if measured and all(k in measured for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")):
+    keys = ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
+    try:
+        valid = bool(measured and all(math.isfinite(float(measured[key])) for key in keys))
+    except (KeyError, ValueError, TypeError):
+        valid = False
+    if valid:
         return (
             f"loudnorm=I=-14:TP=-1.5:LRA=11"
             f":measured_I={measured['input_i']}"
@@ -97,9 +103,9 @@ def build_loudnorm_filter(measured: Optional[Dict[str, str]] = None) -> str:
             f":measured_LRA={measured['input_lra']}"
             f":measured_thresh={measured['input_thresh']}"
             f":offset={measured['target_offset']}"
-            f":linear=true"
+            f":linear=true:print_format=json"
         )
-    return LOUDNORM_FILTER
+    return LOUDNORM_FILTER + ":print_format=json"
 
 def measure_audio_loudness(input_path: str, ffmpeg_bin: Optional[str] = None) -> Optional[Dict[str, str]]:
     """
@@ -966,7 +972,7 @@ def build_ffmpeg_args(
     can_embed_art = has_valid_cover and target_format in ("mp3", "flac", "m4a", "aac")
 
     ffmpeg_bin = get_ffmpeg_binary()
-    cmd = [ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
+    cmd = [ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "info" if normalize_audio else "error"]
 
     # Resolve the encoder once so decode acceleration and encode args stay consistent
     enc_spec = None
@@ -999,7 +1005,7 @@ def build_ffmpeg_args(
         # Audio filters
         audio_filters = []
         if normalize_audio:
-            # Linear EBU R128 loudness normalization without dynamic compression pumping
+            # Request linear processing and read FFmpeg's actual mode after encoding.
             audio_filters.append(build_loudnorm_filter(measured_loudness))
 
         source_rate_matches = (
@@ -1577,6 +1583,11 @@ def _convert_media_impl(
 
         if proc.returncode != 0:
             raise subprocess.CalledProcessError(proc.returncode, cmd, output=b"", stderr=stderr)
+        if normalize_audio:
+            text = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else str(stderr)
+            modes = re.findall(r'"normalization_type"\s*:\s*"(linear|dynamic)"', text, re.I)
+            mode = modes[-1].lower() if modes else "unconfirmed"
+            report(0.99, f"Normalization mode: {mode}." + (" FFmpeg used dynamic processing to meet the loudness and peak targets." if mode == "dynamic" else ""))
 
     except KeyboardInterrupt:
         if proc.poll() is None:

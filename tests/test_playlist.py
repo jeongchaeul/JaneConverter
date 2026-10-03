@@ -206,8 +206,8 @@ def test_linear_loudnorm_filter_builder():
     from janeconverter.converter import build_loudnorm_filter, LOUDNORM_FILTER
 
     # Default fallback when no measurements
-    assert build_loudnorm_filter(None) == LOUDNORM_FILTER
-    assert build_loudnorm_filter({}) == LOUDNORM_FILTER
+    assert build_loudnorm_filter(None) == LOUDNORM_FILTER + ":print_format=json"
+    assert build_loudnorm_filter({}) == LOUDNORM_FILTER + ":print_format=json"
 
     # Full measurements enable linear=true
     measured = {
@@ -224,4 +224,3 @@ def test_linear_loudnorm_filter_builder():
     assert ":measured_LRA=8.0" in filter_str
     assert ":measured_thresh=-27.0" in filter_str
     assert ":offset=0.5" in filter_str
-

@@ -14,6 +14,8 @@ from typing import Optional, Dict, Any, Callable
 import json
 import requests
 import yt_dlp
+from .catalog_match import choose_catalog_match, match_score
+from .extraction_recovery import extract_with_recovery, classify_extraction, ExtractionCategory
 from .auth import (
     describe_authenticated_extraction_failure,
     normalize_browser_session,
@@ -427,6 +429,7 @@ def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
     year = ""
     thumbnail = ""
     description = ""
+    duration = 0
 
     # 1. Try Spotify embed page for rich track details and high-res art
     m_track = re.search(r'/track/([a-zA-Z0-9]+)', clean_url)
@@ -441,6 +444,7 @@ def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
                     data = json.loads(m_data.group(1))
                     entity = data.get("props", {}).get("pageProps", {}).get("state", {}).get("data", {}).get("entity", {})
                     title = entity.get("title") or title
+                    duration = int(entity.get("duration") or 0) // 1000
                     artist_list = [a.get("name") for a in entity.get("artists", []) if a.get("name")]
                     if artist_list:
                         artist = ", ".join(artist_list)
@@ -503,7 +507,8 @@ def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
         "search_candidates": candidates,
         "thumbnail": thumbnail,
         "thumbnail_url": thumbnail,
-        "description": description
+        "description": description,
+        "duration": duration,
     }
 
 def fetch_media_stream(
@@ -698,6 +703,10 @@ def fetch_media_stream(
         "no_warnings": True,
         "noprogress": True,
         "concurrent_fragment_downloads": 4,
+        "socket_timeout": 10,
+        "retries": 1,
+        "fragment_retries": 1,
+        "extractor_retries": 1,
         # Prefer a direct HTTPS stream over an HLS fallback, then prefer the
         # highest source bitrate at the requested resolution. This prevents
         # YouTube's low-bitrate AV1 rendition from winning over its clearer
@@ -717,9 +726,9 @@ def fetch_media_stream(
                 "player_skip": ["webpage", "configs"],
             }
         }
-        ydl_opts["retries"] = 10
-        ydl_opts["fragment_retries"] = 10
-        ydl_opts["file_access_retries"] = 5
+        ydl_opts["retries"] = 1
+        ydl_opts["fragment_retries"] = 1
+        ydl_opts["file_access_retries"] = 1
 
     if ffmpeg_bin and (os.path.isfile(ffmpeg_bin) or shutil.which(ffmpeg_bin)):
         ydl_opts["ffmpeg_location"] = ffmpeg_bin
@@ -727,12 +736,29 @@ def fetch_media_stream(
     try:
         info = None
         last_error = None
+        catalog_meta = spotify_meta or apple_meta
+        recovery_deadline = time.monotonic() + 60
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             for query_item in candidates:
                 if abort_event and abort_event.is_set():
                     raise KeyboardInterrupt("Stream extraction aborted by user.")
                 try:
-                    cand_info = ydl.extract_info(query_item, download=True)
+                    if time.monotonic() >= recovery_deadline:
+                        raise TimeoutError("Extraction recovery deadline reached.")
+                    if catalog_meta:
+                        search = re.sub(r"^(ytsearch|scsearch)1:", r"\g<1>5:", query_item)
+                        preview = extract_with_recovery(ydl, search, False, abort_event, report, recovery_deadline)
+                        matches = list((preview or {}).get("entries") or [preview])
+                        selected = choose_catalog_match(catalog_meta, matches)
+                        selected_url = selected.get("webpage_url") or selected.get("original_url") or selected.get("url")
+                        if not selected_url or not is_url(selected_url):
+                            raise ValueError("Catalog candidate has no direct source link.")
+                        report(0.15, f"Catalog match selected from {identify_source_type(selected_url)}: {selected.get('title', '')}. This is an alternate public recording, not catalog audio.", force=True)
+                        cand_info = extract_with_recovery(ydl, selected_url, True, abort_event, report, recovery_deadline)
+                        if not cand_info or match_score(catalog_meta, cand_info) is None:
+                            raise ValueError("The selected recording changed identity during download; it was not accepted.")
+                    else:
+                        cand_info = extract_with_recovery(ydl, query_item, True, abort_event, report, recovery_deadline)
                     if not cand_info:
                         continue
                     if "entries" in cand_info:
@@ -746,8 +772,7 @@ def fetch_media_stream(
                     raise
                 except Exception as ex:
                     last_error = ex
-                    err_msg = str(ex).lower()
-                    if "private video" in err_msg or "this video is private" in err_msg:
+                    if classify_extraction(ex) in (ExtractionCategory.ACCESS, ExtractionCategory.REMOVED, ExtractionCategory.RATE_LIMIT, ExtractionCategory.NETWORK):
                         break
                     continue
 
@@ -854,6 +879,10 @@ def fetch_media_stream(
                 "source_video_codec": info.get("vcodec", ""),
                 "source_audio_codec": info.get("acodec", ""),
                 "source_type": source_type,
+                "catalog_match": "verified-metadata" if catalog_meta else None,
+                "requested_catalog_url": source if catalog_meta else None,
+                "matched_source_title": info.get("title", ""),
+                "matched_source_artist": info.get("artist") or info.get("uploader", ""),
                 "is_local": False
             }
     except Exception as e:

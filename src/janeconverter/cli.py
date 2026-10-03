@@ -170,6 +170,11 @@ def write_credits_file(output_path: str, meta: Dict[str, Any]) -> str:
         lines.append(f"Platform:     {platform.replace('_', ' ').title()}")
     if source_url:
         lines.append(f"Source URL:   {source_url}")
+    if meta.get("requested_catalog_url"):
+        lines.append(f"Requested catalog: {meta['requested_catalog_url']}")
+        lines.append(f"Matched public recording: {meta.get('webpage_url', '')}")
+        lines.append(f"Source title: {meta.get('matched_source_title', '')}")
+        lines.append("Match evidence: title, artist, version and available duration; audio identity is not fingerprint-verified.")
 
     if description:
         lines.extend([
@@ -390,7 +395,10 @@ def process_conversion(
                     "duration_str": stream_info.get("duration_str", ""),
                     "description": description,
                     "tags": stream_info.get("tags", []),
-                    "categories": stream_info.get("categories", [])
+                    "categories": stream_info.get("categories", []),
+                    "requested_catalog_url": stream_info.get("requested_catalog_url"),
+                    "webpage_url": stream_info.get("webpage_url"),
+                    "matched_source_title": stream_info.get("matched_source_title"),
                 })
                 print(f"[+] Saved metadata: {os.path.basename(meta_path)}")
             except (OSError, TypeError, ValueError) as exc:
@@ -906,9 +914,21 @@ def main():
     parser.add_argument("--check-engine-updates", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--hardware-snapshot-json", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--hardware-target-pid", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--validate-browser-capture", help=argparse.SUPPRESS)
+    parser.add_argument("--capture-kind", choices=("image", "audio", "video"), help=argparse.SUPPRESS)
+    parser.add_argument("--compatibility-info", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--version", action="version", version=f"JaneConverter {__version__}")
 
     args = parser.parse_args()
+    if args.compatibility_info:
+        from yt_dlp.version import __version__ as extractor_version
+        print(json.dumps({"applicationVersion": __version__, "bridgeProtocol": 2, "extractorVersion": extractor_version,
+                          "captureValidation": True}))
+        return
+    if args.validate_browser_capture:
+        from .capture_validation import validate_capture
+        print(json.dumps(validate_capture(args.validate_browser_capture, args.capture_kind)))
+        return
     if args.hardware_snapshot_json:
         if not args.hardware_target_pid or args.hardware_target_pid < 1:
             parser.error("A valid target process is required for hardware telemetry.")
