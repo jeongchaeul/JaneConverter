@@ -15,7 +15,8 @@ import json
 import requests
 import yt_dlp
 from .catalog_match import choose_catalog_match, match_score
-from .extraction_recovery import extract_with_recovery, classify_extraction, ExtractionCategory
+from .extraction_recovery import classify_extraction, ExtractionCategory
+from .browser_session_fallback import extract_with_browser_fallback, BrowserSessionError
 from .auth import (
     describe_authenticated_extraction_failure,
     normalize_browser_session,
@@ -739,6 +740,12 @@ def fetch_media_stream(
         catalog_meta = spotify_meta or apple_meta
         recovery_deadline = time.monotonic() + 60
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            def extract(query, download):
+                return extract_with_browser_fallback(
+                    ydl, ydl_opts, query, download, abort_event=abort_event,
+                    report=report, deadline=recovery_deadline,
+                )
+
             for query_item in candidates:
                 if abort_event and abort_event.is_set():
                     raise KeyboardInterrupt("Stream extraction aborted by user.")
@@ -747,18 +754,18 @@ def fetch_media_stream(
                         raise TimeoutError("Extraction recovery deadline reached.")
                     if catalog_meta:
                         search = re.sub(r"^(ytsearch|scsearch)1:", r"\g<1>5:", query_item)
-                        preview = extract_with_recovery(ydl, search, False, abort_event, report, recovery_deadline)
+                        preview = extract(search, False)
                         matches = list((preview or {}).get("entries") or [preview])
                         selected = choose_catalog_match(catalog_meta, matches)
                         selected_url = selected.get("webpage_url") or selected.get("original_url") or selected.get("url")
                         if not selected_url or not is_url(selected_url):
                             raise ValueError("Catalog candidate has no direct source link.")
                         report(0.15, f"Catalog match selected from {identify_source_type(selected_url)}: {selected.get('title', '')}. This is an alternate public recording, not catalog audio.", force=True)
-                        cand_info = extract_with_recovery(ydl, selected_url, True, abort_event, report, recovery_deadline)
+                        cand_info = extract(selected_url, True)
                         if not cand_info or match_score(catalog_meta, cand_info) is None:
                             raise ValueError("The selected recording changed identity during download; it was not accepted.")
                     else:
-                        cand_info = extract_with_recovery(ydl, query_item, True, abort_event, report, recovery_deadline)
+                        cand_info = extract(query_item, True)
                     if not cand_info:
                         continue
                     if "entries" in cand_info:
@@ -769,6 +776,8 @@ def fetch_media_stream(
                     info = cand_info
                     break
                 except KeyboardInterrupt:
+                    raise
+                except BrowserSessionError:
                     raise
                 except Exception as ex:
                     last_error = ex
@@ -885,6 +894,8 @@ def fetch_media_stream(
                 "matched_source_artist": info.get("artist") or info.get("uploader", ""),
                 "is_local": False
             }
+    except BrowserSessionError:
+        raise
     except Exception as e:
         if auth_browser:
             raise RuntimeError(describe_authenticated_extraction_failure(auth_browser, e)) from e

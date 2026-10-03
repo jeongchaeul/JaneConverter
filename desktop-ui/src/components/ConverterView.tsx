@@ -978,7 +978,7 @@ export function ConverterView({
         <div className="mt-5 border-t border-white/[0.06] pt-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-xs text-zinc-400">
-              <LockKeyhole className="size-3.5 text-zinc-600" /> Optional account access <span className="text-zinc-700">- session only</span>
+              <LockKeyhole className="size-3.5 text-zinc-600" /> Optional browser capture <span className="text-zinc-700">- session only</span>
             </div>
             <span
               className={`text-[11px] ${
@@ -997,7 +997,7 @@ export function ConverterView({
                 ? `Access confirmed in ${access.browser}`
                 : access.active
                 ? "Access page open"
-                : "Public-only extraction"}
+                : "Public access first"}
             </span>
           </div>
           <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-zinc-600">
@@ -1007,7 +1007,7 @@ export function ConverterView({
               ? "Browser Capture connected for this session. Keep capturing from the active browser page; every item is kept temporarily in the Fetched Media tab. This access session does not affect unrelated URL or local-file conversions."
               : access.active
               ? "Open the media in this browser, sign in if needed, confirm access here, then open the JaneConverter Browser Capture extension. Choose Capture current media or Capture story sequence. Unrelated URL and local-file conversions remain public/local."
-              : "Create a temporary local link with or without a source URL. JaneConverter receives only media you explicitly capture with the optional extension; it never reads or stores your password, cookies, cache, or browser profile."}
+              : "Public access is tried first. If a supported site requires sign-in, yt-dlp automatically retries using your default browser's existing session. Cookies are used temporarily and are not exported to a file. Browser Capture below offers another way to send visible media to JaneConverter."}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {access.link && (

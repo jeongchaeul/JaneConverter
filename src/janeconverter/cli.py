@@ -41,6 +41,8 @@ from .updater import check_for_engine_updates, check_for_repo_updates
 from .version import __version__
 from .paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, initialize_app_data
 from .auth import normalize_browser_session
+from .browser_session_fallback import BrowserSessionError
+from .extraction_recovery import classify_extraction, ExtractionCategory
 from .facebook_capture import download_facebook_photo_manifest
 from .social_photo_capture import MEDIA_HOSTS as SOCIAL_PHOTO_MEDIA_HOSTS, download_social_photo_manifest
 from .hardware_snapshot import get_hardware_snapshot
@@ -472,6 +474,8 @@ def _retry_operation(operation: Callable[[], Any], label: str, max_retries: int)
             raise
         except Exception as exc:
             last_error = exc
+            if isinstance(exc, BrowserSessionError) or classify_extraction(exc) in (ExtractionCategory.ACCESS, ExtractionCategory.REMOVED):
+                break
             if attempt >= max_retries:
                 break
             delay = min(2 ** attempt, 4)
@@ -612,9 +616,11 @@ def process_playlist_conversion(
         report_overall(base_pct, f"[{i+1}/{total_items}] Fetching #{idx}: {clean_title}...")
 
         track_work_dir = None
+        fetch_attempts = 0
 
         def fetch_attempt():
-            nonlocal track_work_dir
+            nonlocal track_work_dir, fetch_attempts
+            fetch_attempts += 1
             track_job_id = uuid.uuid4().hex[:8]
             track_work_dir = os.path.join(DEFAULT_TEMP_DIR, f"track_{track_job_id}")
             os.makedirs(track_work_dir, exist_ok=True)
@@ -711,7 +717,7 @@ def process_playlist_conversion(
                 "index": idx,
                 "title": raw_title,
                 "error": str(e),
-                "attempts": 1 if conversion_started else max_retries + 1,
+                "attempts": 1 if conversion_started else fetch_attempts,
             })
             consecutive_failures += 1
             print(f"[!] Error converting track #{idx} '{raw_title}': {e}")
@@ -923,7 +929,7 @@ def main():
     if args.compatibility_info:
         from yt_dlp.version import __version__ as extractor_version
         print(json.dumps({"applicationVersion": __version__, "bridgeProtocol": 2, "extractorVersion": extractor_version,
-                          "captureValidation": True}))
+                          "captureValidation": True, "automaticBrowserSession": True}))
         return
     if args.validate_browser_capture:
         from .capture_validation import validate_capture

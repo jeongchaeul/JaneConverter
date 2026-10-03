@@ -20,7 +20,17 @@ JaneConverter remains a personal media fetching and conversion tool; these chang
 
 The native catalog uses versioned JSON snapshots with serialized, synced writes and recovery backups; it does not claim SQLite transactions or resumable interrupted conversions.
 
-Adaptation remains bounded: public extraction can refresh provider defaults, browser capture can try alternative existing methods, and a method is remembered only after native validation acknowledges success; access restrictions remain terminal.
+Adaptation remains bounded: public extraction can refresh provider defaults, browser capture can try alternative existing methods, and a method is remembered only after native validation acknowledges success. Sign-in failures now get one automatic browser-session fallback as described below; DRM, deleted content, and ordinary access refusals do not trigger it.
+
+## Automatic sign-in recovery
+
+Public extraction still runs first. For supported HTTPS media platforms, an explicit sign-in/cookie requirement now makes yt-dlp read the supported default browser's existing session and retry the same source using provider-maintained client defaults. No extension toggle or cookie-file export is required. The authenticated request retains only that platform's cookies, forces HTTPS cookie delivery, suppresses credential-bearing debug output, and clears its cookie jar on success, failure, or cooperative cancellation. Playlist retries do not repeat terminal browser-session failures.
+
+yt-dlp reads the selected browser's cookie database across sites before JaneConverter filters its cookie jar; its browser-reader may make a temporary database copy, which it cleans after normal extraction. This changes the engine's previous no-cookie-reading promise; the Browser Bridge extension remains cookie-free. Unsupported default-browser detection, missing site cookies, browser locks, and unsupported encryption produce an actionable failure with Browser Capture as an alternative. No other browser's profile is tried automatically.
+
+Synthetic-cookie tests use the actual yt-dlp browser-cookie loader integration and verify public-first behavior, successful recovery, domain filtering, cleanup, cancellation, private diagnostic suppression, and a single failed authentication attempt. They do not establish that the two reported videos are accessible with the user's account.
+
+After this follow-up, 256 engine tests and 61 desktop tests passed, along with Python lint, TypeScript compilation, and the frontend production build. The executable was rebuilt at `dist/adaptive-session-test-exe/JaneConverter.exe`; its embedded frontend and frozen engine's automatic-session capability were verified, and the packaged engine passed the local WAV-to-MP3 smoke check. No installer was rebuilt. Actual browser-cookie access was not exercised against the user's profile.
 
 ## Verification
 
