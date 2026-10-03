@@ -158,10 +158,10 @@ function SelectField({
           disabled={disabled}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className="field w-full appearance-none px-3 py-2.5 pr-9 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          className="field w-full appearance-none px-3 py-2.5 pr-9 text-sm cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
         >
           {values.map((item) => (
-            <option key={item} value={item}>
+            <option key={item} value={item} className="bg-[#0c0914] text-zinc-200">
               {formatValue ? formatValue(item) : String(item)}
             </option>
           ))}

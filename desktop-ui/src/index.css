@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 :root {
+  color-scheme: dark;
   --accent-color: #c52b68;
   --accent-hover: #da3a78;
   --accent-glow: rgba(197, 43, 104, 0.35);
@@ -62,7 +63,41 @@ button { cursor: pointer; }
 .top-right-glow { background: radial-gradient(ellipse at center, var(--accent-subtle, rgba(197,43,104,.12)), rgba(95,23,70,.045) 44%, transparent 75%); filter: blur(48px); }
 .panel { border: 1px solid rgba(255,255,255,.075); background: rgba(255,255,255,.028); border-radius: 18px; }
 .field { border: 1px solid rgba(255,255,255,.09); background: rgba(0,0,0,.24); color: #ededed; border-radius: 10px; }
-.field:focus { outline: 2px solid rgba(59,130,246,.65); outline-offset: 2px; border-color: rgba(59,130,246,.55); }
+.field:focus,
+.field:focus-visible {
+  outline: 2px solid var(--accent-glow, rgba(197, 43, 104, 0.45));
+  outline-offset: 2px;
+  border-color: var(--accent-color, #c52b68);
+}
+
+/* Form controls & select dropdown styling */
+select, input, textarea {
+  color-scheme: dark;
+}
+
+select {
+  cursor: pointer;
+}
+
+select option {
+  background-color: #0c0914;
+  color: #ededed;
+  padding: 8px 12px;
+}
+
+select option:checked {
+  background-color: var(--accent-color, #c52b68);
+  color: #ffffff;
+}
+
+select option:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+select option:disabled {
+  color: #555260;
+  background-color: #080611;
+}
 .subtle-button { border: 1px solid rgba(255,255,255,.09); background: rgba(255,255,255,.035); color: #c7c7cf; border-radius: 10px; transition: background .18s ease, border-color .18s ease, color .18s ease; }
 .subtle-button:hover { background: rgba(255,255,255,.075); border-color: rgba(255,255,255,.16); color: #fff; }
 .primary-button { background: var(--accent-color, #c52b68) !important; color: white !important; border-radius: 11px; transition: background .18s ease, transform .18s ease, filter .18s ease; }
@@ -82,6 +117,7 @@ button { cursor: pointer; }
 /* White Pink / Light Theme */
 [data-theme="light"],
 [data-theme="light"] body {
+  color-scheme: light;
   background: var(--bg-color, #fdf7fa) !important;
   color: #1f1222 !important;
 }
@@ -107,6 +143,31 @@ button { cursor: pointer; }
   outline: 2px solid var(--accent-glow, rgba(197, 43, 104, 0.55)) !important;
   outline-offset: 2px;
   border-color: var(--accent-color, #c52b68) !important;
+}
+
+[data-theme="light"] select,
+[data-theme="light"] input,
+[data-theme="light"] textarea {
+  color-scheme: light;
+}
+
+[data-theme="light"] select option {
+  background-color: #ffffff;
+  color: #1f1222;
+}
+
+[data-theme="light"] select option:checked {
+  background-color: var(--accent-subtle, rgba(197, 43, 104, 0.15));
+  color: var(--accent-color, #c52b68);
+}
+
+[data-theme="light"] select option:hover {
+  background-color: #fdf2f7;
+}
+
+[data-theme="light"] select option:disabled {
+  color: #a0909f;
+  background-color: #f5f0f4;
 }
 
 [data-theme="light"] .subtle-button {
