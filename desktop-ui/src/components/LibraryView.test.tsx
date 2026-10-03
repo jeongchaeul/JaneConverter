@@ -295,6 +295,132 @@ describe("Converted library", () => {
     container.remove();
   });
 
+  it("copies the source media path from conversion history to clipboard", async () => {
+    const onStatus = vi.fn();
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
+      clipboard: { writeText: writeTextMock },
+    });
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <LibraryView
+          settings={settings}
+          onSettings={vi.fn()}
+          onStatus={onStatus}
+          history={[
+            {
+              id: "hist-copy",
+              timestamp: "2026-10-01T10:00:00.000Z",
+              source: "https://soundcloud.com/project-aspyr/test-track",
+              fileName: "test-track.mp3",
+              exportPath: "D:\\JaneConverter\\converted\\test-track.mp3",
+              presetName: "Preserve Quality",
+              formatLabel: "MP3",
+              qualityLabel: "320 kbps",
+              elapsedMs: 1200,
+              status: "succeeded",
+            },
+          ]}
+        />,
+      );
+    });
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "History")?.click();
+      await Promise.resolve();
+    });
+
+    const copyBtn = container.querySelector('button[aria-label="Copy source path for test-track.mp3"]');
+    expect(copyBtn).not.toBeNull();
+
+    await act(async () => {
+      (copyBtn as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(writeTextMock).toHaveBeenCalledWith("https://soundcloud.com/project-aspyr/test-track");
+    expect(onStatus).toHaveBeenCalledWith("Copied source path to clipboard.");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("paginates conversion history to 20 items per page", async () => {
+    const manyHistory = Array.from({ length: 25 }, (_, i) => ({
+      id: `hist-item-${i + 1}`,
+      timestamp: "2026-10-01T10:00:00.000Z",
+      source: `https://example.com/item-${i + 1}`,
+      fileName: `song_${String(i + 1).padStart(2, "0")}.mp3`,
+      exportPath: `D:\\JaneConverter\\converted\\song_${String(i + 1).padStart(2, "0")}.mp3`,
+      presetName: "Preserve Quality",
+      formatLabel: "MP3",
+      qualityLabel: "320 kbps",
+      elapsedMs: 1000,
+      status: "succeeded" as const,
+    }));
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <LibraryView
+          settings={settings}
+          onSettings={vi.fn()}
+          onStatus={vi.fn()}
+          history={manyHistory}
+        />,
+      );
+    });
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "History")?.click();
+      await Promise.resolve();
+    });
+
+    // Page 1: song_01.mp3 to song_20.mp3 should be present, song_21.mp3 should not
+    expect(container.textContent).toContain("song_01.mp3");
+    expect(container.textContent).toContain("song_20.mp3");
+    expect(container.textContent).not.toContain("song_21.mp3");
+    expect(container.textContent).toContain("Showing 1–20 of 25 entries");
+    expect(container.textContent).toContain("1 / 2");
+
+    const nextBtn = container.querySelector('button[aria-label="Next history page"]');
+    expect(nextBtn).not.toBeNull();
+
+    await act(async () => {
+      (nextBtn as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    // Page 2: song_21.mp3 to song_25.mp3 should be present, song_01.mp3 should not
+    expect(container.textContent).toContain("song_21.mp3");
+    expect(container.textContent).toContain("song_25.mp3");
+    expect(container.textContent).not.toContain("song_01.mp3");
+    expect(container.textContent).toContain("Showing 21–25 of 25 entries");
+    expect(container.textContent).toContain("2 / 2");
+
+    const prevBtn = container.querySelector('button[aria-label="Previous history page"]');
+    expect(prevBtn).not.toBeNull();
+
+    await act(async () => {
+      (prevBtn as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("song_01.mp3");
+    expect(container.textContent).toContain("Showing 1–20 of 25 entries");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
   it("filters library files by audio, video, image, and metadata type", async () => {
     fakeBridge.scanLibrary.mockResolvedValue([
       {

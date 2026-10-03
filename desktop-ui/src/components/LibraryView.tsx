@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
+  Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Copy,
   ExternalLink,
@@ -59,6 +62,7 @@ function joinPath(parent: string, name: string) {
   return parent.replace(/[\\/]+$/, "") + "\\" + name;
 }
 
+const HISTORY_PAGE_SIZE = 20;
 type LibrarySection = "explorer" | "recent" | "history";
 type MediaFilter = "all" | "audio" | "video" | "image" | "metadata";
 type PreviewSetter = (update: (current: Record<string, string>) => Record<string, string>) => void;
@@ -124,6 +128,7 @@ export function LibraryView({
   const [recentEntries, setRecentEntries] = useState<LibraryEntry[]>([]);
   const [recentPreviews, setRecentPreviews] = useState<Record<string, string>>({});
   const [section, setSection] = useState<LibrarySection>("explorer");
+  const [historyPage, setHistoryPage] = useState(1);
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
   const [loading, setLoading] = useState(false);
   const [recentLoading, setRecentLoading] = useState(false);
@@ -135,6 +140,18 @@ export function LibraryView({
   const cancelConfirmRef = useRef<HTMLButtonElement>(null);
   const libraryDragActive = useRef(false);
   const suppressClickUntil = useRef(0);
+
+  const [copiedSourceId, setCopiedSourceId] = useState<string | null>(null);
+
+  function copySourcePath(id: string, source: string) {
+    void navigator.clipboard.writeText(source);
+    setCopiedSourceId(id);
+    setTimeout(() => {
+      setCopiedSourceId((current) => (current === id ? null : current));
+    }, 2000);
+    onStatus("Copied source path to clipboard.");
+  }
+
 
   function entryElapsedMs(entry: LibraryEntry): number | undefined {
     if (entry.conversionMs !== undefined) return entry.conversionMs;
@@ -353,6 +370,7 @@ export function LibraryView({
 
   function handleClearTempHistory() {
     onClearHistory?.();
+    setHistoryPage(1);
     void refresh(currentPath);
     void refreshRecent();
   }
@@ -377,6 +395,9 @@ export function LibraryView({
     };
   }
 
+  const totalHistoryPages = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
+  const safeHistoryPage = Math.min(Math.max(1, historyPage), totalHistoryPages);
+  const pagedHistory = history.slice((safeHistoryPage - 1) * HISTORY_PAGE_SIZE, safeHistoryPage * HISTORY_PAGE_SIZE);
   const confirmation = pendingActionCopy();
   const atRoot = pathKey(currentPath) === pathKey(root);
   const visibleEntries = section === "recent"
@@ -511,7 +532,7 @@ export function LibraryView({
               No temporary conversion history recorded yet.
             </div>
           )}
-          {history.map((item) => {
+          {pagedHistory.map((item) => {
             const succeeded = item.status === "succeeded";
             const isPartial = item.status === "partial";
             const hasExported = succeeded || isPartial;
@@ -546,8 +567,27 @@ export function LibraryView({
                       </span>
                       <span className="truncate text-sm font-medium text-white">{item.fileName}</span>
                     </div>
-                    <div className="mt-1 break-all font-mono text-[11px] text-zinc-500">
-                      Source: {item.source}
+                    <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[11px] text-zinc-500">
+                      <span className="break-all">Source: {item.source}</span>
+                      <button
+                        type="button"
+                        onClick={() => copySourcePath(item.id, item.source)}
+                        className="inline-flex items-center gap-1 rounded bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-zinc-400 transition-colors hover:bg-white/[0.08] hover:text-white"
+                        aria-label={`Copy source path for ${item.fileName}`}
+                        title={`Copy source path for ${item.fileName}`}
+                      >
+                        {copiedSourceId === item.id ? (
+                          <>
+                            <Check size={11} className="text-emerald-400" />
+                            <span className="text-emerald-400">Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy size={11} />
+                            <span>Copy</span>
+                          </>
+                        )}
+                      </button>
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -580,37 +620,90 @@ export function LibraryView({
                     {item.fallbackNote}
                   </div>
                 )}
-                {hasExported ? (
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] pt-2.5">
-                    <div className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500">
-                      Exported: {item.exportPath}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void openFile(item.exportPath)}
-                        className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs hover:border-pink-500/40"
-                      >
-                        <Play className="size-3 text-pink-400" /> Open File
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void openPath(item.exportPath)}
-                        className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
-                      >
-                        <FolderOpen className="size-3.5" /> Open Path
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
                 {item.errorMessage && !succeeded && (
                   <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
                     {item.errorMessage}
                   </div>
                 )}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] pt-2.5">
+                  <div className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500">
+                    {hasExported ? `Exported: ${item.exportPath}` : `Source: ${item.source}`}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => copySourcePath(item.id, item.source)}
+                      className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs hover:border-pink-500/40"
+                      aria-label={`Copy source path for ${item.fileName}`}
+                      title={`Copy source path for ${item.fileName}`}
+                    >
+                      {copiedSourceId === item.id ? (
+                        <>
+                          <Check className="size-3.5 text-emerald-400" />
+                          <span className="text-emerald-400">Copied Source</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="size-3.5 text-zinc-400" />
+                          <span>Copy Source Path</span>
+                        </>
+                      )}
+                    </button>
+                    {hasExported && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void openFile(item.exportPath)}
+                          className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs hover:border-pink-500/40"
+                        >
+                          <Play className="size-3 text-pink-400" /> Open File
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void openPath(item.exportPath)}
+                          className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                        >
+                          <FolderOpen className="size-3.5" /> Open Path
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
               </motion.div>
             );
           })}
+          {totalHistoryPages > 1 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/[0.08] bg-white/[0.025] px-4 py-3">
+              <div className="text-xs text-zinc-400">
+                Showing <span className="font-medium text-white">{(safeHistoryPage - 1) * HISTORY_PAGE_SIZE + 1}</span>–
+                <span className="font-medium text-white">{Math.min(safeHistoryPage * HISTORY_PAGE_SIZE, history.length)}</span> of{" "}
+                <span className="font-medium text-white">{history.length}</span> entries
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={safeHistoryPage <= 1}
+                  onClick={() => setHistoryPage((prev) => Math.max(1, prev - 1))}
+                  className="subtle-button flex items-center gap-1 px-2.5 py-1 text-xs disabled:pointer-events-none disabled:opacity-40 hover:border-pink-500/40"
+                  aria-label="Previous history page"
+                >
+                  <ChevronLeft className="size-3.5" /> Previous
+                </button>
+                <span className="px-2 text-xs font-mono text-zinc-300">
+                  {safeHistoryPage} / {totalHistoryPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={safeHistoryPage >= totalHistoryPages}
+                  onClick={() => setHistoryPage((prev) => Math.min(totalHistoryPages, prev + 1))}
+                  className="subtle-button flex items-center gap-1 px-2.5 py-1 text-xs disabled:pointer-events-none disabled:opacity-40 hover:border-pink-500/40"
+                  aria-label="Next history page"
+                >
+                  Next <ChevronRight className="size-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
         </section>
       ) : (
         <section className="space-y-2">
