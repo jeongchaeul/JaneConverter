@@ -65,6 +65,8 @@ function extractExportedPathFromMessage(message: string): string | null {
 function detectFallbackNote(logs: string[], forcedVideoFallback: boolean): string | null {
   for (let i = logs.length - 1; i >= 0; i -= 1) {
     const line = logs[i];
+    if (/Normalization mode: dynamic/i.test(line)) return "FFmpeg used dynamic loudness normalization to meet the requested targets.";
+    if (/Normalization mode: unconfirmed/i.test(line)) return "Loudness normalization was applied; FFmpeg did not confirm whether the processing was linear or dynamic.";
     const pngMatch = line.match(/Recovered from\s+([^\s]+)\s+as\s+([^\s]+)\s+using\s+(.+?)\.?$/i);
     if (pngMatch) {
       return `Forced fallback to ${pngMatch[2].toUpperCase()} (${pngMatch[3]}) after source format recovery.`;
@@ -156,7 +158,7 @@ export default function App() {
       const raw = window.localStorage.getItem(HISTORY_STORAGE_KEY);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? (parsed as ConversionHistoryItem[]) : [];
+      return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item.id === "string" && typeof item.timestamp === "string" && typeof item.source === "string" && typeof item.fileName === "string" && typeof item.exportPath === "string" && typeof item.presetName === "string" && typeof item.formatLabel === "string" && typeof item.qualityLabel === "string" && Number.isInteger(item.elapsedMs) && item.elapsedMs >= 0 && ["succeeded", "failed", "partial"].includes(item.status)) : [];
     } catch {
       return [];
     }
@@ -247,13 +249,42 @@ export default function App() {
     } catch {}
   }, [theme, accentColor, bgColor]);
 
+  const [historyError, setHistoryError] = useState("");
+  const pendingHistoryWrites = useRef<Array<() => Promise<void>>>([]);
+  const writingHistory = useRef(false);
+  function queueHistory(action: () => Promise<void>) {
+    pendingHistoryWrites.current.push(action);
+    void flushHistory();
+  }
+  async function flushHistory() {
+    if (writingHistory.current) return;
+    writingHistory.current = true;
+    try {
+      while (pendingHistoryWrites.current.length) {
+        try {
+          await pendingHistoryWrites.current[0]();
+          pendingHistoryWrites.current.shift();
+        } catch (error) {
+          setHistoryError(`History could not be saved: ${String(error)}. Your media is still available.`);
+          break;
+        }
+      }
+    } finally { writingHistory.current = false; }
+  }
+  useEffect(() => {
+    queueHistory(async () => {
+      const result = await bridge.conversionHistory(history);
+      setHistory(result.history);
+      setHistoryError(result.warning || "");
+      try { window.localStorage.removeItem(HISTORY_STORAGE_KEY); }
+      catch { setHistoryError("History was saved, but the legacy browser cache could not be cleared."); }
+    });
+  }, []);
   function recordHistoryEntry(entry: ConversionHistoryItem) {
-    setHistory((current) => {
-      const next = [entry, ...current].slice(0, 200);
-      try {
-        window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(next));
-      } catch {}
-      return next;
+    queueHistory(async () => {
+      const result = await bridge.conversionHistory([], entry);
+      setHistory(result.history);
+      if (result.warning) setHistoryError(result.warning);
     });
   }
 
@@ -270,24 +301,20 @@ export default function App() {
   }
 
   function handleRemoveHistoryItem(id: string) {
-    setHistory((current) => {
-      const next = current.filter((item) => item.id !== id);
-      try {
-        window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(next));
-      } catch {}
-      return next;
+    queueHistory(async () => {
+      const result = await bridge.conversionHistory([], undefined, id);
+      setHistory(result.history);
     });
   }
-
   function handleClearHistory() {
-    setHistory([]);
-    setConversionTimings({});
-    try {
-      window.localStorage.removeItem(HISTORY_STORAGE_KEY);
+    queueHistory(async () => {
+      const result = await bridge.conversionHistory([], undefined, undefined, true);
+      await bridge.clearConversionTimings();
+      setHistory(result.history);
+      setConversionTimings({});
       window.localStorage.removeItem(TIMINGS_STORAGE_KEY);
-    } catch {}
-    void bridge.clearConversionTimings().catch(() => {});
-    statusMessage("Cleared temporary conversion history and timings.");
+      statusMessage("Cleared conversion history and timings.");
+    });
   }
 
   function handleAccentChange(color: string) {
@@ -675,6 +702,12 @@ export default function App() {
           )}
         </main>
       </div>
+      {historyError && <div role="alert" className="fixed bottom-4 left-4 right-4 z-[60] rounded-lg bg-amber-950 p-3 text-sm text-amber-100">
+        {historyError} <button className="underline" onClick={() => {
+          setHistoryError("");
+          void flushHistory();
+        }}>{pendingHistoryWrites.current.length ? "Retry saving history" : "Dismiss"}</button>
+      </div>}
       {success && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/75 p-5 backdrop-blur-md">
           <section

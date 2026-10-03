@@ -166,7 +166,7 @@ pub struct AccessDiagnostic {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FetchedMedia {
     pub path: String,
@@ -176,6 +176,12 @@ pub struct FetchedMedia {
     pub capture_mode: String,
     pub title: String,
     pub size: u64,
+    #[serde(default)]
+    pub source_url: String,
+    #[serde(default)]
+    pub captured_at: u64,
+    #[serde(default)]
+    pub capture_method: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

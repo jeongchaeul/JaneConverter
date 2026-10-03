@@ -125,6 +125,12 @@
     }
   }
 
+  function requireCompatibleBridge(challenge) {
+    if (!challenge || challenge.protocolVersion !== 2) {
+      throw new Error("JaneConverter and Browser Bridge need matching compatibility versions. Update the app and reload the bundled extension, then confirm access again.");
+    }
+  }
+
   function visualHashFromPixels(pixels) {
     if (!pixels || pixels.length !== 9 * 8 * 4) return null;
     let hash = "";
@@ -152,27 +158,57 @@
       || left.surface !== right.surface || left.duration !== right.duration) return false;
     if (left.sequenceIndex != null && right.sequenceIndex != null
       && left.sequenceIndex !== right.sequenceIndex) return false;
-    if (left.visualHash && right.visualHash) {
-      if (!/^[0-9a-f]{22}$/.test(left.visualHash) || !/^[0-9a-f]{22}$/.test(right.visualHash)) return false;
-      if (left.kind === "video" && !left.duration) {
-        return Boolean(left.url && right.url && normalizeMediaUrl(left.url).url === normalizeMediaUrl(right.url).url);
+    // Similar pixels and mutable CDN URLs are hints, never deletion evidence.
+    return Boolean(left.contentHash && /^[0-9a-f]{64}$/.test(left.contentHash)
+      && left.contentHash === right.contentHash);
+  }
+
+  async function contentHash(bytes) {
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest), function (byte) { return byte.toString(16).padStart(2, "0"); }).join("");
+  }
+
+  async function withDeadline(operation, timeoutMs) {
+    let timer;
+    try {
+      return await Promise.race([operation, new Promise(function (_, reject) {
+        timer = setTimeout(function () { reject(new Error("Capture deadline reached. Retry the remaining item.")); }, Math.max(1, timeoutMs));
+      })]);
+    } finally { clearTimeout(timer); }
+  }
+
+  async function fetchBounded(url, options, timeoutMs, maxBytes) {
+    const controller = new AbortController();
+    let reader;
+    let timer;
+    const operation = (async function () {
+      const response = await fetch(url, Object.assign({}, options, { signal: controller.signal }));
+      if (Number(response.headers.get("content-length")) > maxBytes) throw new Error("Capture exceeds its byte limit.");
+      if (!response.body) return response;
+      reader = response.body.getReader();
+      const chunks = [];
+      let size = 0;
+      while (true) {
+        const part = await reader.read();
+        if (part.done) break;
+        size += part.value.byteLength;
+        if (size > maxBytes) throw new Error("Capture exceeds its byte limit.");
+        chunks.push(part.value);
       }
-      let differences = 0;
-      for (let index = 0; index < 16; index += 1) {
-        let bits = parseInt(left.visualHash[index], 16) ^ parseInt(right.visualHash[index], 16);
-        while (bits) {
-          differences += bits & 1;
-          bits >>= 1;
-        }
-      }
-      const colorTolerance = left.kind === "video" ? 12 : 24;
-      for (let index = 16; index < 22; index += 2) {
-        if (Math.abs(parseInt(left.visualHash.slice(index, index + 2), 16)
-          - parseInt(right.visualHash.slice(index, index + 2), 16)) > colorTolerance) return false;
-      }
-      return differences <= (left.kind === "video" ? 2 : 4);
+      return new Response(new Blob(chunks), { status: response.status, statusText: response.statusText, headers: response.headers });
+    }());
+    try {
+      return await Promise.race([operation, new Promise(function (_, reject) {
+        timer = setTimeout(function () {
+          controller.abort();
+          reject(new Error("Capture timed out while reading media; retry with the item open."));
+        }, Math.max(1, timeoutMs));
+      })]);
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+      if (reader) void reader.cancel().catch(function () {});
     }
-    return Boolean(left.url && right.url && normalizeMediaUrl(left.url).url === normalizeMediaUrl(right.url).url);
   }
 
   function isStreamSegment(url, contentType) {
@@ -227,6 +263,10 @@
   }
 
   return {
+    requireCompatibleBridge,
+    contentHash,
+    fetchBounded,
+    withDeadline,
     classify,
     filenameFromUrl,
     isSocialMediaImage,

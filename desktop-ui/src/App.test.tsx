@@ -7,6 +7,21 @@ import { bridge, type ConverterEvent } from "./bridge";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("Application shell", () => {
+  it("shows a failed history save and retries without clearing legacy data", async () => {
+    const history = [{ id: "legacy", timestamp: "2026-10-04", source: "local", fileName: "song", exportPath: "out", presetName: "music", formatLabel: "MP3", qualityLabel: "high", elapsedMs: 1, status: "succeeded" }];
+    window.localStorage.setItem("janecoverter.conversionHistory", JSON.stringify(history));
+    const save = vi.spyOn(bridge, "conversionHistory").mockRejectedValueOnce(new Error("disk full"))
+      .mockResolvedValueOnce({ history: [] });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => { root.render(<App />); });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("disk full");
+    expect(window.localStorage.getItem("janecoverter.conversionHistory")).not.toBeNull();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[role="alert"] button')?.click(); });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(window.localStorage.getItem("janecoverter.conversionHistory")).toBeNull();
+    await act(async () => { root.unmount(); });
+  });
   afterEach(() => {
     window.localStorage.clear();
     vi.restoreAllMocks();
@@ -216,4 +231,3 @@ describe("Application shell", () => {
     container.remove();
   });
 });
-

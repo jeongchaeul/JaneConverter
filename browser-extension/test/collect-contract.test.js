@@ -52,11 +52,12 @@ test("collect mode skips a repeated image after its CDN URL changes", async () =
           return { data: pixels };
         }
       });
-      canvas.toBlob = (callback) => callback(new Blob(["image"], { type: "image/png" }));
+      canvas.toBlob = (callback) => callback(new Blob([String(canvas.pattern)], { type: "image/png" }));
       return canvas;
     }
   };
   const context = {
+    crypto: require("node:crypto").webcrypto, setTimeout, clearTimeout,
     window: {}, document, location: { href: "https://example.test/stories", hostname: "example.test" },
     innerWidth: 1200, innerHeight: 900, Uint8Array, Blob, btoa,
     getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
@@ -73,7 +74,7 @@ test("collect mode skips a repeated image after its CDN URL changes", async () =
   };
   vm.runInNewContext(read("media-utils.js"), context);
   vm.runInNewContext(read("collect.js"), context);
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
   control({ type: "jane-collect-control", enabled: true }, null, () => {});
   await settle();
   assert.equal(uploads.length, 1);
@@ -88,4 +89,9 @@ test("collect mode skips a repeated image after its CDN URL changes", async () =
   tick();
   await settle();
   assert.equal(uploads.length, 2);
+  // Changed bytes can share a perceptual hash and a reused CDN URL.
+  image.pattern = 3;
+  tick();
+  await settle();
+  assert.equal(uploads.length, 3);
 });

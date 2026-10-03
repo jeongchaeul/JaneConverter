@@ -4,6 +4,12 @@ const MAX_CHUNK_BYTES = 1024 * 1024;
 const MAX_SESSION_FETCH_BYTES = 1024 * 1024 * 1024;
 const SESSION_FETCH_TIMEOUT_MS = 120 * 1000;
 
+async function bridgeRequest(url, options, deadline = Date.now() + 120000) {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new Error("Browser capture deadline reached.");
+  return globalThis.JaneMediaUtils.fetchBounded(url, options, Math.min(remaining, url.endsWith("/finish") ? 45000 : 8000), 2 * 1024 * 1024);
+}
+
 function accessEndpoint(tab, suffix) {
   const url = new URL(tab.url);
   const match = url.pathname.match(/^\/access\/[^/]+/);
@@ -35,9 +41,12 @@ async function findConfirmedAccess() {
   let lastError;
   for (const tab of candidates) {
     try {
-      const response = await fetch(accessEndpoint(tab, "/bridge/challenge"), { cache: "no-store" });
+      const response = await bridgeRequest(accessEndpoint(tab, "/bridge/challenge"), { cache: "no-store" });
       const value = await readJson(response);
-      if (response.ok && value.bridgeToken) return { tab: tab, challenge: value };
+      if (response.ok && value.bridgeToken) {
+        globalThis.JaneMediaUtils.requireCompatibleBridge(value);
+        return { tab: tab, challenge: value };
+      }
       lastError = new Error(value.error || "JaneConverter has not confirmed browser access.");
     } catch (error) {
       lastError = error;
@@ -54,10 +63,14 @@ function decodeBase64(value) {
 }
 
 async function uploadCollectedMedia(payload) {
+  const deadline = Date.now() + 120000;
   if (!payload || typeof payload.base64 !== "string" || !payload.base64) {
     throw new Error("The browser did not provide media bytes.");
   }
   const bridge = await findConfirmedAccess();
+  if (payload.base64.length > Math.ceil(64 * 1024 * 1024 * 4 / 3) + 4) {
+    throw new Error("The rendered capture is larger than 64 MB.");
+  }
   const bytes = decodeBase64(payload.base64);
   if (!bytes.byteLength || bytes.byteLength > 64 * 1024 * 1024) {
     throw new Error("The rendered capture is empty or larger than 64 MB.");
@@ -65,7 +78,7 @@ async function uploadCollectedMedia(payload) {
   const mediaKind = payload.mediaKind === "audio" ? "audio" : payload.mediaKind === "image" ? "image" : "video";
   const fallbackMime = mediaKind + "/" + (mediaKind === "image" ? "png" : mediaKind === "audio" ? "webm" : "webm");
   const mimeType = String(payload.contentType || fallbackMime).split(";")[0].toLowerCase();
-  const start = await fetch(accessEndpoint(bridge.tab, "/bridge/capture/start"), {
+  const start = await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/capture/start"), {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-JaneConverter-Bridge": bridge.challenge.bridgeToken },
     body: JSON.stringify({
@@ -73,18 +86,19 @@ async function uploadCollectedMedia(payload) {
       mediaKind: mediaKind,
       mimeType: mimeType,
       captureMode: "collect",
+      captureMethod: payload.captureMethod || "rendered",
       pageUrl: payload.pageUrl || bridge.challenge.sourceUrl || "",
       expectedBytes: bytes.byteLength,
       title: payload.title || "Collected browser media"
     })
-  });
+  }, deadline);
   const started = await readJson(start);
   if (!start.ok || !started.captureId) throw new Error(started.error || "JaneConverter rejected the collected media.");
   let offset = 0;
   try {
     while (offset < bytes.byteLength) {
       const next = Math.min(offset + MAX_CHUNK_BYTES, bytes.byteLength);
-      const chunk = await fetch(accessEndpoint(bridge.tab, "/bridge/capture/chunk"), {
+      const chunk = await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/capture/chunk"), {
         method: "POST",
         headers: {
           "Content-Type": "application/octet-stream",
@@ -93,20 +107,21 @@ async function uploadCollectedMedia(payload) {
           "X-JaneConverter-Capture-Offset": String(offset)
         },
         body: bytes.slice(offset, next)
-      });
+      }, deadline);
       const result = await readJson(chunk);
       if (!chunk.ok) throw new Error(result.error || "JaneConverter rejected a collected-media chunk.");
       offset = next;
     }
-    const finish = await fetch(accessEndpoint(bridge.tab, "/bridge/capture/finish"), {
+    const finish = await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/capture/finish"), {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-JaneConverter-Bridge": bridge.challenge.bridgeToken },
       body: JSON.stringify({ captureId: started.captureId })
-    });
+    }, deadline);
     const result = await readJson(finish);
     if (!finish.ok) throw new Error(result.error || "JaneConverter could not finish the collected media.");
     return result;
   } catch (error) {
+    await abortUpload(bridge, started.captureId);
     throw error;
   }
 }
@@ -132,13 +147,16 @@ function requireSessionFetchPayload(payload) {
     mediaKind: mediaKind,
     captureMode: captureMode,
     title: String(payload.title || "Browser media").slice(0, 240),
+    fingerprint: payload.fingerprint && typeof payload.fingerprint === "object" ? payload.fingerprint : {},
+    previousFingerprints: Array.isArray(payload.previousFingerprints) ? payload.previousFingerprints.slice(-24) : [],
+    timeoutMs: Math.max(1, Math.min(SESSION_FETCH_TIMEOUT_MS, Number(payload.timeoutMs) || SESSION_FETCH_TIMEOUT_MS)),
     fileName: String(payload.fileName || globalThis.JaneMediaUtils.filenameFromUrl(mediaUrl, mediaKind, 0)).slice(0, 180)
   };
 }
 
 async function sendDiagnostic(bridge, event, fields) {
   try {
-    await fetch(accessEndpoint(bridge.tab, "/bridge/diagnostic"), {
+    await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/diagnostic"), {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-JaneConverter-Bridge": bridge.challenge.bridgeToken },
       body: JSON.stringify(Object.assign({ event: event }, fields || {}))
@@ -148,8 +166,17 @@ async function sendDiagnostic(bridge, event, fields) {
   }
 }
 
-async function startCaptureUpload(bridge, payload, mimeType, expectedBytes) {
-  const response = await fetch(accessEndpoint(bridge.tab, "/bridge/capture/start"), {
+async function abortUpload(bridge, captureId) {
+  try {
+    await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/capture/abort"), {
+      method: "POST", headers: { "Content-Type": "application/json", "X-JaneConverter-Bridge": bridge.challenge.bridgeToken },
+      body: JSON.stringify({ captureId })
+    });
+  } catch (_) {}
+}
+
+async function startCaptureUpload(bridge, payload, mimeType, expectedBytes, deadline) {
+  const response = await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/capture/start"), {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-JaneConverter-Bridge": bridge.challenge.bridgeToken },
     body: JSON.stringify({
@@ -157,59 +184,94 @@ async function startCaptureUpload(bridge, payload, mimeType, expectedBytes) {
       mediaKind: payload.mediaKind,
       mimeType: mimeType,
       captureMode: payload.captureMode,
+      captureMethod: payload.captureMode === "network" ? "network" : "session-fetch",
       pageUrl: payload.pageUrl,
       expectedBytes: expectedBytes || undefined,
       title: payload.title
     })
-  });
+  }, deadline);
   const result = await readJson(response);
   if (!response.ok || !result.captureId) throw new Error(result.error || "JaneConverter rejected the media capture.");
   return result.captureId;
 }
 
-async function uploadSessionResponse(bridge, payload, response, mimeType, expectedBytes) {
-  const captureId = await startCaptureUpload(bridge, payload, mimeType, expectedBytes);
-  const reader = response.body && response.body.getReader();
-  if (!reader) throw new Error("The signed-in browser response contained no media bytes.");
-  let offset = 0;
-  let nextDiagnosticAt = 8 * 1024 * 1024;
-  while (true) {
-    const read = await reader.read();
-    if (read.done) break;
-    for (let index = 0; index < read.value.byteLength; index += MAX_CHUNK_BYTES) {
-      const chunkData = read.value.slice(index, Math.min(index + MAX_CHUNK_BYTES, read.value.byteLength));
-      if (!chunkData.byteLength || offset + chunkData.byteLength > MAX_SESSION_FETCH_BYTES) {
-        throw new Error("The authenticated media response exceeded JaneConverter's 1 GB capture limit.");
+async function uploadSessionResponse(bridge, payload, response, mimeType, expectedBytes, deadline) {
+  let fingerprint = null;
+  if (payload.mediaKind === "image" && payload.captureMode === "sequence") {
+    const reader = response.body && response.body.getReader();
+    if (!reader) throw new Error("The browser response contained no image bytes.");
+    const parts = [];
+    let size = 0;
+    try {
+      while (true) {
+        const part = await globalThis.JaneMediaUtils.withDeadline(reader.read(), deadline - Date.now());
+        if (part.done) break;
+        size += part.value.byteLength;
+        if (size > 64 * 1024 * 1024) throw new Error("The story image exceeded the 64 MB byte limit.");
+        parts.push(part.value);
       }
-      const chunk = await fetch(accessEndpoint(bridge.tab, "/bridge/capture/chunk"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/octet-stream",
-          "X-JaneConverter-Bridge": bridge.challenge.bridgeToken,
-          "X-JaneConverter-Capture-Id": captureId,
-          "X-JaneConverter-Capture-Offset": String(offset)
-        },
-        body: chunkData
-      });
-      const chunkResult = await readJson(chunk);
-      if (!chunk.ok) throw new Error(chunkResult.error || "JaneConverter rejected part of the media capture.");
-      offset += chunkData.byteLength;
-      if (offset >= nextDiagnosticAt) {
-        await sendDiagnostic(bridge, "upload_progress", { bytes: offset });
-        nextDiagnosticAt += 8 * 1024 * 1024;
+    } finally { void reader.cancel().catch(function () {}); }
+    if (!size) throw new Error("The browser response contained no image bytes.");
+    const bytes = new Uint8Array(await new Blob(parts).arrayBuffer());
+    fingerprint = Object.assign({}, payload.fingerprint, {
+      site: new URL(payload.pageUrl).hostname, kind: "image",
+      contentHash: await globalThis.JaneMediaUtils.contentHash(bytes)
+    });
+    if (payload.previousFingerprints.some((previous) => globalThis.JaneMediaUtils.sameStoryFingerprint(previous, fingerprint))) {
+      return { duplicate: true, fingerprint };
+    }
+    response = new Response(bytes);
+    expectedBytes = bytes.byteLength;
+  }
+  const captureId = await startCaptureUpload(bridge, payload, mimeType, expectedBytes, deadline);
+  try {
+    const reader = response.body && response.body.getReader();
+    if (!reader) throw new Error("The signed-in browser response contained no media bytes.");
+    let offset = 0;
+    let nextDiagnosticAt = 8 * 1024 * 1024;
+    while (true) {
+      if (Date.now() >= deadline) { await reader.cancel(); throw new Error("Browser capture deadline reached."); }
+      const read = await reader.read();
+      if (read.done) break;
+      for (let index = 0; index < read.value.byteLength; index += MAX_CHUNK_BYTES) {
+        const chunkData = read.value.slice(index, Math.min(index + MAX_CHUNK_BYTES, read.value.byteLength));
+        if (!chunkData.byteLength || offset + chunkData.byteLength > MAX_SESSION_FETCH_BYTES) {
+          throw new Error("The authenticated media response exceeded JaneConverter's 1 GB capture limit.");
+        }
+        const chunk = await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/capture/chunk"), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "X-JaneConverter-Bridge": bridge.challenge.bridgeToken,
+            "X-JaneConverter-Capture-Id": captureId,
+            "X-JaneConverter-Capture-Offset": String(offset)
+          },
+          body: chunkData
+        }, deadline);
+        const chunkResult = await readJson(chunk);
+        if (!chunk.ok) throw new Error(chunkResult.error || "JaneConverter rejected part of the media capture.");
+        offset += chunkData.byteLength;
+        if (offset >= nextDiagnosticAt) {
+          await sendDiagnostic(bridge, "upload_progress", { bytes: offset });
+          nextDiagnosticAt += 8 * 1024 * 1024;
+        }
       }
     }
+    if (!offset) throw new Error("The signed-in browser response contained no media bytes.");
+    const finish = await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/capture/finish"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-JaneConverter-Bridge": bridge.challenge.bridgeToken },
+      body: JSON.stringify({ captureId: captureId })
+    }, deadline);
+    const result = await readJson(finish);
+    if (!finish.ok) throw new Error(result.error || "JaneConverter could not finish the media capture.");
+    await sendDiagnostic(bridge, "upload_complete", { bytes: offset });
+    return Object.assign({}, result, { fingerprint });
+  } catch (error) {
+    await abortUpload(bridge, captureId);
+    throw error;
   }
-  if (!offset) throw new Error("The signed-in browser response contained no media bytes.");
-  const finish = await fetch(accessEndpoint(bridge.tab, "/bridge/capture/finish"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-JaneConverter-Bridge": bridge.challenge.bridgeToken },
-    body: JSON.stringify({ captureId: captureId })
-  });
-  const result = await readJson(finish);
-  if (!finish.ok) throw new Error(result.error || "JaneConverter could not finish the media capture.");
-  await sendDiagnostic(bridge, "upload_complete", { bytes: offset });
-  return result;
+
 }
 
 async function fetchAuthenticatedMedia(payload) {
@@ -219,7 +281,8 @@ async function fetchAuthenticatedMedia(payload) {
   const host = new URL(request.mediaUrl).hostname.toLowerCase();
   await sendDiagnostic(bridge, "session_fetch_started", { platform: pagePlatform.id, host: host, mediaKind: request.mediaKind });
   const controller = new AbortController();
-  const timeout = setTimeout(function () { controller.abort(); }, SESSION_FETCH_TIMEOUT_MS);
+  const deadline = Date.now() + request.timeoutMs;
+  const timeout = setTimeout(function () { controller.abort(); }, request.timeoutMs);
   try {
     const response = await fetch(request.mediaUrl, {
       credentials: "include",
@@ -241,13 +304,14 @@ async function fetchAuthenticatedMedia(payload) {
       throw new Error("The signed-in browser response is larger than JaneConverter's 1 GB capture limit.");
     }
     await sendDiagnostic(bridge, "media_response", { host: host, status: response.status, mediaKind: request.mediaKind, bytes: contentLength || undefined });
-    const result = await uploadSessionResponse(bridge, request, response, contentType, contentLength || undefined);
-    return { ok: true, captureCount: Number(result.captureCount || 0) };
+    const result = await uploadSessionResponse(bridge, request, response, contentType, contentLength || undefined, deadline);
+    return Object.assign({}, result, { ok: true, captureCount: Number(result.captureCount || 0) });
   } catch (error) {
     await sendDiagnostic(bridge, "session_fetch_failed", { host: host, mediaKind: request.mediaKind });
     throw error;
   } finally {
     clearTimeout(timeout);
+    controller.abort();
   }
 }
 
@@ -295,7 +359,7 @@ chrome.tabs.onUpdated.addListener(function (tabId, changeInfo) {
     const state = stored.janeCollectTabs && stored.janeCollectTabs[String(tabId)];
     if (!state || !state.enabled) return;
     try {
-      await chrome.scripting.executeScript({ target: { tabId: tabId }, files: ["collect.js"] });
+      await chrome.scripting.executeScript({ target: { tabId: tabId }, files: ["media-utils.js", "collect.js"] });
       await chrome.tabs.sendMessage(tabId, { type: "jane-collect-control", enabled: true });
       await setBadge(tabId, "ON", "#0f766e");
     } catch (_) {}

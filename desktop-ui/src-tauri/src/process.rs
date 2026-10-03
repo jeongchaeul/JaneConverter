@@ -762,7 +762,115 @@ pub fn parse_playlist_output(output: &str) -> Result<PlaylistCatalog, String> {
     Ok(PlaylistCatalog { title, items })
 }
 
-pub fn load_playlist(source: &str, browser: Option<String>) -> Result<PlaylistCatalog, String> {
+pub fn bounded_output(
+    command: &mut Command,
+    timeout: Duration,
+    cancel: &AtomicBool,
+) -> Result<std::process::Output, String> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err("Operation cancelled.".into());
+    }
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    prepare_command(command);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Could not start operation: {error}"))?;
+    fn drain(mut pipe: impl Read + Send + 'static) -> std::sync::mpsc::Receiver<Vec<u8>> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let mut result = Vec::new();
+            let mut buffer = [0u8; 8192];
+            while let Ok(size) = pipe.read(&mut buffer) {
+                if size == 0 {
+                    break;
+                }
+                let keep = size.min((2 * 1024 * 1024usize).saturating_sub(result.len()));
+                result.extend_from_slice(&buffer[..keep]);
+            }
+            let _ = sender.send(result);
+        });
+        receiver
+    }
+    let stdout = drain(child.stdout.take().expect("piped stdout"));
+    let stderr = drain(child.stderr.take().expect("piped stderr"));
+    let started = Instant::now();
+    let status =
+        loop {
+            if cancel.load(Ordering::Relaxed) || started.elapsed() >= timeout {
+                terminate_child(&mut child);
+                let _ = stdout.recv_timeout(Duration::from_millis(100));
+                let _ = stderr.recv_timeout(Duration::from_millis(100));
+                return Err(if cancel.load(Ordering::Relaxed) { "Operation cancelled." } else {
+                "Operation timed out. Check the connection, keep the source available, and retry."
+            }.into());
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => thread::sleep(Duration::from_millis(20)),
+                Err(error) => {
+                    terminate_child(&mut child);
+                    let _ = stdout.recv_timeout(Duration::from_millis(100));
+                    let _ = stderr.recv_timeout(Duration::from_millis(100));
+                    return Err(format!("Could not wait for operation: {error}"));
+                }
+            }
+        };
+    let output = (|| {
+        let stdout = stdout
+            .recv_timeout(Duration::from_secs(1))
+            .map_err(|_| "The operation left its output stream open.")?;
+        let stderr = stderr
+            .recv_timeout(Duration::from_secs(1))
+            .map_err(|_| "The operation left its error stream open.")?;
+        Ok(std::process::Output {
+            status,
+            stdout,
+            stderr,
+        })
+    })();
+    if output.is_err() {
+        terminate_child(&mut child);
+    }
+    output
+}
+
+pub fn validate_capture(
+    path: &std::path::Path,
+    kind: &str,
+    cancel: &AtomicBool,
+) -> Result<String, String> {
+    let engine = find_python();
+    let mut command = Command::new(&engine);
+    if !packaged_engine(&engine) {
+        command.args(["run", "--locked", "janeconverter"]);
+    }
+    command
+        .arg("--validate-browser-capture")
+        .arg(path)
+        .args(["--capture-kind", kind]);
+    command.current_dir(project_root());
+    let output = bounded_output(&mut command, Duration::from_secs(40), cancel)?;
+    if !output.status.success() {
+        return Err("The browser returned unreadable or mismatched media. Keep the original item open and retry.".into());
+    }
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|_| "The media validator returned an invalid result.")?;
+    report
+        .get("mimeType")
+        .and_then(|value| value.as_str())
+        .filter(|value| value.starts_with(&format!("{kind}/")))
+        .map(str::to_owned)
+        .ok_or_else(|| "The capture does not contain the requested media kind.".into())
+}
+
+pub fn load_playlist(
+    source: &str,
+    browser: Option<String>,
+    cancel: &AtomicBool,
+) -> Result<PlaylistCatalog, String> {
     let engine = find_python();
     let mut command = Command::new(&engine);
     if !packaged_engine(&engine) {
@@ -780,12 +888,7 @@ pub fn load_playlist(source: &str, browser: Option<String>) -> Result<PlaylistCa
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     prepare_command(&mut command);
-    let child = command
-        .spawn()
-        .map_err(|error| format!("Could not start playlist loading: {error}"))?;
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("Could not wait for playlist loading: {error}"))?;
+    let output = bounded_output(&mut command, Duration::from_secs(60), cancel)?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
@@ -803,6 +906,36 @@ pub fn load_playlist(source: &str, browser: Option<String>) -> Result<PlaylistCa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_operations_honour_cancellation_and_deadlines() {
+        #[cfg(target_os = "windows")]
+        let mut command = {
+            let mut c = Command::new("powershell.exe");
+            c.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 5"]);
+            c
+        };
+        #[cfg(not(target_os = "windows"))]
+        let mut command = {
+            let mut c = Command::new("sh");
+            c.args(["-c", "sleep 5"]);
+            c
+        };
+        assert!(
+            bounded_output(&mut command, Duration::from_secs(5), &AtomicBool::new(true))
+                .unwrap_err()
+                .contains("cancelled")
+        );
+        let started = Instant::now();
+        assert!(bounded_output(
+            &mut command,
+            Duration::from_millis(100),
+            &AtomicBool::new(false)
+        )
+        .unwrap_err()
+        .contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(4));
+    }
 
     #[test]
     fn progress_parser_is_bounded() {

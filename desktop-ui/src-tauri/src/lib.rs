@@ -1,4 +1,5 @@
 mod access;
+mod catalog;
 mod facebook_capture;
 mod library;
 mod model;
@@ -106,6 +107,7 @@ fn is_newer_updater_build(current: &str, latest: &str) -> bool {
 pub struct AppState {
     active_child: Arc<Mutex<Option<Arc<Mutex<std::process::Child>>>>>,
     active_cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+    playlist_cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     active_paused: Arc<AtomicBool>,
     active_job: Arc<Mutex<Option<String>>>,
     storage_operation: Arc<Mutex<()>>,
@@ -128,6 +130,7 @@ impl Default for AppState {
         Self {
             active_child: Arc::new(Mutex::new(None)),
             active_cancel: Arc::new(Mutex::new(None)),
+            playlist_cancel: Arc::new(Mutex::new(None)),
             active_paused: Arc::new(AtomicBool::new(false)),
             active_job: Arc::new(Mutex::new(None)),
             storage_operation: Arc::new(Mutex::new(())),
@@ -960,10 +963,11 @@ async fn capture_social_post_photos(
         .incognito(true)
         .data_directory(profile.clone())
         .initialization_script(&initial_script)
-        .on_navigation(move |url| social_photo_capture::is_allowed_navigation(url.as_str(), platform))
+        .on_navigation(move |url| {
+            social_photo_capture::is_allowed_navigation(url.as_str(), platform)
+        })
         .on_document_title_changed(move |window, title| {
-            let Some(message) =
-                social_photo_capture::message_from_title(&title, &nonce_for_title)
+            let Some(message) = social_photo_capture::message_from_title(&title, &nonce_for_title)
             else {
                 return;
             };
@@ -972,7 +976,10 @@ async fn capture_social_post_photos(
             }
             match message.kind.as_str() {
                 "photos" => {
-                    if message.photos.is_empty() || message.photos.len() > 2 || message.sequence == 0 {
+                    if message.photos.is_empty()
+                        || message.photos.len() > 2
+                        || message.sequence == 0
+                    {
                         return;
                     }
                     let capture_count = {
@@ -985,8 +992,13 @@ async fn capture_social_post_photos(
                         for photo in message.photos {
                             if photo.id.is_empty()
                                 || photo.id.len() > 200
-                                || !photo.id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-                                || !social_photo_capture::validate_photo_url(&photo.url, platform_for_title)
+                                || !photo.id.bytes().all(|byte| {
+                                    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
+                                })
+                                || !social_photo_capture::validate_photo_url(
+                                    &photo.url,
+                                    platform_for_title,
+                                )
                             {
                                 continue;
                             }
@@ -1002,28 +1014,38 @@ async fn capture_social_post_photos(
                         }
                         collected.photos.len()
                     };
-                    let _ = window.set_title(&format!("Found {capture_count} {} photos...", platform_for_title.label()));
-                    let ack_key = serde_json::to_string(&format!("__JANE_SOCIAL_PHOTO_ACK__{nonce_for_title}"))
-                        .expect("acknowledgment key is a string");
+                    let _ = window.set_title(&format!(
+                        "Found {capture_count} {} photos...",
+                        platform_for_title.label()
+                    ));
+                    let ack_key = serde_json::to_string(&format!(
+                        "__JANE_SOCIAL_PHOTO_ACK__{nonce_for_title}"
+                    ))
+                    .expect("acknowledgment key is a string");
                     let _ = window.eval(&format!("window[{ack_key}] = {};", message.sequence));
                 }
                 "done" => {
-                    let result = accumulator_for_title.lock().map_err(|_| "The public photo list became unavailable.".to_string()).and_then(|collected| {
-                        if message.count == 0 || message.count > 500 || collected.photos.len() != message.count {
-                            return Err(format!(
-                                "{} reported {} photos, but JaneConverter received {}. No partial post was saved.",
-                                platform_for_title.label(), message.count, collected.photos.len()
-                            ));
-                        }
-                        let title = if !message.title.is_empty() { message.title.chars().take(500).collect() } else { collected.title.clone() };
-                        Ok(social_photo_capture::CaptureOutcome::Photos(
-                            social_photo_capture::manifest(
-                                platform_for_title,
-                                title,
-                                collected.photos.clone(),
-                            ),
-                        ))
-                    });
+                    let result = accumulator_for_title
+                        .lock()
+                        .map_err(|_| "The public photo list became unavailable.".to_string())
+                        .and_then(|collected| {
+                            social_photo_capture::validate_completion(
+                                &message,
+                                collected.photos.len(),
+                            )?;
+                            let title = if !message.title.is_empty() {
+                                message.title.chars().take(500).collect()
+                            } else {
+                                collected.title.clone()
+                            };
+                            Ok(social_photo_capture::CaptureOutcome::Photos(
+                                social_photo_capture::manifest(
+                                    platform_for_title,
+                                    title,
+                                    collected.photos.clone(),
+                                ),
+                            ))
+                        });
                     let _ = sender_for_title.send(result);
                     let _ = window.close();
                 }
@@ -1039,13 +1061,20 @@ async fn capture_social_post_photos(
                         let _ = window.close();
                     }
                 }
-                "no_photos" if platform_for_title == social_photo_capture::SocialPlatform::Twitter => {
+                "no_photos"
+                    if platform_for_title == social_photo_capture::SocialPlatform::Twitter =>
+                {
                     let _ = sender_for_title.send(Err("NO_PUBLIC_PHOTOS".into()));
                     let _ = window.close();
                 }
                 "error" => {
-                    let error = if message.error.chars().count() <= 400 { message.error } else {
-                        format!("{} could not show this post to a logged-out visitor.", platform_for_title.label())
+                    let error = if message.error.chars().count() <= 400 {
+                        message.error
+                    } else {
+                        format!(
+                            "{} could not show this post to a logged-out visitor.",
+                            platform_for_title.label()
+                        )
                     };
                     let _ = sender_for_title.send(Err(error));
                     let _ = window.close();
@@ -1510,11 +1539,59 @@ fn cancel_conversion(state: State<'_, AppState>, job_id: String) -> Result<(), S
 }
 
 #[tauri::command]
-fn load_playlist(
-    _state: State<'_, AppState>,
+async fn load_playlist(
+    state: State<'_, AppState>,
     source: String,
 ) -> Result<model::PlaylistCatalog, String> {
-    load_playlist_engine(&source, None)
+    let cancel = Arc::new(AtomicBool::new(false));
+    let slot = state.playlist_cancel.clone();
+    {
+        let mut current = slot
+            .lock()
+            .map_err(|_| "The playlist loader is unavailable.")?;
+        if current.is_some() {
+            return Err("A playlist is already loading. Cancel it before retrying.".into());
+        }
+        *current = Some(cancel.clone());
+    }
+    let result =
+        tauri::async_runtime::spawn_blocking(move || load_playlist_engine(&source, None, &cancel))
+            .await
+            .map_err(|error| format!("Playlist loading stopped: {error}"));
+    if let Ok(mut current) = slot.lock() {
+        *current = None;
+    }
+    result?
+}
+
+#[tauri::command]
+fn cancel_playlist(state: State<'_, AppState>) -> Result<(), String> {
+    if let Some(cancel) = state
+        .playlist_cancel
+        .lock()
+        .map_err(|_| "The playlist loader is unavailable.")?
+        .as_ref()
+    {
+        cancel.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn conversion_history(
+    legacy: Vec<serde_json::Value>,
+    entry: Option<serde_json::Value>,
+    remove: Option<String>,
+    clear: bool,
+) -> Result<serde_json::Value, String> {
+    let result = catalog::history(
+        &data_root().join("catalog.json"),
+        legacy,
+        entry,
+        remove.as_deref(),
+        clear,
+    )?;
+    Ok(serde_json::json!({"history":result.history,"warning":result.warning}))
 }
 
 #[tauri::command]
@@ -1749,14 +1826,16 @@ fn access_status(state: State<'_, AppState>) -> AccessStatus {
 }
 
 #[tauri::command]
-fn fetched_media(state: State<'_, AppState>) -> Vec<FetchedMedia> {
+fn fetched_media(state: State<'_, AppState>) -> Result<Vec<FetchedMedia>, String> {
     let fallback_root = PathBuf::from(settings_get_internal().fetched_dir);
-    state
+    // Surface a catalog failure instead of silently replacing provenance with filenames.
+    catalog::captures(&fallback_root.join("capture-catalog.json"))?;
+    Ok(state
         .access
         .lock()
         .ok()
         .and_then(|value| value.as_ref().map(access::AccessServer::fetched_media))
-        .unwrap_or_else(|| access::scan_fetched_media(&fallback_root))
+        .unwrap_or_else(|| access::scan_fetched_media(&fallback_root)))
 }
 
 #[tauri::command]
@@ -2229,6 +2308,11 @@ async fn install_update(
         .map_err(|_| "The pending update state is unavailable.".to_owned())?
         .take()
         .ok_or_else(|| "Check for updates again before installing.".to_owned())?;
+    // Preserve a readable catalog snapshot before the signed installer runs.
+    catalog::backup_for_update(
+        &data_root(),
+        &PathBuf::from(settings_get_internal().fetched_dir),
+    )?;
     update
         .download_and_install(|_, _| {}, || {})
         .await
@@ -2276,6 +2360,8 @@ pub fn run() {
             resume_conversion,
             cancel_conversion,
             load_playlist,
+            cancel_playlist,
+            conversion_history,
             scan_library,
             is_converted_library_path,
             recent_conversions,

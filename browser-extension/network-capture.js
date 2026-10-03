@@ -131,32 +131,38 @@
       pageUrl: state.pageUrl,
       title: "Authenticated network media"
     };
-    const captureId = await startCaptureUpload(bridge, payload, item.mimeType, bytes.byteLength);
-    let offset = 0;
-    while (offset < bytes.byteLength) {
-      const next = Math.min(offset + MAX_CHUNK_BYTES, bytes.byteLength);
-      const chunk = await fetch(accessEndpoint(bridge.tab, "/bridge/capture/chunk"), {
+    const deadline = Date.now() + 120000;
+    const captureId = await startCaptureUpload(bridge, payload, item.mimeType, bytes.byteLength, deadline);
+    try {
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        const next = Math.min(offset + MAX_CHUNK_BYTES, bytes.byteLength);
+        const chunk = await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/capture/chunk"), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "X-JaneConverter-Bridge": bridge.challenge.bridgeToken,
+            "X-JaneConverter-Capture-Id": captureId,
+            "X-JaneConverter-Capture-Offset": String(offset)
+          },
+          body: bytes.slice(offset, next)
+        }, deadline);
+        const result = await readJson(chunk);
+        if (!chunk.ok) throw new Error(result.error || "JaneConverter rejected a network-media chunk.");
+        offset = next;
+      }
+      const finish = await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/capture/finish"), {
         method: "POST",
-        headers: {
-          "Content-Type": "application/octet-stream",
-          "X-JaneConverter-Bridge": bridge.challenge.bridgeToken,
-          "X-JaneConverter-Capture-Id": captureId,
-          "X-JaneConverter-Capture-Offset": String(offset)
-        },
-        body: bytes.slice(offset, next)
-      });
-      const result = await readJson(chunk);
-      if (!chunk.ok) throw new Error(result.error || "JaneConverter rejected a network-media chunk.");
-      offset = next;
+        headers: { "Content-Type": "application/json", "X-JaneConverter-Bridge": bridge.challenge.bridgeToken },
+        body: JSON.stringify({ captureId: captureId })
+      }, deadline);
+      const result = await readJson(finish);
+      if (!finish.ok) throw new Error(result.error || "JaneConverter could not finish the network media.");
+      return result;
+    } catch (error) {
+      await abortUpload(bridge, captureId);
+      throw error;
     }
-    const finish = await fetch(accessEndpoint(bridge.tab, "/bridge/capture/finish"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-JaneConverter-Bridge": bridge.challenge.bridgeToken },
-      body: JSON.stringify({ captureId: captureId })
-    });
-    const result = await readJson(finish);
-    if (!finish.ok) throw new Error(result.error || "JaneConverter could not finish the network media.");
-    return result;
   }
 
   function sourceKey(source, requestId) {
@@ -174,11 +180,15 @@
     state.pending.delete(requestKey);
     if (!item || !state.attached) return;
     try {
-      const body = await chrome.debugger.sendCommand(
+      const body = await globalThis.JaneMediaUtils.withDeadline(chrome.debugger.sendCommand(
         item.target || { tabId: state.tabId },
         "Network.getResponseBody",
         { requestId: item.requestId }
-      );
+      ), 8000);
+      const encodedSize = String(body && body.body || "").length;
+      if (encodedSize > MAX_NETWORK_CAPTURE_BYTES * (body?.base64Encoded ? 4 / 3 : 1) + 4) {
+        throw new Error("The network response exceeded the capture byte limit.");
+      }
       const bytes = decodeBody(body && body.body, Boolean(body && body.base64Encoded));
       if (!bytes.byteLength || bytes.byteLength > MAX_NETWORK_CAPTURE_BYTES) {
         await diagnose(state, "network_discarded", { mediaKind: item.mediaKind, status: item.status, bytes: bytes.byteLength, reason: "response exceeded the 256 MB limit" });

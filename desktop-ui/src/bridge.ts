@@ -125,6 +125,9 @@ export interface AccessStatus {
 }
 
 export interface FetchedMedia {
+  captureMethod?: string;
+  sourceUrl?: string;
+  capturedAt?: number;
   path: string;
   name: string;
   mediaKind: "video" | "audio" | "image";
@@ -171,6 +174,7 @@ export interface ConversionHistoryItem {
 }
 
 export interface JaneBridge {
+  conversionHistory(legacy?: ConversionHistoryItem[], entry?: ConversionHistoryItem, remove?: string, clear?: boolean): Promise<{ history: ConversionHistoryItem[]; warning?: string | null }>;
   runtimeInfo(): Promise<RuntimeInfo>;
   hardwareSnapshot(): Promise<HardwareSnapshot>;
   settingsGet(): Promise<ConverterSettings>;
@@ -191,6 +195,7 @@ export interface JaneBridge {
   resumeConversion(jobId?: string): Promise<void>;
   cancelConversion(jobId: string): Promise<void>;
   loadPlaylist(source: string): Promise<PlaylistCatalog>;
+  cancelPlaylist(): Promise<void>;
   subscribe(listener: (event: ConverterEvent) => void): Promise<UnlistenFn>;
   scanLibrary(path: string): Promise<LibraryEntry[]>;
   isConvertedLibraryPath(path: string): Promise<boolean>;
@@ -231,6 +236,12 @@ const demoSettings: ConverterSettings = {
 };
 
 const demoBridge: JaneBridge = {
+  async conversionHistory(legacy = [], entry, remove, clear) {
+    const saved: ConversionHistoryItem[] = JSON.parse(window.localStorage.getItem("janeconverter.preview-history") || "null") || legacy;
+    const history = clear ? [] : entry ? [entry, ...saved.filter((item) => item.id !== entry.id)] : saved.filter((item) => item.id !== remove);
+    window.localStorage.setItem("janeconverter.preview-history", JSON.stringify(history));
+    return { history };
+  },
   async runtimeInfo() {
     return { mode: "browser", pythonReady: false, ffmpegReady: false, ffmpegPath: "", pythonPath: "", dataRoot: "Project-local", projectRoot: "Project-local", gpuAvailable: false, gpuLabel: "Preview mode", packaged: false };
   },
@@ -255,6 +266,7 @@ const demoBridge: JaneBridge = {
   async resumeConversion() {},
   async cancelConversion() {},
   async loadPlaylist() { return { title: "Preview playlist", items: [] }; },
+  async cancelPlaylist() {},
   async subscribe() { return () => {}; },
   async scanLibrary() { return []; },
   async isConvertedLibraryPath() { return false; },
@@ -281,6 +293,7 @@ const demoBridge: JaneBridge = {
 const isTauriRuntime = () => "__TAURI_INTERNALS__" in window;
 
 const tauriBridge: JaneBridge = {
+  conversionHistory: (legacy = [], entry, remove, clear = false) => invoke("conversion_history", { legacy, entry: entry ?? null, remove: remove ?? null, clear }),
   runtimeInfo: () => invoke<RuntimeInfo>("runtime_info"),
   hardwareSnapshot: () => invoke<HardwareSnapshot>("hardware_snapshot"),
   settingsGet: () => invoke<ConverterSettings>("settings_get"),
@@ -301,6 +314,7 @@ const tauriBridge: JaneBridge = {
   resumeConversion: (jobId) => invoke<void>("resume_conversion", { jobId }),
   cancelConversion: (jobId) => invoke<void>("cancel_conversion", { jobId }),
   loadPlaylist: (source) => invoke<PlaylistCatalog>("load_playlist", { source }),
+  cancelPlaylist: () => invoke<void>("cancel_playlist"),
   subscribe: (listener) => listen<ConverterEvent>("converter-event", (event) => listener(event.payload)),
   scanLibrary: (path) => invoke<LibraryEntry[]>("scan_library", { path }),
   isConvertedLibraryPath: (path) => invoke<boolean>("is_converted_library_path", { path }),

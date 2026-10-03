@@ -51,6 +51,14 @@ pub struct PageMessage {
     #[serde(default)]
     pub count: usize,
     #[serde(default)]
+    pub expected_count: Option<usize>,
+    #[serde(default)]
+    pub end_confirmed: bool,
+    #[serde(default)]
+    pub count_conflict: bool,
+    #[serde(default)]
+    pub completion: String,
+    #[serde(default)]
     pub sequence: usize,
     #[serde(default)]
     pub platform: String,
@@ -209,6 +217,19 @@ pub fn message_from_title(title: &str, nonce: &str) -> Option<PageMessage> {
     serde_json::from_slice(&bytes).ok()
 }
 
+pub fn validate_completion(message: &PageMessage, received: usize) -> Result<(), String> {
+    if message.completion != "complete"
+        || !message.end_confirmed
+        || message.count_conflict
+        || message.expected_count != Some(received)
+        || message.count != received
+        || !(1..=500).contains(&received)
+    {
+        return Err(format!("Collection completeness could not be verified (received {received} photos). No partial collection was saved. Keep the full post open and retry, or use Browser Capture for individual visible items."));
+    }
+    Ok(())
+}
+
 pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
     let nonce_json = serde_json::to_string(nonce).expect("nonce is a string");
     let platform_json = serde_json::to_string(platform.key()).expect("platform is a string");
@@ -221,6 +242,9 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
   const ackKey = "__JANE_SOCIAL_PHOTO_ACK__" + nonce;
   window[ackKey] = 0;
   const photos = new Map();
+  const originalTitle = document.title;
+  let expectedCount = null;
+  let countConflict = false;
   let pending = [];
   let sequence = 0;
   let waiting = 0;
@@ -312,7 +336,7 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
     const article = document.querySelector("article");
     const text = article && article.innerText ? article.innerText.slice(0, 140) : "";
     const fallback = {{instagram:"Instagram Post",twitter:"X Post",tiktok:"TikTok Photo Post",reddit:"Reddit Gallery",tumblr:"Tumblr Photo Post",pinterest:"Pinterest Collection"}}[platform];
-    return ((meta && meta.content) || text || document.title || fallback).slice(0, 200);
+    return ((meta && meta.content) || text || originalTitle || fallback).slice(0, 200);
   }};
   const closeGuestPrompt = () => {{
     // Social photo viewers use the same generic close label as account
@@ -461,6 +485,46 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
     send(inFlight);
     return true;
   }};
+  const observeCount = () => {{
+    const container = postContainer();
+    if (!container) return;
+    const counts = [];
+    for (const node of container.querySelectorAll('[aria-setsize], [aria-label]')) {{
+      const size = Number(node.getAttribute("aria-setsize"));
+      if (Number.isInteger(size) && size > 0 && size <= 500) counts.push(size);
+      const label = node.getAttribute("aria-label") || "";
+      const match = /(?:photo|image|slide)\s*\d+\s*(?:of|\/)\s*(\d+)/i.exec(label);
+      if (match && Number(match[1]) > 0) counts.push(Number(match[1]));
+    }}
+    // Read declarative media lists only when they identify this exact post.
+    // A page-wide list of recommendations cannot certify this collection.
+    const postPath = (value) => {{
+      if (!value || typeof value !== "string") return "";
+      try {{ const url = new URL(value, location.href); return url.origin + url.pathname.replace(/\/$/, ""); }} catch (_) {{ return ""; }}
+    }};
+    for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {{
+      try {{
+        const data = JSON.parse(script.textContent);
+        const entries = Array.isArray(data) ? data : data["@graph"] || [data];
+        for (const entry of entries) {{
+          if (!entry || postPath(entry.url || entry["@id"] || "") !== postPath(location.href)) continue;
+          if (!["Article", "SocialMediaPosting", "ImageGallery", "ImageObject", "ItemList"].includes(entry["@type"])) continue;
+          if (Array.isArray(entry.image) && entry.image.length) counts.push(entry.image.length);
+          if (entry["@type"] === "ImageObject" && entry.contentUrl) counts.push(1);
+          if (entry["@type"] === "ItemList" && Number.isInteger(entry.numberOfItems) && entry.numberOfItems > 0) counts.push(entry.numberOfItems);
+        }}
+      }} catch (_) {{}}
+    }}
+    for (const count of counts) {{
+      if (expectedCount !== null && expectedCount !== count) countConflict = true;
+      expectedCount = count;
+    }}
+  }};
+  const finishPhotos = (title) => {{
+    const complete = !countConflict && expectedCount === photos.size;
+    sendFinal({{kind:"done",count:photos.size,title,platform,expectedCount,endConfirmed:complete,countConflict,
+      completion:complete ? "complete" : expectedCount === null ? "unknown" : "incomplete"}});
+  }};
   const scan = () => {{
     if (finished) return;
     if (window.__JANE_CAPTURE_PAUSED__) {{
@@ -484,6 +548,7 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
       return;
     }}
     collectPhotos();
+    observeCount();
     const title = pageTitle();
     if (!photos.size && !pending.length && attempts >= 3 && hasVideoPost()) {{
       sendFinal({{kind:"video",count:0,title,platform}});
@@ -519,12 +584,12 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
       if (hasMoreSlides || (isPinterestBoard && !(atBottom && unchanged >= 8))) {{
         sendFinal({{kind:"error",error:platformLabel + " collection exceeds the 500-photo capture limit; nothing was saved."}});
       }} else if (settled) {{
-        sendFinal({{kind:"done",count:photos.size,title,platform}});
+        finishPhotos(title);
       }}
       if (finished) return;
     }}
     if (attempts >= noPhotoWait && settled && !waiting && !pending.length) {{
-      if (photos.size) sendFinal({{kind:"done",count:photos.size,title,platform}});
+      if (photos.size) finishPhotos(title);
       else if (hasVideoPost()) sendFinal({{kind:"video",count:0,title,platform}});
       else if (platform === "twitter") sendFinal({{kind:"no_photos",count:0,title,platform}});
       else sendFinal({{kind:"error",error:"No public " + platformLabel + " photos were visible in this post."}});
@@ -545,6 +610,21 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quiet_partial_collections_are_not_complete() {
+        let mut message: PageMessage =
+            serde_json::from_str(r#"{"kind":"done","count":2}"#).unwrap();
+        assert!(validate_completion(&message, 2).is_err());
+        message.expected_count = Some(3);
+        message.end_confirmed = true;
+        message.completion = "complete".into();
+        assert!(validate_completion(&message, 2).is_err());
+        message.expected_count = Some(2);
+        assert!(validate_completion(&message, 2).is_ok());
+        message.count_conflict = true;
+        assert!(validate_completion(&message, 2).is_err());
+    }
 
     #[test]
     fn collection_links_are_limited_to_supported_public_routes() {

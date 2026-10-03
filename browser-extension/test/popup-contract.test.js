@@ -34,7 +34,7 @@ test("falls back to visible player capture when a media URL returns no bytes", (
 test("retains the authenticated service-worker path with rendered fallback", () => {
   assert.match(popupSource, /async function captureThroughAuthenticatedSession\(/);
   assert.match(popupSource, /type:\s*"jane-authenticated-fetch"/);
-  assert.match(popupSource, /Using the signed-in browser session[\s\S]*captureThroughAuthenticatedSession\(sourceTab, item, mode\)/);
+  assert.match(popupSource, /Using the signed-in browser session[\s\S]*captureThroughAuthenticatedSession\(sourceTab, item, mode, deadline, previousFingerprints\)/);
   assert.match(popupSource, /Authenticated browser fetch was unavailable; trying the rendered media fallback/);
 });
 
@@ -69,5 +69,5 @@ test("keeps the confirmed bridge reusable for additional captures", () => {
 test("captures story items while they are still visible", () => {
   assert.match(popupSource, /async function captureStorySequence\(/);
   assert.match(popupSource, /Capturing story item/);
-  assert.match(popupSource, /await inspectCurrentMedia\(sourceTab\)/);
+  assert.match(popupSource, /await inspectCurrentMedia\(sourceTab, Math\.min\(deadline/);
 });

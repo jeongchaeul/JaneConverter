@@ -103,9 +103,9 @@ async function requestSessionFetchPermissions(pageUrl, mediaUrl) {
   await requestOriginPermission(mediaUrl);
 }
 
-async function captureThroughAuthenticatedSession(sourceTab, item, mode) {
+async function captureThroughAuthenticatedSession(sourceTab, item, mode, deadline, previousFingerprints = []) {
   await requestSessionFetchPermissions(sourceTab.url, item.mediaUrl);
-  const result = await chrome.runtime.sendMessage({
+  const result = await globalThis.JaneMediaUtils.withDeadline(chrome.runtime.sendMessage({
     type: "jane-authenticated-fetch",
     payload: {
       pageUrl: sourceTab.url,
@@ -113,9 +113,12 @@ async function captureThroughAuthenticatedSession(sourceTab, item, mode) {
       mediaKind: item.mediaKind,
       captureMode: mode,
       fileName: item.fileName,
-      title: item.title
+      title: item.title,
+      fingerprint: storyFingerprint(item),
+      previousFingerprints,
+      timeoutMs: Math.max(1, Math.min(120000, deadline - Date.now()))
     }
-  });
+  }), deadline - Date.now());
   if (!result || !result.ok) {
     throw new Error(result && result.error || "The authenticated browser fetch did not complete.");
   }
@@ -131,24 +134,16 @@ function describeFetchFailure(stage, url, error) {
   return stage + host + " failed" + detail + ".";
 }
 
-async function bridgeFetch(url, options, stage) {
+async function bridgeFetch(url, options, stage, timeoutMs = MEDIA_FETCH_TIMEOUT_MS) {
   try {
-    return await fetch(url, options);
+    return await globalThis.JaneMediaUtils.fetchBounded(url, options, timeoutMs, 2 * 1024 * 1024);
   } catch (error) {
     throw new Error(describeFetchFailure(stage, url, error));
   }
 }
 
-async function fetchWithTimeout(url, options) {
-  const controller = new AbortController();
-  const timer = setTimeout(function () {
-    controller.abort();
-  }, MEDIA_FETCH_TIMEOUT_MS);
-  try {
-    return await fetch(url, Object.assign({}, options || {}, { signal: controller.signal }));
-  } finally {
-    clearTimeout(timer);
-  }
+async function fetchWithTimeout(url, options, timeoutMs = MEDIA_FETCH_TIMEOUT_MS) {
+  return globalThis.JaneMediaUtils.fetchBounded(url, options, timeoutMs, MAX_RENDERED_CAPTURE_BYTES);
 }
 
 async function findSourceTab(sourceUrl) {
@@ -468,7 +463,8 @@ function inspectPageMedia(sequence) {
   });
 }
 
-async function capturePageMedia(item, maxBytes) {
+async function capturePageMedia(item, maxBytes, deadline = Date.now() + 180000) {
+  if (Date.now() >= deadline) throw new Error("Rendered capture deadline reached.");
   const collectElements = function () {
     const elements = [];
     const seen = new Set();
@@ -507,15 +503,25 @@ async function capturePageMedia(item, maxBytes) {
     try {
       const controller = new AbortController();
       const timer = setTimeout(function () { controller.abort(); }, 8000);
-      let response;
       try {
-        response = await fetch(url, { signal: controller.signal });
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok || !response.body) return null;
+        const reader = response.body.getReader();
+        const chunks = [];
+        let size = 0;
+        while (true) {
+          const part = await reader.read();
+          if (part.done) break;
+          size += part.value.byteLength;
+          if (size > maxBytes) { await reader.cancel(); throw new Error("Capture exceeds its byte limit."); }
+          chunks.push(part.value);
+        }
+        const blob = new Blob(chunks, { type: response.headers.get("content-type") || "" });
+        return await encodeCapture(blob, blob.type || "", item.fileName);
       } finally {
         clearTimeout(timer);
+        controller.abort();
       }
-      if (!response.ok) return null;
-      const blob = await response.blob();
-      return encodeCapture(blob, blob.type || "", item.fileName);
     } catch (_) {
       return null;
     }
@@ -621,11 +627,16 @@ async function capturePageMedia(item, maxBytes) {
     const timeoutMs = duration > 0 ? Math.min(180 * 1000, Math.max(15 * 1000, (duration + 3) * 1000)) : 30 * 1000;
     let timer;
     let firstDataTimer;
+    let hardTimer;
+    let recordedBytes = 0;
     const finish = function (callback, value) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       clearTimeout(firstDataTimer);
+      clearTimeout(hardTimer);
+      if (recorder.state !== "inactive") recorder.stop();
+      stream.getTracks().forEach((track) => track.stop());
       recorder.removeEventListener("dataavailable", onData);
       recorder.removeEventListener("error", onError);
       recorder.removeEventListener("stop", onStop);
@@ -635,6 +646,11 @@ async function capturePageMedia(item, maxBytes) {
     const onData = function (event) {
       if (event.data && event.data.size > 0) {
         clearTimeout(firstDataTimer);
+        recordedBytes += event.data.size;
+        if (recordedBytes > maxBytes) {
+          finish(reject, new Error("The rendered capture exceeded its byte limit."));
+          return;
+        }
         chunks.push(event.data);
       }
     };
@@ -656,7 +672,10 @@ async function capturePageMedia(item, maxBytes) {
     const stop = function () {
       if (recorder.state !== "inactive") recorder.stop();
     };
-    timer = setTimeout(stop, timeoutMs);
+    timer = setTimeout(stop, Math.min(timeoutMs, Math.max(1, deadline - Date.now() - 1000)));
+    hardTimer = setTimeout(function () {
+      finish(reject, new Error("Rendered capture deadline reached; retry the remaining item."));
+    }, Math.max(1, deadline - Date.now()));
     recorder.addEventListener("dataavailable", onData);
     recorder.addEventListener("error", onError);
     recorder.addEventListener("stop", onStop);
@@ -669,12 +688,10 @@ async function capturePageMedia(item, maxBytes) {
       }
     }, 8 * 1000);
   });
-  const captured = await result;
-  try {
-    element.currentTime = originalTime;
-    if (originalPaused) element.pause();
-  } catch (_) {}
-  return captured;
+  try { return await result; }
+  finally {
+    try { element.currentTime = originalTime; if (originalPaused) element.pause(); } catch (_) {}
+  }
 }
 
 async function normalizePageCapture(pageCapture) {
@@ -717,7 +734,7 @@ async function runVisibleMediaCapture(sourceTab, item, world) {
     target: target,
     world: world,
     func: capturePageMedia,
-    args: [item, MAX_RENDERED_CAPTURE_BYTES]
+    args: [item, MAX_RENDERED_CAPTURE_BYTES, item.captureDeadline || Date.now() + 180000]
   });
   return normalizePageCapture(captured && captured[0] && captured[0].result);
 }
@@ -725,6 +742,7 @@ async function runVisibleMediaCapture(sourceTab, item, world) {
 async function captureVisibleMedia(sourceTab, item) {
   const errors = [];
   for (const world of ["MAIN", "ISOLATED"]) {
+    if (item.captureDeadline && Date.now() >= item.captureDeadline) throw new Error("Rendered capture deadline reached.");
     try {
       const pageCapture = await runVisibleMediaCapture(sourceTab, item, world);
       if (pageCapture && pageCapture.buffer && pageCapture.buffer.byteLength) return pageCapture;
@@ -739,7 +757,12 @@ async function captureVisibleMedia(sourceTab, item) {
   throw new Error((usefulError || errors[0] || new Error("The browser did not expose readable bytes for this media. Keep it playing and retry.")).message);
 }
 
-async function sendCapture(sourceTab, accessTab, challenge, item, mode, index) {
+async function sendCapture(sourceTab, accessTab, challenge, item, mode, index, deadline = Date.now() + 240000, previousFingerprints = []) {
+  const remaining = (cap = MEDIA_FETCH_TIMEOUT_MS) => {
+    const value = deadline - Date.now();
+    if (value <= 0) throw new Error("Capture deadline reached. Retry the remaining item.");
+    return Math.min(value, cap);
+  };
   const isWebUrl = /^https?:\/\//i.test(item.mediaUrl || "");
   const memoryKey = mode === "sequence" && globalThis.JaneStoryAdaptation
     ? globalThis.JaneStoryAdaptation.layoutKey(sourceTab.url, item) : null;
@@ -749,6 +772,7 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index) {
   let pageCapture = null;
   let method = null;
   let lastCaptureError = null;
+  let sessionResult = null;
   const attempted = new Set();
   let contentLength = 0;
   let responseMime = "";
@@ -761,7 +785,7 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index) {
     attempted.add("session-fetch");
     try {
       setStatus("Using the signed-in browser session to fetch the selected media...", "warning");
-      await captureThroughAuthenticatedSession(sourceTab, item, mode);
+      sessionResult = await captureThroughAuthenticatedSession(sourceTab, item, mode, deadline, previousFingerprints);
       await noteStoryStrategy(memoryKey, "session-fetch", true);
       return true;
     } catch (error) {
@@ -776,7 +800,8 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index) {
     if (attempted.has("rendered")) return false;
     attempted.add("rendered");
     try {
-      pageCapture = await captureVisibleMedia(sourceTab, item);
+      pageCapture = await globalThis.JaneMediaUtils.withDeadline(
+        captureVisibleMedia(sourceTab, Object.assign({}, item, { captureDeadline: deadline })), deadline - Date.now());
       contentLength = pageCapture.buffer.byteLength;
       responseMime = String(pageCapture.contentType || "").split(";")[0].toLowerCase();
       filename = pageCapture.fileName || filename;
@@ -796,7 +821,7 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index) {
       await requestOriginPermission(item.mediaUrl);
       const mediaUrl = new URL(item.mediaUrl);
       setStatus("Reading " + (mode === "sequence" ? "story item " + (index + 1) : "the selected media") + " from " + mediaUrl.host + "...", "warning");
-      mediaResponse = await fetchWithTimeout(item.mediaUrl, { credentials: "include", cache: "no-store" });
+      mediaResponse = await fetchWithTimeout(item.mediaUrl, { credentials: "include", cache: "no-store" }, remaining());
       if (!mediaResponse.ok || !mediaResponse.body) throw new Error("HTTP " + mediaResponse.status);
       contentLength = Number(mediaResponse.headers.get("content-length") || 0);
       responseMime = String(mediaResponse.headers.get("content-type") || "").split(";")[0].toLowerCase();
@@ -813,29 +838,39 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index) {
     if (!isWebUrl || attempted.has("page-fetch")) return false;
     attempted.add("page-fetch");
     try {
-      const pageResult = await chrome.scripting.executeScript({
+      const pageResult = await globalThis.JaneMediaUtils.withDeadline(chrome.scripting.executeScript({
         target: { tabId: sourceTab.id },
         world: "MAIN",
-        func: async function (url) {
+        func: async function (url, maxBytes, timeoutMs) {
           const controller = new AbortController();
-          const timer = setTimeout(function () { controller.abort(); }, 8000);
-          let response;
+          const timer = setTimeout(function () { controller.abort(); }, timeoutMs);
           try {
-            response = await fetch(url, { credentials: "include", cache: "no-store", signal: controller.signal });
+            const response = await fetch(url, { credentials: "include", cache: "no-store", signal: controller.signal });
+            if (!response.ok || !response.body) throw new Error("HTTP " + response.status);
+            const reader = response.body.getReader();
+            const chunks = [];
+            let size = 0;
+            while (true) {
+              const part = await reader.read();
+              if (part.done) break;
+              size += part.value.byteLength;
+              if (size > maxBytes) { await reader.cancel(); throw new Error("Capture exceeds its byte limit."); }
+              chunks.push(part.value);
+            }
+            const blob = new Blob(chunks);
+            const bytes = new Uint8Array(await blob.arrayBuffer());
+            let binary = "";
+            for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+            }
+            return { base64: btoa(binary), contentType: response.headers.get("content-type") || "" };
           } finally {
             clearTimeout(timer);
+            controller.abort();
           }
-          if (!response.ok) throw new Error("HTTP " + response.status);
-          const blob = await response.blob();
-          const bytes = new Uint8Array(await blob.arrayBuffer());
-          let binary = "";
-          for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-            binary += String.fromCharCode.apply(null, bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
-          }
-          return { base64: btoa(binary), contentType: response.headers.get("content-type") || blob.type || "" };
         },
-        args: [item.mediaUrl]
-      });
+        args: [item.mediaUrl, MAX_RENDERED_CAPTURE_BYTES, remaining()]
+      }), remaining());
       pageFetched = await normalizePageCapture(pageResult && pageResult[0] && pageResult[0].result);
       if (!pageFetched || !pageFetched.buffer || !pageFetched.buffer.byteLength) {
         throw new Error("The source page returned no media bytes.");
@@ -856,9 +891,9 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index) {
   if (!mediaResponse && !pageFetched) {
     if (preferred === "rendered" && preferRenderedCapture) {
       await tryRenderedCapture();
-      if (!pageCapture && sessionFetchAllowed && await trySessionFetch()) return;
+      if (!pageCapture && sessionFetchAllowed && await trySessionFetch()) return sessionResult;
     } else {
-      if (sessionFetchAllowed && await trySessionFetch()) return;
+      if (sessionFetchAllowed && await trySessionFetch()) return sessionResult;
       if (preferRenderedCapture) await tryRenderedCapture();
     }
   }
@@ -874,6 +909,17 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index) {
     throw new Error(lastCaptureError && lastCaptureError.message
       || "The browser did not expose readable media. Keep it open and playing, then retry.");
   }
+  // Deduplicate actual image bytes only after a readable capture has been obtained.
+  if (mediaResponse && item.mediaKind === "image") {
+    pageFetched = { buffer: await mediaResponse.arrayBuffer(), contentType: responseMime };
+    mediaResponse = null;
+  }
+  const capturedBytes = pageFetched?.buffer || pageCapture?.buffer;
+  const contentHash = capturedBytes ? await globalThis.JaneMediaUtils.contentHash(capturedBytes) : null;
+  const fingerprint = Object.assign(storyFingerprint(item), { contentHash });
+  if (previousFingerprints.some((previous) => globalThis.JaneMediaUtils.sameStoryFingerprint(previous, fingerprint))) {
+    return { duplicate: true, fingerprint };
+  }
   const mediaPrefix = item.mediaKind === "image" ? "image/" : item.mediaKind === "audio" ? "audio/" : "video/";
   const mimeType = responseMime.startsWith(mediaPrefix) ? responseMime : (mediaPrefix + "*");
   const startUrl = accessEndpoint(accessTab, "/bridge/capture/start");
@@ -885,64 +931,80 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index) {
       mediaKind: item.mediaKind,
       mimeType: mimeType,
       captureMode: mode,
+      captureMethod: method,
       pageUrl: item.pageUrl || sourceTab.url || challenge.sourceUrl,
       expectedBytes: contentLength > 0 ? contentLength : undefined,
       title: item.title
     })
-  }, "JaneConverter capture start");
+  }, "JaneConverter capture start", remaining());
   const started = await readJson(start);
   if (!start.ok) throw new Error(started.error || "JaneConverter rejected the capture metadata.");
-  let offset = 0;
-  const sendChunk = async function (chunkData) {
-    const chunkUrl = accessEndpoint(accessTab, "/bridge/capture/chunk");
-    const chunk = await bridgeFetch(chunkUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/octet-stream",
-        "X-JaneConverter-Bridge": challenge.bridgeToken,
-        "X-JaneConverter-Capture-Id": started.captureId,
-        "X-JaneConverter-Capture-Offset": String(offset)
-      },
-      body: chunkData
-    }, "JaneConverter capture upload");
-    if (!chunk.ok) {
-      const failure = await readJson(chunk);
-      throw new Error(failure.error || "JaneConverter rejected a capture chunk.");
-    }
-    offset += chunkData.byteLength;
-  };
-  if (mediaResponse) {
-    const reader = mediaResponse.body.getReader();
-    while (true) {
-      const read = await reader.read();
-      if (read.done) break;
-      let partOffset = 0;
-      while (partOffset < read.value.byteLength) {
-        const nextOffset = Math.min(partOffset + MAX_CHUNK_BYTES, read.value.byteLength);
-        await sendChunk(read.value.slice(partOffset, nextOffset));
-        partOffset = nextOffset;
+  try {
+    let offset = 0;
+    const sendChunk = async function (chunkData) {
+      remaining();
+      if (offset + chunkData.byteLength > MAX_RENDERED_CAPTURE_BYTES) throw new Error("Capture exceeds 64 MB.");
+      const chunkUrl = accessEndpoint(accessTab, "/bridge/capture/chunk");
+      const chunk = await bridgeFetch(chunkUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "X-JaneConverter-Bridge": challenge.bridgeToken,
+          "X-JaneConverter-Capture-Id": started.captureId,
+          "X-JaneConverter-Capture-Offset": String(offset)
+        },
+        body: chunkData
+      }, "JaneConverter capture upload", remaining());
+      if (!chunk.ok) {
+        const failure = await readJson(chunk);
+        throw new Error(failure.error || "JaneConverter rejected a capture chunk.");
+      }
+      offset += chunkData.byteLength;
+    };
+    if (mediaResponse) {
+      const reader = mediaResponse.body.getReader();
+      while (true) {
+        const read = await reader.read();
+        if (read.done) break;
+        let partOffset = 0;
+        while (partOffset < read.value.byteLength) {
+          const nextOffset = Math.min(partOffset + MAX_CHUNK_BYTES, read.value.byteLength);
+          await sendChunk(read.value.slice(partOffset, nextOffset));
+          partOffset = nextOffset;
+        }
+      }
+    } else if (pageFetched) {
+      const bytes = new Uint8Array(pageFetched.buffer);
+      for (let offsetInBuffer = 0; offsetInBuffer < bytes.byteLength; offsetInBuffer += MAX_CHUNK_BYTES) {
+        await sendChunk(bytes.slice(offsetInBuffer, Math.min(offsetInBuffer + MAX_CHUNK_BYTES, bytes.byteLength)));
+      }
+    } else {
+      const bytes = new Uint8Array(pageCapture.buffer);
+      for (let offsetInBuffer = 0; offsetInBuffer < bytes.byteLength; offsetInBuffer += MAX_CHUNK_BYTES) {
+        await sendChunk(bytes.slice(offsetInBuffer, Math.min(offsetInBuffer + MAX_CHUNK_BYTES, bytes.byteLength)));
       }
     }
-  } else if (pageFetched) {
-    const bytes = new Uint8Array(pageFetched.buffer);
-    for (let offsetInBuffer = 0; offsetInBuffer < bytes.byteLength; offsetInBuffer += MAX_CHUNK_BYTES) {
-      await sendChunk(bytes.slice(offsetInBuffer, Math.min(offsetInBuffer + MAX_CHUNK_BYTES, bytes.byteLength)));
-    }
-  } else {
-    const bytes = new Uint8Array(pageCapture.buffer);
-    for (let offsetInBuffer = 0; offsetInBuffer < bytes.byteLength; offsetInBuffer += MAX_CHUNK_BYTES) {
-      await sendChunk(bytes.slice(offsetInBuffer, Math.min(offsetInBuffer + MAX_CHUNK_BYTES, bytes.byteLength)));
-    }
+    remaining();
+    const finishUrl = accessEndpoint(accessTab, "/bridge/capture/finish");
+    const finished = await bridgeFetch(finishUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-JaneConverter-Bridge": challenge.bridgeToken },
+      body: JSON.stringify({ captureId: started.captureId })
+    }, "JaneConverter capture finalize", remaining(45000));
+    const result = await readJson(finished);
+    if (!finished.ok) throw new Error(result.error || "JaneConverter could not finish the capture.");
+  } catch (error) {
+    await noteStoryStrategy(memoryKey, method, false);
+    try {
+      await bridgeFetch(accessEndpoint(accessTab, "/bridge/capture/abort"), {
+        method: "POST", headers: { "Content-Type": "application/json", "X-JaneConverter-Bridge": challenge.bridgeToken },
+        body: JSON.stringify({ captureId: started.captureId })
+      }, "JaneConverter capture cancel");
+    } catch (_) {}
+    throw error;
   }
-  const finishUrl = accessEndpoint(accessTab, "/bridge/capture/finish");
-  const finished = await bridgeFetch(finishUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-JaneConverter-Bridge": challenge.bridgeToken },
-    body: JSON.stringify({ captureId: started.captureId })
-  }, "JaneConverter capture finalize");
-  const result = await readJson(finished);
-  if (!finished.ok) throw new Error(result.error || "JaneConverter could not finish the capture.");
   await noteStoryStrategy(memoryKey, method, true);
+  return { duplicate: false, fingerprint };
 }
 
 function captureItemKey(item) {
@@ -953,14 +1015,14 @@ function captureItemKey(item) {
   return raw || [item && item.mediaKind, item && item.frameId, item && item.elementIndex].join(":");
 }
 
-async function inspectCurrentMedia(sourceTab) {
+async function inspectCurrentMedia(sourceTab, deadline = Date.now() + 8000) {
   const items = [];
   try {
-    const probe = await chrome.scripting.executeScript({
+    const probe = await globalThis.JaneMediaUtils.withDeadline(chrome.scripting.executeScript({
       target: { tabId: sourceTab.id, allFrames: true },
       world: "MAIN",
       func: probePage
-    });
+    }), deadline - Date.now());
     for (const frame of probe || []) {
       for (const item of (frame.result && frame.result.dom || []).concat(frame.result && frame.result.network || [])) {
         items.push(Object.assign({}, item, { frameId: frame.frameId }));
@@ -968,11 +1030,11 @@ async function inspectCurrentMedia(sourceTab) {
     }
   } catch (_) {}
   try {
-    const visible = await chrome.scripting.executeScript({
+    const visible = await globalThis.JaneMediaUtils.withDeadline(chrome.scripting.executeScript({
       target: { tabId: sourceTab.id, allFrames: true },
       func: inspectPageMedia,
       args: [false]
-    });
+    }), deadline - Date.now());
     for (const frame of visible || []) {
       for (const item of frame.result || []) {
         const visualHash = item.visualPixels && globalThis.JaneMediaUtils
@@ -1001,46 +1063,43 @@ function storyFingerprint(item) {
 }
 
 async function captureStorySequence(sourceTab, accessTab, challenge, initialItems) {
-  const seen = new Set();
+  let cursor = 0;
   const fingerprints = [];
   const attempts = new Map();
   const failures = [];
   const deadline = Date.now() + MAX_SEQUENCE_MS;
   let lastNewItem = Date.now();
   let count = 0;
-  let nextItems = (await inspectCurrentMedia(sourceTab)).concat(initialItems);
-  while (Date.now() < deadline && Date.now() - lastNewItem < STORY_QUIET_MS) {
+  let nextItems = (await inspectCurrentMedia(sourceTab, Math.min(deadline, Date.now() + 8000))).concat(initialItems);
+  while (count < MAX_SEQUENCE_ITEMS && Date.now() < deadline && Date.now() - lastNewItem < STORY_QUIET_MS) {
     const candidates = globalThis.JaneMediaUtils
       ? globalThis.JaneMediaUtils.selectCaptureItems(nextItems, "sequence", MAX_SEQUENCE_ITEMS)
       : nextItems.slice(0, MAX_SEQUENCE_ITEMS);
-    const candidate = candidates.find(function (item) {
-      const key = captureItemKey(item);
-      const fingerprint = storyFingerprint(item);
-      return !seen.has(key) && (attempts.get(key) || 0) < 2
-        && !fingerprints.some(function (previous) {
-          return globalThis.JaneMediaUtils && globalThis.JaneMediaUtils.sameStoryFingerprint(previous, fingerprint);
-        });
-    });
+    const available = candidates.filter((item) => (attempts.get(captureItemKey(item)) || 0) < 2);
+    const candidate = available.length ? available[cursor++ % available.length] : null;
     if (candidate) {
       const key = captureItemKey(candidate);
       attempts.set(key, (attempts.get(key) || 0) + 1);
       setStatus("Capturing story item " + (count + 1) + " while it is still open...", "warning");
       try {
-        await sendCapture(sourceTab, accessTab, challenge, candidate, "sequence", count);
-        seen.add(key);
-        fingerprints.push(storyFingerprint(candidate));
-        count += 1;
-        lastNewItem = Date.now();
+        const result = await sendCapture(sourceTab, accessTab, challenge, candidate, "sequence", count, deadline, fingerprints);
+        attempts.delete(key);
+        if (!result?.duplicate) {
+          fingerprints.push(result?.fingerprint || storyFingerprint(candidate));
+          count += 1;
+          lastNewItem = Date.now();
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 750));
+        }
       } catch (error) {
         if ((attempts.get(key) || 0) >= 2) {
-          seen.add(key);
           failures.push(error instanceof Error ? error.message : String(error));
         }
       }
     } else {
       await new Promise(function (resolve) { setTimeout(resolve, 750); });
     }
-    nextItems = await inspectCurrentMedia(sourceTab);
+    nextItems = await inspectCurrentMedia(sourceTab, Math.min(deadline, Date.now() + 8000));
   }
   return { count: count, failures: failures };
 }
@@ -1061,6 +1120,7 @@ async function capture(mode) {
         const value = await readJson(response);
         if (response.ok) {
           accessTab = candidate;
+          globalThis.JaneMediaUtils.requireCompatibleBridge(value);
           challenge = value;
           break;
         }
@@ -1077,11 +1137,11 @@ async function capture(mode) {
     setStatus(mode === "sequence" ? "Watching the open page for story items..." : "Inspecting the selected page and its media requests...", "warning");
     let inspected = [];
     try {
-      inspected = await chrome.scripting.executeScript({
+      inspected = await globalThis.JaneMediaUtils.withDeadline(chrome.scripting.executeScript({
         target: { tabId: sourceTab.id, allFrames: true },
         world: "MAIN",
         func: probePage
-      });
+      }), 8000);
     } catch (_) {}
     const items = [];
     for (const frame of inspected || []) {
@@ -1092,11 +1152,11 @@ async function capture(mode) {
     }
 
     if (!items.length) {
-      const fallback = await chrome.scripting.executeScript({
+      const fallback = await globalThis.JaneMediaUtils.withDeadline(chrome.scripting.executeScript({
         target: { tabId: sourceTab.id, allFrames: true },
         func: inspectPageMedia,
         args: [false]
-      });
+      }), 8000);
       for (const frame of fallback || []) {
         for (const item of frame.result || []) {
           items.push(Object.assign({}, item, { frameId: frame.frameId }));
@@ -1140,6 +1200,7 @@ async function resolveConfirmedSession() {
     try {
       const response = await bridgeFetch(accessEndpoint(accessTab, "/bridge/challenge"), { cache: "no-store" }, "JaneConverter bridge request");
       const challenge = await readJson(response);
+        if (response.ok) globalThis.JaneMediaUtils.requireCompatibleBridge(challenge);
       if (!response.ok) {
         lastError = new Error(challenge.error || "JaneConverter has not confirmed access yet.");
         continue;

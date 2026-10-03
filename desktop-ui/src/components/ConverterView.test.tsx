@@ -16,6 +16,8 @@ const bridge = vi.hoisted(() => ({
   cancelFacebookAlbum: vi.fn(),
   captureSocialPostPhotos: vi.fn(),
   cancelSocialPostPhotos: vi.fn(),
+  loadPlaylist: vi.fn(),
+  cancelPlaylist: vi.fn(),
 }));
 
 vi.mock("../bridge", () => ({ bridge }));
@@ -92,6 +94,31 @@ describe("Converter account access feedback", () => {
     expect(view.container.querySelector('[role="status"]')?.textContent).toContain("Access page opened");
     expect(view.onCreateAccess).toHaveBeenCalledWith("");
 
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("cancels a pending playlist load and closes the loading overlay", async () => {
+    let rejectLoad: (reason: Error) => void = () => {};
+    bridge.loadPlaylist.mockImplementationOnce(() => new Promise((_, reject) => { rejectLoad = reject; }));
+    bridge.cancelPlaylist.mockImplementationOnce(async () => { rejectLoad(new Error("Playlist loading cancelled.")); });
+    const view = renderView();
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Source media URL or local path"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "https://example.test/playlist");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+      input?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.includes("Playlist tracks"))?.click();
+    });
+    expect(bridge.loadPlaylist).toHaveBeenCalledWith("https://example.test/playlist");
+    const cancel = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Cancel");
+    expect(cancel).toBeDefined();
+    await act(async () => { cancel?.click(); });
+    expect(bridge.cancelPlaylist).toHaveBeenCalledTimes(1);
+    expect(view.onStatus).toHaveBeenCalledWith("Playlist loading cancelled.");
+    expect(view.container.textContent).not.toContain("Loading playlist");
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });

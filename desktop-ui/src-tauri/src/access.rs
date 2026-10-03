@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use url::Url;
 
 const MAX_METADATA_BYTES: usize = 64 * 1024;
+pub const BRIDGE_PROTOCOL_VERSION: u32 = 2;
 const MAX_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 const MAX_MEDIA_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_CAPTURE_ITEMS: usize = 24;
@@ -23,6 +24,43 @@ const REQUEST_READ_DEADLINE: Duration = Duration::from_secs(45);
 const BRIDGE_HEADER: &str = "x-janeconverter-bridge";
 const CAPTURE_ID_HEADER: &str = "x-janeconverter-capture-id";
 const CAPTURE_OFFSET_HEADER: &str = "x-janeconverter-capture-offset";
+
+fn capture_extension(mime: &str) -> Result<&'static str, String> {
+    match mime {
+        "image/jpeg" => Ok("jpg"),
+        "image/png" => Ok("png"),
+        "image/webp" => Ok("webp"),
+        "image/gif" => Ok("gif"),
+        "image/bmp" => Ok("bmp"),
+        "image/tiff" => Ok("tiff"),
+        "image/x-icon" | "image/vnd.microsoft.icon" => Ok("ico"),
+        "image/x-tga" => Ok("tga"),
+        "image/x-portable-pixmap" => Ok("ppm"),
+        "image/x-portable-graymap" => Ok("pgm"),
+        "image/x-portable-bitmap" => Ok("pbm"),
+        "video/mp4" => Ok("mp4"),
+        "audio/mp4" => Ok("m4a"),
+        "video/webm" => Ok("webm"),
+        "audio/webm" => Ok("weba"),
+        "video/x-matroska" | "audio/x-matroska" => Ok("mkv"),
+        "video/avi" => Ok("avi"),
+        "video/flv" => Ok("flv"),
+        "video/mpegts" => Ok("ts"),
+        "video/mpeg" => Ok("mpeg"),
+        "audio/mpeg" => Ok("mp3"),
+        "audio/wav" => Ok("wav"),
+        "audio/flac" => Ok("flac"),
+        "audio/ogg" | "video/ogg" => Ok("ogg"),
+        "audio/aac" => Ok("aac"),
+        "audio/aiff" => Ok("aiff"),
+        "audio/ac3" => Ok("ac3"),
+        "audio/asf" => Ok("wma"),
+        "video/asf" => Ok("wmv"),
+        "audio/caf" => Ok("caf"),
+        "audio/au" => Ok("au"),
+        _ => Err("The captured container is readable but unsupported by the local library.".into()),
+    }
+}
 
 pub struct AccessServer {
     pub link: String,
@@ -44,6 +82,8 @@ struct CaptureMetadata {
     page_url: String,
     expected_bytes: Option<u64>,
     title: String,
+    #[serde(default)]
+    capture_method: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,9 +106,11 @@ struct PendingCapture {
     expected_bytes: Option<u64>,
     file_name: String,
     media_kind: String,
-    mime_type: String,
     capture_mode: String,
     title: String,
+    page_url: String,
+    started_at: Instant,
+    capture_method: String,
 }
 
 struct CaptureState {
@@ -151,6 +193,9 @@ pub fn scan_fetched_media(root: &Path) -> Vec<FetchedMedia> {
                 capture_mode: "saved".into(),
                 title,
                 size,
+                source_url: String::new(),
+                captured_at: 0,
+                capture_method: "unknown".into(),
             })
         })
         .collect::<Vec<_>>();
@@ -159,6 +204,17 @@ pub fn scan_fetched_media(root: &Path) -> Vec<FetchedMedia> {
             .to_ascii_lowercase()
             .cmp(&right.name.to_ascii_lowercase())
     });
+    if let Ok(saved) = crate::catalog::captures(&root.join("capture-catalog.json")) {
+        for item in &mut items {
+            if let Some(record) = saved.iter().find(|record| {
+                Path::new(&record.path).file_name() == Path::new(&item.path).file_name()
+            }) {
+                let path = item.path.clone();
+                *item = record.clone();
+                item.path = path;
+            }
+        }
+    }
     items
 }
 
@@ -170,6 +226,7 @@ impl Drop for AccessServer {
         }
         if let Ok(mut state) = self.capture_state.lock() {
             if let Some(pending) = state.pending.take() {
+                drop(pending.file);
                 let _ = fs::remove_file(pending.path);
             }
         }
@@ -651,6 +708,18 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
     } = state;
     let _ = listener.set_nonblocking(true);
     while !stop.load(Ordering::Relaxed) {
+        if let Ok(mut captures) = capture_state.lock() {
+            if captures
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.started_at.elapsed() > Duration::from_secs(120))
+            {
+                if let Some(pending) = captures.pending.take() {
+                    drop(pending.file);
+                    let _ = fs::remove_file(pending.path);
+                }
+            }
+        }
         match listener.accept() {
             Ok((mut stream, _)) => {
                 let request = match read_request(&mut stream, &stop) {
@@ -738,7 +807,8 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
                             "confirmed": true,
                             "connected": count > 0,
                             "captureCount": count,
-                            "bridgeToken": bridge_nonce.clone()
+                            "bridgeToken": bridge_nonce.clone(),
+                            "protocolVersion": BRIDGE_PROTOCOL_VERSION
                         });
                         send_json_cors_or_plain(
                             &mut stream,
@@ -886,7 +956,7 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
                         .extension()
                         .and_then(|value| value.to_str())
                         .unwrap_or("bin");
-                    let path = capture_root.join(format!("{id}.{suffix}"));
+                    let path = capture_root.join(format!("{id}.{suffix}.part"));
                     let file = match File::create(&path) {
                         Ok(file) => file,
                         Err(error) => {
@@ -902,9 +972,11 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
                         expected_bytes: metadata.expected_bytes,
                         file_name: metadata.file_name.clone(),
                         media_kind: metadata.media_kind.clone(),
-                        mime_type: metadata.mime_type.clone(),
                         capture_mode: metadata.capture_mode.clone(),
                         title: metadata.title.clone(),
+                        page_url: crate::catalog::source_url(&metadata.page_url),
+                        started_at: Instant::now(),
+                        capture_method: metadata.capture_method.clone(),
                     });
                     send_json_cors_or_plain(
                         &mut stream,
@@ -912,6 +984,51 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
                         "OK",
                         origin.as_deref(),
                         &json!({"captureId": id}).to_string(),
+                    );
+                    continue;
+                }
+                if request.method == "POST"
+                    && request.path == format!("{base}/bridge/capture/abort")
+                {
+                    let origin = match bridge_ready(&request.headers, &bridge_nonce, &confirmed) {
+                        Ok(origin) => origin,
+                        Err((status, error, origin)) => {
+                            send_json_cors_or_plain(
+                                &mut stream,
+                                status,
+                                "Request rejected",
+                                origin.as_deref(),
+                                &json!({"error":error}).to_string(),
+                            );
+                            continue;
+                        }
+                    };
+                    let id = serde_json::from_slice::<serde_json::Value>(&request.body)
+                        .ok()
+                        .and_then(|value| {
+                            value
+                                .get("captureId")
+                                .and_then(|id| id.as_str())
+                                .map(str::to_owned)
+                        });
+                    if let Ok(mut captures) = capture_state.lock() {
+                        if captures
+                            .pending
+                            .as_ref()
+                            .is_some_and(|pending| Some(pending.id.as_str()) == id.as_deref())
+                        {
+                            if let Some(pending) = captures.pending.take() {
+                                drop(pending.file);
+                                let _ = fs::remove_file(pending.path);
+                            }
+                        }
+                    }
+                    send_json_cors_or_plain(
+                        &mut stream,
+                        200,
+                        "OK",
+                        origin.as_deref(),
+                        &json!({"ok":true}).to_string(),
                     );
                     continue;
                 }
@@ -1045,6 +1162,21 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
                             continue;
                         }
                     };
+                    if state
+                        .pending
+                        .as_ref()
+                        .is_some_and(|pending| requested_id.as_deref() != Some(pending.id.as_str()))
+                    {
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            origin.as_deref(),
+                            &json!({"error":"The capture id does not match the active upload."})
+                                .to_string(),
+                        );
+                        continue;
+                    }
                     let Some(mut current) = state.pending.take() else {
                         send_json_cors_or_plain(
                             &mut stream,
@@ -1057,11 +1189,13 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
                         continue;
                     };
                     if requested_id.as_deref() != Some(current.id.as_str())
+                        || current.bytes_written == 0
                         || current
                             .expected_bytes
                             .map(|expected| expected != current.bytes_written)
                             .unwrap_or(false)
                     {
+                        drop(current.file);
                         let _ = fs::remove_file(&current.path);
                         send_json_cors_or_plain(
                             &mut stream,
@@ -1073,19 +1207,89 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
                         );
                         continue;
                     }
-                    let _ = current.file.flush();
-                    let path = current.path.clone();
+                    let stored = current.file.flush().and_then(|_| current.file.sync_all());
+                    drop(current.file);
+                    let validation = stored
+                        .map_err(|error| format!("Could not store the capture: {error}"))
+                        .and_then(|_| {
+                            crate::process::validate_capture(
+                                &current.path,
+                                &current.media_kind,
+                                &stop,
+                            )
+                        });
+                    let mime = match validation {
+                        Ok(mime) => mime,
+                        Err(error) => {
+                            let _ = fs::remove_file(&current.path);
+                            send_json_cors_or_plain(
+                                &mut stream,
+                                400,
+                                "Bad Request",
+                                origin.as_deref(),
+                                &json!({"error": error}).to_string(),
+                            );
+                            continue;
+                        }
+                    };
+                    let extension = match capture_extension(&mime) {
+                        Ok(extension) => extension,
+                        Err(error) => {
+                            let _ = fs::remove_file(&current.path);
+                            send_json_cors_or_plain(
+                                &mut stream,
+                                400,
+                                "Bad Request",
+                                origin.as_deref(),
+                                &json!({"error": error}).to_string(),
+                            );
+                            continue;
+                        }
+                    };
+                    // The detected container owns the suffix; page-supplied names are untrusted.
+                    let path = capture_root.join(format!("{}.{}", current.id, extension));
+                    let file_name = PathBuf::from(&current.file_name)
+                        .with_extension(extension)
+                        .to_string_lossy()
+                        .into_owned();
+                    if let Err(error) = fs::rename(&current.path, &path) {
+                        let _ = fs::remove_file(&current.path);
+                        send_json_cors_or_plain(&mut stream, 500, "Internal Server Error", origin.as_deref(), &json!({"error": format!("Could not publish the validated capture: {error}")}).to_string());
+                        continue;
+                    }
                     let capture_id = current.id.clone();
                     let count = state.paths.len() + 1;
-                    state.fetched.push(FetchedMedia {
+                    let record = FetchedMedia {
                         path: path.to_string_lossy().into_owned(),
-                        name: current.file_name,
+                        name: file_name,
                         media_kind: current.media_kind,
-                        mime_type: current.mime_type,
+                        mime_type: mime,
                         capture_mode: current.capture_mode,
+                        capture_method: current.capture_method,
                         title: current.title,
                         size: current.bytes_written,
-                    });
+                        source_url: current.page_url,
+                        captured_at: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    };
+                    if let Err(error) = crate::catalog::capture(
+                        &capture_root.join("capture-catalog.json"),
+                        record.clone(),
+                    ) {
+                        // Keep validated bytes quarantined so a storage failure cannot lose them.
+                        let _ = fs::rename(&path, &current.path);
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            500,
+                            "Internal Server Error",
+                            origin.as_deref(),
+                            &json!({"error": error}).to_string(),
+                        );
+                        continue;
+                    }
+                    state.fetched.push(record);
                     state.total_bytes = state.total_bytes.saturating_add(current.bytes_written);
                     state.paths.push(path);
                     send_json_cors_or_plain(
@@ -1326,12 +1530,21 @@ fn validate_capture_metadata(body: &[u8], source: Option<&str>) -> Result<Captur
     if !matches!(metadata.media_kind.as_str(), "video" | "audio" | "image")
         || !matches!(
             metadata.capture_mode.as_str(),
-            "current" | "sequence" | "network"
+            "current" | "sequence" | "network" | "collect"
         )
         || !metadata.mime_type.contains('/')
         || metadata.title.is_empty()
     {
         return Err("The browser capture metadata was invalid.".into());
+    }
+    if !matches!(
+        metadata.capture_method.as_str(),
+        "" | "session-fetch" | "direct-fetch" | "page-fetch" | "rendered" | "network"
+    ) {
+        return Err(
+            "The capture method was not recognized. Reload the matching Browser Bridge extension."
+                .into(),
+        );
     }
     if let Some(expected) = metadata.expected_bytes {
         if expected == 0 || expected > MAX_MEDIA_BYTES {
@@ -1610,5 +1823,20 @@ mod tests {
             reason: None,
         };
         assert!(diagnostic_message(&unsafe_host).is_err());
+    }
+
+    #[test]
+    fn collect_metadata_requires_a_recognized_capture_method() {
+        let mut payload = json!({"fileName":"capture.png","mediaKind":"image","mimeType":"image/png","captureMode":"collect","captureMethod":"rendered","pageUrl":"https://example.test/post","title":"Post","expectedBytes":100});
+        assert!(validate_capture_metadata(&serde_json::to_vec(&payload).unwrap(), None).is_ok());
+        payload["captureMethod"] = json!("unknown-strategy");
+        assert!(validate_capture_metadata(&serde_json::to_vec(&payload).unwrap(), None).is_err());
+    }
+
+    #[test]
+    fn capture_suffix_follows_decoded_container_not_the_page_filename() {
+        assert_eq!(capture_extension("image/png").unwrap(), "png");
+        assert_eq!(capture_extension("audio/mp4").unwrap(), "m4a");
+        assert!(capture_extension("text/html").is_err());
     }
 }

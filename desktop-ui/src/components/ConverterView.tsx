@@ -620,7 +620,9 @@ export function ConverterView({
       setPlaylist(catalog);
       onStatus(`Loaded ${catalog.items.length} tracks from ${catalog.title}.`);
     } catch (error) {
-      onError(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      if (/cancelled/i.test(message)) onStatus("Playlist loading cancelled.");
+      else onError(message);
     } finally {
       setLoadingPlaylist(false);
     }
@@ -1523,6 +1525,7 @@ export function ConverterView({
         <div className="fixed inset-0 z-40 grid place-items-center bg-black/45 backdrop-blur-sm">
           <div className="panel flex items-center gap-3 px-5 py-4 text-sm text-zinc-300">
             <RefreshCw className="size-4 animate-spin text-zinc-500" /> Reading playlist catalog...
+            <button type="button" className="subtle-button px-3 py-1" onClick={() => void bridge.cancelPlaylist().catch((error) => onError(String(error)))}>Cancel</button>
           </div>
         </div>
       )}

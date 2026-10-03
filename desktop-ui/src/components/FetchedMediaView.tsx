@@ -224,6 +224,7 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm text-zinc-200">{item.title || item.name || ("Capture " + (index + 1))}</div>
+                {item.captureMethod && <div className="text-xs text-zinc-500">{item.captureMethod === "rendered" ? "Captured from playback; original quality is not guaranteed." : `Source capture: ${item.captureMethod}`}</div>}
                 <div className="mt-1 truncate text-xs text-zinc-600">{item.name} · {item.mediaKind} · {formatBytes(item.size)} · {item.captureMode === "sequence" ? "Story sequence" : item.captureMode === "collect" ? "Collect mode" : item.captureMode === "network" ? "Network compatibility" : "Saved file"}</div>
               </div>
               <div className="flex shrink-0 items-center gap-2">

@@ -6,7 +6,8 @@
     timer: null,
     observer: null,
     lastKeys: new Set(),
-    fingerprints: []
+    fingerprints: [],
+    stopCapture: null
   };
   window.__janeConverterCollectMode__ = state;
 
@@ -100,7 +101,7 @@
     }
   }
 
-  function fingerprintFor(candidate, visualHash) {
+  function fingerprintFor(candidate, contentHash) {
     const element = candidate.element;
     const rect = candidate.geometry.rect;
     const position = element.closest && element.closest("[aria-posinset]");
@@ -113,12 +114,12 @@
       surface: [rect.left, rect.top, rect.width, rect.height].map(function (value) { return Math.round(value / 32); }).join(":"),
       duration: candidate.tag === "video" && Number.isFinite(element.duration) ? Math.round(element.duration * 2) / 2 : 0,
       sequenceIndex: Number.isInteger(index) && index > 0 ? index : null,
-      visualHash: visualHash,
+      contentHash: contentHash,
       url: currentUrl(element)
     };
   }
 
-  async function encodeBlob(blob, fileName) {
+  async function encodeBlob(blob, fileName, captureMethod = "rendered") {
     if (!blob || !blob.size || blob.size > MAX_BYTES) throw new Error("The rendered capture is empty or larger than 64 MB.");
     const bytes = new Uint8Array(await blob.arrayBuffer());
     let binary = "";
@@ -126,6 +127,8 @@
       binary += String.fromCharCode.apply(null, bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
     }
     return {
+      contentHash: await globalThis.JaneMediaUtils.contentHash(bytes),
+      captureMethod,
       base64: btoa(binary),
       contentType: blob.type || "application/octet-stream",
       fileName: fileName,
@@ -140,16 +143,14 @@
     const width = element.naturalWidth || element.videoWidth || element.width;
     const height = element.naturalHeight || element.videoHeight || element.height;
     if (!width || !height) throw new Error("The story image has not finished loading.");
-    const canvas = element.tagName.toLowerCase() === "canvas" ? element : document.createElement("canvas");
+    const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
     let blob;
     try {
-      if (canvas !== element) {
-        const context = canvas.getContext("2d");
-        if (!context) throw new Error("The browser could not create a rendered image surface.");
-        context.drawImage(element, 0, 0, width, height);
-      }
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("The browser could not create a rendered image surface.");
+      context.drawImage(element, 0, 0, width, height);
       blob = await new Promise(function (resolve) { canvas.toBlob(resolve, "image/png"); });
     } catch (_) {}
     if (blob) {
@@ -157,10 +158,10 @@
     }
     const source = currentUrl(element);
     if (!source || !/^https?:/i.test(source)) throw new Error("The browser protected the rendered story image.");
-    const response = await fetch(source, { credentials: "include", cache: "no-store" });
+    const response = await globalThis.JaneMediaUtils.fetchBounded(source, { credentials: "include", cache: "no-store" }, 8000, MAX_BYTES);
     if (!response.ok) throw new Error("The story image could not be read.");
     blob = await response.blob();
-    return { payload: await encodeBlob(blob, "browser-collect-" + Date.now() + ".png"), visualHash: await visualHashForBlob(blob) };
+    return { payload: await encodeBlob(blob, "browser-collect-" + Date.now() + ".png", "page-fetch"), visualHash: await visualHashForBlob(blob) };
   }
 
   async function captureVideo(candidate) {
@@ -174,19 +175,38 @@
       .find(function (value) { return !MediaRecorder.isTypeSupported || MediaRecorder.isTypeSupported(value); });
     if (!mimeType) throw new Error("This browser cannot record the story video format.");
     const visualHash = visualHashForElement(element);
-    const recorder = new MediaRecorder(captureStream.call(element), { mimeType: mimeType });
+    const stream = captureStream.call(element);
+    const recorder = new MediaRecorder(stream, { mimeType: mimeType });
     const chunks = [];
+    let recordedBytes = 0;
     const result = await new Promise(function (resolve, reject) {
       let timer;
+      let hardTimer;
+      let settled = false;
       const finish = function (callback, value) {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
+        clearTimeout(hardTimer);
+        state.stopCapture = null;
+        if (recorder.state !== "inactive") recorder.stop();
+        stream.getTracks().forEach((track) => track.stop());
         recorder.removeEventListener("dataavailable", onData);
         recorder.removeEventListener("stop", onStop);
         recorder.removeEventListener("error", onError);
         element.removeEventListener("ended", stop);
         callback(value);
       };
-      const onData = function (event) { if (event.data && event.data.size) chunks.push(event.data); };
+      const onData = function (event) {
+        if (!event.data || !event.data.size) return;
+        recordedBytes += event.data.size;
+        if (recordedBytes > MAX_BYTES) {
+          stop();
+          finish(reject, new Error("The rendered capture exceeded 64 MB."));
+          return;
+        }
+        chunks.push(event.data);
+      };
       const onError = function () { finish(reject, new Error("The browser could not record the story video.")); };
       const onStop = async function () {
         const blob = new Blob(chunks, { type: mimeType });
@@ -201,11 +221,13 @@
         }
       };
       const stop = function () { if (recorder.state !== "inactive") recorder.stop(); };
+      state.stopCapture = stop;
       recorder.addEventListener("dataavailable", onData);
       recorder.addEventListener("stop", onStop);
       recorder.addEventListener("error", onError);
       element.addEventListener("ended", stop, { once: true });
       timer = setTimeout(stop, MAX_VIDEO_MS);
+      hardTimer = setTimeout(function () { finish(reject, new Error("Rendered capture deadline reached.")); }, MAX_VIDEO_MS + 5000);
       recorder.start(250);
     });
     return { payload: result, visualHash: visualHash };
@@ -220,11 +242,12 @@
     const candidate = candidates()[0];
     if (!candidate) return;
     const key = keyFor(candidate);
-    if (state.lastKeys.has(key)) return;
+    // A reused media URL cannot establish that a story is unchanged.
     state.busy = true;
     try {
       const captured = await captureCandidate(candidate);
-      const fingerprint = fingerprintFor(candidate, captured.visualHash);
+      if (!state.enabled) return;
+      const fingerprint = fingerprintFor(candidate, captured.payload.contentHash);
       state.fingerprints = state.fingerprints.filter(function (previous) {
         return Date.now() - previous.capturedAt < 2 * 60 * 1000;
       });
@@ -236,7 +259,9 @@
         return;
       }
       const accepted = await new Promise(function (resolve) {
+        const deadline = setTimeout(function () { resolve(false); }, 60000);
         chrome.runtime.sendMessage({ type: "jane-collect-media", payload: captured.payload }, function (response) {
+          clearTimeout(deadline);
           resolve(!chrome.runtime.lastError && Boolean(response && response.ok));
         });
       });
@@ -253,6 +278,7 @@
   }
 
   function stopWatching() {
+    if (state.stopCapture) state.stopCapture();
     if (state.timer) clearInterval(state.timer);
     state.timer = null;
     if (state.observer) state.observer.disconnect();
