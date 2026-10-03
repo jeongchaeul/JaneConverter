@@ -210,6 +210,24 @@ pub fn history(
     Ok(catalog)
 }
 
+pub fn load_history_paths(path: &Path) -> Vec<String> {
+    let Ok(_guard) = CATALOG_LOCK.lock() else {
+        return Vec::new();
+    };
+    let Ok(catalog) = load(path) else {
+        return Vec::new();
+    };
+    catalog
+        .history
+        .iter()
+        .filter_map(|item| {
+            item.get("exportPath")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
 pub fn capture(path: &Path, item: FetchedMedia) -> Result<(), String> {
     let _guard = CATALOG_LOCK
         .lock()
@@ -342,6 +360,7 @@ mod tests {
             false
         )
         .is_err());
+        assert_eq!(load_history_paths(&path), vec!["out".to_string()]);
         fs::remove_dir_all(root).unwrap();
     }
 }

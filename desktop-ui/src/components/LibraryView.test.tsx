@@ -346,6 +346,16 @@ describe("Converted library", () => {
     expect(writeTextMock).toHaveBeenCalledWith("https://soundcloud.com/project-aspyr/test-track");
     expect(onStatus).toHaveBeenCalledWith("Copied source path to clipboard.");
 
+    const dragBtn = container.querySelector('button[aria-label="Drag test-track.mp3 into another app"]');
+    expect(dragBtn).not.toBeNull();
+    expect((dragBtn as HTMLButtonElement).draggable).toBe(true);
+
+    await act(async () => {
+      dragBtn?.dispatchEvent(new Event("dragstart", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    expect(fakeBridge.dragLibraryFile).toHaveBeenCalledWith("D:\\JaneConverter\\converted\\test-track.mp3");
+
     await act(async () => { root.unmount(); });
     container.remove();
   });

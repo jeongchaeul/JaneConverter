@@ -376,11 +376,24 @@ pub fn draggable_media_file(root: &str, path: &str) -> Result<PathBuf, String> {
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err("Only regular media files can be dragged from the library.".into());
     }
-    let (_root, target) = canonical_library_item(root, path)?;
+    let target = fs::canonicalize(path.trim())
+        .map_err(|error| format!("That library item is unavailable: {error}"))?;
     if !media_extension(&target) && !image_extension(&target) {
         return Err("Only media files can be dragged from the library.".into());
     }
-    Ok(target)
+    if let Ok((_root, library_target)) = canonical_library_item(root, path) {
+        return Ok(library_target);
+    }
+    let history_paths =
+        crate::catalog::load_history_paths(&crate::paths::data_root().join("catalog.json"));
+    for history_path in history_paths {
+        if let Ok(canonical_history) = fs::canonicalize(history_path.trim()) {
+            if canonical_history == target {
+                return Ok(target);
+            }
+        }
+    }
+    Err("For safety, JaneConverter can only access items inside the active library.".into())
 }
 
 pub fn delete_inside(root: &str, path: &str) -> Result<(), String> {

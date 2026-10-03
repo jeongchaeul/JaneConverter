@@ -138,15 +138,23 @@ describe("Application shell", () => {
     expect(dialog?.textContent).toContain("Time elapsed:");
     expect(dialog?.textContent).toContain("D:\\JaneConverter\\converted\\Images\\Local Files\\sample.png");
 
+    const dragLibraryFileSpy = vi.spyOn(bridge, "dragLibraryFile").mockResolvedValue();
     const openFileBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.includes("Open File"));
     const openPathBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.includes("Open Path"));
+    const dragFileBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.includes("Drag File"));
     const closeBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.trim() === "Close");
 
+    expect(dragFileBtn?.draggable).toBe(true);
+    const exportedCard = dialog?.querySelector('[title*="Drag this file into another app"]');
+    expect(exportedCard?.getAttribute("draggable")).toBe("true");
+
     await act(async () => {
+      dragFileBtn?.dispatchEvent(new Event("dragstart", { bubbles: true, cancelable: true }));
       openFileBtn?.click();
       openPathBtn?.click();
       await Promise.resolve();
     });
+    expect(dragLibraryFileSpy).toHaveBeenCalledWith("D:\\JaneConverter\\converted\\Images\\Local Files\\sample.png");
     expect(openFileSpy).toHaveBeenCalledWith("D:\\JaneConverter\\converted\\Images\\Local Files\\sample.png");
     expect(openPathSpy).toHaveBeenCalledWith("D:\\JaneConverter\\converted\\Images\\Local Files\\sample.png");
 

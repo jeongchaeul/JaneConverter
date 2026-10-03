@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, CheckCircle2, Clock, FolderOpen, Play, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, FolderOpen, GripVertical, Play, X } from "lucide-react";
 import { bridge, type AccessStatus, type ConversionHistoryItem, type ConverterEvent, type ConverterSettings, type FetchedMedia, type RuntimeInfo } from "./bridge";
 import { Sidebar, type ViewKey } from "./components/Sidebar";
 import { ConverterView } from "./components/ConverterView";
@@ -511,6 +511,15 @@ export default function App() {
     setFailure({ title: "Something went wrong", message, suggestLossless: false });
   }
 
+  function dragExportedFile(event: React.DragEvent, exportPath: string) {
+    if (!exportPath) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void bridge.dragLibraryFile(exportPath).catch((error: unknown) => {
+      statusMessage(error instanceof Error ? error.message : String(error));
+    });
+  }
+
   function updateSettings(next: ConverterSettings) {
     setSettings(next);
     void bridge.settingsSave(next).catch((error) => errorMessage(error instanceof Error ? error.message : String(error)));
@@ -754,14 +763,35 @@ export default function App() {
                   {success.fallbackNote}
                 </div>
               )}
-              <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3">
-                <div className="text-[10px] uppercase tracking-wider text-zinc-500">Exported to</div>
+              <div
+                draggable
+                onDragStartCapture={(e) => dragExportedFile(e, success.exportPath)}
+                title="Drag this file into another app (e.g. FL Studio, Explorer, Discord)"
+                className="group relative cursor-grab active:cursor-grabbing rounded-xl border border-white/[0.08] bg-white/[0.03] p-3 transition-colors hover:border-pink-500/30 hover:bg-white/[0.05]"
+              >
+                <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-zinc-500">
+                  <span>Exported to</span>
+                  <span className="flex items-center gap-1 font-mono text-[10px] text-zinc-500 group-hover:text-pink-400 transition-colors">
+                    <GripVertical className="size-3" /> Draggable
+                  </span>
+                </div>
                 <div className="mt-1 break-all font-mono text-xs text-zinc-300">
                   {success.exportPath}
                 </div>
               </div>
             </div>
             <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                draggable
+                onDragStartCapture={(e) => dragExportedFile(e, success.exportPath)}
+                onClick={() => statusMessage("Drag this button or the exported card directly into another app (e.g. FL Studio).")}
+                className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs cursor-grab active:cursor-grabbing hover:border-pink-500/40"
+                title="Drag this file into another app (e.g. FL Studio, Explorer, Discord)"
+                aria-label="Drag this file into another app"
+              >
+                <GripVertical className="size-3.5 text-pink-400" /> Drag File
+              </button>
               <button
                 type="button"
                 onClick={() => void bridge.openFile(success.exportPath).catch((error) => statusMessage(error instanceof Error ? error.message : String(error)))}

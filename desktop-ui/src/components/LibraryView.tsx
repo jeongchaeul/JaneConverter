@@ -14,6 +14,7 @@ import {
   Folder,
   FolderInput,
   FolderOpen,
+  GripVertical,
   History,
   ImageIcon,
   Play,
@@ -651,6 +652,29 @@ export function LibraryView({
                     </button>
                     {hasExported && (
                       <>
+                        <button
+                          type="button"
+                          draggable
+                          onDragStartCapture={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            libraryDragActive.current = true;
+                            void bridge.dragLibraryFile(item.exportPath)
+                              .catch((error) => {
+                                onStatus(error instanceof Error ? error.message : String(error));
+                              })
+                              .finally(() => {
+                                libraryDragActive.current = false;
+                                suppressClickUntil.current = Date.now() + 400;
+                              });
+                          }}
+                          onClick={() => onStatus("Drag this button into another app (e.g. FL Studio, Explorer, or Discord).")}
+                          className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-grab active:cursor-grabbing hover:border-pink-500/40"
+                          title="Drag this file into another app"
+                          aria-label={`Drag ${item.fileName} into another app`}
+                        >
+                          <GripVertical className="size-3.5 text-pink-400" /> Drag File
+                        </button>
                         <button
                           type="button"
                           onClick={() => void openFile(item.exportPath)}
