@@ -358,13 +358,16 @@ export default function App() {
             ctx.exportedPath = parsedPath;
           }
         }
-        if (event.kind === "finished") {
+        if (event.kind === "finished" || event.kind === "partial") {
+          const isPartial = event.kind === "partial";
           const effective = ctx?.effectiveSettings ?? settingsRef.current;
           const elapsedMs = Math.max(1, Date.now() - (ctx?.startedAtMs ?? Date.now()));
           const exportPath = cleanDisplayPath(
             event.output || extractExportedPathFromMessage(event.message) || ctx?.exportedPath || effective.outputDir,
           );
-          const fallbackNote = detectFallbackNote(ctx?.logs ?? [], ctx?.forcedVideoFallback ?? false);
+          const fallbackNote = isPartial
+            ? event.message || "Partial conversion: some media items failed to convert."
+            : detectFallbackNote(ctx?.logs ?? [], ctx?.forcedVideoFallback ?? false);
           const { formatLabel, qualityLabel } = describeOutputFormatAndQuality(effective, exportPath, fallbackNote);
           const fileName = baseNameFromPath(exportPath) || baseNameFromPath(ctx?.source || "") || "Converted media";
           setFailure(null);
@@ -387,8 +390,9 @@ export default function App() {
             formatLabel,
             qualityLabel,
             elapsedMs,
-            status: "succeeded",
+            status: isPartial ? "partial" : "succeeded",
             fallbackNote,
+            errorMessage: isPartial ? event.message : undefined,
           });
         }
         if (event.kind === "failed") {
@@ -418,7 +422,7 @@ export default function App() {
             errorMessage: event.message,
           });
         }
-        if (event.kind === "finished" || event.kind === "failed" || event.kind === "cancelled") {
+        if (event.kind === "finished" || event.kind === "partial" || event.kind === "failed" || event.kind === "cancelled") {
           activeJobRef.current = "";
           activeJobSuggestLosslessRef.current = false;
           activeJobContextRef.current = null;

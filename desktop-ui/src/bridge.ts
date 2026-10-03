@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type Category = "Audio" | "Music" | "Video" | "Image" | "Miscellaneous";
-export type EventKind = "started" | "log" | "progress" | "status" | "finished" | "failed" | "cancelled";
+export type EventKind = "started" | "log" | "progress" | "status" | "finished" | "partial" | "failed" | "cancelled";
 
 export interface RuntimeInfo {
   mode: "tauri" | "browser";
@@ -165,7 +165,7 @@ export interface ConversionHistoryItem {
   formatLabel: string;
   qualityLabel: string;
   elapsedMs: number;
-  status: "succeeded" | "failed";
+  status: "succeeded" | "failed" | "partial";
   fallbackNote?: string | null;
   errorMessage?: string | null;
 }

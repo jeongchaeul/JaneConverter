@@ -40,11 +40,20 @@ export function ConsoleView({
       const collapsed: ConverterEvent[] = [];
       let lastWasProgress = false;
       for (const event of events) {
+        const isMilestone =
+          event.message.startsWith("[+]") ||
+          event.message.startsWith("[*]") ||
+          event.message.startsWith("[!]") ||
+          event.message.startsWith("===") ||
+          event.message.startsWith("PLAYLIST") ||
+          event.message.startsWith("DONE!") ||
+          event.message.startsWith("Export Directory:");
         const isProgress =
-          event.kind === "progress" ||
-          (event.progress !== undefined && event.kind === "status") ||
-          event.message.includes("[download]") ||
-          event.message.includes("Downloading stream:");
+          !isMilestone &&
+          (event.kind === "progress" ||
+            event.message.includes("[download]") ||
+            event.message.includes("Downloading stream:") ||
+            event.message.startsWith("Transcoding "));
         if (isProgress) {
           if (lastWasProgress && collapsed.length > 0) {
             collapsed[collapsed.length - 1] = event;

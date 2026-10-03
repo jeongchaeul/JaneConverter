@@ -92,7 +92,7 @@ pub fn notify_user_attention(app: &tauri::AppHandle) {
 }
 
 pub fn emit_event(app: &tauri::AppHandle, event: ConverterEvent) {
-    let should_notify = matches!(event.kind.as_str(), "finished" | "failed");
+    let should_notify = matches!(event.kind.as_str(), "finished" | "failed" | "partial");
     let _ = app.emit("converter-event", event);
     if should_notify {
         notify_user_attention(app);
@@ -113,6 +113,23 @@ fn failure_detail_from_line(line: &str) -> Option<String> {
     Some(detail.chars().take(500).collect())
 }
 
+fn partial_summary_from_line(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if let Some(rest) = trimmed.strip_prefix("PARTIAL_COMPLETION:") {
+        let text = rest.trim();
+        if !text.is_empty() {
+            return Some(text.to_owned());
+        }
+    }
+    if let Some(rest) = trimmed.strip_prefix("[*] Partial completion:") {
+        let text = rest.trim();
+        if !text.is_empty() {
+            return Some(text.to_owned());
+        }
+    }
+    None
+}
+
 fn exported_path_from_line(line: &str) -> Option<String> {
     let trimmed = line.trim();
     let raw = trimmed
@@ -131,6 +148,7 @@ pub fn forward_output<R: Read + Send + 'static>(
     job_id: String,
     failure_detail: Option<Arc<Mutex<Option<String>>>>,
     exported_output: Option<Arc<Mutex<Option<String>>>>,
+    partial_summary: Option<Arc<Mutex<Option<String>>>>,
     facebook_stdin: Option<Arc<Mutex<ChildStdin>>>,
     facebook_refresh: Option<FacebookRefreshHandler>,
 ) -> thread::JoinHandle<()> {
@@ -210,11 +228,19 @@ pub fn forward_output<R: Read + Send + 'static>(
                     }
                 }
             }
+            if let Some(partial) = partial_summary_from_line(&message) {
+                if let Some(partial_summary) = &partial_summary {
+                    if let Ok(mut current) = partial_summary.lock() {
+                        *current = Some(partial);
+                    }
+                }
+            }
 
             let progress = progress_from_line(&message);
-            let is_progress = progress.is_some()
-                || message.starts_with("[download]")
-                || message.contains("Downloading stream:");
+            let is_progress = message.starts_with("[download]")
+                || message.contains("Downloading stream:")
+                || message.starts_with("Transcoding ")
+                || message.contains("Transcoding ");
             emit_event(
                 &app,
                 ConverterEvent {
@@ -588,6 +614,7 @@ pub fn start_conversion(
     let started_at = Instant::now();
     let failure_detail = Arc::new(Mutex::new(None));
     let exported_output = Arc::new(Mutex::new(None));
+    let partial_summary = Arc::new(Mutex::new(None));
     let stdout_thread = stdout.map(|reader| {
         forward_output(
             reader,
@@ -595,6 +622,7 @@ pub fn start_conversion(
             job_id.clone(),
             None,
             Some(Arc::clone(&exported_output)),
+            Some(Arc::clone(&partial_summary)),
             facebook_stdin,
             slots.facebook_refresh.clone(),
         )
@@ -605,6 +633,7 @@ pub fn start_conversion(
             app.clone(),
             job_id.clone(),
             Some(Arc::clone(&failure_detail)),
+            None,
             None,
             None,
             None,
@@ -644,7 +673,7 @@ pub fn start_conversion(
             let _ = thread.join();
         }
         let mut resolved_output = None;
-        if !cancelled && status.success() {
+        if !cancelled {
             if let Some(raw_path) = exported_output.lock().ok().and_then(|value| value.clone()) {
                 let (record_target, display_output) =
                     crate::library::resolve_exported_output(&raw_path);
@@ -652,19 +681,34 @@ pub fn start_conversion(
                 resolved_output = Some(display_output);
             }
         }
+        let partial_msg = partial_summary.lock().ok().and_then(|value| value.clone());
+        let failure_msg = failure_detail.lock().ok().and_then(|value| value.clone());
+
         let (kind, message, progress) = if cancelled {
             ("cancelled", "Conversion cancelled.".to_string(), None)
+        } else if let Some(summary) = partial_msg {
+            let msg = if let Some(detail) = failure_msg {
+                format!("{summary} ({detail})")
+            } else {
+                summary
+            };
+            ("partial", msg, Some(1.0))
         } else if status.success() {
             (
                 "finished",
                 "Conversion finished. Your media is ready.".to_string(),
                 Some(1.0),
             )
+        } else if resolved_output.is_some() {
+            let msg = failure_msg
+                .map(|value| format!("Partial conversion: {value}"))
+                .unwrap_or_else(|| "Partial conversion completed with some errors.".to_string());
+            ("partial", msg, Some(1.0))
         } else {
-            let detail = failure_detail.lock().ok().and_then(|value| value.clone());
             (
                 "failed",
-                detail.map(|value| format!("Conversion failed: {value}"))
+                failure_msg
+                    .map(|value| format!("Conversion failed: {value}"))
                     .unwrap_or_else(|| "The Python engine reported a conversion failure. Review Console for details.".to_string()),
                 None,
             )

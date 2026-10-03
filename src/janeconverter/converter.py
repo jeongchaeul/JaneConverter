@@ -12,6 +12,7 @@ import shutil
 import threading
 import subprocess
 import json
+import re
 import tempfile
 import unicodedata
 from dataclasses import replace
@@ -81,6 +82,67 @@ VIDEO_QUALITY_SETTINGS = {
 
 # Industry standard EBU R128 loudness normalization targets
 LOUDNORM_FILTER = "loudnorm=I=-14:TP=-1.5:LRA=11"
+
+def build_loudnorm_filter(measured: Optional[Dict[str, str]] = None) -> str:
+    """
+    Builds the EBU R128 loudnorm filter.
+    When pass 1 measurements are provided, enables linear=true which scales volume
+    uniformly without dynamic compression or pumping, preserving drops and track balance.
+    """
+    if measured and all(k in measured for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")):
+        return (
+            f"loudnorm=I=-14:TP=-1.5:LRA=11"
+            f":measured_I={measured['input_i']}"
+            f":measured_TP={measured['input_tp']}"
+            f":measured_LRA={measured['input_lra']}"
+            f":measured_thresh={measured['input_thresh']}"
+            f":offset={measured['target_offset']}"
+            f":linear=true"
+        )
+    return LOUDNORM_FILTER
+
+def measure_audio_loudness(input_path: str, ffmpeg_bin: Optional[str] = None) -> Optional[Dict[str, str]]:
+    """
+    Pass 1 measurement for EBU R128 loudness normalization.
+    Returns measured integrated loudness, true peak, LRA, threshold, and target offset
+    to enable linear, dynamic-compression-free normalization (linear=true).
+    """
+    if not os.path.isfile(input_path):
+        return None
+    ffmpeg = ffmpeg_bin or get_ffmpeg_binary()
+    if not ffmpeg or (not shutil.which(ffmpeg) and not os.path.isfile(ffmpeg)):
+        return None
+
+    cmd = [
+        ffmpeg, "-hide_banner", "-nostats",
+        "-i", input_path,
+        "-vn", "-sn",
+        "-af", "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json",
+        "-f", "null", "-"
+    ]
+    no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=no_window,
+            timeout=45
+        )
+        stderr_text = res.stderr.decode("utf-8", errors="ignore")
+        json_match = re.search(r"\{\s*\"input_i\"\s*:.*?\n\}", stderr_text, re.DOTALL)
+        if json_match:
+            data = json.loads(json_match.group(0))
+            return {
+                "input_i": str(data.get("input_i", "-14")),
+                "input_tp": str(data.get("input_tp", "-1.5")),
+                "input_lra": str(data.get("input_lra", "11")),
+                "input_thresh": str(data.get("input_thresh", "-24")),
+                "target_offset": str(data.get("target_offset", "0")),
+            }
+    except Exception:
+        pass
+    return None
 
 # Explicit bit-depth selection for lossless containers (no substring sniffing)
 WAV_BIT_DEPTH_CODECS = {
@@ -874,6 +936,7 @@ def build_ffmpeg_args(
     fps: Optional[int] = None,
     stream_copy: bool = False,
     input_sample_rate: Optional[int] = None,
+    measured_loudness: Optional[Dict[str, str]] = None,
 ) -> list:
     """Constructs command line argument list for FFmpeg transcode or instant stream remuxing."""
     target_format = target_format.lower().strip(".")
@@ -936,8 +999,8 @@ def build_ffmpeg_args(
         # Audio filters
         audio_filters = []
         if normalize_audio:
-            # Industry standard EBU R128 loudness normalization
-            audio_filters.append(LOUDNORM_FILTER)
+            # Linear EBU R128 loudness normalization without dynamic compression pumping
+            audio_filters.append(build_loudnorm_filter(measured_loudness))
 
         source_rate_matches = (
             input_sample_rate is not None
@@ -1042,7 +1105,7 @@ def build_ffmpeg_args(
 
             audio_filters = []
             if normalize_audio:
-                audio_filters.append(LOUDNORM_FILTER)
+                audio_filters.append(build_loudnorm_filter(measured_loudness))
 
             if audio_filters:
                 cmd.extend(["-af", ",".join(audio_filters)])
@@ -1388,6 +1451,11 @@ def _convert_media_impl(
             stream_copy=True,
         )
     else:
+        measured_loudness = None
+        if normalize_audio and os.path.isfile(input_path):
+            report(0.68, "Analyzing audio loudness dynamics (linear EBU R128 pass)...")
+            measured_loudness = measure_audio_loudness(input_path, ffmpeg_bin=ffmpeg_bin)
+
         report(0.70, f"Transcoding media to {target_format.upper()}...")
         cmd = build_ffmpeg_args(
             input_path=input_path,
@@ -1405,6 +1473,7 @@ def _convert_media_impl(
             input_sample_rate=input_sample_rate,
             fps=fps,
             stream_copy=False,
+            measured_loudness=measured_loudness,
         )
     # Request machine-readable progress on stdout (inserted before the output path)
     cmd = cmd[:-1] + ["-progress", "pipe:1", "-nostats"] + [cmd[-1]]
@@ -1429,6 +1498,7 @@ def _convert_media_impl(
     duration = probe_media_duration(input_path)
     transcode_base, transcode_span = 0.70, 0.25
     last_report_time = [0.0]
+    cur_speed = [""]
 
     def read_progress():
         try:
@@ -1437,6 +1507,8 @@ def _convert_media_impl(
                 if not line or "=" not in line:
                     continue
                 key, _, value = line.partition("=")
+                if key == "speed":
+                    cur_speed[0] = value.strip()
                 if key == "progress" and value == "end":
                     report(transcode_base + transcode_span, "Transcode finishing up...")
                     continue
@@ -1449,9 +1521,20 @@ def _convert_media_impl(
                     now = time.time()
                     if frac > 0 and now - last_report_time[0] >= 0.5:
                         last_report_time[0] = now
+                        spd_info = f" (speed {cur_speed[0]})" if cur_speed[0] else ""
                         report(
                             transcode_base + transcode_span * frac,
-                            f"Transcoding {target_format.upper()}: {int(frac * 100)}%"
+                            f"Transcoding {target_format.upper()}: {int(frac * 100)}%{spd_info}"
+                        )
+                elif not duration and key == "out_time":
+                    now = time.time()
+                    if now - last_report_time[0] >= 1.0:
+                        last_report_time[0] = now
+                        time_val = value.strip().split(".")[0]
+                        spd_info = f" speed {cur_speed[0]}" if cur_speed[0] else ""
+                        report(
+                            0.75,
+                            f"Transcoding {target_format.upper()} (time {time_val}{spd_info})..."
                         )
         except Exception:
             pass

@@ -513,6 +513,8 @@ export function LibraryView({
           )}
           {history.map((item) => {
             const succeeded = item.status === "succeeded";
+            const isPartial = item.status === "partial";
+            const hasExported = succeeded || isPartial;
             return (
               <motion.div
                 key={item.id}
@@ -528,11 +530,19 @@ export function LibraryView({
                           "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium " +
                           (succeeded
                             ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                            : isPartial
+                            ? "border-amber-400/30 bg-amber-400/10 text-amber-300"
                             : "border-rose-400/30 bg-rose-400/10 text-rose-300")
                         }
                       >
-                        {succeeded ? <CheckCircle2 className="size-3" /> : <XCircle className="size-3" />}
-                        {succeeded ? "Succeeded" : "Failed"}
+                        {succeeded ? (
+                          <CheckCircle2 className="size-3" />
+                        ) : isPartial ? (
+                          <AlertTriangle className="size-3" />
+                        ) : (
+                          <XCircle className="size-3" />
+                        )}
+                        {succeeded ? "Succeeded" : isPartial ? "Partial" : "Failed"}
                       </span>
                       <span className="truncate text-sm font-medium text-white">{item.fileName}</span>
                     </div>
@@ -570,7 +580,7 @@ export function LibraryView({
                     {item.fallbackNote}
                   </div>
                 )}
-                {succeeded ? (
+                {hasExported ? (
                   <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] pt-2.5">
                     <div className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500">
                       Exported: {item.exportPath}
@@ -592,12 +602,11 @@ export function LibraryView({
                       </button>
                     </div>
                   </div>
-                ) : (
-                  item.errorMessage && (
-                    <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-                      {item.errorMessage}
-                    </div>
-                  )
+                ) : null}
+                {item.errorMessage && !succeeded && (
+                  <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                    {item.errorMessage}
+                  </div>
                 )}
               </motion.div>
             );

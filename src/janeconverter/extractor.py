@@ -706,6 +706,21 @@ def fetch_media_stream(
         "js_runtimes": {"node": {"path": None}},
         "progress_hooks": [progress_hook]
     }
+    is_youtube_source = (
+        source_type == "youtube"
+        or any("youtube.com" in str(c) or "youtu.be" in str(c) or str(c).startswith("ytsearch") for c in candidates)
+    )
+    if is_youtube_source:
+        ydl_opts["extractor_args"] = {
+            "youtube": {
+                "player_client": ["android", "ios", "web", "mweb"],
+                "player_skip": ["webpage", "configs"],
+            }
+        }
+        ydl_opts["retries"] = 10
+        ydl_opts["fragment_retries"] = 10
+        ydl_opts["file_access_retries"] = 5
+
     if ffmpeg_bin and (os.path.isfile(ffmpeg_bin) or shutil.which(ffmpeg_bin)):
         ydl_opts["ffmpeg_location"] = ffmpeg_bin
 
@@ -731,6 +746,9 @@ def fetch_media_stream(
                     raise
                 except Exception as ex:
                     last_error = ex
+                    err_msg = str(ex).lower()
+                    if "private video" in err_msg or "this video is private" in err_msg:
+                        break
                     continue
 
             if not info:
@@ -967,10 +985,22 @@ def fetch_playlist_entries(
 
             report(0.7, f"Processing {len(raw_entries)} entries...")
             entries = []
-            for idx, e in enumerate(raw_entries, 1):
+            valid_idx = 1
+            for e in raw_entries:
                 if not e:
                     continue
-                t_title = e.get("title") or f"Track {idx}"
+                raw_t = (e.get("title") or "").strip()
+                if raw_t.lower() in {
+                    "[private video]", "[deleted video]", "[unavailable video]",
+                    "[private]", "[deleted]", "[unavailable]"
+                }:
+                    continue
+                if e.get("availability") in ("private", "deleted", "unavailable", "needs_auth"):
+                    continue
+                if not raw_t and not e.get("duration") and not (e.get("uploader") or e.get("channel")):
+                    continue
+
+                t_title = raw_t or f"Track {valid_idx}"
                 t_artist = e.get("uploader") or e.get("channel") or e.get("artist") or ""
                 t_dur_sec = int(e.get("duration") or 0)
                 e_url = e.get("url") or ""
@@ -985,7 +1015,7 @@ def fetch_playlist_entries(
                         e_url = e_id
 
                 entries.append({
-                    "index": idx,
+                    "index": valid_idx,
                     "title": t_title,
                     "artist": t_artist,
                     "duration": t_dur_sec,
@@ -996,6 +1026,7 @@ def fetch_playlist_entries(
                     "description": e_desc,
                     "album": playlist_title
                 })
+                valid_idx += 1
 
             report(1.0, f"Successfully loaded {len(entries)} items from {playlist_title}.")
             return {

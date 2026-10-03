@@ -157,3 +157,71 @@ def test_process_playlist_conversion_local_files():
         assert os.path.exists(os.path.join(meta_folder, "1. First Song_credits.txt"))
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_fetch_playlist_entries_filters_private_and_deleted_videos(monkeypatch):
+    from unittest.mock import MagicMock
+    import yt_dlp
+
+    mock_info = {
+        "_type": "playlist",
+        "title": "Revengeseekerz",
+        "thumbnail": "https://example.com/thumb.jpg",
+        "entries": [
+            {"id": "vid1", "title": "Track 1", "duration": 180, "uploader": "Jane"},
+            {"id": "vid2", "title": "[Private video]", "duration": None, "uploader": None},
+            {"id": "vid3", "title": "Track 3", "duration": 200, "uploader": "Jane"},
+            {"id": "vid4", "title": "[Deleted video]", "duration": 0, "uploader": ""},
+            {"id": "vid5", "title": "Track 5", "duration": 210, "uploader": "Jane", "availability": "private"},
+            {"id": "vid6", "title": "Track 6", "duration": 190, "uploader": "Jane"},
+        ]
+    }
+
+    class MockYDL:
+        def __init__(self, opts):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def extract_info(self, url, download=False):
+            return mock_info
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", MockYDL)
+
+    result = fetch_playlist_entries("https://www.youtube.com/playlist?list=PLmock123")
+    assert result["playlist_title"] == "Revengeseekerz"
+    entries = result["entries"]
+    # Only vid1, vid3, and vid6 should survive (3 tracks)
+    assert len(entries) == 3
+    assert [e["id"] for e in entries] == ["vid1", "vid3", "vid6"]
+    # Check sequential 1-based indexing
+    assert [e["index"] for e in entries] == [1, 2, 3]
+    assert entries[0]["title"] == "Track 1"
+    assert entries[1]["title"] == "Track 3"
+    assert entries[2]["title"] == "Track 6"
+
+
+def test_linear_loudnorm_filter_builder():
+    from janeconverter.converter import build_loudnorm_filter, LOUDNORM_FILTER
+
+    # Default fallback when no measurements
+    assert build_loudnorm_filter(None) == LOUDNORM_FILTER
+    assert build_loudnorm_filter({}) == LOUDNORM_FILTER
+
+    # Full measurements enable linear=true
+    measured = {
+        "input_i": "-16.5",
+        "input_tp": "-0.5",
+        "input_lra": "8.0",
+        "input_thresh": "-27.0",
+        "target_offset": "0.5",
+    }
+    filter_str = build_loudnorm_filter(measured)
+    assert ":linear=true" in filter_str
+    assert ":measured_I=-16.5" in filter_str
+    assert ":measured_TP=-0.5" in filter_str
+    assert ":measured_LRA=8.0" in filter_str
+    assert ":measured_thresh=-27.0" in filter_str
+    assert ":offset=0.5" in filter_str
+

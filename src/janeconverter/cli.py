@@ -273,7 +273,7 @@ def process_conversion(
             last_report[:] = [now, pct]
             if progress_callback:
                 progress_callback(pct, msg)
-            print(f"[{int(pct * 100)}%] {msg}")
+            print(f"[{int(pct * 100)}%] {msg}", flush=True)
 
     target_format = target_format.lower().strip(".")
     is_audio_target = target_format in SUPPORTED_AUDIO_FORMATS or (
@@ -546,7 +546,7 @@ def process_playlist_conversion(
             last_report[:] = [now, frac]
             if progress_callback:
                 progress_callback(frac, msg)
-            print(f"[{int(frac * 100)}%] {msg}")
+            print(f"[{int(frac * 100)}%] {msg}", flush=True)
 
     enc_info = get_best_hardware_encoder()
     gpu_desc = f"{enc_info['short_name']} ({enc_info['encoder_label']})" if active_gpu and enc_info["has_gpu"] else "CPU Multi-Core"
@@ -598,7 +598,8 @@ def process_playlist_conversion(
             if abort_event and abort_event.is_set():
                 raise KeyboardInterrupt("Playlist conversion aborted by user.")
             scaled_pct = max(base_pct, base_pct + (sub_frac * slice_pct))
-            report_overall(scaled_pct, f"[{i+1}/{total_items}] #{idx}: {clean_title} ({int(sub_frac * 100)}%)")
+            msg_detail = f" — {sub_msg}" if sub_msg else f" ({int(sub_frac * 100)}%)"
+            report_overall(scaled_pct, f"[{i+1}/{total_items}] #{idx}: {clean_title}{msg_detail}")
 
         report_overall(base_pct, f"[{i+1}/{total_items}] Fetching #{idx}: {clean_title}...")
 
@@ -1007,9 +1008,13 @@ def main():
             max_retries=args.retries
         )
         failed = summary.get("failed_count", 0)
+        successful = summary.get("successful_count", 0)
         if failed:
-            print(f"[!] {failed} track(s) failed to convert.")
-            sys.exit(1)
+            print(f"[!] {failed} track(s) failed to convert.", flush=True)
+            if successful == 0:
+                sys.exit(1)
+            else:
+                print(f"[*] Partial completion: {successful} tracks converted, {failed} failed.", flush=True)
     else:
         args.browser_session = normalize_browser_session(args.browser_session)
         refresh_callback = None
