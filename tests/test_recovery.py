@@ -11,6 +11,7 @@ from PIL import Image
 from janeconverter import converter
 from janeconverter.recovery import (
     FailureCategory,
+    FailureEvidence,
     IntentMode,
     OutputIntent,
     RecoveryCoordinator,
@@ -92,6 +93,23 @@ def test_transient_io_is_classified_without_a_blind_repeat():
 def test_ffmpeg_banner_does_not_turn_container_failure_into_hardware_failure():
     detail = b"configuration: --enable-nvenc --enable-libmfx\n[flac @ 0x123] Audio codec mp3 not supported in flac\nCould not write header for output file\n"
     assert classify_ffmpeg_failure(detail) == FailureCategory.CONTAINER
+
+
+def test_gpu_transcode_falls_back_to_cpu_transcode_on_encoder_or_option_failure():
+    err = b"Unrecognized option 'spatial_aq'.\nError splitting the argument list: Option not found\n"
+    assert classify_ffmpeg_failure(err) == FailureCategory.ENCODER
+
+    evidence = FailureEvidence.ffmpeg(err)
+    assert evidence.category == FailureCategory.ENCODER
+    assert evidence.retryable
+
+    recovery = RecoveryCoordinator(_intent())
+    recovery.start("gpu-transcode")
+    assert recovery.next_method(evidence) == "cpu-transcode"
+
+    recovery_unknown = RecoveryCoordinator(_intent())
+    recovery_unknown.start("gpu-transcode")
+    assert recovery_unknown.next_method(FailureCategory.UNKNOWN) == "cpu-transcode"
 
 
 def test_source_image_with_wrong_extension_keeps_bytes_and_reports_real_format(tmp_path):

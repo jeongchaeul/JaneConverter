@@ -73,7 +73,13 @@ class FailureEvidence:
         category = classify_ffmpeg_failure(stderr)
         return cls(
             stage="ffmpeg", category=category,
-            retryable=category in {FailureCategory.CONTAINER, FailureCategory.HARDWARE, FailureCategory.ARTWORK},
+            retryable=category in {
+                FailureCategory.CONTAINER,
+                FailureCategory.HARDWARE,
+                FailureCategory.ARTWORK,
+                FailureCategory.ENCODER,
+                FailureCategory.UNKNOWN,
+            },
             diagnostic=f"ffmpeg:{category.value}",
         )
 
@@ -100,7 +106,9 @@ STRATEGIES = {
                               (("stream-copy", FailureCategory.CONTAINER),)),
     "cpu-transcode": Strategy("cpu-transcode", "audio-video", "none", "ffprobe-contract",
                               (("stream-copy", FailureCategory.CONTAINER),
-                               ("gpu-transcode", FailureCategory.HARDWARE))),
+                               ("gpu-transcode", FailureCategory.HARDWARE),
+                               ("gpu-transcode", FailureCategory.ENCODER),
+                               ("gpu-transcode", FailureCategory.UNKNOWN))),
     "cover-normalized": Strategy("cover-normalized", "audio", "none", "ffprobe-contract",
                                  (("cpu-transcode", FailureCategory.ARTWORK),
                                   ("gpu-transcode", FailureCategory.ARTWORK))),
@@ -124,11 +132,11 @@ def classify_ffmpeg_failure(stderr: bytes | str | None) -> FailureCategory:
         return FailureCategory.TRANSIENT_IO
     if any(word in value for word in ("attached picture", "cover art", "album art", "attached_pic")):
         return FailureCategory.ARTWORK
-    if any(word in value for word in ("nvenc", "vaapi", "videotoolbox", "qsv", "amf", "hardware device", "no capable devices")):
+    if any(word in value for word in ("nvenc", "vaapi", "videotoolbox", "qsv", "amf", "hardware device", "no capable devices", "cuda", "cuinit", "nvcuda")):
         return FailureCategory.HARDWARE
     if any(word in value for word in ("not supported in container", "could not write header", "tag ", "incorrect codec parameters")) or ("codec" in value and "not supported" in value):
         return FailureCategory.CONTAINER
-    if any(word in value for word in ("unknown encoder", "encoder not found", "error while opening encoder")):
+    if any(word in value for word in ("unknown encoder", "encoder not found", "error while opening encoder", "unrecognized option", "option not found")):
         return FailureCategory.ENCODER
     if any(word in value for word in ("error while decoding", "decoder not found")):
         return FailureCategory.DECODER

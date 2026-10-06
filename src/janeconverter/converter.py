@@ -899,8 +899,8 @@ def _apply_video_quality_to_encoder_args(
             "-maxrate", maxrate,
             "-bufsize", bufsize,
             "-profile:v", "high",
-            "-spatial_aq", "1",
-            "-temporal_aq", "1",
+            "-spatial-aq", "1",
+            "-temporal-aq", "1",
             "-pix_fmt", "yuv420p",
         ])
         return nvenc_args

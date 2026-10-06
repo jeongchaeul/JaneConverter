@@ -157,6 +157,10 @@ def test_best_video_quality_is_applied_to_each_hardware_encoder():
     assert nvenc[nvenc.index("-preset") + 1] == "p7"
     assert nvenc[nvenc.index("-tune") + 1] == "hq"
     assert nvenc[nvenc.index("-cq") + 1] == "16"
+    assert "-spatial-aq" in nvenc
+    assert "-temporal-aq" in nvenc
+    assert "-spatial_aq" not in nvenc
+    assert "-temporal_aq" not in nvenc
     assert qsv[qsv.index("-global_quality") + 1] == "16"
     assert amf[amf.index("-quality") + 1] == "quality"
     assert "-rc" not in amf
