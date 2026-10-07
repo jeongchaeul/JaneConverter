@@ -117,6 +117,7 @@ $node = Resolve-Tool $NodePath "node.exe" "Node.js"
 $npm = Resolve-Tool "" "npm.cmd" "npm"
 $cargo = Resolve-Tool "" "cargo.exe" "Rust/Cargo"
 
+$env:UV_PYTHON_PREFERENCE = "only-managed"
 Invoke-Checked { & $uv sync --locked --python 3.12 } "Locked Python environment sync"
 Invoke-Checked { & $uv run --locked pyinstaller --version | Out-Null } "PyInstaller validation"
 Invoke-Checked { & $ffmpeg -version | Out-Null } "FFmpeg validation"
@@ -129,6 +130,8 @@ $engineDist = Join-Path $pyinstallerRoot "dist"
 Invoke-Checked {
     & $uv run --locked pyinstaller --noconfirm --clean --onedir --contents-directory _internal `
         --collect-all yt_dlp_ejs `
+        --collect-submodules janeconverter.flp `
+        --hidden-import urllib.request `
         --name JaneConverterEngine `
         --paths (Join-Path $repoRoot "src") `
         --distpath $engineDist `

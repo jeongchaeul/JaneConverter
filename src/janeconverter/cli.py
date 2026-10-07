@@ -923,9 +923,35 @@ def main():
     parser.add_argument("--validate-browser-capture", help=argparse.SUPPRESS)
     parser.add_argument("--capture-kind", choices=("image", "audio", "video"), help=argparse.SUPPRESS)
     parser.add_argument("--compatibility-info", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--flp-inspect", help="Inspect an FL Studio project (.flp) and output JSON metadata")
+    parser.add_argument("--flp-downgrade", help="Downgrade an FL Studio project (.flp) to a target version")
+    parser.add_argument("--flp-target", default="24", help="Target FL Studio version profile (24, 21, 20, 12; default: 24)")
+    parser.add_argument("--flp-output", help="Optional destination path for downgraded .flp project")
     parser.add_argument("--version", action="version", version=f"JaneConverter {__version__}")
 
     args = parser.parse_args()
+    if args.flp_inspect:
+        from .flp import inspect_flp_file
+        try:
+            info = inspect_flp_file(args.flp_inspect)
+            print(json.dumps(info))
+        except Exception as error:
+            print(json.dumps({"error": str(error)}))
+            sys.exit(1)
+        return
+    if args.flp_downgrade:
+        from .flp import downgrade_flp_file
+        try:
+            summary = downgrade_flp_file(
+                input_path=args.flp_downgrade,
+                target_version_key=args.flp_target,
+                output_path=args.flp_output,
+            )
+            print(json.dumps(summary))
+        except Exception as error:
+            print(json.dumps({"error": str(error)}))
+            sys.exit(1)
+        return
     if args.compatibility_info:
         from yt_dlp.version import __version__ as extractor_version
         print(json.dumps({"applicationVersion": __version__, "bridgeProtocol": 2, "extractorVersion": extractor_version,

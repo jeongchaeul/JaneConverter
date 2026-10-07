@@ -181,3 +181,10 @@ def test_no_site_cookies_produces_actionable_failure_without_an_auth_request(mon
     public.extract_info.side_effect = RuntimeError("Please sign in")
     with pytest.raises(fallback.BrowserSessionError, match="No usable session"):
         fallback.extract_with_browser_fallback(public, {}, "https://www.youtube.com/watch?v=synthetic", True)
+
+
+def test_tiktok_challenge_triggers_browser_session_fallback():
+    assert fallback.needs_browser_session("ERROR: [TikTok] Unexpected response from webpage request")
+    assert fallback.needs_browser_session("ERROR: [TikTok] Unable to extract challenge data")
+    assert fallback.needs_browser_session("ERROR: [TikTok] Unable to solve JS challenge")
+

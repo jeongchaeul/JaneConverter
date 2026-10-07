@@ -3,7 +3,15 @@ Unit tests for the extractor module.
 """
 
 import pytest
-from janeconverter.extractor import is_url, identify_source_type, sanitize_filename, resolve_spotify_metadata, resolve_apple_music_metadata, build_search_candidates
+from janeconverter.extractor import (
+    is_url,
+    identify_source_type,
+    sanitize_filename,
+    resolve_spotify_metadata,
+    resolve_apple_music_metadata,
+    build_search_candidates,
+    build_tiktok_candidates,
+)
 
 def test_is_url():
     assert is_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ") is True
@@ -64,3 +72,104 @@ def test_build_search_candidates():
         clean_part = c.replace("ytsearch1:", "").replace("scsearch1:", "")
         assert ":" not in clean_part
         assert "?" not in clean_part
+
+
+def test_build_tiktok_candidates():
+    url_with_params = "https://www.tiktok.com/@user/video/7693187265878674709?is_from_webapp=1&sender_device=pc"
+    candidates = build_tiktok_candidates(url_with_params)
+    assert len(candidates) == 3
+    assert candidates[0] == url_with_params
+    assert candidates[1] == "https://www.tiktok.com/@user/video/7693187265878674709"
+    assert candidates[2] == "https://m.tiktok.com/v/7693187265878674709.html"
+
+    clean_url = "https://www.tiktok.com/@user/video/7693187265878674709"
+    clean_candidates = build_tiktok_candidates(clean_url)
+    assert len(clean_candidates) == 2
+    assert clean_candidates[0] == clean_url
+    assert clean_candidates[1] == "https://m.tiktok.com/v/7693187265878674709.html"
+
+    short_url = "https://vt.tiktok.com/ZS123456/"
+    short_candidates = build_tiktok_candidates(short_url)
+    assert short_candidates == [short_url]
+
+
+def test_fetch_tiktok_direct_unit(tmp_path, monkeypatch):
+    import os
+    from unittest.mock import Mock
+    from janeconverter.extractor import _fetch_tiktok_direct
+
+    api_resp = Mock()
+    api_resp.status_code = 200
+    api_resp.json.return_value = {
+        "code": 0,
+        "data": {
+            "id": "7693187265878674709",
+            "title": "Synthetic TikTok Video",
+            "author": {"unique_id": "creator_one", "nickname": "Creator One"},
+            "duration": 42,
+            "play": "https://cdn.example.test/video.mp4",
+            "hdplay": "https://cdn.example.test/hd_video.mp4",
+            "cover": "https://cdn.example.test/cover.jpg",
+        }
+    }
+
+    stream_resp = Mock()
+    stream_resp.status_code = 200
+    stream_resp.headers = {"content-length": "100"}
+    stream_resp.iter_content.return_value = [b"synthetic-mp4-data-bytes"]
+    stream_resp.__enter__ = Mock(return_value=stream_resp)
+    stream_resp.__exit__ = Mock(return_value=False)
+
+    def mock_requests_post(url, **kwargs):
+        return api_resp
+
+    def mock_requests_get(url, **kwargs):
+        if "tikwm.com" in url:
+            return api_resp
+        return stream_resp
+
+    monkeypatch.setattr("requests.post", mock_requests_post)
+    monkeypatch.setattr("requests.get", mock_requests_get)
+
+    result = _fetch_tiktok_direct(
+        "https://www.tiktok.com/@creator_one/video/7693187265878674709",
+        str(tmp_path),
+    )
+
+    assert result["title"] == "Synthetic TikTok Video"
+    assert result["artist"] == "creator_one"
+    assert result["duration"] == 42
+    assert result["source_type"] == "tiktok"
+    assert os.path.exists(result["media_path"])
+    with open(result["media_path"], "rb") as f:
+        assert f.read() == b"synthetic-mp4-data-bytes"
+
+
+def test_fetch_media_stream_tiktok_fallback(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+    import yt_dlp
+    from janeconverter.extractor import fetch_media_stream
+
+    def failing_extract(self, query, download):
+        raise RuntimeError("ERROR: [TikTok] 7693187265878674709: Unexpected response from webpage request")
+
+    monkeypatch.setattr(yt_dlp.YoutubeDL, "extract_info", failing_extract)
+
+    mock_direct = Mock(return_value={
+        "media_path": str(tmp_path / "fallback.mp4"),
+        "title": "Direct TikTok Video",
+        "artist": "creator_one",
+        "duration": 30,
+        "source_type": "tiktok",
+    })
+    monkeypatch.setattr("janeconverter.extractor._fetch_tiktok_direct", mock_direct)
+
+    result = fetch_media_stream(
+        "https://www.tiktok.com/@creator_one/video/7693187265878674709",
+        str(tmp_path),
+    )
+
+    assert result["title"] == "Direct TikTok Video"
+    assert mock_direct.call_count == 1
+
+

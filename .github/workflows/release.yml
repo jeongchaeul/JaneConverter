@@ -25,6 +25,7 @@ jobs:
     env:
       JANECONVERTER_BUILD_COMMIT: ${{ github.sha }}
       JANECONVERTER_UPDATER_PUBKEY: ${{ vars.JANECONVERTER_UPDATER_PUBKEY }}
+      UV_PYTHON_PREFERENCE: "only-managed"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

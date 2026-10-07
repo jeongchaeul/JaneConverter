@@ -21,6 +21,9 @@ def test_catalog_rejects_wrong_artist_version_duration_and_ambiguity():
     ("HTTP 429", ExtractionCategory.RATE_LIMIT), ("Sign in to view", ExtractionCategory.ACCESS),
     ("Video deleted", ExtractionCategory.REMOVED), ("Connection timed out", ExtractionCategory.NETWORK),
     ("Requested format unavailable", ExtractionCategory.FORMAT), ("Unable to extract signature", ExtractionCategory.LAYOUT),
+    ("Unexpected response from webpage request", ExtractionCategory.LAYOUT),
+    ("Unable to solve JS challenge", ExtractionCategory.LAYOUT),
+    ("Unable to extract challenge data", ExtractionCategory.LAYOUT),
 ])
 def test_extraction_failures_have_distinct_recovery_categories(message, category):
     assert classify_extraction(message) == category

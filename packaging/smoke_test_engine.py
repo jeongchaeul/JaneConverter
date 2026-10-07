@@ -128,7 +128,38 @@ def main() -> int:
         if not any(stream.get("codec_type") == "audio" for stream in streams) or not 0.8 <= duration <= 1.2:
             raise RuntimeError("The packaged conversion output failed its audio stream or duration check.")
 
-    print("Packaged engine smoke test passed: local WAV converted to a readable one-second MP3.")
+        # FL Studio Project (.flp) smoke test
+        from janeconverter.flp.models import FLPProject, FLPEvent
+        smoke_flp = temporary_directory / "smoke-project.flp"
+        flp_out = temporary_directory / "smoke-downgraded.flp"
+        proj = FLPProject(
+            format=0,
+            channels=4,
+            ppq=96,
+            events=[
+                FLPEvent(event_id=199, data=b"25.1.0.4000\x00"),
+                FLPEvent(event_id=194, data="Smoke Test".encode("utf-16le")),
+                FLPEvent(event_id=68, data=struct.pack("<H", 1400)),
+            ],
+        )
+        smoke_flp.write_bytes(proj.to_bytes())
+
+        flp_inspect_proc = _run([*engine, "--flp-inspect", str(smoke_flp)], environment, work_directory)
+        if flp_inspect_proc.returncode != 0:
+            raise RuntimeError(f"Packaged engine FLP inspection failed: {flp_inspect_proc.stderr.strip() or flp_inspect_proc.stdout.strip()}")
+        flp_info = json.loads(flp_inspect_proc.stdout)
+        if flp_info.get("version") != "25.1.0.4000" or flp_info.get("title") != "Smoke Test":
+            raise RuntimeError(f"Packaged engine FLP inspection returned invalid metadata: {flp_info}")
+
+        flp_downgrade_proc = _run(
+            [*engine, "--flp-downgrade", str(smoke_flp), "--flp-target", "21", "--flp-output", str(flp_out)],
+            environment,
+            work_directory,
+        )
+        if flp_downgrade_proc.returncode != 0 or not flp_out.exists():
+            raise RuntimeError(f"Packaged engine FLP downgrade failed: {flp_downgrade_proc.stderr.strip() or flp_downgrade_proc.stdout.strip()}")
+
+    print("Packaged engine smoke test passed: local WAV converted to a readable one-second MP3, and FL Studio project parsed and downgraded.")
     return 0
 
 

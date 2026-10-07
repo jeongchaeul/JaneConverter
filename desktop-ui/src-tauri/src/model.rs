@@ -197,3 +197,36 @@ pub struct LibraryEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversion_ms: Option<u64>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlpProjectInfo {
+    pub file_path: String,
+    pub file_name: String,
+    pub file_size: u64,
+    pub version: String,
+    pub major_version: u32,
+    pub title: String,
+    pub bpm: f64,
+    pub ppq: u32,
+    pub channels: u32,
+    pub registered: bool,
+    pub registration_name: String,
+    pub events_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlpDowngradeResult {
+    pub success: bool,
+    pub source_path: String,
+    pub output_path: String,
+    pub source_version: String,
+    pub source_major: u32,
+    pub target_version: String,
+    pub target_profile: String,
+    pub target_label: String,
+    pub records_adjusted: usize,
+    pub events_count: usize,
+    pub output_size_bytes: u64,
+}

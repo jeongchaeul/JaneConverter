@@ -147,6 +147,8 @@ mkdir -p -- "$RUNTIME_ENGINE" "$RUNTIME_BIN" "$PYINSTALLER_ROOT/spec"
 echo "Building the frozen engine (onedir)..."
 uv run --locked pyinstaller --noconfirm --clean --onedir --contents-directory _internal \
   --collect-all yt_dlp_ejs \
+  --collect-submodules janeconverter.flp \
+  --hidden-import urllib.request \
   --name JaneConverterEngine \
   --paths "$REPO_ROOT/src" \
   --distpath "$PYINSTALLER_ROOT/dist" \

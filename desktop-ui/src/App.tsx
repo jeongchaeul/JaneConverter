@@ -605,8 +605,7 @@ export default function App() {
       const nextAccess = await bridge.createAccessLink(source);
       accessDiagnosticIds.current.clear();
       setAccess(nextAccess);
-      await bridge.openUrl(nextAccess.link);
-      statusMessage("Temporary access link opened in your browser.");
+      statusMessage("Account session initialized. Direct extraction is ready.");
       return nextAccess;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

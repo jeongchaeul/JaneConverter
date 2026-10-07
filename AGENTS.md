@@ -53,6 +53,13 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
+Rebuilding Executables:
+
+See `packaging/REBUILD.md` for complete build and local deployment steps.
+- **Desktop UI (`janeconverter-desktop.exe`):** NEVER run bare `cargo build --release` (which defaults to `http://localhost:1420` and fails with `localhost refused to connect`). Always run `npm run tauri:build -- --no-bundle` inside `desktop-ui/` so production web assets are embedded into the binary.
+- **Engine (`JaneConverterEngine.exe`):** Run PyInstaller via `uv run` collecting `yt_dlp_ejs` and submodules `janeconverter.flp`.
+
+
 ## Conventions
 
 - Keep build and packaging scripts under `packaging/`. Do not add build scripts to the repository root.

@@ -57,6 +57,7 @@ jobs:
     env:
       JANECONVERTER_BUILD_COMMIT: ${{ needs.prepare.outputs.commit }}
       JANECONVERTER_UPDATER_PUBKEY: ${{ vars.JANECONVERTER_UPDATER_PUBKEY }}
+      UV_PYTHON_PREFERENCE: "only-managed"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

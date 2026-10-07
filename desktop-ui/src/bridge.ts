@@ -114,6 +114,35 @@ export interface PlaylistCatalog {
   items: PlaylistItem[];
 }
 
+export interface FlpProjectInfo {
+  filePath: string;
+  fileName: string;
+  fileSize: number;
+  version: string;
+  majorVersion: number;
+  title: string;
+  bpm: number;
+  ppq: number;
+  channels: number;
+  registered: boolean;
+  registrationName: string;
+  eventsCount: number;
+}
+
+export interface FlpDowngradeResult {
+  success: boolean;
+  sourcePath: string;
+  outputPath: string;
+  sourceVersion: string;
+  sourceMajor: number;
+  targetVersion: string;
+  targetProfile: string;
+  targetLabel: string;
+  recordsAdjusted: number;
+  eventsCount: number;
+  outputSizeBytes: number;
+}
+
 export interface AccessStatus {
   active: boolean;
   link: string;
@@ -217,6 +246,9 @@ export interface JaneBridge {
   notifyAttention(): Promise<void>;
   checkUpdates(): Promise<UpdateCheckResult>;
   installUpdate(): Promise<void>;
+  chooseFlpFile(): Promise<string | null>;
+  flpInspect(path: string): Promise<FlpProjectInfo>;
+  flpDowngrade(source: string, targetVersion: string, outputPath?: string): Promise<FlpDowngradeResult>;
 }
 
 const demoSettings: ConverterSettings = {
@@ -288,6 +320,38 @@ const demoBridge: JaneBridge = {
   async notifyAttention() {},
   async checkUpdates() { return { message: "Preview mode: update checks are available in the desktop build." }; },
   async installUpdate() {},
+  async chooseFlpFile() { return null; },
+  async flpInspect(path: string) {
+    return {
+      filePath: path,
+      fileName: "Preview_Project.flp",
+      fileSize: 1048576,
+      version: "25.1.0.4000",
+      majorVersion: 25,
+      title: "Preview Project",
+      bpm: 140.0,
+      ppq: 96,
+      channels: 16,
+      registered: true,
+      registrationName: "Jane Cerys",
+      eventsCount: 1250,
+    };
+  },
+  async flpDowngrade(source: string, targetVersion: string, outputPath?: string) {
+    return {
+      success: true,
+      sourcePath: source,
+      outputPath: outputPath || source.replace(/\.flp$/i, `_downgraded_FL${targetVersion}.flp`),
+      sourceVersion: "25.1.0.4000",
+      sourceMajor: 25,
+      targetVersion: "24.1.2.4398",
+      targetProfile: targetVersion,
+      targetLabel: `FL Studio ${targetVersion}`,
+      recordsAdjusted: 16,
+      eventsCount: 1250,
+      outputSizeBytes: 1047500,
+    };
+  },
 };
 
 const isTauriRuntime = () => "__TAURI_INTERNALS__" in window;
@@ -302,6 +366,10 @@ const tauriBridge: JaneBridge = {
   chooseFile: () => invoke<string | null>("choose_file"),
   chooseFiles: () => invoke<string[]>("choose_files"),
   chooseFolder: () => invoke<string | null>("choose_folder"),
+  chooseFlpFile: () => invoke<string | null>("choose_flp_file"),
+  flpInspect: (path: string) => invoke<FlpProjectInfo>("flp_inspect", { path }),
+  flpDowngrade: (source: string, targetVersion: string, outputPath?: string) =>
+    invoke<FlpDowngradeResult>("flp_downgrade", { source, targetVersion, outputPath: outputPath ?? null }),
   openPath: (path) => invoke<void>("open_path", { path }),
   openFile: (path) => invoke<void>("open_file", { path }),
   openUrl: (url) => invoke<void>("open_url", { url }),

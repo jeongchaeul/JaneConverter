@@ -46,7 +46,10 @@ def needs_browser_session(error):
     # content must not trigger credential access.
     if any(word in message for word in ("drm", "geo-restricted", "geo restricted", "not available in your country", "removed", "deleted")):
         return False
-    return any(word in message for word in ("sign in", "login required", "log in", "age-restricted", "use --cookies", "cookies are required"))
+    return any(word in message for word in (
+        "sign in", "login required", "log in", "age-restricted", "use --cookies", "cookies are required",
+        "unexpected response from webpage request", "unable to extract challenge data", "unable to solve js challenge",
+    ))
 
 
 class _PrivateLogger:
@@ -68,7 +71,7 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
             raise KeyboardInterrupt("Stream extraction aborted by user.")
         browser = normalize_browser_session(browser) if browser else detect_default_browser_session()
         if not browser:
-            raise BrowserSessionError("This source requires sign-in, but JaneConverter could not identify a supported default browser. Browser Capture is available instead.") from None
+            raise BrowserSessionError("This source requires sign-in, but JaneConverter could not identify a supported default browser.") from None
         options = dict(options)
         # Keep browser sessions away from pinned anonymous clients and prevent
         # caller options from writing an exported cookie file or debug headers.
@@ -96,7 +99,7 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                         else:
                             cookie.secure = True
                 if not jar or not len(jar):
-                    raise BrowserSessionError(f"No usable session for this site was found in {browser.title()}. Sign in there, then retry; Browser Capture is also available.")
+                    raise BrowserSessionError(f"No usable session for this site was found in {browser.title()}. Sign in there, then retry.")
                 if abort_event and abort_event.is_set():
                     raise KeyboardInterrupt("Stream extraction aborted by user.")
                 return extract_with_recovery(authenticated, query, download, abort_event, report, deadline)
@@ -107,9 +110,9 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
         except Exception as error:
             message = str(error).casefold()
             if any(word in message for word in ("cookie database", "decrypt", "dpapi", "keyring", "extract cookies", "cookies from", "load cookies")):
-                detail = f"yt-dlp could not read the {browser.title()} session. The browser may be locked or its cookie encryption unsupported. Close it and retry, or use Browser Capture."
+                detail = f"yt-dlp could not read the {browser.title()} session. The browser may be locked or its cookie encryption unsupported. Close it and retry."
             else:
-                detail = f"Automatic browser-session retry did not succeed. Check that the source plays in {browser.title()}, then retry or use Browser Capture."
+                detail = f"Automatic browser-session retry did not succeed. Check that the source plays in {browser.title()}, then retry."
             raise BrowserSessionError(detail) from None
         finally:
             if jar is not None:

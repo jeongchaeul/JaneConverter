@@ -47,6 +47,7 @@ import {
   videoQualityLabel,
 } from "../options";
 import { PlaylistDialog } from "./PlaylistDialog";
+import { FlpConverterView } from "./FlpConverterView";
 
 function isFacebookPostLink(value: string): boolean {
   try {
@@ -243,6 +244,7 @@ export function ConverterView({
   onError: (message: string) => void;
 }) {
   const [source, setSource] = useState("");
+  const [converterTab, setConverterTab] = useState<"media" | "flp">("media");
   const [playlist, setPlaylist] = useState<PlaylistCatalog | null>(null);
   const [loadingPlaylist, setLoadingPlaylist] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -639,7 +641,7 @@ export function ConverterView({
         setAccessNotice(`Access page opened in ${nextAccess.browser}. Confirm access there, then use the Browser Capture extension to capture the visible media.`);
         setAccessNoticeTone("success");
       } else {
-        setAccessNotice("Access page opened. Sign in there if needed, confirm access, then use the Browser Capture extension.");
+        setAccessNotice("Access page opened. Direct brute-force extraction is active in JaneConverter; no localhost website required.");
         setAccessNoticeTone("neutral");
       }
     } catch (error) {
@@ -679,8 +681,13 @@ export function ConverterView({
 
   async function openAccessLink() {
     try {
+      if (/localhost|127\.0\.0\.1|::1/i.test(access.link)) {
+        setAccessNotice("Direct extraction is active in JaneConverter. Localhost pages do not need to be opened in your browser.");
+        setAccessNoticeTone("neutral");
+        return;
+      }
       await bridge.openUrl(access.link);
-      setAccessNotice("Access page opened in your browser. Confirm it there, then use Browser Capture on the source page.");
+      setAccessNotice("Access page opened in your browser.");
       setAccessNoticeTone("neutral");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -918,8 +925,32 @@ export function ConverterView({
         </div>
       </motion.div>
 
-      {/* Source Input Section */}
-      <section
+      {/* Converter Type Sub-Navigation Switcher */}
+      <div className="inline-flex rounded-xl border border-white/[0.08] bg-white/[0.025] p-1">
+        <button
+          type="button"
+          aria-pressed={converterTab === "media"}
+          onClick={() => setConverterTab("media")}
+          className={"rounded-lg px-3 py-1.5 text-xs font-medium transition-colors " + (converterTab === "media" ? "bg-white/[0.09] text-white" : "text-zinc-500 hover:text-zinc-300")}
+        >
+          Media Converter
+        </button>
+        <button
+          type="button"
+          aria-pressed={converterTab === "flp"}
+          onClick={() => setConverterTab("flp")}
+          className={"rounded-lg px-3 py-1.5 text-xs font-medium transition-colors " + (converterTab === "flp" ? "border border-violet-500/30 bg-violet-600/25 text-violet-200" : "text-zinc-500 hover:text-zinc-300")}
+        >
+          FL Studio Project (.flp)
+        </button>
+      </div>
+
+      {converterTab === "flp" ? (
+        <FlpConverterView onStatus={onStatus} />
+      ) : (
+        <>
+          {/* Source Input Section */}
+          <section
         onDragOver={handleDragOver}
         onDragEnter={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -1010,16 +1041,6 @@ export function ConverterView({
               : "Public access is tried first. If a supported site requires sign-in, yt-dlp automatically retries using your default browser's existing session. Cookies are used temporarily and are not exported to a file. Browser Capture below offers another way to send visible media to JaneConverter."}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {access.link && (
-              <button type="button" disabled={accessBusy} onClick={() => void copyAccessLink()} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">
-                <Link2 className="size-3.5" /> Copy link
-              </button>
-            )}
-            {access.link && (
-              <button type="button" disabled={accessBusy} onClick={() => void openAccessLink()} className="subtle-button px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">
-                Open link
-              </button>
-            )}
             {access.active ? (
               <button type="button" disabled={accessBusy} onClick={() => void clearAccess()} className="subtle-button px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">
                 {accessBusy ? "Working..." : "Clear access"}
@@ -1035,7 +1056,6 @@ export function ConverterView({
                 {accessBusy ? "Opening access page..." : "Create access link"}
               </button>
             )}
-            {access.link && <span className="max-w-[420px] truncate text-[11px] text-zinc-700">{access.link}</span>}
           </div>
           {accessNotice && (
             <div
@@ -1519,6 +1539,8 @@ export function ConverterView({
           </div>
         </div>
       </section>
+        </>
+      )}
 
       {playlist && <PlaylistDialog catalog={playlist} onClose={() => setPlaylist(null)} onConfirm={(indexes) => { setPlaylist(null); void convert(indexes); }} />}
       {loadingPlaylist && (

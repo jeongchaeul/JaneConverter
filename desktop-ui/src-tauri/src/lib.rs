@@ -9,8 +9,8 @@ mod social_photo_capture;
 
 use model::{
     AccessDiagnostic, AccessStatus, ConversionRequest, ConverterEvent, FacebookCaptureResult,
-    FacebookPhotoManifest, FetchedMedia, HardwareSnapshot, LibraryEntry, RuntimeInfo,
-    SocialCaptureResult, SocialPhotoManifest,
+    FacebookPhotoManifest, FetchedMedia, FlpDowngradeResult, FlpProjectInfo, HardwareSnapshot,
+    LibraryEntry, RuntimeInfo, SocialCaptureResult, SocialPhotoManifest,
 };
 use paths::{
     command_available, data_root, detect_gpu, find_ffmpeg, find_python, packaged_engine,
@@ -306,6 +306,84 @@ fn choose_folder() -> Option<String> {
 }
 
 #[tauri::command]
+fn choose_flp_file() -> Option<String> {
+    FileDialog::new()
+        .set_title("Choose FL Studio Project (.flp)")
+        .add_filter("FL Studio Project (*.flp)", &["flp"])
+        .pick_file()
+        .map(|path| path.display().to_string())
+}
+
+#[tauri::command]
+async fn flp_inspect(path: String) -> Result<FlpProjectInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = find_python();
+        let mut command = Command::new(&engine);
+        if !packaged_engine(&engine) {
+            command.args(["run", "--locked", "janeconverter"]);
+        }
+        command
+            .args(["--flp-inspect", &path])
+            .current_dir(project_root());
+        prepare_command(&mut command);
+        let output = command
+            .output()
+            .map_err(|error| format!("Could not inspect FL Studio project: {error}"))?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if detail.is_empty() {
+                format!("FLP inspector exited with status {}.", output.status)
+            } else {
+                detail
+            });
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("Could not read FLP inspector output: {error}"))
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))?
+}
+
+#[tauri::command]
+async fn flp_downgrade(
+    source: String,
+    target_version: String,
+    output_path: Option<String>,
+) -> Result<FlpDowngradeResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = find_python();
+        let mut command = Command::new(&engine);
+        if !packaged_engine(&engine) {
+            command.args(["run", "--locked", "janeconverter"]);
+        }
+        command
+            .args(["--flp-downgrade", &source, "--flp-target", &target_version])
+            .current_dir(project_root());
+        if let Some(ref out) = output_path {
+            if !out.trim().is_empty() {
+                command.args(["--flp-output", out]);
+            }
+        }
+        prepare_command(&mut command);
+        let output = command
+            .output()
+            .map_err(|error| format!("Could not downgrade FL Studio project: {error}"))?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if detail.is_empty() {
+                format!("FLP downgrader exited with status {}.", output.status)
+            } else {
+                detail
+            });
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("Could not read FLP downgrader output: {error}"))
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))?
+}
+
+#[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
     let target = PathBuf::from(library::clean_windows_path(&path));
     if !target.exists() {
@@ -387,6 +465,14 @@ fn open_url(url: String) -> Result<(), String> {
     let value = url.trim();
     if !(value.starts_with("http://") || value.starts_with("https://")) {
         return Err("Only http and https URLs can be opened.".into());
+    }
+    let lower = value.to_ascii_lowercase();
+    if lower.contains("localhost")
+        || lower.contains("127.0.0.1")
+        || lower.contains("0.0.0.0")
+        || lower.contains("[::1]")
+    {
+        return Err("Opening local or loopback addresses in external browsers is blocked.".into());
     }
     #[cfg(target_os = "windows")]
     {
@@ -2348,6 +2434,9 @@ pub fn run() {
             choose_file,
             choose_files,
             choose_folder,
+            choose_flp_file,
+            flp_inspect,
+            flp_downgrade,
             open_path,
             open_file,
             open_url,

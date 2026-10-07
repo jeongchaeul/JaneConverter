@@ -26,7 +26,11 @@ def classify_extraction(error):
         return ExtractionCategory.NETWORK
     if any(word in message for word in ("requested format", "no video formats", "no formats")):
         return ExtractionCategory.FORMAT
-    if any(word in message for word in ("unable to extract", "signature", "nsig", "extractor", "could not locate")):
+    if any(word in message for word in (
+        "unable to extract", "signature", "nsig", "extractor", "could not locate",
+        "unexpected response from webpage request", "unable to solve js challenge",
+        "unable to extract challenge data",
+    )):
         return ExtractionCategory.LAYOUT
     return ExtractionCategory.UNKNOWN
 

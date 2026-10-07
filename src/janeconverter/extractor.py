@@ -10,6 +10,7 @@ import shutil
 import time
 import unicodedata
 import urllib.parse
+from datetime import datetime
 from typing import Optional, Dict, Any, Callable
 import ipaddress
 import socket
@@ -595,6 +596,182 @@ def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
         "duration": duration,
     }
 
+
+def build_tiktok_candidates(url: str) -> list[str]:
+    """Build multi-strategy TikTok URL candidates to maximize extraction reliability.
+
+    Desktop web requests with tracking parameters can trigger ByteDance's bot WAF.
+    Providing the original URL, a clean URL without tracking params, and a mobile
+    web URL fallback gives yt-dlp multiple independent resolution avenues.
+    """
+    candidates = [url]
+    m = re.search(r'/(?:video|v)/(\d+)', url) or re.search(r'\b(\d{15,22})\b', url)
+    if m:
+        video_id = m.group(1)
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.query:
+            clean_url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+            if clean_url not in candidates:
+                candidates.append(clean_url)
+        mobile_url = f"https://m.tiktok.com/v/{video_id}.html"
+        if mobile_url not in candidates:
+            candidates.append(mobile_url)
+    return candidates
+
+
+def _fetch_tiktok_direct(
+    source: str,
+    output_dir: str,
+    audio_only: bool = False,
+    abort_event: Optional[Any] = None,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    report: Optional[Callable[[float, str], None]] = None,
+    preexisting_stream_files: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Brute-force direct extraction for TikTok videos bypassing web WAF blocks.
+
+    Uses high-availability direct endpoints (TikWM / direct CDN stream) to fetch
+    watermark-free media and metadata with zero reliance on web browser challenges.
+    """
+    def _rep(pct: float, msg: str, force: bool = False):
+        if report:
+            report(pct, msg, force=force)
+        elif progress_callback:
+            progress_callback(max(0.0, min(1.0, pct)), msg)
+
+    _rep(0.15, "Connecting to direct TikTok media service...", force=True)
+
+    clean_source = source.strip()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+    }
+
+    data = None
+    try:
+        resp = requests.post(
+            "https://www.tikwm.com/api/",
+            data={"url": clean_source, "hd": 1},
+            headers=headers,
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            parsed = resp.json()
+            if parsed.get("code") == 0 and parsed.get("data"):
+                data = parsed.get("data")
+    except Exception:
+        pass
+
+    if not data:
+        try:
+            get_url = f"https://www.tikwm.com/api/?url={urllib.parse.quote(clean_source)}&hd=1"
+            resp = requests.get(get_url, headers=headers, timeout=15)
+            if resp.status_code == 200:
+                parsed = resp.json()
+                if parsed.get("code") == 0 and parsed.get("data"):
+                    data = parsed.get("data")
+        except Exception:
+            pass
+
+    if not data:
+        raise ValueError(f"Direct stream extraction failed for TikTok URL: {source}")
+
+    title = (data.get("title") or "TikTok Video").strip()
+    author_info = data.get("author") or {}
+    artist = (author_info.get("unique_id") or author_info.get("nickname") or "TikTok Creator").strip()
+    duration = int(data.get("duration") or 0)
+    cover_url = data.get("origin_cover") or data.get("cover") or ""
+
+    if audio_only and data.get("music"):
+        stream_url = data.get("music")
+        ext = ".mp3"
+    else:
+        stream_url = data.get("hdplay") or data.get("play")
+        ext = ".mp4"
+
+    if not stream_url:
+        raise ValueError("Direct TikTok extractor returned no playable stream URL.")
+
+    if stream_url.startswith("/"):
+        stream_url = f"https://www.tikwm.com{stream_url}"
+
+    base_label = sanitize_filename(f"{artist} - {title}"[:60] if artist else title[:60]) or f"tiktok_{data.get('id', 'video')}"
+    target_filename = os.path.join(output_dir, f"{base_label}{ext}")
+    counter = 1
+    base_stem, base_ext = os.path.splitext(target_filename)
+    while os.path.exists(target_filename):
+        target_filename = f"{base_stem}_{counter}{base_ext}"
+        counter += 1
+
+    _rep(0.25, "Streaming media directly from TikTok CDN...", force=True)
+
+    stream_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Referer": "https://www.tiktok.com/",
+    }
+
+    with requests.get(stream_url, headers=stream_headers, stream=True, timeout=30) as stream_resp:
+        stream_resp.raise_for_status()
+        total_size = int(stream_resp.headers.get("content-length") or 0)
+        downloaded = 0
+        with open(target_filename, "wb") as f:
+            for chunk in stream_resp.iter_content(chunk_size=65536):
+                if abort_event and abort_event.is_set():
+                    try:
+                        f.close()
+                        if os.path.exists(target_filename):
+                            os.remove(target_filename)
+                    except Exception:
+                        pass
+                    raise KeyboardInterrupt("Stream extraction aborted by user.")
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size > 0:
+                        pct = 0.25 + (downloaded / total_size) * 0.45
+                        _rep(pct, f"Downloaded {downloaded // 1024} KB of {total_size // 1024} KB...")
+
+    if not os.path.exists(target_filename) or os.path.getsize(target_filename) == 0:
+        raise FileNotFoundError(f"Failed to stream direct TikTok media to {target_filename}")
+
+    thumbnail_local_path = None
+    if cover_url:
+        local_thumb_file = os.path.join(output_dir, "cover.jpg")
+        try:
+            thumbnail_local_path = download_and_convert_thumbnail(cover_url, local_thumb_file)
+        except Exception:
+            thumbnail_local_path = None
+
+    _rep(0.75, "Direct TikTok media extraction complete.", force=True)
+
+    return {
+        "media_path": os.path.abspath(target_filename),
+        "title": title,
+        "artist": artist,
+        "album": "",
+        "year": str(datetime.now().year),
+        "description": data.get("title", ""),
+        "tags": [],
+        "categories": [],
+        "webpage_url": clean_source,
+        "thumbnail_url": cover_url,
+        "thumbnail_path": thumbnail_local_path,
+        "duration": duration,
+        "source_format": "mp4" if ext == ".mp4" else "mp3",
+        "source_format_id": "direct_cdn",
+        "source_width": None,
+        "source_height": None,
+        "source_video_codec": "h264" if ext == ".mp4" else "",
+        "source_audio_codec": "aac" if ext == ".mp4" else "mp3",
+        "source_type": "tiktok",
+        "catalog_match": None,
+        "requested_catalog_url": None,
+        "matched_source_title": title,
+        "matched_source_artist": artist,
+        "is_local": False,
+    }
+
+
 def fetch_media_stream(
     source: str,
     output_dir: str,
@@ -667,7 +844,6 @@ def fetch_media_stream(
             "source_type": source_type,
             "is_local": False,
         }
-
     if auth_browser:
         raise RuntimeError(
             "Account access is ready, but no browser capture has arrived. "
@@ -741,6 +917,8 @@ def fetch_media_stream(
             apple_meta["artist"], apple_meta["title"]
         )
         target_url = candidates[0] if candidates else apple_meta.get("search_query", "")
+    elif source_type == "tiktok":
+        candidates = build_tiktok_candidates(target_url)
     elif target_url.startswith("ytsearch") or target_url.startswith("scsearch"):
         candidates = [target_url]
     else:
@@ -814,6 +992,17 @@ def fetch_media_stream(
         ydl_opts["fragment_retries"] = 1
         ydl_opts["file_access_retries"] = 1
 
+    is_tiktok_source = (
+        source_type == "tiktok"
+        or any("tiktok.com" in str(c) for c in candidates)
+    )
+    if is_tiktok_source:
+        ydl_opts["extractor_args"] = {
+            "tiktok": {
+                "api_hostname": ["api16-normal-c-useast1a.tiktokv.com", "api22-normal-c-alisg.tiktokv.com"],
+            }
+        }
+
     if ffmpeg_bin and (os.path.isfile(ffmpeg_bin) or shutil.which(ffmpeg_bin)):
         ydl_opts["ffmpeg_location"] = ffmpeg_bin
 
@@ -860,15 +1049,35 @@ def fetch_media_stream(
                     break
                 except KeyboardInterrupt:
                     raise
-                except BrowserSessionError:
+                except BrowserSessionError as bse:
+                    last_error = bse
+                    if is_tiktok_source:
+                        break
                     raise
                 except Exception as ex:
                     last_error = ex
+                    if is_tiktok_source:
+                        if query_item != candidates[-1]:
+                            continue
+                        break
                     if classify_extraction(ex) in (ExtractionCategory.ACCESS, ExtractionCategory.REMOVED, ExtractionCategory.RATE_LIMIT, ExtractionCategory.NETWORK):
+                        if source_type == "tiktok" and query_item != candidates[-1]:
+                            continue
                         break
                     continue
 
             if not info:
+                if is_tiktok_source:
+                    report(0.18, "Engaging direct TikTok stream extractor...", force=True)
+                    return _fetch_tiktok_direct(
+                        source,
+                        output_dir,
+                        audio_only=audio_only,
+                        abort_event=abort_event,
+                        progress_callback=progress_callback,
+                        report=report,
+                        preexisting_stream_files=preexisting_stream_files,
+                    )
                 if source_type == "apple_music":
                     msg = (
                         "Apple Music was recognized, but no matching downloadable public stream was found. "
@@ -978,8 +1187,33 @@ def fetch_media_stream(
                 "is_local": False
             }
     except BrowserSessionError:
+        if is_tiktok_source:
+            report(0.18, "Engaging direct TikTok stream extractor...", force=True)
+            return _fetch_tiktok_direct(
+                source,
+                output_dir,
+                audio_only=audio_only,
+                abort_event=abort_event,
+                progress_callback=progress_callback,
+                report=report,
+                preexisting_stream_files=preexisting_stream_files,
+            )
         raise
     except Exception as e:
+        if is_tiktok_source:
+            report(0.18, "Engaging direct TikTok stream extractor...", force=True)
+            try:
+                return _fetch_tiktok_direct(
+                    source,
+                    output_dir,
+                    audio_only=audio_only,
+                    abort_event=abort_event,
+                    progress_callback=progress_callback,
+                    report=report,
+                    preexisting_stream_files=preexisting_stream_files,
+                )
+            except Exception as direct_err:
+                raise RuntimeError(f"Stream extraction failed: {str(e)} (Direct extractor: {direct_err})") from e
         if auth_browser:
             raise RuntimeError(describe_authenticated_extraction_failure(auth_browser, e)) from e
         raise RuntimeError(f"Stream extraction failed: {str(e)}") from e
