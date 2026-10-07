@@ -1,6 +1,6 @@
 [package]
 name = "janeconverter-desktop"
-version = "2.2.8"
+version = "2.2.9"
 description = "The modern JaneConverter desktop surface"
 authors = ["project//aspyr"]
 edition = "2021"

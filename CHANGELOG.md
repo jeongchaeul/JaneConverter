@@ -5,7 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [2.2.7] - 2026-10-01 - Conversion Recovery, Library History, Adaptive GPU & Social Capture Hardening
+## [2.2.9] - 2026-10-08 - Experimental FL Studio Downgrade & Theme Harmony
+
+### Added
+- Added experimental FL Studio project (`.flp`) downgrade engine supporting inspection of project BPM, PPQ timebase, channel count, and build numbers.
+- Added Windows auto-detection for local FL Studio installations (`--flp-detect-installed`) providing 1-click preset targeting in the desktop UI.
+- Added surgical binary patching for Event 0xC7 (ASCII version), Event 0x9F (DWORD build number), and UTF-16LE version strings, with playlist clip records (Event 0xD4) adjustment and optional in-place `.bak` safety backup.
+- Added explicit `Experimental` badge in the Converter sub-navigation and an informative in-app disclaimer for the FLP converter.
+
+### Changed
+- Refactored the Converter sub-navigation and FLP Converter view to strictly inherit the application's global CSS theme tokens (`.panel`, `.field`, `.subtle-button`, `.primary-button`), eliminating visual and styling discrepancies across dark and light modes.
+
 
 ### Added
 - Added a conversion completion **Success Modal** showing output format and quality summary, elapsed conversion time, automatic fallback notes, and instant **Play / Open file** and **Open folder** actions, paired with host taskbar attention/glow notifications (`FlashWindowEx` / `request_user_attention`) whenever an operation finishes or fails.
