@@ -10,7 +10,7 @@ mod social_photo_capture;
 use model::{
     AccessDiagnostic, AccessStatus, ConversionRequest, ConverterEvent, FacebookCaptureResult,
     FacebookPhotoManifest, FetchedMedia, FlpDowngradeResult, FlpProjectInfo, HardwareSnapshot,
-    LibraryEntry, RuntimeInfo, SocialCaptureResult, SocialPhotoManifest,
+    InstalledFlStudio, LibraryEntry, RuntimeInfo, SocialCaptureResult, SocialPhotoManifest,
 };
 use paths::{
     command_available, data_root, detect_gpu, find_ffmpeg, find_python, packaged_engine,
@@ -348,7 +348,9 @@ async fn flp_inspect(path: String) -> Result<FlpProjectInfo, String> {
 async fn flp_downgrade(
     source: String,
     target_version: String,
+    target_build: Option<u32>,
     output_path: Option<String>,
+    overwrite: Option<bool>,
 ) -> Result<FlpDowngradeResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let engine = find_python();
@@ -359,10 +361,18 @@ async fn flp_downgrade(
         command
             .args(["--flp-downgrade", &source, "--flp-target", &target_version])
             .current_dir(project_root());
+        if let Some(build) = target_build {
+            if build > 0 {
+                command.args(["--flp-build", &build.to_string()]);
+            }
+        }
         if let Some(ref out) = output_path {
             if !out.trim().is_empty() {
                 command.args(["--flp-output", out]);
             }
+        }
+        if overwrite.unwrap_or(false) {
+            command.arg("--flp-overwrite");
         }
         prepare_command(&mut command);
         let output = command
@@ -378,6 +388,36 @@ async fn flp_downgrade(
         }
         serde_json::from_slice(&output.stdout)
             .map_err(|error| format!("Could not read FLP downgrader output: {error}"))
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))?
+}
+
+#[tauri::command]
+async fn flp_detect_installed() -> Result<Vec<InstalledFlStudio>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = find_python();
+        let mut command = Command::new(&engine);
+        if !packaged_engine(&engine) {
+            command.args(["run", "--locked", "janeconverter"]);
+        }
+        command
+            .arg("--flp-detect-installed")
+            .current_dir(project_root());
+        prepare_command(&mut command);
+        let output = command
+            .output()
+            .map_err(|error| format!("Could not detect FL Studio installations: {error}"))?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if detail.is_empty() {
+                format!("FLP detector exited with status {}.", output.status)
+            } else {
+                detail
+            });
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("Could not read FLP detector output: {error}"))
     })
     .await
     .map_err(|e| format!("Task execution error: {e}"))?
@@ -2437,6 +2477,7 @@ pub fn run() {
             choose_flp_file,
             flp_inspect,
             flp_downgrade,
+            flp_detect_installed,
             open_path,
             open_file,
             open_url,

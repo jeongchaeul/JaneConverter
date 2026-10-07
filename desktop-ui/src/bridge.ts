@@ -120,6 +120,7 @@ export interface FlpProjectInfo {
   fileSize: number;
   version: string;
   majorVersion: number;
+  build?: number;
   title: string;
   bpm: number;
   ppq: number;
@@ -135,12 +136,24 @@ export interface FlpDowngradeResult {
   outputPath: string;
   sourceVersion: string;
   sourceMajor: number;
+  sourceBuild?: number;
   targetVersion: string;
+  targetBuild?: number;
+  targetMajor?: number;
   targetProfile: string;
   targetLabel: string;
   recordsAdjusted: number;
   eventsCount: number;
   outputSizeBytes: number;
+  backupPath?: string | null;
+}
+
+export interface InstalledFlStudio {
+  name: string;
+  fullVersion: string;
+  version: string;
+  build: number;
+  executablePath: string;
 }
 
 export interface AccessStatus {
@@ -247,8 +260,9 @@ export interface JaneBridge {
   checkUpdates(): Promise<UpdateCheckResult>;
   installUpdate(): Promise<void>;
   chooseFlpFile(): Promise<string | null>;
+  flpDetectInstalled(): Promise<InstalledFlStudio[]>;
   flpInspect(path: string): Promise<FlpProjectInfo>;
-  flpDowngrade(source: string, targetVersion: string, outputPath?: string): Promise<FlpDowngradeResult>;
+  flpDowngrade(source: string, targetVersion: string, targetBuild?: number, outputPath?: string, overwrite?: boolean): Promise<FlpDowngradeResult>;
 }
 
 const demoSettings: ConverterSettings = {
@@ -321,13 +335,25 @@ const demoBridge: JaneBridge = {
   async checkUpdates() { return { message: "Preview mode: update checks are available in the desktop build." }; },
   async installUpdate() {},
   async chooseFlpFile() { return null; },
+  async flpDetectInstalled() {
+    return [
+      {
+        name: "FL Studio 21.2.3",
+        fullVersion: "21.2.3.4004",
+        version: "21.2.3",
+        build: 4004,
+        executablePath: "D:\\Programs\\FL Studio 21.2.3\\FL64.exe",
+      },
+    ];
+  },
   async flpInspect(path: string) {
     return {
       filePath: path,
       fileName: "Preview_Project.flp",
       fileSize: 1048576,
-      version: "25.1.0.4000",
-      majorVersion: 25,
+      version: "26.1.4.5589",
+      majorVersion: 26,
+      build: 5589,
       title: "Preview Project",
       bpm: 140.0,
       ppq: 96,
@@ -337,19 +363,23 @@ const demoBridge: JaneBridge = {
       eventsCount: 1250,
     };
   },
-  async flpDowngrade(source: string, targetVersion: string, outputPath?: string) {
+  async flpDowngrade(source: string, targetVersion: string, targetBuild?: number, outputPath?: string, overwrite?: boolean) {
     return {
       success: true,
       sourcePath: source,
-      outputPath: outputPath || source.replace(/\.flp$/i, `_downgraded_FL${targetVersion}.flp`),
-      sourceVersion: "25.1.0.4000",
-      sourceMajor: 25,
-      targetVersion: "24.1.2.4398",
+      outputPath: overwrite ? source : (outputPath || source.replace(/\.flp$/i, `_downgraded_FL${targetVersion}.flp`)),
+      sourceVersion: "26.1.4.5589",
+      sourceMajor: 26,
+      sourceBuild: 5589,
+      targetVersion: targetVersion.includes(".") ? targetVersion : `${targetVersion}.0.0.${targetBuild ?? 0}`,
+      targetBuild: targetBuild ?? 4004,
+      targetMajor: parseInt(targetVersion, 10) || 21,
       targetProfile: targetVersion,
       targetLabel: `FL Studio ${targetVersion}`,
       recordsAdjusted: 16,
       eventsCount: 1250,
       outputSizeBytes: 1047500,
+      backupPath: overwrite ? `${source}.bak` : null,
     };
   },
 };
@@ -367,9 +397,16 @@ const tauriBridge: JaneBridge = {
   chooseFiles: () => invoke<string[]>("choose_files"),
   chooseFolder: () => invoke<string | null>("choose_folder"),
   chooseFlpFile: () => invoke<string | null>("choose_flp_file"),
+  flpDetectInstalled: () => invoke<InstalledFlStudio[]>("flp_detect_installed"),
   flpInspect: (path: string) => invoke<FlpProjectInfo>("flp_inspect", { path }),
-  flpDowngrade: (source: string, targetVersion: string, outputPath?: string) =>
-    invoke<FlpDowngradeResult>("flp_downgrade", { source, targetVersion, outputPath: outputPath ?? null }),
+  flpDowngrade: (source: string, targetVersion: string, targetBuild?: number, outputPath?: string, overwrite?: boolean) =>
+    invoke<FlpDowngradeResult>("flp_downgrade", {
+      source,
+      targetVersion,
+      targetBuild: targetBuild ?? null,
+      outputPath: outputPath ?? null,
+      overwrite: overwrite ?? null,
+    }),
   openPath: (path) => invoke<void>("open_path", { path }),
   openFile: (path) => invoke<void>("open_file", { path }),
   openUrl: (url) => invoke<void>("open_url", { url }),

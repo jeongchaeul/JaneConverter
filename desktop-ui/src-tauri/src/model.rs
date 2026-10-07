@@ -206,6 +206,8 @@ pub struct FlpProjectInfo {
     pub file_size: u64,
     pub version: String,
     pub major_version: u32,
+    #[serde(default)]
+    pub build: u32,
     pub title: String,
     pub bpm: f64,
     pub ppq: u32,
@@ -223,10 +225,26 @@ pub struct FlpDowngradeResult {
     pub output_path: String,
     pub source_version: String,
     pub source_major: u32,
+    #[serde(default)]
+    pub source_build: u32,
     pub target_version: String,
+    #[serde(default)]
+    pub target_build: u32,
     pub target_profile: String,
     pub target_label: String,
     pub records_adjusted: usize,
     pub events_count: usize,
     pub output_size_bytes: u64,
+    #[serde(default)]
+    pub backup_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledFlStudio {
+    pub name: String,
+    pub full_version: String,
+    pub version: String,
+    pub build: u32,
+    pub executable_path: String,
 }

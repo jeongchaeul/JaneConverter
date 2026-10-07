@@ -43,6 +43,8 @@ def inspect_flp(project: FLPProject, file_path: Optional[str] = None) -> Dict[st
     registered = True
     bpm = 140.0
 
+    build_num: Optional[int] = None
+
     # Search events
     for ev in project.events:
         # Event 199 (0xC7): Version string (ASCII)
@@ -51,6 +53,15 @@ def inspect_flp(project: FLPProject, file_path: Optional[str] = None) -> Dict[st
                 raw_ver = ev.data.decode("ascii", errors="ignore").strip("\x00 \t\r\n")
                 if raw_ver:
                     version_str = raw_ver
+            except Exception:
+                pass
+
+        # Event 159 (0x9F): Build number (DWORD)
+        elif ev.event_id == 159 and len(ev.data) >= 4:
+            try:
+                b_val = struct.unpack("<I", ev.data[:4])[0]
+                if 0 < b_val < 100000:
+                    build_num = b_val
             except Exception:
                 pass
 
@@ -79,12 +90,14 @@ def inspect_flp(project: FLPProject, file_path: Optional[str] = None) -> Dict[st
             if clean:
                 registration_name = clean
 
-    # Determine major version integer
+    # Determine major version integer and fallback build
     major_version = 0
     if version_str != "Unknown":
         parts = version_str.split(".")
         if parts and parts[0].isdigit():
             major_version = int(parts[0])
+        if build_num is None and len(parts) >= 4 and parts[3].isdigit():
+            build_num = int(parts[3])
 
     file_size = 0
     file_name = ""
@@ -98,6 +111,7 @@ def inspect_flp(project: FLPProject, file_path: Optional[str] = None) -> Dict[st
         "fileSize": file_size,
         "version": version_str,
         "majorVersion": major_version,
+        "build": build_num or 0,
         "title": title_str or (os.path.splitext(file_name)[0] if file_name else "Untitled Project"),
         "bpm": bpm,
         "ppq": project.ppq,

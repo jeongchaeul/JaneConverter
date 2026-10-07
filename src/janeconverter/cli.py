@@ -925,11 +925,23 @@ def main():
     parser.add_argument("--compatibility-info", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--flp-inspect", help="Inspect an FL Studio project (.flp) and output JSON metadata")
     parser.add_argument("--flp-downgrade", help="Downgrade an FL Studio project (.flp) to a target version")
-    parser.add_argument("--flp-target", default="24", help="Target FL Studio version profile (24, 21, 20, 12; default: 24)")
+    parser.add_argument("--flp-target", default="21.2.3", help="Target FL Studio version or profile (e.g. 21.2.3, 24.2.2, 20.9.2, 12.5.1; default: 21.2.3)")
+    parser.add_argument("--flp-build", type=int, default=None, help="Explicit target FL Studio build number (e.g. 4004)")
     parser.add_argument("--flp-output", help="Optional destination path for downgraded .flp project")
+    parser.add_argument("--flp-overwrite", action="store_true", help="Overwrite original .flp file in-place (creates .bak backup)")
+    parser.add_argument("--flp-detect-installed", action="store_true", help="Detect installed FL Studio versions and output JSON")
     parser.add_argument("--version", action="version", version=f"JaneConverter {__version__}")
 
     args = parser.parse_args()
+    if args.flp_detect_installed:
+        from .flp import detect_installed_fl_studios
+        try:
+            installs = detect_installed_fl_studios()
+            print(json.dumps(installs))
+        except Exception as error:
+            print(json.dumps({"error": str(error)}))
+            sys.exit(1)
+        return
     if args.flp_inspect:
         from .flp import inspect_flp_file
         try:
@@ -945,7 +957,9 @@ def main():
             summary = downgrade_flp_file(
                 input_path=args.flp_downgrade,
                 target_version_key=args.flp_target,
+                target_build=args.flp_build,
                 output_path=args.flp_output,
+                overwrite=args.flp_overwrite,
             )
             print(json.dumps(summary))
         except Exception as error:

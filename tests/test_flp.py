@@ -3,6 +3,7 @@ Unit tests for FL Studio Project (.flp) parsing, inspection, and downgrading.
 """
 
 import io
+import os
 import struct
 import pytest
 from janeconverter.flp.models import FLPEvent, FLPProject, write_varint
@@ -212,4 +213,52 @@ def test_cli_flp_inspect_and_downgrade(tmp_path, capsys):
         assert info["majorVersion"] == 20
     finally:
         sys.argv = orig_argv
+
+
+def test_detect_installed_fl_studios():
+    from janeconverter.flp.models import detect_installed_fl_studios
+    # Function runs safely on any environment
+    installs = detect_installed_fl_studios()
+    assert isinstance(installs, list)
+    for inst in installs:
+        assert "name" in inst
+        assert "version" in inst
+        assert "build" in inst
+        assert "executablePath" in inst
+
+
+def test_adaptive_build_downgrade(tmp_path):
+    proj = FLPProject(
+        format=0,
+        channels=2,
+        ppq=96,
+        events=[
+            FLPEvent(event_id=199, data=b"26.1.4.5589\x00"),
+            FLPEvent(event_id=159, data=struct.pack("<I", 5589)),
+            FLPEvent(event_id=68, data=struct.pack("<H", 1400)),
+        ],
+    )
+    test_file = str(tmp_path / "modern_fl26.flp")
+    with open(test_file, "wb") as f:
+        f.write(proj.to_bytes())
+
+    # Downgrade with explicit version and build (e.g. user's 21.2.3.4004)
+    summary = downgrade_flp_file(
+        input_path=test_file,
+        target_version_key="21.2.3",
+        target_build=4004,
+        overwrite=True,
+    )
+    assert summary["success"] is True
+    assert summary["targetVersion"] == "21.2.3"
+    assert summary["targetBuild"] == 4004
+    assert summary["backupPath"] is not None
+    assert os.path.exists(summary["backupPath"])
+
+    # Inspect downgraded file
+    info = inspect_flp(parse_flp(open(test_file, "rb").read()))
+    assert info["majorVersion"] == 21
+    assert "21.2.3" in info["version"]
+    assert info["build"] == 4004
+
 

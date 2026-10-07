@@ -939,7 +939,7 @@ export function ConverterView({
           type="button"
           aria-pressed={converterTab === "flp"}
           onClick={() => setConverterTab("flp")}
-          className={"rounded-lg px-3 py-1.5 text-xs font-medium transition-colors " + (converterTab === "flp" ? "border border-violet-500/30 bg-violet-600/25 text-violet-200" : "text-zinc-500 hover:text-zinc-300")}
+          className={"rounded-lg px-3 py-1.5 text-xs font-medium transition-colors " + (converterTab === "flp" ? "border border-[#c52b68]/40 bg-[#c52b68]/20 text-rose-300 shadow-[0_0_15px_rgba(197,43,104,0.15)]" : "text-zinc-500 hover:text-zinc-300")}
         >
           FL Studio Project (.flp)
         </button>
