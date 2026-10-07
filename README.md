@@ -39,6 +39,7 @@ JaneConverter downloads and converts media through a sleek Tauri desktop app or 
 - **Automatic Sandboxed Session Recovery**: Public access is always attempted first. When yt-dlp reports that a supported media platform requires sign-in or cookies, the engine automatically retries once using your default browser's local session. To protect privacy, unrelated site cookies are stripped, HTTPS is enforced, no cookie files are ever saved to disk, and the temporary cookie jar is immediately wiped from memory upon job completion.
 - **Air-Gapped Browser Bridge**: Optional local companion extension to capture active media (**Capture current media**, **Collect mode**, **Network Compatibility Mode**, and adaptive **Story sequence** capture) from authenticated browser pages without ever exporting or reading cookies, session tokens, or passwords.
 - **Signed In-App Updates**: Cryptographically signed desktop update packages via the rolling `continuous` release feed and tagged releases, with automatic GitHub Atom feed fallback when unauthenticated API requests are rate-limited.
+- **FL Studio (.flp) Project Downgrade (Experimental)**: Native project header inspector and surgical binary patcher designed for music producers collaborating across different FL Studio versions. Inspects project tempo (BPM), PPQ timebase, channel count, and build numbers, auto-detects locally installed FL Studio versions on Windows, and patches Event 0xC7 / 0x9F version and build identifiers.
 
 ## Platform Coverage and Verification
 
@@ -148,6 +149,14 @@ SoundCloud, Spotify, and YouTube are verified working with the primary audio con
 
 Browser-captured files appear in the **Fetched media.** tab and are saved in the configured fetched-media folder. The default is a `fetched` folder beside the converted library; clearing access ends the browser session without deleting those files. Each item supports **Open file**, **Open path**, **Use for conversion**, and **Discard**.
 
+### FL Studio Project (.flp) Downgrade (Experimental)
+
+JaneConverter includes an experimental workflow for music producers and audio engineers encountering cross-version compatibility barriers in Image-Line's FL Studio.
+
+- **Why it's there**: Music collaboration frequently involves artists working across different FL Studio versions (e.g., FL 24 vs. FL 21 vs. FL 20). When a collaborator on a newer version saves an `.flp` project, opening it on an older FL Studio installation is normally blocked by FL Studio's version check dialog. This tool was built as part of the `project//aspyr` production toolkit to explore non-destructive project header adaptation.
+- **What it does**: Inspects project metadata (BPM, PPQ timebase, channel count, license status, exact version string, and DWORD build number), auto-detects locally installed FL Studio editions on Windows for 1-click targeting, and surgically patches version headers (ASCII Event `0xC7`, DWORD little-endian Event `0x9F`, and UTF-16LE version strings) while adjusting playlist clip chunk records (Event `0xD4`).
+- **Current state (Experimental)**: While surgical binary patching successfully updates structural version headers without deserializing musical arrangements, modern FL Studio releases (FL 21.x, 24.x, and beyond) introduce proprietary internal event schemas, generator state chunks, and plugin wrapper formats that can still cause FL Studio to flag the file or behave unpredictably depending on project complexity and third-party VSTs. Because bit-level backward compatibility across arbitrary FL Studio versions remains an active research effort, this feature is labeled **Experimental**. **Always keep safe backups of your original `.flp` files before running experimental downgrades.**
+
 ## Browser Extension (Local Installation Guide)
 
 The **JaneConverter Browser Bridge** is an optional companion extension that lets you capture active audio, video, and story media from browser tabs directly into the JaneConverter desktop inbox. It supports **Capture current media**, **Collect mode** (for continuous story advancing), **Network Compatibility Mode** (tab-scoped network response capture), and experimental **Story sequence** capture with 14-day local structural adaptation.
@@ -184,6 +193,12 @@ Source use requires [uv](https://docs.astral.sh/uv/), Python 3.10+, FFmpeg with 
 ```bash
 uv sync
 uv run janeconverter --source "https://example.com/media" --format mp3
+
+# FL Studio project inspection & experimental downgrade
+uv run janeconverter --flp-inspect "project.flp"
+uv run janeconverter --flp-downgrade "project.flp" --flp-target 21.2.3 --flp-build 4004
+uv run janeconverter --flp-detect-installed
+
 uv run janeconverter --help
 ```
 
