@@ -926,7 +926,7 @@ export function ConverterView({
       </motion.div>
 
       {/* Converter Type Sub-Navigation Switcher */}
-      <div className="inline-flex rounded-xl border border-white/[0.08] bg-white/[0.025] p-1">
+      <div className="inline-flex items-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.025] p-1">
         <button
           type="button"
           aria-pressed={converterTab === "media"}
@@ -939,9 +939,12 @@ export function ConverterView({
           type="button"
           aria-pressed={converterTab === "flp"}
           onClick={() => setConverterTab("flp")}
-          className={"rounded-lg px-3 py-1.5 text-xs font-medium transition-colors " + (converterTab === "flp" ? "border border-[#c52b68]/40 bg-[#c52b68]/20 text-rose-300 shadow-[0_0_15px_rgba(197,43,104,0.15)]" : "text-zinc-500 hover:text-zinc-300")}
+          className={"inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors " + (converterTab === "flp" ? "bg-white/[0.09] text-white" : "text-zinc-500 hover:text-zinc-300")}
         >
-          FL Studio Project (.flp)
+          <span>FL Studio (.flp)</span>
+          <span className="rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider border border-amber-500/30 bg-amber-500/10 text-amber-300">
+            Experimental
+          </span>
         </button>
       </div>
 

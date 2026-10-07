@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, type DragEvent } from "react";
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowRight,
   Check,
   CheckCircle2,
@@ -8,12 +9,9 @@ import {
   FileMusic,
   FolderOpen,
   HardDrive,
-  Info,
   LoaderCircle,
   Play,
   RefreshCw,
-  Sliders,
-  Sparkles,
   Zap,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -102,7 +100,7 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
   const [filePath, setFilePath] = useState<string>("");
   const [projectInfo, setProjectInfo] = useState<FlpProjectInfo | null>(null);
   const [installedFl, setInstalledFl] = useState<InstalledFlStudio[]>([]);
-  const [detectingFl, setDetectingFl] = useState<boolean>(false);
+  const [, setDetectingFl] = useState<boolean>(false);
 
   // Target version & build controls
   const [targetVersion, setTargetVersion] = useState<string>("21.2.3");
@@ -154,7 +152,7 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
       setProjectInfo(info);
       onStatus(`Inspected FLP: ${info.title || info.fileName} (FL Studio ${info.version})`);
 
-      // Smart default target: If user has an installed FL Studio older than the project, use that!
+      // Smart default target: If user has an installed FL Studio older than the project, use that
       const projectMajor = info.majorVersion;
       const olderInstalls = installedFl.filter(
         (inst) => parseInt(inst.version.split(".")[0], 10) < projectMajor
@@ -254,7 +252,7 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
         overwriteOriginal
       );
       setConvertResult(result);
-      onStatus(`Successfully downgraded project to ${result.targetLabel}!`);
+      onStatus(`Successfully processed project headers for ${result.targetLabel}!`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setConvertError(msg);
@@ -290,17 +288,28 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
   }
 
   return (
-    <div className="space-y-5 pb-6">
-      {/* File Dropzone & Selection (Signature Dark Rose Obsidian) */}
+    <div className="space-y-4 pb-6">
+      {/* Experimental Notice Banner */}
+      <div className="flex items-start gap-3 rounded-xl border border-amber-500/25 bg-amber-500/[0.05] p-3.5 text-xs text-amber-200/90">
+        <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-400" />
+        <div className="space-y-0.5">
+          <div className="font-semibold text-amber-300">Experimental Feature</div>
+          <p className="text-[11px] leading-relaxed text-zinc-400">
+            FL Studio (.flp) downgrade is experimental. Modern FL Studio builds use proprietary, non-linear event structures and VST-specific chunks that may still trigger version warnings or behave unpredictably in older environments. Always keep a backup of your original project before testing.
+          </p>
+        </div>
+      </div>
+
+      {/* File Dropzone & Selection (Clean native panel styling) */}
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`relative overflow-hidden rounded-2xl border transition-all duration-200 ${
+        className={`panel relative overflow-hidden transition-all duration-200 ${
           isDragOver
-            ? "border-[#c52b68] bg-[#c52b68]/10 shadow-[0_0_35px_rgba(197,43,104,0.2)]"
-            : "border-white/[0.08] bg-white/[0.02] hover:border-white/[0.14]"
-        } p-7 text-center`}
+            ? "border-[var(--accent-color)] bg-[var(--accent-subtle)] shadow-[0_0_24px_var(--accent-glow)] ring-1 ring-[var(--accent-color)]"
+            : "hover:border-white/[0.14]"
+        } p-6 text-center`}
       >
         <input
           ref={fileInputRef}
@@ -316,26 +325,26 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
           }}
         />
 
-        <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-[#c52b68]/30 bg-[#c52b68]/10 text-rose-400 shadow-[0_0_20px_rgba(197,43,104,0.15)]">
-          <FileMusic size={26} />
+        <div className="mx-auto flex size-12 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-zinc-300">
+          <FileMusic size={22} className="text-zinc-400" />
         </div>
 
-        <h3 className="mt-4 text-base font-medium text-white">
+        <h3 className="mt-3 text-sm font-medium text-white">
           {filePath ? "Loaded FL Studio Project" : "Drag & drop an FL Studio project (.flp)"}
         </h3>
-        <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-zinc-400">
+        <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-zinc-500">
           {filePath
             ? filePath
-            : "Drop any .flp file here to inspect project headers, patch version & build events bit-perfectly, and open cleanly in older FL Studio versions."}
+            : "Drop any .flp file here or browse from your computer to inspect headers and test experimental downgrade patching."}
         </p>
 
-        <div className="mt-5 flex items-center justify-center gap-3">
+        <div className="mt-4 flex items-center justify-center gap-2.5">
           <button
             type="button"
             onClick={handleBrowseFile}
-            className="flex items-center gap-2 rounded-xl border border-white/[0.1] bg-white/[0.05] px-4 py-2 text-xs font-medium text-white shadow-sm transition-all hover:border-[#c52b68]/40 hover:bg-white/[0.1]"
+            className="subtle-button flex items-center gap-2 px-3.5 py-1.5 text-xs font-medium"
           >
-            <FolderOpen size={14} className="text-rose-400" />
+            <FolderOpen size={13} className="text-zinc-400" />
             Browse .flp file
           </button>
 
@@ -344,9 +353,9 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
               type="button"
               disabled={inspecting}
               onClick={() => handleLoadProject(filePath)}
-              className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 py-2 text-xs text-zinc-400 transition-all hover:text-white"
+              className="subtle-button flex items-center gap-2 px-3 py-1.5 text-xs"
             >
-              <RefreshCw size={13} className={inspecting ? "animate-spin text-rose-400" : ""} />
+              <RefreshCw size={12} className={inspecting ? "animate-spin text-zinc-400" : ""} />
               Re-scan
             </button>
           )}
@@ -355,8 +364,8 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
 
       {/* Inspect Error Message */}
       {inspectError && (
-        <div className="flex items-center gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-300">
-          <AlertCircle size={16} className="shrink-0 text-rose-400" />
+        <div className="flex items-center gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-300">
+          <AlertCircle size={15} className="shrink-0 text-rose-400" />
           <span>{inspectError}</span>
         </div>
       )}
@@ -368,25 +377,25 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-6 backdrop-blur-sm"
+            className="panel p-5 space-y-5"
           >
             {/* Header info */}
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/[0.06] pb-5">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] pb-4">
               <div>
-                <div className="mono-label text-rose-400">Project Inspection</div>
-                <h4 className="mt-1 text-xl font-semibold tracking-tight text-white">
+                <div className="mono-label">Project Inspection</div>
+                <h4 className="mt-1 text-lg font-semibold tracking-tight text-white">
                   {projectInfo.title || "Untitled FLP"}
                 </h4>
                 <p className="mt-0.5 text-xs text-zinc-400">{projectInfo.fileName}</p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-lg border border-[#c52b68]/40 bg-[#c52b68]/20 px-3 py-1 text-xs font-medium text-rose-300">
+                <span className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-2.5 py-1 text-xs font-medium text-zinc-300">
                   FL Studio {projectInfo.version}
                   {projectInfo.build ? ` (Build ${projectInfo.build})` : ""}
                 </span>
                 {projectInfo.registered && (
-                  <span className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-400">
+                  <span className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
                     Producer Licensed
                   </span>
                 )}
@@ -394,37 +403,37 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
             </div>
 
             {/* Project Specs Grid */}
-            <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-xl border border-white/[0.05] bg-white/[0.015] p-3.5">
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+              <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3">
                 <div className="text-[11px] text-zinc-500">Tempo (BPM)</div>
-                <div className="mt-1 text-base font-semibold text-white">{projectInfo.bpm} BPM</div>
+                <div className="mt-1 text-sm font-semibold text-white">{projectInfo.bpm} BPM</div>
               </div>
-              <div className="rounded-xl border border-white/[0.05] bg-white/[0.015] p-3.5">
+              <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3">
                 <div className="text-[11px] text-zinc-500">Timebase (PPQ)</div>
-                <div className="mt-1 text-base font-semibold text-white">{projectInfo.ppq} PPQ</div>
+                <div className="mt-1 text-sm font-semibold text-white">{projectInfo.ppq} PPQ</div>
               </div>
-              <div className="rounded-xl border border-white/[0.05] bg-white/[0.015] p-3.5">
+              <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3">
                 <div className="text-[11px] text-zinc-500">Channel Count</div>
-                <div className="mt-1 text-base font-semibold text-white">{projectInfo.channels} Channels</div>
+                <div className="mt-1 text-sm font-semibold text-white">{projectInfo.channels} Channels</div>
               </div>
-              <div className="rounded-xl border border-white/[0.05] bg-white/[0.015] p-3.5">
+              <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3">
                 <div className="text-[11px] text-zinc-500">File Size</div>
-                <div className="mt-1 text-base font-semibold text-white">{formatBytes(projectInfo.fileSize)}</div>
+                <div className="mt-1 text-sm font-semibold text-white">{formatBytes(projectInfo.fileSize)}</div>
               </div>
             </div>
 
             {/* Detected Local FL Studio Installations */}
             {installedFl.length > 0 && (
-              <div className="mt-6 rounded-xl border border-[#c52b68]/20 bg-[#c52b68]/[0.04] p-4">
-                <div className="flex items-center gap-2 text-xs font-medium text-rose-300">
-                  <HardDrive size={14} className="text-rose-400" />
-                  <span>Detected on Your Rig (1-Click Target)</span>
+              <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-3.5 space-y-2">
+                <div className="flex items-center gap-2 text-xs font-medium text-zinc-300">
+                  <HardDrive size={13} className="text-zinc-400" />
+                  <span>Detected on Your Rig (Quick Target)</span>
                 </div>
-                <p className="mt-1 text-[11px] text-zinc-400">
-                  Select your exact local FL Studio build to guarantee instant opening without newer-version warnings:
+                <p className="text-[11px] text-zinc-500">
+                  Select your installed version to populate target version and build:
                 </p>
 
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 pt-1">
                   {installedFl.map((inst) => {
                     const isSelected =
                       targetVersion === inst.version &&
@@ -434,10 +443,10 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
                         key={inst.executablePath}
                         type="button"
                         onClick={() => applyInstalled(inst)}
-                        className={`group flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs transition-all ${
+                        className={`group flex items-center gap-2 rounded-lg border px-2.5 py-1 text-xs transition-all ${
                           isSelected
-                            ? "border-[#c52b68] bg-[#c52b68]/25 text-white shadow-[0_0_15px_rgba(197,43,104,0.3)]"
-                            : "border-white/[0.08] bg-white/[0.03] text-zinc-300 hover:border-[#c52b68]/50 hover:bg-white/[0.06] hover:text-white"
+                            ? "border-[var(--accent-color)] bg-[var(--accent-subtle)] text-white shadow-sm"
+                            : "border-white/[0.07] bg-white/[0.02] text-zinc-400 hover:border-white/[0.14] hover:bg-white/[0.05] hover:text-white"
                         }`}
                       >
                         <span className="font-medium">{inst.name}</span>
@@ -445,8 +454,8 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
                           <span
                             className={`rounded px-1.5 py-0.2 text-[10px] ${
                               isSelected
-                                ? "bg-white/20 text-rose-100"
-                                : "bg-black/30 text-zinc-400 group-hover:text-zinc-200"
+                                ? "bg-white/15 text-white"
+                                : "bg-black/30 text-zinc-500 group-hover:text-zinc-300"
                             }`}
                           >
                             Build {inst.build}
@@ -460,11 +469,11 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
             )}
 
             {/* Target Compatibility & Custom Build Inputs */}
-            <div className="mt-6 space-y-4">
+            <div className="space-y-3">
               <div>
-                <div className="mono-label text-rose-400">Target Compatibility Setup</div>
-                <p className="mt-1 text-xs text-zinc-400">
-                  JaneConverter surgically updates Event 0xC7 (ASCII version), Event 0x9F (DWORD build number), and UTF-16LE version strings, recalculating the project header size for bit-perfect loading.
+                <div className="mono-label">Target Compatibility Setup</div>
+                <p className="mt-0.5 text-xs text-zinc-500">
+                  Select a version or specify custom build numbers to adjust project headers:
                 </p>
               </div>
 
@@ -479,7 +488,7 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
                     value={targetVersion}
                     onChange={(e) => setTargetVersion(e.target.value)}
                     placeholder="e.g. 21.2.3"
-                    className="w-full rounded-xl border border-white/[0.1] bg-black/40 px-3.5 py-2 text-xs font-medium text-white transition-all focus:border-[#c52b68] focus:outline-none focus:ring-1 focus:ring-[#c52b68]"
+                    className="field w-full px-3 py-1.5 text-xs font-medium"
                   />
                   <span className="text-[10px] text-zinc-500">e.g. 24.2.2, 21.2.3, 20.9.2</span>
                 </div>
@@ -493,10 +502,10 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
                     value={targetBuild}
                     onChange={(e) => setTargetBuild(e.target.value)}
                     placeholder="e.g. 4004"
-                    className="w-full rounded-xl border border-white/[0.1] bg-black/40 px-3.5 py-2 text-xs font-medium text-white transition-all focus:border-[#c52b68] focus:outline-none focus:ring-1 focus:ring-[#c52b68]"
+                    className="field w-full px-3 py-1.5 text-xs font-medium"
                   />
                   <span className="text-[10px] text-zinc-500">
-                    Crucial for preventing the "newer version" popup (e.g. 4004 for FL 21.2.3)
+                    Build number (e.g. 4004 for FL 21.2.3)
                   </span>
                 </div>
 
@@ -504,12 +513,12 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
                   <label className="text-[11px] font-medium text-zinc-400">
                     Output File Option
                   </label>
-                  <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-white/[0.08] bg-black/30 p-2.5 transition-all hover:border-white/[0.14]">
+                  <label className="field flex cursor-pointer items-center gap-2.5 p-2 transition-all hover:border-white/[0.14]">
                     <input
                       type="checkbox"
                       checked={overwriteOriginal}
                       onChange={(e) => setOverwriteOriginal(e.target.checked)}
-                      className="size-4 rounded border-white/20 bg-black/40 text-rose-600 focus:ring-rose-500"
+                      className="size-4 rounded border-white/20 bg-black/40 text-[var(--accent-color)] focus:ring-[var(--accent-color)]"
                     />
                     <div className="text-left">
                       <div className="text-xs font-medium text-white">Overwrite original file</div>
@@ -520,9 +529,9 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
               </div>
 
               {/* Popular Presets Cards */}
-              <div className="mt-3">
+              <div className="pt-1">
                 <div className="text-[11px] font-medium text-zinc-500">Common Preset Targets</div>
-                <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="mt-1.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {POPULAR_PRESETS.map((preset) => {
                     const isSelected =
                       targetVersion === preset.version && targetBuild === String(preset.build);
@@ -533,12 +542,12 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
                         onClick={() => applyPreset(preset)}
                         className={`rounded-xl border p-2.5 text-left transition-all ${
                           isSelected
-                            ? "border-[#c52b68] bg-[#c52b68]/15 text-white shadow-[0_0_15px_rgba(197,43,104,0.2)]"
-                            : "border-white/[0.06] bg-white/[0.02] text-zinc-300 hover:border-white/[0.12] hover:bg-white/[0.04]"
+                            ? "border-[var(--accent-color)] bg-[var(--accent-subtle)] text-white shadow-sm"
+                            : "border-white/[0.06] bg-white/[0.02] text-zinc-400 hover:border-white/[0.12] hover:bg-white/[0.04] hover:text-white"
                         }`}
                       >
                         <div className="flex items-center justify-between">
-                          <span className={`text-xs font-medium ${isSelected ? "text-rose-300" : "text-white"}`}>
+                          <span className={`text-xs font-medium ${isSelected ? "text-white" : "text-zinc-200"}`}>
                             {preset.label}
                           </span>
                           <span className="text-[10px] text-zinc-500">b.{preset.build}</span>
@@ -555,34 +564,34 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
 
             {/* Convert Error */}
             {convertError && (
-              <div className="mt-4 flex items-center gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-300">
+              <div className="flex items-center gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-300">
                 <AlertCircle size={15} className="shrink-0 text-rose-400" />
                 <span>{convertError}</span>
               </div>
             )}
 
             {/* Action Bar */}
-            <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-white/[0.06] pt-5">
-              <div className="text-xs text-zinc-400">
-                Non-destructive surgical patching preserves all mixer routes, playlist arrangements, and automations.
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.06] pt-4">
+              <div className="text-[11px] text-zinc-500">
+                Experimental: Please keep backups of your original project before testing.
               </div>
 
               <button
                 type="button"
                 disabled={converting || !targetVersion.trim()}
                 onClick={handleDowngrade}
-                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#c52b68] to-[#911849] px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-[#c52b68]/20 transition-all hover:from-[#d9387a] hover:to-[#a71d55] hover:shadow-[#c52b68]/30 disabled:opacity-50"
+                className="primary-button flex items-center gap-2 px-4 py-2 text-xs font-semibold disabled:opacity-50"
               >
                 {converting ? (
                   <>
-                    <LoaderCircle size={15} className="animate-spin" />
-                    Downgrading project...
+                    <LoaderCircle size={14} className="animate-spin" />
+                    Patching project...
                   </>
                 ) : (
                   <>
-                    <Zap size={14} />
+                    <Zap size={13} />
                     Downgrade to FL Studio {targetVersion}
-                    <ArrowRight size={14} />
+                    <ArrowRight size={13} />
                   </>
                 )}
               </button>
@@ -591,34 +600,34 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
         )}
       </AnimatePresence>
 
-      {/* Downgrade Outcome Card (Signature Rose / Emerald Confirmation) */}
+      {/* Downgrade Outcome Card */}
       <AnimatePresence>
         {convertResult && (
           <motion.div
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.98 }}
-            className="rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.06] p-6 backdrop-blur-sm"
+            className="panel border-emerald-500/25 bg-emerald-500/[0.04] p-5"
           >
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400">
-                  <CheckCircle2 size={20} />
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
+                  <CheckCircle2 size={18} />
                 </div>
                 <div>
-                  <h4 className="text-base font-semibold text-white">
+                  <h4 className="text-sm font-semibold text-white">
                     Downgraded to {convertResult.targetLabel}
                     {convertResult.targetBuild ? ` (Build ${convertResult.targetBuild})` : ""}
                   </h4>
-                  <p className="text-xs text-emerald-300/80">
+                  <p className="text-xs text-zinc-400">
                     Processed {convertResult.eventsCount} events
                     {convertResult.recordsAdjusted > 0 &&
                       ` and aligned ${convertResult.recordsAdjusted} playlist records`}
-                    . Ready to open in FL Studio {convertResult.targetProfile}!
+                    . Ready to test in FL Studio {convertResult.targetProfile}!
                   </p>
                   {convertResult.backupPath && (
-                    <p className="mt-0.5 text-[11px] text-zinc-400">
-                      Backup saved to: <span className="font-mono">{convertResult.backupPath}</span>
+                    <p className="mt-0.5 text-[11px] text-zinc-500">
+                      Backup saved to: <span className="font-mono text-zinc-400">{convertResult.backupPath}</span>
                     </p>
                   )}
                 </div>
@@ -628,31 +637,31 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
                 <button
                   type="button"
                   onClick={() => handleCopyPath(convertResult.outputPath)}
-                  className="flex items-center gap-1.5 rounded-lg border border-white/[0.1] bg-white/[0.05] px-3 py-1.5 text-xs text-white transition-all hover:bg-white/[0.1]"
+                  className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
                 >
-                  {copiedPath ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                  {copiedPath ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
                   {copiedPath ? "Copied" : "Copy Path"}
                 </button>
                 <button
                   type="button"
                   onClick={() => handleOpenFolder(convertResult.outputPath)}
-                  className="flex items-center gap-1.5 rounded-lg border border-white/[0.1] bg-white/[0.05] px-3 py-1.5 text-xs text-white transition-all hover:bg-white/[0.1]"
+                  className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
                 >
-                  <FolderOpen size={13} />
+                  <FolderOpen size={12} />
                   Show in Folder
                 </button>
                 <button
                   type="button"
                   onClick={() => handleOpenFile(convertResult.outputPath)}
-                  className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-medium text-white transition-all hover:bg-emerald-500"
+                  className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs text-emerald-300 hover:border-emerald-500/40"
                 >
-                  <Play size={13} />
+                  <Play size={12} />
                   Open in FL Studio
                 </button>
               </div>
             </div>
 
-            <div className="mt-4 rounded-xl border border-white/[0.06] bg-black/30 p-3 font-mono text-[11px] text-zinc-300 break-all">
+            <div className="mt-3 rounded-lg border border-white/[0.06] bg-black/30 p-2.5 font-mono text-[11px] text-zinc-400 break-all">
               {convertResult.outputPath}
             </div>
           </motion.div>
