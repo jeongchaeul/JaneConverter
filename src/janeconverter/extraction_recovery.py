@@ -16,7 +16,10 @@ class ExtractionCategory(str, Enum):
 
 def classify_extraction(error):
     message = str(error).casefold()
-    if any(word in message for word in ("drm", "private video", "sign in", "login", "log in", "401", "403", "age-restricted", "geo restricted", "captcha", "not a bot")):
+    if any(word in message for word in (
+        "drm", "private video", "sign in", "login", "log in", "401", "403", "age-restricted", "geo restricted", "captcha", "not a bot",
+        "error code: 152", "code: 152", "152 - 18", "watch video on youtube", "confirm your age", "the page needs to be reloaded",
+    )):
         return ExtractionCategory.ACCESS
     if any(word in message for word in ("404", "410", "removed", "deleted", "unavailable video")):
         return ExtractionCategory.REMOVED

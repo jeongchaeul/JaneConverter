@@ -208,6 +208,64 @@ def get_ffprobe_binary() -> str:
         return which_path
     return "ffprobe"
 
+
+def get_node_binary() -> Optional[str]:
+    """Finds Node.js executable next to FFmpeg, in application root, or system PATH."""
+    ffmpeg_bin = get_ffmpeg_binary()
+    if ffmpeg_bin and os.path.isfile(ffmpeg_bin):
+        sibling = os.path.join(
+            os.path.dirname(os.path.abspath(ffmpeg_bin)),
+            "node" + (".exe" if os.name == "nt" else ""),
+        )
+        if os.path.isfile(sibling) and os.access(sibling, os.X_OK):
+            return os.path.abspath(sibling)
+
+    candidate = os.path.join(PROJECT_ROOT, "bin", "node" + (".exe" if os.name == "nt" else ""))
+    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+        return os.path.abspath(candidate)
+
+    which_path = shutil.which("node")
+    if which_path:
+        return which_path
+
+    if os.name == "nt":
+        candidates = [
+            r"D:\node.js\Node.js\node.exe",
+            os.path.expandvars(r"%ProgramFiles%\nodejs\node.exe"),
+            os.path.expandvars(r"%ProgramFiles(x86)%\nodejs\node.exe"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\node\node.exe"),
+            os.path.expandvars(r"%APPDATA%\npm\node.exe"),
+            os.path.expandvars(r"%USERPROFILE%\AppData\Local\hermes\node\node.exe"),
+            r"C:\nodejs\node.exe",
+            r"D:\nodejs\node.exe",
+        ]
+        for c in candidates:
+            if os.path.isfile(c) and os.access(c, os.X_OK):
+                return os.path.abspath(c)
+    else:
+        posix_candidates = [
+            "/usr/local/bin/node",
+            "/usr/bin/node",
+            "/opt/homebrew/bin/node",
+        ]
+        for c in posix_candidates:
+            if os.path.isfile(c) and os.access(c, os.X_OK):
+                return c
+
+    return None
+
+
+def get_js_runtimes_config() -> dict:
+    """Detect an available JavaScript runtime (Node, Deno, Bun) for yt-dlp EJS challenges."""
+    node_bin = get_node_binary()
+    if node_bin:
+        return {"node": {"path": node_bin}}
+    for name in ("deno", "bun"):
+        w = shutil.which(name)
+        if w:
+            return {name: {"path": w}}
+    return {"node": {"path": None}}
+
 def probe_media_duration(input_path: str) -> Optional[float]:
     """
     Returns the duration of the media in seconds via ffprobe, or None if it cannot be determined.

@@ -25,6 +25,7 @@ from .auth import (
     normalize_browser_session,
     normalize_browser_error_message,
 )
+from .converter import get_js_runtimes_config
 
 
 class _AuthenticatedYtdlpLogger:
@@ -953,7 +954,7 @@ def fetch_media_stream(
         else build_video_format_selector(resolution)
     )
 
-    from .converter import get_ffmpeg_binary
+    from .converter import get_ffmpeg_binary, get_js_runtimes_config
     ffmpeg_bin = get_ffmpeg_binary()
 
     ydl_opts = {
@@ -974,7 +975,7 @@ def fetch_media_stream(
         # YouTube's low-bitrate AV1 rendition from winning over its clearer
         # direct VP9 rendition at the same resolution.
         "format_sort": ["res", "fps", "proto:https", "br"],
-        "js_runtimes": {"node": {"path": None}},
+        "js_runtimes": get_js_runtimes_config(),
         "progress_hooks": [progress_hook]
     }
     is_youtube_source = (
@@ -1014,8 +1015,8 @@ def fetch_media_stream(
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             def extract(query, download):
                 return extract_with_browser_fallback(
-                    ydl, ydl_opts, query, download, abort_event=abort_event,
-                    report=report, deadline=recovery_deadline,
+                    ydl, ydl_opts, query, download, browser=auth_browser,
+                    abort_event=abort_event, report=report, deadline=recovery_deadline,
                 )
 
             for query_item in candidates:
@@ -1324,7 +1325,7 @@ def fetch_playlist_entries(
         "no_warnings": True,
         "skip_download": True,
         "noplaylist": False,
-        "js_runtimes": {"node": {"path": None}}
+        "js_runtimes": get_js_runtimes_config()
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

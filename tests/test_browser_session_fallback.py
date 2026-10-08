@@ -188,3 +188,9 @@ def test_tiktok_challenge_triggers_browser_session_fallback():
     assert fallback.needs_browser_session("ERROR: [TikTok] Unable to extract challenge data")
     assert fallback.needs_browser_session("ERROR: [TikTok] Unable to solve JS challenge")
 
+
+def test_youtube_age_restricted_error_152_triggers_browser_session_fallback():
+    assert fallback.needs_browser_session("ERROR: [youtube] aZwbwk4EDGE: This video is unavailable. Error code: 152 - 18 Watch video on YouTube")
+    assert fallback.needs_browser_session("ERROR: [youtube] aZwbwk4EDGE: Sign in to confirm your age. Use --cookies-from-browser")
+    assert fallback.needs_browser_session("ERROR: [youtube] aZwbwk4EDGE: The page needs to be reloaded.")
+

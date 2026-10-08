@@ -49,6 +49,7 @@ def needs_browser_session(error):
     return any(word in message for word in (
         "sign in", "login required", "log in", "age-restricted", "use --cookies", "cookies are required",
         "unexpected response from webpage request", "unable to extract challenge data", "unable to solve js challenge",
+        "error code: 152", "code: 152", "152 - 18", "watch video on youtube", "confirm your age", "the page needs to be reloaded",
     ))
 
 
@@ -80,6 +81,12 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
         options.update(cookiesfrombrowser=yt_dlp_cookie_option(browser),
                        logger=_PrivateLogger(), verbose=False, cachedir=False,
                        quiet=True, no_warnings=True, noprogress=True)
+        if "js_runtimes" not in options or not options["js_runtimes"] or options["js_runtimes"].get("node", {}).get("path") is None:
+            try:
+                from .converter import get_js_runtimes_config
+                options["js_runtimes"] = get_js_runtimes_config()
+            except ImportError:
+                pass
         if report:
             report(0.15, f"Sign-in required. Temporarily using your {browser.title()} session to retry.", force=True)
         jar = None

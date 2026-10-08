@@ -24,6 +24,8 @@ def test_catalog_rejects_wrong_artist_version_duration_and_ambiguity():
     ("Unexpected response from webpage request", ExtractionCategory.LAYOUT),
     ("Unable to solve JS challenge", ExtractionCategory.LAYOUT),
     ("Unable to extract challenge data", ExtractionCategory.LAYOUT),
+    ("This video is unavailable. Error code: 152 - 18 Watch video on YouTube", ExtractionCategory.ACCESS),
+    ("Sign in to confirm your age", ExtractionCategory.ACCESS),
 ])
 def test_extraction_failures_have_distinct_recovery_categories(message, category):
     assert classify_extraction(message) == category
