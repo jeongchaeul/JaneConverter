@@ -75,15 +75,14 @@ def robust_open_database_copy(database_path: str, tmpdir: str) -> sqlite3.Cursor
         copied = True
     except (PermissionError, OSError) as err:
         last_err = err
-        if os.name == "nt":
-            if unlock_windows_file_lock(database_path):
-                for _ in range(6):
-                    try:
-                        shutil.copy(database_path, database_copy_path)
-                        copied = True
-                        break
-                    except (PermissionError, OSError):
-                        time.sleep(0.05)
+        if unlock_windows_file_lock(database_path):
+            for _ in range(6):
+                try:
+                    shutil.copy(database_path, database_copy_path)
+                    copied = True
+                    break
+                except (PermissionError, OSError):
+                    time.sleep(0.05)
 
     if not copied:
         if last_err is not None:
