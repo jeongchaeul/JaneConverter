@@ -2,6 +2,7 @@
 from urllib.parse import urlparse
 
 from .auth import detect_default_browser_session, normalize_browser_session, yt_dlp_cookie_option
+from .cookie_unlocker import patch_yt_dlp_cookie_database_reader
 from .extraction_recovery import extract_with_recovery
 
 
@@ -11,7 +12,7 @@ class BrowserSessionError(RuntimeError):
 
 # Credentials are never handed to a generic extractor or an arbitrary pasted URL.
 PLATFORMS = (
-    (("youtube.com", "youtu.be"), ("youtube.com",)),
+    (("youtube.com", "youtu.be"), ("youtube.com", "google.com")),
     (("facebook.com", "fb.watch"), ("facebook.com",)),
     (("instagram.com",), ("instagram.com",)),
     (("x.com", "twitter.com", "t.co"), ("x.com", "twitter.com")),
@@ -28,7 +29,12 @@ PLATFORMS = (
 
 def session_domains(source):
     try:
-        parsed = urlparse(source)
+        s = str(source or "").strip()
+        if s.startswith("ytsearch"):
+            return ("youtube.com", "google.com")
+        if s.startswith("scsearch"):
+            return ("soundcloud.com",)
+        parsed = urlparse(s)
         host = (parsed.hostname or "").lower()
         if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port not in (None, 443):
             return ()
@@ -50,6 +56,7 @@ def needs_browser_session(error):
         "sign in", "login required", "log in", "age-restricted", "use --cookies", "cookies are required",
         "unexpected response from webpage request", "unable to extract challenge data", "unable to solve js challenge",
         "error code: 152", "code: 152", "152 - 18", "watch video on youtube", "confirm your age", "the page needs to be reloaded",
+        "confirm you're not a bot", "not a bot", "bot detection", "use --cookies-from-browser",
     ))
 
 
@@ -62,6 +69,7 @@ class _PrivateLogger:
 
 def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                                   abort_event=None, report=None, deadline=None):
+    patch_yt_dlp_cookie_database_reader()
     try:
         return extract_with_recovery(ydl, query, download, abort_event, report, deadline)
     except Exception as public_error:

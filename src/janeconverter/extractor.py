@@ -1052,6 +1052,8 @@ def fetch_media_stream(
                     raise
                 except BrowserSessionError as bse:
                     last_error = bse
+                    if (is_tiktok_source or catalog_meta) and query_item != candidates[-1]:
+                        continue
                     if is_tiktok_source:
                         break
                     raise
@@ -1062,7 +1064,7 @@ def fetch_media_stream(
                             continue
                         break
                     if classify_extraction(ex) in (ExtractionCategory.ACCESS, ExtractionCategory.REMOVED, ExtractionCategory.RATE_LIMIT, ExtractionCategory.NETWORK):
-                        if source_type == "tiktok" and query_item != candidates[-1]:
+                        if (source_type == "tiktok" or catalog_meta) and query_item != candidates[-1]:
                             continue
                         break
                     continue

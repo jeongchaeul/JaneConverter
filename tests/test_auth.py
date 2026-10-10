@@ -27,6 +27,8 @@ from janeconverter.auth import (
         ("Firefox", "firefox"),
         ("Brave", "brave"),
         ("Vivaldi", "vivaldi"),
+        ("Safari", "safari"),
+        ("safari", "safari"),
     ],
 )
 def test_normalize_browser_session(selection, expected):
@@ -147,7 +149,20 @@ def test_default_browser_detection_uses_association_fallback(monkeypatch):
 
 def test_default_browser_detection_reads_real_host_association():
     detected = auth.detect_default_browser_session()
-    assert detected in {None, "chrome", "edge", "firefox", "brave", "vivaldi", "opera"}
+    assert detected in {None, "chrome", "edge", "firefox", "brave", "vivaldi", "opera", "safari"}
+
+
+def test_detect_default_browser_session_darwin(monkeypatch):
+    monkeypatch.setattr(auth.os, "name", "posix")
+    monkeypatch.setattr(auth.sys, "platform", "darwin")
+    monkeypatch.setattr(auth, "_macos_default_browser_signals", lambda: ["com.apple.safari"])
+    assert auth.detect_default_browser_session() == "safari"
+
+    monkeypatch.setattr(auth, "_macos_default_browser_signals", lambda: ["com.google.chrome"])
+    assert auth.detect_default_browser_session() == "chrome"
+
+    monkeypatch.setattr(auth, "_macos_default_browser_signals", lambda: [])
+    assert auth.detect_default_browser_session() == "safari"
 
 
 def test_fetch_media_stream_uses_direct_browser_capture_without_cookie_options(tmp_path, monkeypatch):

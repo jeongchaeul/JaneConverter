@@ -65,7 +65,7 @@ def test_sign_in_failure_uses_real_yt_dlp_cookie_option_then_clears_jar(browser,
     ("http://youtube.com/", "Please sign in"),
     ("https://user@youtube.com/", "Please sign in"),
     ("https://youtube.com:8080/", "Please sign in"),
-    ("ytsearch1:synthetic", "Please sign in"),
+    ("customsearch:synthetic", "Please sign in"),
     (URL, "HTTP Error 403: Forbidden"),
     (URL, "DRM protected. Please sign in"),
     (URL, "Video deleted. Please sign in"),
@@ -193,4 +193,33 @@ def test_youtube_age_restricted_error_152_triggers_browser_session_fallback():
     assert fallback.needs_browser_session("ERROR: [youtube] aZwbwk4EDGE: This video is unavailable. Error code: 152 - 18 Watch video on YouTube")
     assert fallback.needs_browser_session("ERROR: [youtube] aZwbwk4EDGE: Sign in to confirm your age. Use --cookies-from-browser")
     assert fallback.needs_browser_session("ERROR: [youtube] aZwbwk4EDGE: The page needs to be reloaded.")
+
+
+def test_youtube_bot_check_triggers_browser_session_fallback():
+    assert fallback.needs_browser_session("ERROR: [youtube] AcY86qZBVwE: Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies for the authentication.")
+    assert fallback.needs_browser_session("Sign in to confirm you're not a bot.")
+    assert fallback.needs_browser_session("bot detection triggered")
+
+
+def test_session_domains_handles_search_queries():
+    assert fallback.session_domains("ytsearch5:Nowhere Land - artist") == ("youtube.com", "google.com")
+    assert fallback.session_domains("ytsearch1:track title") == ("youtube.com", "google.com")
+    assert fallback.session_domains("scsearch1:track title") == ("soundcloud.com",)
+    assert fallback.session_domains("unknownsearch:track title") == ()
+
+
+def test_ytsearch_triggers_browser_fallback_on_bot_check(browser, monkeypatch):
+    public = Mock(params={})
+    public.extract_info.side_effect = RuntimeError("ERROR: [youtube] AcY86qZBVwE: Sign in to confirm you're not a bot.")
+
+    def authenticated_extract(self, query, download):
+        assert query.startswith("ytsearch5:")
+        return {"id": "recovered_search_item"}
+
+    monkeypatch.setattr(yt_dlp.YoutubeDL, "extract_info", authenticated_extract)
+    result = fallback.extract_with_browser_fallback(public, {}, "ytsearch5:artist song", True)
+    assert result["id"] == "recovered_search_item"
+    assert browser[0].call_count == 1
+    assert browser[1].call_count == 1
+
 

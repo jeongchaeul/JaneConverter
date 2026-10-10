@@ -243,14 +243,27 @@ def get_node_binary() -> Optional[str]:
             if os.path.isfile(c) and os.access(c, os.X_OK):
                 return os.path.abspath(c)
     else:
+        home = os.path.expanduser("~")
         posix_candidates = [
+            "/opt/homebrew/bin/node",
             "/usr/local/bin/node",
             "/usr/bin/node",
-            "/opt/homebrew/bin/node",
+            "/opt/local/bin/node",
+            os.path.join(home, ".nvm/current/bin/node"),
+            os.path.join(home, ".volta/bin/node"),
+            os.path.join(home, ".fnm/current/bin/node"),
+            os.path.join(home, ".asdf/shims/node"),
         ]
+        nvm_dir = os.path.join(home, ".nvm", "versions", "node")
+        if os.path.isdir(nvm_dir):
+            try:
+                for ver in sorted(os.listdir(nvm_dir), reverse=True):
+                    posix_candidates.append(os.path.join(nvm_dir, ver, "bin", "node"))
+            except OSError:
+                pass
         for c in posix_candidates:
             if os.path.isfile(c) and os.access(c, os.X_OK):
-                return c
+                return os.path.abspath(c)
 
     return None
 
@@ -260,10 +273,17 @@ def get_js_runtimes_config() -> dict:
     node_bin = get_node_binary()
     if node_bin:
         return {"node": {"path": node_bin}}
-    for name in ("deno", "bun"):
+    home = os.path.expanduser("~")
+    for name, extra_paths in (
+        ("deno", ["/opt/homebrew/bin/deno", "/usr/local/bin/deno", os.path.join(home, ".deno/bin/deno")]),
+        ("bun", ["/opt/homebrew/bin/bun", "/usr/local/bin/bun", os.path.join(home, ".bun/bin/bun")]),
+    ):
         w = shutil.which(name)
         if w:
             return {name: {"path": w}}
+        for p in extra_paths:
+            if os.path.isfile(p) and os.access(p, os.X_OK):
+                return {name: {"path": os.path.abspath(p)}}
     return {"node": {"path": None}}
 
 def probe_media_duration(input_path: str) -> Optional[float]:

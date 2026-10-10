@@ -5,6 +5,7 @@ browser session is handed directly to yt-dlp for the active job.
 """
 
 import os
+import sys
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -19,6 +20,7 @@ BROWSER_SESSION_CHOICES = (
     "Firefox",
     "Brave",
     "Vivaldi",
+    "Safari",
 )
 
 _BROWSER_ALIASES = {
@@ -52,8 +54,11 @@ _BROWSER_SIGNAL_MARKERS = (
     ("firefox", "firefox"),
     ("msedge", "edge"),
     ("microsoftedge", "edge"),
+    ("edgemac", "edge"),
     ("chrome", "chrome"),
     ("opera", "opera"),
+    ("safari", "safari"),
+    ("arc", "chrome"),
 )
 
 _BROWSER_PROCESS_NAMES = {
@@ -64,6 +69,7 @@ _BROWSER_PROCESS_NAMES = {
     "vivaldi": {"vivaldi"},
     "opera": {"opera"},
     "chromium": {"chromium"},
+    "safari": {"safari"},
 }
 
 
@@ -233,15 +239,26 @@ def describe_authenticated_extraction_failure(
 
 
 def detect_default_browser_session() -> Optional[str]:
-    """Return the yt-dlp browser name associated with Windows' default browser.
+    """Return the yt-dlp browser name associated with the host's default browser.
 
-    The registry lookup is intentionally read-only. Unknown browsers are
+    The lookup is intentionally read-only. Unknown browsers are
     treated as public-only rather than guessing a profile or opening files.
     """
-    if os.name != "nt":
+    if os.name == "nt":
+        for signal in _windows_default_browser_signals():
+            browser = _browser_from_signal(signal)
+            if browser:
+                return browser
         return None
 
-    for signal in _windows_default_browser_signals():
+    if sys.platform == "darwin":
+        for signal in _macos_default_browser_signals():
+            browser = _browser_from_signal(signal)
+            if browser:
+                return browser
+        return "safari"
+
+    for signal in _posix_default_browser_signals():
         browser = _browser_from_signal(signal)
         if browser:
             return browser
@@ -300,3 +317,81 @@ def _windows_default_browser_signals() -> list[str]:
         except OSError:
             pass
     return signals
+
+
+def _macos_default_browser_signals() -> list[str]:
+    """Read macOS default browser associations and installed browser bundles."""
+    signals: list[str] = []
+    # 1. Ask LaunchServices via JXA / NSWorkspace
+    try:
+        import subprocess
+        script = 'ObjC.import("AppKit"); $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL($.NSURL.URLWithString("https://apple.com")).path.js'
+        res = subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", script],
+            capture_output=True, text=True, timeout=2.0
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            signals.append(res.stdout.strip().lower())
+    except Exception:
+        pass
+
+    # 2. Query LaunchServices secure plist via defaults
+    try:
+        import re
+        import subprocess
+        res = subprocess.run(
+            ["defaults", "read", "com.apple.LaunchServices/com.apple.launchservices.secure", "LSHandlers"],
+            capture_output=True, text=True, timeout=2.0
+        )
+        if res.returncode == 0 and res.stdout:
+            lines = res.stdout.splitlines()
+            for i, line in enumerate(lines):
+                if "LSHandlerURLScheme" in line and ("https" in line.lower() or "http" in line.lower()):
+                    for j in range(max(0, i - 5), min(len(lines), i + 6)):
+                        m = re.search(r'LSHandlerRoleAll\s*=\s*"([^"]+)"', lines[j])
+                        if m:
+                            signals.append(m.group(1).lower())
+    except Exception:
+        pass
+
+    # 3. Check installed application bundles in priority order
+    for app_path, name in (
+        ("/Applications/Google Chrome.app", "chrome"),
+        ("/Applications/Brave Browser.app", "brave"),
+        ("/Applications/Vivaldi.app", "vivaldi"),
+        ("/Applications/Microsoft Edge.app", "edge"),
+        ("/Applications/Firefox.app", "firefox"),
+        ("/Applications/Safari.app", "safari"),
+    ):
+        if os.path.exists(app_path):
+            signals.append(name)
+
+    signals.append("safari")
+    return signals
+
+
+def _posix_default_browser_signals() -> list[str]:
+    """Query Linux XDG default browser associations."""
+    signals: list[str] = []
+    try:
+        import subprocess
+        res = subprocess.run(
+            ["xdg-settings", "get", "default-web-browser"],
+            capture_output=True, text=True, timeout=2.0
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            signals.append(res.stdout.strip().lower())
+    except Exception:
+        pass
+    try:
+        import subprocess
+        res = subprocess.run(
+            ["xdg-mime", "query", "default", "x-scheme-handler/https"],
+            capture_output=True, text=True, timeout=2.0
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            signals.append(res.stdout.strip().lower())
+    except Exception:
+        pass
+    return signals
+
