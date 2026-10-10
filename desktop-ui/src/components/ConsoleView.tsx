@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Check, Clipboard, Filter, Layers, Pause, Play, Search, Square, TerminalSquare, Trash2, X } from "lucide-react";
-import type { ConverterEvent } from "../bridge";
+import { ArrowDown, Check, Clipboard, Download, Filter, Layers, Pause, Play, Search, Square, TerminalSquare, Trash2, X } from "lucide-react";
+import { bridge, type ConverterEvent } from "../bridge";
 
 export function ConsoleView({
   events,
@@ -124,6 +124,39 @@ export function ConsoleView({
     }
   }
 
+  async function exportLogs() {
+    if (!processedEvents.length) {
+      onStatus("No logs to export.");
+      return;
+    }
+    try {
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      const defaultFilename = `janeconverter-session-${dateStr}.txt`;
+
+      const header = [
+        "============================================================",
+        "JaneConverter Diagnostics Log",
+        `Exported: ${now.toLocaleString()}`,
+        `Filter Mode: ${filter.toUpperCase()}`,
+        `Total Lines: ${processedEvents.length}`,
+        "============================================================",
+        "",
+      ].join("\n");
+
+      const body = processedEvents.map((event) => event.message).join("\n");
+      const fullLog = `${header}\n${body}\n`;
+
+      const savedPath = await bridge.exportLogFile(fullLog, defaultFilename);
+      if (savedPath) {
+        onStatus(`Exported logs to: ${savedPath}`);
+      }
+    } catch (error) {
+      onStatus(`Could not export logs: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   return (
     <div className="mx-auto flex h-full w-full max-w-[1180px] flex-1 flex-col gap-4 min-h-0">
       {/* Header */}
@@ -185,6 +218,14 @@ export function ConsoleView({
             className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
           >
             <Clipboard size={13} /> Copy logs
+          </button>
+          <button
+            type="button"
+            onClick={() => void exportLogs()}
+            className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
+            title="Export console logs to a text file (.txt)"
+          >
+            <Download size={13} /> Export logs
           </button>
           <button
             type="button"

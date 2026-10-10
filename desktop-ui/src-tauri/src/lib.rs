@@ -306,6 +306,28 @@ fn choose_folder() -> Option<String> {
 }
 
 #[tauri::command]
+fn export_log_file(
+    content: String,
+    default_filename: Option<String>,
+) -> Result<Option<String>, String> {
+    let name = default_filename.unwrap_or_else(|| "janeconverter-logs.txt".to_string());
+    let path = FileDialog::new()
+        .set_title("Export Console Logs")
+        .set_file_name(&name)
+        .add_filter("Text File (*.txt)", &["txt"])
+        .add_filter("Log File (*.log)", &["log"])
+        .save_file();
+
+    if let Some(path) = path {
+        fs::write(&path, content.as_bytes())
+            .map_err(|error| format!("Could not save log file: {error}"))?;
+        Ok(Some(path.display().to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
 fn choose_flp_file() -> Option<String> {
     FileDialog::new()
         .set_title("Choose FL Studio Project (.flp)")
@@ -2513,7 +2535,8 @@ pub fn run() {
             relaunch,
             notify_attention,
             check_updates,
-            install_update
+            install_update,
+            export_log_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running JaneConverter Desktop");

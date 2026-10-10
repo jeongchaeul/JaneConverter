@@ -263,6 +263,7 @@ export interface JaneBridge {
   flpDetectInstalled(): Promise<InstalledFlStudio[]>;
   flpInspect(path: string): Promise<FlpProjectInfo>;
   flpDowngrade(source: string, targetVersion: string, targetBuild?: number, outputPath?: string, overwrite?: boolean): Promise<FlpDowngradeResult>;
+  exportLogFile(content: string, defaultFilename?: string): Promise<string | null>;
 }
 
 const demoSettings: ConverterSettings = {
@@ -382,6 +383,18 @@ const demoBridge: JaneBridge = {
       backupPath: overwrite ? `${source}.bak` : null,
     };
   },
+  async exportLogFile(content: string, defaultFilename = "janeconverter-logs.txt") {
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = defaultFilename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return defaultFilename;
+  },
 };
 
 const isTauriRuntime = () => "__TAURI_INTERNALS__" in window;
@@ -441,6 +454,8 @@ const tauriBridge: JaneBridge = {
   notifyAttention: () => invoke<void>("notify_attention"),
   checkUpdates: () => invoke<UpdateCheckResult>("check_updates"),
   installUpdate: () => invoke<void>("install_update"),
+  exportLogFile: (content: string, defaultFilename?: string) =>
+    invoke<string | null>("export_log_file", { content, defaultFilename: defaultFilename ?? null }),
 };
 
 export const bridge: JaneBridge = isTauriRuntime() ? tauriBridge : demoBridge;
