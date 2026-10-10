@@ -1036,9 +1036,9 @@ export function ConverterView({
           </div>
           <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-zinc-600">
             {selectedCapture
-              ? "Fetched media selected from the browser capture inbox. Choose your output settings and convert it whenever you are ready."
+              ? "Media Capturer item selected. Choose your output settings and convert it whenever you are ready."
               : access.bridgeConnected
-              ? "Browser Capture connected for this session. Keep capturing from the active browser page; every item is kept temporarily in the Fetched Media tab. This access session does not affect unrelated URL or local-file conversions."
+              ? "Browser Capture connected for this session. Keep capturing from the active browser page; every item is kept temporarily in the Media Capturer tab. This access session does not affect unrelated URL or local-file conversions."
               : access.active
               ? "Open the media in this browser, sign in if needed, confirm access here, then open the JaneConverter Browser Capture extension. Choose Capture current media or Capture story sequence. Unrelated URL and local-file conversions remain public/local."
               : "Public access is tried first. If a supported site requires sign-in, yt-dlp automatically retries using your default browser's existing session. Cookies are used temporarily and are not exported to a file. Browser Capture below offers another way to send visible media to JaneConverter."}

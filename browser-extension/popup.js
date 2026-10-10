@@ -1307,7 +1307,7 @@ async function toggleNetworkMode() {
     setNetworkButtonState(enabled);
     setStatus(
       enabled
-        ? "Network Compatibility Mode is on for this tab. Play or advance media; approved responses will appear in Fetched Media."
+        ? "Network Compatibility Mode is on for this tab. Play or advance media; approved responses will appear in Media Capturer."
         : "Network Compatibility Mode is off. The confirmed access session remains available.",
       enabled ? "warning" : ""
     );

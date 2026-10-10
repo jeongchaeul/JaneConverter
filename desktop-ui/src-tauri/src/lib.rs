@@ -1855,7 +1855,9 @@ fn move_fetched_folder(
         .map_err(|_| "The conversion registry is unavailable.")?
         .is_some()
     {
-        return Err("Wait for the active conversion to finish before moving fetched media.".into());
+        return Err(
+            "Wait for the active conversion to finish before moving captured media.".into(),
+        );
     }
     if state
         .access
@@ -1863,16 +1865,16 @@ fn move_fetched_folder(
         .map_err(|_| "The access registry is unavailable.")?
         .is_some()
     {
-        return Err("Clear browser access before moving the fetched media folder.".into());
+        return Err("Clear browser access before moving the media capturer folder.".into());
     }
 
     let mut settings = settings_get_internal();
     let configured = fs::canonicalize(settings.fetched_dir.trim())
-        .map_err(|error| format!("The configured fetched media folder is unavailable: {error}"))?;
+        .map_err(|error| format!("The configured media capturer folder is unavailable: {error}"))?;
     let requested = fs::canonicalize(source.trim())
-        .map_err(|error| format!("The current fetched media folder is unavailable: {error}"))?;
+        .map_err(|error| format!("The current media capturer folder is unavailable: {error}"))?;
     if configured != requested {
-        return Err("For safety, only the active fetched media folder can be moved.".into());
+        return Err("For safety, only the active media capturer folder can be moved.".into());
     }
     write_settings(&settings).map_err(|error| {
         format!("JaneConverter could not verify that settings are writable: {error}")
@@ -1881,7 +1883,7 @@ fn move_fetched_folder(
     settings.fetched_dir = result.destination.clone();
     write_settings(&settings).map_err(|error| {
         format!(
-            "The fetched media folder moved to {}, but JaneConverter could not save the new location: {error}",
+            "The media capturer folder moved to {}, but JaneConverter could not save the new location: {error}",
             result.destination
         )
     })?;
@@ -2008,7 +2010,7 @@ fn discard_fetched_media(state: State<'_, AppState>, path: String) -> Result<(),
         .is_some()
     {
         return Err(
-            "Wait for the active conversion to finish before discarding fetched media.".into(),
+            "Wait for the active conversion to finish before discarding captured media.".into(),
         );
     }
     let fallback_root = settings_get_internal().fetched_dir;

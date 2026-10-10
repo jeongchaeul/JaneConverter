@@ -71,7 +71,7 @@ describe("FetchedMediaView", () => {
     container.remove();
   });
 
-  it("moves the fetched media folder through the native bridge", async () => {
+  it("moves the media capturer folder through the native bridge", async () => {
     const onSettings = vi.fn();
     const onStatus = vi.fn();
     bridge.chooseFolder.mockResolvedValue("E:/Media");
@@ -97,11 +97,11 @@ describe("FetchedMediaView", () => {
     });
 
     await act(async () => {
-      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Move fetched folder"))?.click();
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Move capturer folder"))?.click();
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Move fetched media folder?");
+    expect(container.textContent).toContain("Move media capturer folder?");
 
     const confirmButton = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Move folder");
@@ -114,7 +114,7 @@ describe("FetchedMediaView", () => {
 
     expect(bridge.moveFetchedFolder).toHaveBeenCalledWith("C:/JaneConverter/fetched", "E:/Media");
     expect(onSettings).toHaveBeenCalledWith(expect.objectContaining({ fetchedDir: "E:/Media/fetched" }));
-    expect(onStatus).toHaveBeenCalledWith(expect.stringContaining("Fetched media folder moved"));
+    expect(onStatus).toHaveBeenCalledWith(expect.stringContaining("Media capturer folder moved"));
 
     await act(async () => { root.unmount(); });
     container.remove();
@@ -141,7 +141,7 @@ it("provides a quiet, clickable manual refresh control", async () => {
       await Promise.resolve();
     });
 
-    const refresh = container.querySelector<HTMLButtonElement>('button[aria-label="Refresh fetched media"]');
+    const refresh = container.querySelector<HTMLButtonElement>('button[aria-label="Refresh media capturer"]');
     expect(refresh).not.toBeNull();
     expect(refresh?.querySelector("svg")?.getAttribute("class") ?? "").not.toContain("animate-spin");
     const callsBefore = bridge.fetchedMedia.mock.calls.length;

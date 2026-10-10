@@ -235,7 +235,7 @@ export function SettingsView({
 
       <section className="panel p-5">
         <div className="flex items-center gap-2 text-sm text-zinc-200"><FolderOpen size={16} className="text-zinc-500" /> Application data folder</div>
-        <p className="mt-2 text-xs leading-relaxed text-zinc-600">Choose where JaneConverter keeps its settings, fetched media, and converted-library defaults. Existing files stay where they are; the application will relaunch after you apply the new location.</p>
+        <p className="mt-2 text-xs leading-relaxed text-zinc-600">Choose where JaneConverter keeps its settings, captured media, and converted-library defaults. Existing files stay where they are; the application will relaunch after you apply the new location.</p>
         <div className="mt-3 flex gap-2">
           <input aria-label="Application data folder" value={dataRootPath} onChange={(event) => setDataRootPath(event.target.value)} className="field min-w-0 flex-1 px-3 py-2.5 text-sm" />
           <button type="button" className="subtle-button px-3 text-xs" onClick={() => void chooseDataRoot()}>Browse</button>

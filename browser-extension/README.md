@@ -49,8 +49,8 @@ as the extension popup closes:
 2. Open the story page and open the extension popup.
 3. Click **Enable collect mode**, then close the popup.
 4. Play or advance stories normally. JaneConverter watches the active page and
-   sends the primary rendered story surface to **Fetched Media**.
-5. Open **Fetched Media** in JaneConverter to preview, discard, or convert each
+   sends the primary rendered story surface to **Media Capturer**.
+5. Open **Media Capturer** in JaneConverter to preview, discard, or convert each
    captured item. Click **Disable collect mode** from the extension popup when
    finished.
 
@@ -69,7 +69,7 @@ does not expose readable media bytes to the normal capture path:
 2. Open the signed-in media page in the same browser tab.
 3. Open the extension and choose **Enable Network Compatibility Mode**.
 4. Play or advance the media normally. JaneConverter listens only to approved
-   media responses from that tab and places accepted files in **Fetched Media**.
+   media responses from that tab and places accepted files in **Media Capturer**.
 5. Disable the mode when finished.
 
 This mode uses Chrome's tab-scoped debugger/network API, so the browser shows a

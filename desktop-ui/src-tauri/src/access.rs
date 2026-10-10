@@ -286,9 +286,9 @@ impl AccessServer {
         let root = fs::canonicalize(&self.capture_root)
             .map_err(|error| format!("The capture workspace is unavailable: {error}"))?;
         let target = fs::canonicalize(requested.trim())
-            .map_err(|error| format!("That fetched media file no longer exists: {error}"))?;
+            .map_err(|error| format!("That captured media file no longer exists: {error}"))?;
         if !target.starts_with(&root) || !target.is_file() {
-            return Err("That fetched media file is outside the active capture session.".into());
+            return Err("That captured media file is outside the active capture session.".into());
         }
         Ok(target)
     }
@@ -306,7 +306,7 @@ impl AccessServer {
         match fs::remove_file(&target) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("Could not discard the fetched media: {error}")),
+            Err(error) => return Err(format!("Could not discard the captured media: {error}")),
         }
         let mut state = self
             .capture_state
@@ -960,7 +960,7 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
                     let file = match File::create(&path) {
                         Ok(file) => file,
                         Err(error) => {
-                            send_json_cors_or_plain(&mut stream, 500, "Internal Server Error", origin.as_deref(), &json!({"error": format!("Could not create the fetched media file: {error}")}).to_string());
+                            send_json_cors_or_plain(&mut stream, 500, "Internal Server Error", origin.as_deref(), &json!({"error": format!("Could not create the captured media file: {error}")}).to_string());
                             continue;
                         }
                     };
@@ -1313,12 +1313,12 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
                     let source_url = source.lock().ok().and_then(|value| value.clone());
                     let content = if let Some(source_url) = source_url {
                         format!(
-                            r#"<div class="eyebrow">Temporary browser access</div><h1>JaneConverter account access</h1><p class="lead">Use this temporary page in the browser where the media session is already signed in. Browser Capture lets you send only the media you choose back to JaneConverter.</p><div class="card"><h2>How Browser Capture works</h2><ol class="steps"><li>Open the source page below and sign in normally if the site asks.</li><li>Return here and select <strong>Confirm Access</strong>.</li><li>On the media page, open the JaneConverter Browser Capture extension and choose <strong>Capture current media</strong> for one item or <strong>Capture story sequence</strong> for a sequence.</li><li>Return to JaneConverter. The selected media appears in <strong>Fetched Media</strong>, ready to convert.</li></ol></div><p class="privacy">Only media you explicitly capture is sent to JaneConverter. The extension does not read or store passwords, cookies, cache, or browser profile data. This temporary access ends when JaneConverter closes or access is cleared.</p><p class="actions"><a class="primary" href="{}" target="_blank" rel="noreferrer">Open source page</a><a class="confirm" href="/access/{token}/ready">Confirm Access</a></p><p class="note">Browser Capture is optional and is intended for private or browser-only media. Public URLs and local files can continue through the normal conversion flow.</p>"#,
+                            r#"<div class="eyebrow">Temporary browser access</div><h1>JaneConverter account access</h1><p class="lead">Use this temporary page in the browser where the media session is already signed in. Browser Capture lets you send only the media you choose back to JaneConverter.</p><div class="card"><h2>How Browser Capture works</h2><ol class="steps"><li>Open the source page below and sign in normally if the site asks.</li><li>Return here and select <strong>Confirm Access</strong>.</li><li>On the media page, open the JaneConverter Browser Capture extension and choose <strong>Capture current media</strong> for one item or <strong>Capture story sequence</strong> for a sequence.</li><li>Return to JaneConverter. The selected media appears in <strong>Media Capturer</strong>, ready to convert.</li></ol></div><p class="privacy">Only media you explicitly capture is sent to JaneConverter. The extension does not read or store passwords, cookies, cache, or browser profile data. This temporary access ends when JaneConverter closes or access is cleared.</p><p class="actions"><a class="primary" href="{}" target="_blank" rel="noreferrer">Open source page</a><a class="confirm" href="/access/{token}/ready">Confirm Access</a></p><p class="note">Browser Capture is optional and is intended for private or browser-only media. Public URLs and local files can continue through the normal conversion flow.</p>"#,
                             html_escape(&source_url)
                         )
                     } else {
                         format!(
-                            r#"<div class="eyebrow">Temporary browser access</div><h1>JaneConverter account access</h1><p class="lead">Use this temporary page in the browser where the media session is already signed in. Browser Capture lets you send only the media you choose back to JaneConverter.</p><div class="card"><h2>How Browser Capture works</h2><ol class="steps"><li>Open the media page you want to capture and sign in normally if the site asks.</li><li>Return here and select <strong>Confirm Access</strong>.</li><li>On the media page, open the JaneConverter Browser Capture extension and choose <strong>Capture current media</strong> for one item or <strong>Capture story sequence</strong> for a sequence.</li><li>Return to JaneConverter. The selected media appears in <strong>Fetched Media</strong>, ready to convert.</li></ol></div><p class="privacy">Only media you explicitly capture is sent to JaneConverter. The extension does not read or store passwords, cookies, cache, or browser profile data. This temporary access ends when JaneConverter closes or access is cleared.</p><p class="actions"><a class="confirm" href="/access/{token}/ready">Confirm Access</a></p><p class="note">Browser Capture is optional and is intended for private or browser-only media. The first capture binds this temporary session to the media page's site.</p>"#
+                            r#"<div class="eyebrow">Temporary browser access</div><h1>JaneConverter account access</h1><p class="lead">Use this temporary page in the browser where the media session is already signed in. Browser Capture lets you send only the media you choose back to JaneConverter.</p><div class="card"><h2>How Browser Capture works</h2><ol class="steps"><li>Open the media page you want to capture and sign in normally if the site asks.</li><li>Return here and select <strong>Confirm Access</strong>.</li><li>On the media page, open the JaneConverter Browser Capture extension and choose <strong>Capture current media</strong> for one item or <strong>Capture story sequence</strong> for a sequence.</li><li>Return to JaneConverter. The selected media appears in <strong>Media Capturer</strong>, ready to convert.</li></ol></div><p class="privacy">Only media you explicitly capture is sent to JaneConverter. The extension does not read or store passwords, cookies, cache, or browser profile data. This temporary access ends when JaneConverter closes or access is cleared.</p><p class="actions"><a class="confirm" href="/access/{token}/ready">Confirm Access</a></p><p class="note">Browser Capture is optional and is intended for private or browser-only media. The first capture binds this temporary session to the media page's site.</p>"#
                         )
                     };
                     send_html(

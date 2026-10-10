@@ -147,7 +147,7 @@ JaneConverter tries public access first. When yt-dlp reports that a supported me
 
 SoundCloud, Spotify, and YouTube are verified working with the primary audio converter. Because Apple Music is subscription-based, use the **Browser Extension** (`JaneConverter Browser Bridge`) to capture Apple Music streams.
 
-Browser-captured files appear in the **Fetched media.** tab and are saved in the configured fetched-media folder. The default is a `fetched` folder beside the converted library; clearing access ends the browser session without deleting those files. Each item supports **Open file**, **Open path**, **Use for conversion**, and **Discard**.
+Browser-captured files appear in the **Media Capturer** tab and are saved in the configured media capturer folder. The default is a `fetched` folder beside the converted library; clearing access ends the browser session without deleting those files. Each item supports **Open file**, **Open path**, **Use for conversion**, and **Discard**.
 
 ### FL Studio Project (.flp) Downgrade (Experimental)
 
@@ -183,7 +183,7 @@ Because the extension is a local power-user tool and not distributed through the
    - Select the `browser-extension` folder from Step 1.
 5. **Pin & Connect**:
    - Pin the JaneConverter icon to your browser extensions toolbar.
-   - In the JaneConverter desktop app, click **Create access link** on the **Converter** or **Fetched media.** tab to generate a pairing session.
+   - In the JaneConverter desktop app, click **Create access link** on the **Converter** or **Media Capturer** tab to generate a pairing session.
    - Confirm access in your browser, then open the extension popup from the toolbar to capture media straight to your desktop queue.
 
 ## Command line

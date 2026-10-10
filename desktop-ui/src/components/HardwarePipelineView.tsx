@@ -144,7 +144,7 @@ export function HardwarePipelineView({
                 <div>Project: {runtime?.projectRoot || "—"}</div>
                 <div>Data: {runtime?.dataRoot || "—"}</div>
                 <div>Converted library: {outputPath}</div>
-                <div>Fetched media: {fetchedPath}</div>
+                <div>Media Capturer: {fetchedPath}</div>
                 <div>Python engine: {runtime?.pythonPath || "—"}</div>
                 <div>FFmpeg: {runtime?.ffmpegPath || "—"}</div>
               </div>

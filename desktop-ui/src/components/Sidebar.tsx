@@ -6,7 +6,7 @@ export type ViewKey = "converter" | "fetched" | "library" | "hardware" | "consol
 
 const items: Array<{ key: ViewKey; label: string; icon: typeof FileAudio }> = [
   { key: "converter", label: "Converter", icon: FileAudio },
-  { key: "fetched", label: "Fetched media.", icon: Inbox },
+  { key: "fetched", label: "Media Capturer", icon: Inbox },
   { key: "library", label: "Converted library", icon: FolderOpen },
   { key: "hardware", label: "Hardware & Pipeline", icon: Cpu },
   { key: "console", label: "Console", icon: TerminalSquare },

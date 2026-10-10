@@ -121,11 +121,11 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
     const destinationParent = await bridge.chooseFolder();
     if (!destinationParent) return;
     if (pathKey(destinationParent) === pathKey(parentPath(settings.fetchedDir))) {
-      onStatus("Choose a different parent folder for the fetched media folder.");
+      onStatus("Choose a different parent folder for the media capturer folder.");
       return;
     }
     if (isInside(settings.fetchedDir, destinationParent)) {
-      onStatus("The new fetched media location cannot be inside the current folder.");
+      onStatus("The new media capturer location cannot be inside the current folder.");
       return;
     }
     setPendingMove(destinationParent);
@@ -140,7 +140,7 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
       const result = await bridge.moveFetchedFolder(settings.fetchedDir, destinationParent);
       const movedTo = result.destination;
       onSettings({ ...settings, fetchedDir: movedTo });
-      onStatus(result.cleanupWarning ?? ("Fetched media folder moved to " + movedTo + "."));
+      onStatus(result.cleanupWarning ?? ("Media capturer folder moved to " + movedTo + "."));
     } catch (error) {
       onStatus(error instanceof Error ? error.message : String(error));
     } finally {
@@ -172,9 +172,9 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
     <section className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="mono-label">BROWSER CAPTURE INBOX</div>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">Fetched media.</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-500">Captured media is saved in the folder below. The browser session controls what can be fetched; the files remain here until you open, convert, or discard them.</p>
+          <div className="mono-label">BROWSER MEDIA CAPTURER</div>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">Media Capturer</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-500">Automatically captures media from your browser and saves it temporarily. The files remain here until you choose what to save, convert, or discard.</p>
         </div>
         <div className="flex items-center gap-2 text-xs text-zinc-500">
           <button
@@ -186,7 +186,7 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
             <HelpCircle className="size-3.5 text-[#d75b88]" />
             Extension guide
           </button>
-          <button type="button" aria-label="Refresh fetched media" title="Refresh fetched media" disabled={refreshing} onClick={() => void refresh(true)} className="subtle-button grid size-7 place-items-center rounded-full disabled:cursor-wait disabled:opacity-60"><RefreshCw className={"size-3.5 " + (refreshing ? "animate-spin" : "")} /></button>
+          <button type="button" aria-label="Refresh media capturer" title="Refresh media capturer" disabled={refreshing} onClick={() => void refresh(true)} className="subtle-button grid size-7 place-items-center rounded-full disabled:cursor-wait disabled:opacity-60"><RefreshCw className={"size-3.5 " + (refreshing ? "animate-spin" : "")} /></button>
           {items.length + (access.active ? " item" : " saved item") + (items.length === 1 ? "" : "s")}
         </div>
       </div>
@@ -196,23 +196,23 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
           <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-[#c52b68]/25 bg-[#c52b68]/[0.08]"><Inbox className="size-5 text-[#d75b88]" /></div>
           <div>
             <div className="text-sm font-medium text-zinc-200">One confirmed session, many captures</div>
-            <p className="mt-1 text-xs leading-relaxed text-zinc-600">JaneConverter stores only the media you explicitly capture. The selected folder is persistent, so clearing access ends the browser session without deleting these fetched files.</p>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-600">JaneConverter stores only the media you explicitly capture. The selected folder is persistent, so clearing access ends the browser session without deleting these captured files.</p>
           </div>
         </div>
       </div>
 
       <div className="panel p-5">
-        <div className="flex items-center gap-2 text-sm font-medium text-zinc-200"><FolderOpen className="size-4 text-zinc-500" /> Fetched media folder</div>
+        <div className="flex items-center gap-2 text-sm font-medium text-zinc-200"><FolderOpen className="size-4 text-zinc-500" /> Media Capturer folder</div>
         <p className="mt-2 text-xs leading-relaxed text-zinc-600">New browser captures are saved here instead of a disposable session folder. You can change this location at any time; new access sessions will use the selected folder.</p>
         <div className="mt-3 flex gap-2">
-          <input aria-label="Fetched media folder" value={settings.fetchedDir} onChange={(event) => onSettings({ ...settings, fetchedDir: event.target.value })} className="field min-w-0 flex-1 px-3 py-2.5 text-sm" />
+          <input aria-label="Media Capturer folder" value={settings.fetchedDir} onChange={(event) => onSettings({ ...settings, fetchedDir: event.target.value })} className="field min-w-0 flex-1 px-3 py-2.5 text-sm" />
           <button type="button" className="subtle-button px-3 text-xs" onClick={async () => { const path = await bridge.chooseFolder(); if (path) onSettings({ ...settings, fetchedDir: path }); }}>Browse</button>
           <button type="button" className="subtle-button flex items-center gap-2 px-3 text-xs" onClick={() => void bridge.openPath(settings.fetchedDir)}><FolderOpen className="size-3.5" /> Open folder</button>
-          <button type="button" disabled={moving || access.active} title={access.active ? "Clear browser access before moving this folder" : "Move the fetched media folder"} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void chooseMoveFolder()}><FolderOpen className={"size-3.5 " + (moving ? "animate-pulse" : "")} /> {moving ? "Moving folder..." : "Move fetched folder"}</button>
+          <button type="button" disabled={moving || access.active} title={access.active ? "Clear browser access before moving this folder" : "Move the media capturer folder"} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void chooseMoveFolder()}><FolderOpen className={"size-3.5 " + (moving ? "animate-pulse" : "")} /> {moving ? "Moving folder..." : "Move capturer folder"}</button>
         </div>
       </div>
       {!items.length ? (
-        <div className="panel p-10 text-center text-sm text-zinc-500">{access.active ? "Your inbox is ready. Capture media from the active browser page and it will appear here automatically." : "No fetched media is saved yet. Create and confirm browser access from the Converter tab to begin."}</div>
+        <div className="panel p-10 text-center text-sm text-zinc-500">{access.active ? "Your Media Capturer is ready. Capture media from the active browser page and it will appear here automatically." : "No captured media is saved yet. Create and confirm browser access from the Converter tab to begin."}</div>
       ) : (
         <div className="space-y-2">
           {items.map((item, index) => (
@@ -245,7 +245,7 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
             <div className="flex items-start gap-3">
               <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-[#d75b88]/20 bg-[#d75b88]/10 text-[#e68aae]"><AlertTriangle size={17} /></div>
               <div>
-                <h2 id="fetched-folder-move-title" className="text-base font-medium text-white">Move fetched media folder?</h2>
+                <h2 id="fetched-folder-move-title" className="text-base font-medium text-white">Move media capturer folder?</h2>
                 <p id="fetched-folder-move-description" className="mt-2 break-words text-sm leading-6 text-zinc-400">Move this folder to {joinPath(pendingMove, baseName(settings.fetchedDir))}? New captures will use the new location.</p>
               </div>
             </div>
@@ -298,7 +298,7 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
               </div>
               <div className="rounded-xl border border-white/[0.06] bg-black/25 p-3">
                 <div className="font-semibold text-pink-300">4. Capture Media with Zero Cookie Leakage</div>
-                <div className="mt-1 text-zinc-400">Navigate to your media page, click the JaneConverter extension icon, and select <strong>Capture current media</strong>. Raw binary bytes transfer directly into this Fetched Media inbox!</div>
+                <div className="mt-1 text-zinc-400">Navigate to your media page, click the JaneConverter extension icon, and select <strong>Capture current media</strong>. Raw binary bytes transfer directly into Media Capturer!</div>
               </div>
             </div>
             <div className="mt-5 flex justify-end">
