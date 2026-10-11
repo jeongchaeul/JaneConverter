@@ -284,8 +284,10 @@ export npm_config_cache="$BUILD_ROOT/npm-cache"
     if [[ -n "$signing_private_key_password" ]]; then
       export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$signing_private_key_password"
     fi
+    ./node_modules/.bin/tauri build --features updater --config "$TAURI_CONFIG"
+  else
+    ./node_modules/.bin/tauri build --config "$TAURI_CONFIG"
   fi
-  ./node_modules/.bin/tauri build --config "$TAURI_CONFIG"
 )
 
 BUNDLED_APP="$TAURI_TARGET/release/bundle/macos/JaneConverter.app"

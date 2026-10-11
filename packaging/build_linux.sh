@@ -276,7 +276,7 @@ if ((ENABLE_UPDATER)); then
     if [[ -n "$signing_private_key_password" ]]; then
       export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$signing_private_key_password"
     fi
-    ./node_modules/.bin/tauri build --config "$TAURI_CONFIG"
+    ./node_modules/.bin/tauri build --features updater --config "$TAURI_CONFIG"
   )
   APPIMAGE_DIRECTORY="$TAURI_TARGET/release/bundle/appimage"
   BUILT_APPIMAGE="$(find "$APPIMAGE_DIRECTORY" -type f -iname '*.AppImage' -print -quit)"

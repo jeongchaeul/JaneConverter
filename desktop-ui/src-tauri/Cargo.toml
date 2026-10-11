@@ -6,6 +6,7 @@ authors = ["project//aspyr"]
 edition = "2021"
 
 [features]
+default = ["updater"]
 updater = []
 
 [lib]

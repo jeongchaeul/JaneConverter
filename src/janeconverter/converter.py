@@ -87,8 +87,10 @@ LOUDNORM_FILTER = "loudnorm=I=-14:TP=-1.5:LRA=11"
 def build_loudnorm_filter(measured: Optional[Dict[str, str]] = None) -> str:
     """
     Builds the EBU R128 loudnorm filter.
-    Pass 1 measurements request linear processing; FFmpeg may use dynamic
-    processing when the requested peak or loudness-range target prevents it.
+    Pass 1 measurements configure linear normalization (linear=true).
+    Dynamically adapts target LRA and target I when necessary to guarantee
+    that FFmpeg operates in transparent linear gain mode without falling back
+    to dynamic AGC compression or clipping past the True Peak ceiling.
     """
     keys = ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
     try:
@@ -96,18 +98,49 @@ def build_loudnorm_filter(measured: Optional[Dict[str, str]] = None) -> str:
     except (KeyError, ValueError, TypeError):
         valid = False
     if valid:
+        measured_i = float(measured["input_i"])
+        measured_tp = float(measured["input_tp"])
+        measured_lra = float(measured["input_lra"])
+
+        target_i = -14.0
+        target_tp = -1.5
+
+        # FFmpeg loudnorm requires measured_lra <= target_lra to stay in linear mode.
+        # If input LRA exceeds 11, expand target LRA so high-dynamic-range tracks
+        # are not forced into dynamic AGC compression.
+        target_lra = max(11.0, round(measured_lra + 0.1, 2))
+
+        # FFmpeg loudnorm requires measured_tp + (target_i - measured_i) <= target_tp
+        # to stay in linear mode. If applying full gain would breach the True Peak ceiling,
+        # cap the target integrated loudness so maximum safe linear gain is applied
+        # without triggering dynamic compression pumping or clipping.
+        gain = target_i - measured_i
+        if measured_tp + gain > target_tp:
+            max_safe_gain = (target_tp - 0.05) - measured_tp
+            target_i = round(measured_i + max_safe_gain, 2)
+
+        target_i_str = f"{target_i:.2f}" if target_i != -14.0 else "-14"
+        target_lra_str = f"{target_lra:.2f}" if target_lra != 11.0 else "11"
+
+        # Edge case: af_loudnorm.c requires measured_lra != 0 to enter linear mode
+        measured_lra_str = f"{max(0.1, measured_lra):.2f}" if measured_lra <= 0.0 else measured["input_lra"]
+
         return (
-            f"loudnorm=I=-14:TP=-1.5:LRA=11"
+            f"loudnorm=I={target_i_str}:TP={target_tp:.1f}:LRA={target_lra_str}"
             f":measured_I={measured['input_i']}"
             f":measured_TP={measured['input_tp']}"
-            f":measured_LRA={measured['input_lra']}"
+            f":measured_LRA={measured_lra_str}"
             f":measured_thresh={measured['input_thresh']}"
             f":offset={measured['target_offset']}"
             f":linear=true:print_format=json"
         )
     return LOUDNORM_FILTER + ":print_format=json"
 
-def measure_audio_loudness(input_path: str, ffmpeg_bin: Optional[str] = None) -> Optional[Dict[str, str]]:
+def measure_audio_loudness(
+    input_path: str,
+    ffmpeg_bin: Optional[str] = None,
+    sample_rate: Optional[int] = None,
+) -> Optional[Dict[str, str]]:
     """
     Pass 1 measurement for EBU R128 loudness normalization.
     Returns measured integrated loudness, true peak, LRA, threshold, and target offset
@@ -119,11 +152,16 @@ def measure_audio_loudness(input_path: str, ffmpeg_bin: Optional[str] = None) ->
     if not ffmpeg or (not shutil.which(ffmpeg) and not os.path.isfile(ffmpeg)):
         return None
 
+    filters = []
+    if sample_rate and has_soxr_support():
+        filters.append("aresample=resampler=soxr:precision=28:cutoff=0.97:dither_method=triangular")
+    filters.append("loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json")
+
     cmd = [
         ffmpeg, "-hide_banner", "-nostats",
         "-i", input_path,
         "-vn", "-sn",
-        "-af", "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json",
+        "-af", ",".join(filters),
         "-f", "null", "-"
     ]
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -133,10 +171,10 @@ def measure_audio_loudness(input_path: str, ffmpeg_bin: Optional[str] = None) ->
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             creationflags=no_window,
-            timeout=45
+            timeout=300
         )
         stderr_text = res.stderr.decode("utf-8", errors="ignore")
-        json_match = re.search(r"\{\s*\"input_i\"\s*:.*?\n\}", stderr_text, re.DOTALL)
+        json_match = re.search(r'\{[^{}]*"input_i"[^{}]*\}', stderr_text, re.DOTALL)
         if json_match:
             data = json.loads(json_match.group(0))
             return {
@@ -149,7 +187,6 @@ def measure_audio_loudness(input_path: str, ffmpeg_bin: Optional[str] = None) ->
     except Exception:
         pass
     return None
-
 # Explicit bit-depth selection for lossless containers (no substring sniffing)
 WAV_BIT_DEPTH_CODECS = {
     "16": "pcm_s16le", "16-bit": "pcm_s16le", "16bit": "pcm_s16le",
@@ -1080,12 +1117,10 @@ def build_ffmpeg_args(
         if not can_embed_art:
             cmd.append("-vn")
 
-        # Audio filters
+        # Audio filters: Resampling must precede loudnorm so that:
+        # 1. Loudnorm normalizes the resampled stream directly.
+        # 2. Resampling sinc reconstruction overshoot cannot breach the True Peak ceiling.
         audio_filters = []
-        if normalize_audio:
-            # Request linear processing and read FFmpeg's actual mode after encoding.
-            audio_filters.append(build_loudnorm_filter(measured_loudness))
-
         source_rate_matches = (
             input_sample_rate is not None
             and sample_rate
@@ -1093,7 +1128,11 @@ def build_ffmpeg_args(
         )
         # Avoid a high-quality resampler pass when the output rate already matches.
         if sample_rate and (normalize_audio or not source_rate_matches) and has_soxr_support():
-            audio_filters.append("aresample=resampler=soxr:precision=28:cutoff=0.99")
+            audio_filters.append("aresample=resampler=soxr:precision=28:cutoff=0.97:dither_method=triangular")
+
+        if normalize_audio:
+            # Request linear processing and read FFmpeg's actual mode after encoding.
+            audio_filters.append(build_loudnorm_filter(measured_loudness))
 
         if audio_filters:
             cmd.extend(["-af", ",".join(audio_filters)])
@@ -1538,7 +1577,7 @@ def _convert_media_impl(
         measured_loudness = None
         if normalize_audio and os.path.isfile(input_path):
             report(0.68, "Analyzing audio loudness dynamics (linear EBU R128 pass)...")
-            measured_loudness = measure_audio_loudness(input_path, ffmpeg_bin=ffmpeg_bin)
+            measured_loudness = measure_audio_loudness(input_path, ffmpeg_bin=ffmpeg_bin, sample_rate=sample_rate)
 
         report(0.70, f"Transcoding media to {target_format.upper()}...")
         cmd = build_ffmpeg_args(

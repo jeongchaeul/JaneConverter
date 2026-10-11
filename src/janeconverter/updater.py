@@ -199,7 +199,14 @@ def _check_release_updates_via_atom(
         return unavailable
 
     download_base = release_url.rsplit("/tag/", 1)[0] + f"/download/{tag}"
-    installer_name = f"JaneConverter-{latest_version}-windows-x64-setup.exe"
+    import platform
+    arch = "arm64" if platform.machine().lower() in {"arm64", "aarch64"} else "x86_64"
+    if sys.platform == "darwin":
+        installer_name = f"JaneConverter-{latest_version}-macos-{arch}.dmg"
+    elif sys.platform.startswith("linux"):
+        installer_name = f"JaneConverter-{latest_version}-linux-x86_64.AppImage"
+    else:
+        installer_name = f"JaneConverter-{latest_version}-windows-x64-setup.exe"
     installer_url = f"{download_base}/{installer_name}"
     return _release_update_result(
         current_version,
@@ -270,15 +277,31 @@ def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
         assets = []
     installer_url = ""
     installer_checksum_url = ""
-    installer_name = f"janeconverter-{latest_version}-windows-x64-setup.exe"
+    import platform
+    arch = "arm64" if platform.machine().lower() in {"arm64", "aarch64"} else "x86_64"
+    if sys.platform == "darwin":
+        candidate_names = {
+            f"janeconverter-{latest_version}-macos-{arch}.dmg",
+            "janeconverter-macos.dmg",
+        }
+    elif sys.platform.startswith("linux"):
+        candidate_names = {
+            f"janeconverter-{latest_version}-linux-x86_64.appimage",
+            "janeconverter-linux-x86_64.appimage",
+        }
+    else:
+        candidate_names = {
+            f"janeconverter-{latest_version}-windows-x64-setup.exe",
+            "janeconverter-setup.exe",
+        }
     for asset in assets:
         if not isinstance(asset, dict):
             continue
         asset_name = str(asset.get("name", "")).strip().lower()
         asset_url = _trusted_release_url(asset.get("browser_download_url"))
-        if asset_name in {installer_name, "janeconverter-setup.exe"}:
+        if asset_name in candidate_names:
             installer_url = asset_url
-        elif asset_name in {f"{installer_name}.sha256", "janeconverter-setup.exe.sha256"}:
+        elif any(asset_name == f"{name}.sha256" for name in candidate_names):
             installer_checksum_url = asset_url
 
     release_url = _trusted_release_url(release.get("html_url"))

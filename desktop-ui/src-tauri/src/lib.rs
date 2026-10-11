@@ -23,7 +23,7 @@ use process::{
 use rfd::FileDialog;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -56,7 +56,8 @@ fn is_commit_sha(value: &str) -> bool {
 }
 
 fn version_core_and_build(value: &str) -> Option<((u64, u64, u64), Option<u64>)> {
-    let (core, metadata) = value.split_once('+').unwrap_or((value, ""));
+    let clean = value.strip_prefix('v').unwrap_or(value);
+    let (core, metadata) = clean.split_once('+').unwrap_or((clean, ""));
     let mut parts = core.split('.');
     let core = (
         parts.next()?.parse().ok()?,
@@ -2281,12 +2282,10 @@ async fn check_updates(
     } else {
         command.arg("--check-updates");
     }
-    command
-        .current_dir(project_root())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    prepare_command(&mut command);
-    let mut payload = match command.output() {
+    command.current_dir(project_root());
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let output_res = crate::process::bounded_output(&mut command, Duration::from_secs(12), &cancel);
+    let mut payload = match output_res {
         Ok(output) if output.status.success() => {
             serde_json::from_slice(&output.stdout).unwrap_or_else(|_| serde_json::json!({}))
         }
@@ -2302,7 +2301,7 @@ async fn check_updates(
             return Err(if stderr.is_empty() { stdout } else { stderr });
         }
         Err(error) if is_commit_sha(BUILD_COMMIT) => serde_json::json!({
-            "engine": { "has_update": false, "online": false, "error": error.to_string() }
+            "engine": { "has_update": false, "online": false, "error": error }
         }),
         Err(error) => return Err(format!("Could not start update check: {error}")),
     };
@@ -2324,7 +2323,7 @@ async fn check_updates(
                 .version_comparator(|current, release| {
                     is_newer_updater_build(&current.to_string(), &release.version.to_string())
                 })
-                .timeout(Duration::from_secs(20))
+                .timeout(Duration::from_secs(12))
                 .build();
 
             let current_version = app.package_info().version.to_string();
@@ -2363,10 +2362,14 @@ async fn check_updates(
                         .unwrap_or_default()
                         .to_owned();
                     let version_commit = build_metadata_commit(&update.version).unwrap_or_default();
-                    if !is_commit_sha(&latest_commit)
-                        || !is_commit_sha(version_commit)
-                        || !latest_commit.eq_ignore_ascii_case(version_commit)
-                    {
+                    let commit_mismatch = if !version_commit.is_empty() {
+                        !is_commit_sha(&latest_commit)
+                            || !is_commit_sha(version_commit)
+                            || !latest_commit.eq_ignore_ascii_case(version_commit)
+                    } else {
+                        false
+                    };
+                    if commit_mismatch {
                         object.insert(
                             "repo".into(),
                             serde_json::json!({
@@ -2383,7 +2386,9 @@ async fn check_updates(
                                 "error": "The signed update metadata did not match its build."
                             }),
                         );
-                    } else if latest_commit.eq_ignore_ascii_case(BUILD_COMMIT) {
+                    } else if !latest_commit.is_empty()
+                        && latest_commit.eq_ignore_ascii_case(BUILD_COMMIT)
+                    {
                         object.insert(
                             "repo".into(),
                             serde_json::json!({
@@ -2414,7 +2419,7 @@ async fn check_updates(
                                 "is_git": false,
                                 "online": true,
                                 "current_commit": BUILD_COMMIT,
-                                "latest_commit": latest_commit,
+                                "latest_commit": if latest_commit.is_empty() { latest_version.clone() } else { latest_commit },
                                 "commits_behind": 1,
                                 "current_version": current_version,
                                 "latest_version": latest_version,
