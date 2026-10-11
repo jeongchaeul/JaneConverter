@@ -328,6 +328,28 @@ fn export_log_file(
 }
 
 #[tauri::command]
+fn set_taskbar_progress(
+    window: tauri::WebviewWindow,
+    progress: Option<u64>,
+    status: Option<String>,
+) -> Result<(), String> {
+    let bar_status = match status.as_deref() {
+        Some("normal") => Some(tauri::window::ProgressBarStatus::Normal),
+        Some("indeterminate") => Some(tauri::window::ProgressBarStatus::Indeterminate),
+        Some("paused") => Some(tauri::window::ProgressBarStatus::Paused),
+        Some("error") => Some(tauri::window::ProgressBarStatus::Error),
+        Some("none") | None => Some(tauri::window::ProgressBarStatus::None),
+        _ => Some(tauri::window::ProgressBarStatus::Normal),
+    };
+    window
+        .set_progress_bar(tauri::window::ProgressBarState {
+            status: bar_status,
+            progress,
+        })
+        .map_err(|error| format!("Could not set taskbar progress: {error}"))
+}
+
+#[tauri::command]
 fn choose_flp_file() -> Option<String> {
     FileDialog::new()
         .set_title("Choose FL Studio Project (.flp)")
@@ -2537,6 +2559,7 @@ pub fn run() {
             check_updates,
             install_update,
             export_log_file,
+            set_taskbar_progress,
         ])
         .run(tauri::generate_context!())
         .expect("error while running JaneConverter Desktop");

@@ -264,6 +264,7 @@ export interface JaneBridge {
   flpInspect(path: string): Promise<FlpProjectInfo>;
   flpDowngrade(source: string, targetVersion: string, targetBuild?: number, outputPath?: string, overwrite?: boolean): Promise<FlpDowngradeResult>;
   exportLogFile(content: string, defaultFilename?: string): Promise<string | null>;
+  setTaskbarProgress(progress?: number, status?: "normal" | "paused" | "error" | "none" | "indeterminate"): Promise<void>;
 }
 
 const demoSettings: ConverterSettings = {
@@ -395,6 +396,7 @@ const demoBridge: JaneBridge = {
     URL.revokeObjectURL(url);
     return defaultFilename;
   },
+  async setTaskbarProgress() {},
 };
 
 const isTauriRuntime = () => "__TAURI_INTERNALS__" in window;
@@ -456,6 +458,11 @@ const tauriBridge: JaneBridge = {
   installUpdate: () => invoke<void>("install_update"),
   exportLogFile: (content: string, defaultFilename?: string) =>
     invoke<string | null>("export_log_file", { content, defaultFilename: defaultFilename ?? null }),
+  setTaskbarProgress: (progress, status) =>
+    invoke<void>("set_taskbar_progress", {
+      progress: progress !== undefined ? Math.round(progress) : null,
+      status: status ?? null,
+    }),
 };
 
 export const bridge: JaneBridge = isTauriRuntime() ? tauriBridge : demoBridge;

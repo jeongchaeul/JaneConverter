@@ -141,6 +141,7 @@ export default function App() {
   const [jobId, setJobId] = useState("");
   const [paused, setPaused] = useState(false);
   const [captureBusy, setCaptureBusy] = useState(false);
+  const captureBusyRef = useRef(false);
   const cancelCaptureRef = useRef<(() => Promise<void>) | null>(null);
   const activeJobRef = useRef("");
   const activeJobSuggestLosslessRef = useRef(false);
@@ -222,6 +223,18 @@ export default function App() {
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [success]);
+
+  useEffect(() => {
+    if (jobId || captureBusy) {
+      const status = paused ? "paused" : "normal";
+      const pct = Math.min(100, Math.max(0, Math.round(progress * 100)));
+      void bridge.setTaskbarProgress(pct, status);
+    } else if (failure) {
+      void bridge.setTaskbarProgress(100, "error");
+    } else {
+      void bridge.setTaskbarProgress(undefined, "none");
+    }
+  }, [jobId, captureBusy, progress, paused, failure]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -398,14 +411,16 @@ export default function App() {
           const { formatLabel, qualityLabel } = describeOutputFormatAndQuality(effective, exportPath, fallbackNote);
           const fileName = baseNameFromPath(exportPath) || baseNameFromPath(ctx?.source || "") || "Converted media";
           setFailure(null);
-          setSuccess({
-            fileName,
-            formatLabel,
-            qualityLabel,
-            exportPath,
-            elapsedMs,
-            fallbackNote,
-          });
+          if (!captureBusyRef.current) {
+            setSuccess({
+              fileName,
+              formatLabel,
+              qualityLabel,
+              exportPath,
+              elapsedMs,
+              fallbackNote,
+            });
+          }
           recordTimingForPath(exportPath, elapsedMs);
           recordHistoryEntry({
             id: `${event.jobId}-${Date.now()}`,
@@ -428,12 +443,14 @@ export default function App() {
           const fallbackNote = detectFallbackNote(ctx?.logs ?? [], ctx?.forcedVideoFallback ?? false);
           const { formatLabel, qualityLabel } = describeOutputFormatAndQuality(effective, ctx?.exportedPath || "", fallbackNote);
           setSuccess(null);
-          setFailure({
-            title: "Conversion failed",
-            message: event.message,
-            suggestLossless: activeJobSuggestLosslessRef.current,
-            elapsedMs,
-          });
+          if (!captureBusyRef.current) {
+            setFailure({
+              title: "Conversion failed",
+              message: event.message,
+              suggestLossless: activeJobSuggestLosslessRef.current,
+              elapsedMs,
+            });
+          }
           recordHistoryEntry({
             id: `${event.jobId}-${Date.now()}`,
             timestamp: new Date().toISOString(),
@@ -688,6 +705,7 @@ export default function App() {
               onPauseToggle={pauseToggle}
               onCaptureBusyChange={(busy, cancelFn) => {
                 setCaptureBusy(busy);
+                captureBusyRef.current = busy;
                 cancelCaptureRef.current = cancelFn ?? null;
                 if (!busy && !activeJobRef.current) setPaused(false);
               }}

@@ -1,11 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ListMusic, Search, X } from "lucide-react";
+import { Check, ListMusic, ListPlus, Search, X } from "lucide-react";
 import type { PlaylistCatalog } from "../bridge";
 
-export function PlaylistDialog({ catalog, onClose, onConfirm }: { catalog: PlaylistCatalog; onClose: () => void; onConfirm: (indexes: string) => void }) {
+export function PlaylistDialog({
+  catalog,
+  onClose,
+  onConfirm,
+  onQueue,
+  initialIndexes,
+  isQueuedItem = false,
+}: {
+  catalog: PlaylistCatalog;
+  onClose: () => void;
+  onConfirm?: (indexes: string) => void;
+  onQueue?: (indexes: string, catalog: PlaylistCatalog) => void;
+  initialIndexes?: string;
+  isQueuedItem?: boolean;
+}) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<Set<number>>(() => new Set(catalog.items.map((item) => item.index)));
+  const [selected, setSelected] = useState<Set<number>>(() => {
+    if (initialIndexes && initialIndexes.trim()) {
+      const idxs = initialIndexes
+        .split(",")
+        .map((s) => parseInt(s.trim(), 10))
+        .filter((n) => !isNaN(n));
+      if (idxs.length > 0) return new Set(idxs);
+    }
+    return new Set(catalog.items.map((item) => item.index));
+  });
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return catalog.items;
@@ -56,9 +79,31 @@ export function PlaylistDialog({ catalog, onClose, onConfirm }: { catalog: Playl
           {visible.map((item) => <label key={item.index} className="flex cursor-pointer items-center gap-3 border-b border-white/[0.04] py-3 text-xs hover:bg-white/[0.02]"><input type="checkbox" checked={selected.has(item.index)} onChange={() => toggle(item.index)} className="size-4 accent-[#c52b68]" /><span className="w-8 font-mono text-[10px] text-zinc-700">{item.index}</span><span className="min-w-0 flex-1 truncate text-zinc-300">{item.title}<span className="ml-2 text-zinc-600">{item.artist}</span></span><span className="font-mono text-[10px] text-zinc-600">{item.duration}</span>{selected.has(item.index) && <Check className="size-3.5 text-emerald-400" />}</label>)}
           {!visible.length && <div className="py-10 text-center text-xs text-zinc-600">No tracks match this filter.</div>}
         </div>
-        <div className="flex items-center justify-between border-t border-white/[0.06] px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] px-5 py-4">
           <button type="button" onClick={onClose} className="subtle-button px-4 py-2 text-xs">Cancel</button>
-          <button type="button" disabled={!selected.size} onClick={() => onConfirm(Array.from(selected).sort((a, b) => a - b).join(","))} className="primary-button px-4 py-2 text-xs disabled:opacity-40">Convert selected tracks</button>
+          <div className="flex items-center gap-2">
+            {onQueue && (
+              <button
+                type="button"
+                disabled={!selected.size}
+                onClick={() => onQueue(Array.from(selected).sort((a, b) => a - b).join(","), catalog)}
+                className="subtle-button flex items-center gap-1.5 px-4 py-2 text-xs text-pink-300 hover:text-pink-200 disabled:opacity-40"
+              >
+                <ListPlus className="size-3.5" />
+                {isQueuedItem ? "Save track selection" : "Add playlist to queue"}
+              </button>
+            )}
+            {onConfirm && !isQueuedItem && (
+              <button
+                type="button"
+                disabled={!selected.size}
+                onClick={() => onConfirm(Array.from(selected).sort((a, b) => a - b).join(","))}
+                className="primary-button px-4 py-2 text-xs disabled:opacity-40"
+              >
+                Convert selected tracks
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </dialog>

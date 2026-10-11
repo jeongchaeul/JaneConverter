@@ -79,4 +79,56 @@ describe("PlaylistDialog", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("calls onQueue when Add playlist to queue is clicked", async () => {
+    const onQueue = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<PlaylistDialog catalog={catalog} onClose={vi.fn()} onQueue={onQueue} />);
+    });
+
+    const queueButton = Array.from(container.querySelectorAll("button")).find((btn) => btn.textContent?.includes("Add playlist to queue"));
+    expect(queueButton).toBeDefined();
+
+    await act(async () => {
+      queueButton?.click();
+    });
+
+    expect(onQueue).toHaveBeenCalledWith("1,2", catalog);
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("displays Save track selection and respects initialIndexes when isQueuedItem is true", async () => {
+    const onQueue = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <PlaylistDialog
+          catalog={catalog}
+          onClose={vi.fn()}
+          onQueue={onQueue}
+          initialIndexes="2"
+          isQueuedItem={true}
+        />
+      );
+    });
+
+    const saveButton = Array.from(container.querySelectorAll("button")).find((btn) => btn.textContent?.includes("Save track selection"));
+    expect(saveButton).toBeDefined();
+
+    await act(async () => {
+      saveButton?.click();
+    });
+
+    expect(onQueue).toHaveBeenCalledWith("2", catalog);
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });

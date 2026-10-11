@@ -490,4 +490,66 @@ describe("Converter account access feedback", () => {
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });
+
+  it("queues an item, displays it in the Conversion Queue, and allows removing it", async () => {
+    const view = renderView();
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "https://youtube.com/watch?v=leroy123");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const queueButton = Array.from(view.container.querySelectorAll("button")).find((btn) => btn.textContent?.trim() === "Queue");
+    expect(queueButton).toBeDefined();
+
+    await act(async () => {
+      queueButton?.click();
+    });
+
+    expect(view.container.textContent).toContain("Conversion Queue");
+    expect(view.container.textContent).toContain("https://youtube.com/watch?v=leroy123");
+
+    const removeButton = view.container.querySelector('button[title="Remove from queue"]') as HTMLButtonElement;
+    expect(removeButton).not.toBeNull();
+
+    await act(async () => {
+      removeButton.click();
+    });
+
+    expect(view.container.textContent).not.toContain("Conversion Queue");
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("starts the queued items sequentially when start queue is clicked", async () => {
+    const onStart = vi.fn().mockResolvedValue(true);
+    const view = renderView(undefined, undefined, onStart);
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "https://youtube.com/watch?v=item1");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const queueButton = Array.from(view.container.querySelectorAll("button")).find((btn) => btn.textContent?.trim() === "Queue");
+    await act(async () => {
+      queueButton?.click();
+    });
+
+    const startQueueButton = Array.from(view.container.querySelectorAll("button")).find((btn) => btn.textContent?.includes("Start queue"));
+    expect(startQueueButton).toBeDefined();
+
+    await act(async () => {
+      startQueueButton?.click();
+    });
+
+    expect(onStart).toHaveBeenCalledWith("https://youtube.com/watch?v=item1", undefined);
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
 });
