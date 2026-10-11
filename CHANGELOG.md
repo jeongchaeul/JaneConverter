@@ -5,6 +5,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-12 - Performance, Updater Resilience & Loudness Consistency
+
+### Added
+- Added Console log file export (`export_log_file`) allowing 1-click export of complete conversion session logs to text files.
+- Added live Windows taskbar green progress indication (`set_taskbar_progress`) tracking active conversion progress directly from the OS taskbar.
+- Added platform-aware release package asset detection for macOS `.dmg` (Apple Silicon and Intel) and Linux `.AppImage` in the update checker.
+
+### Fixed
+- Fixed high CPU transcode delay (+20s) on MP3 conversions by removing exhaustive LAME psychoacoustic search (`-compression_level 0`), restoring full multi-threaded ~80x encoding speeds.
+- Fixed permanent "Checking for updates..." UI freeze on macOS by replacing unbounded subprocess calls with bounded timeouts (`bounded_output`) in the native Tauri bridge.
+- Fixed macOS and Linux updater packaging by enabling the `--features updater` plugin during production builds and making SemVer release version checking resilient without requiring continuous commit metadata.
+- Fixed EBU R128 loudness normalization consistency by expanding target LRA dynamically to prevent dynamic AGC pumping, applying True Peak headroom protection, and ordering SoX resampling prior to loudnorm measurement passes.
+
 ## [2.2.9] - 2026-10-08 - Experimental FL Studio Downgrade & Theme Harmony
 
 ### Added
