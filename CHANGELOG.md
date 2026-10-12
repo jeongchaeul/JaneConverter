@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Added comprehensive legal paperwork framework: `DISCLAIMER.md` (Acceptable Use Policy, DMCA § 1201 Anti-Circumvention Declaration, Trademark Independence, FL Studio DAW Interoperability Statement, and Limitation of Liability), `SECURITY.md` (Security Policy, Responsible Disclosure SLAs, and Air-Gapped Zero-Telemetry guarantees), `CONTRIBUTING.md` (Developer Certificate of Origin 1.1 and Multi-Tier Quality Verification Gates), and `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).
+- Added in-app "Legal & Privacy Safeguards" panel to `SettingsView` and updated `Topbar` quick guide dialog with direct links to legal documentation and DMCA compliance statements.
+- Added comprehensive Third-Party License inventory in `packaging/THIRD-PARTY-NOTICES.md` cataloging FFmpeg/FFprobe, yt-dlp, Tauri, React, Lucide, Framer Motion, and runtime dependencies.
+
+### Fixed
+- Fixed impending 2027 engine update cutoff in `updater.py` and `pyproject.toml` by supporting multi-year CalVer yt-dlp releases through 2029.
+- Fixed non-atomic FLP file writes in `flp/downgrade.py` by staging to `.tmp` files with `os.fsync` before atomic replacement via `os.replace`.
+- Fixed silent truncation of malformed variable-length FLP event payloads in `flp/parser.py`, raising explicit `FLPParseError` on payload shortages.
+- Fixed POSIX publication failure on filesystems lacking hard links (FAT32, exFAT, network shares) in `converter.py` by catching `OSError` and falling back cleanly to atomic moving.
+
 ## [2.3.0] - 2026-10-12 - Performance, Updater Resilience & Loudness Consistency
 
 ### Added

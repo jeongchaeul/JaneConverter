@@ -262,3 +262,20 @@ def test_adaptive_build_downgrade(tmp_path):
     assert info["build"] == 4004
 
 
+def test_truncated_event_raises_flp_parse_error():
+    # Build a minimal FLP header
+    flhd = b"FLhd" + struct.pack("<I", 6) + struct.pack("<HHH", 0, 2, 96)
+    
+    # 1. Truncated variable-length payload (declares 20 bytes, only provides 4)
+    bad_var_payload = b"\xc7" + write_varint(20) + b"test"
+    corrupt_fldt = b"FLdt" + struct.pack("<I", len(bad_var_payload)) + bad_var_payload
+    with pytest.raises(FLPParseError, match="Truncated variable-length payload"):
+        parse_flp(flhd + corrupt_fldt)
+
+    # 2. Truncated 4-byte payload (declares event 130 but provides only 2 bytes)
+    bad_4byte_payload = b"\x82\x01\x02"
+    corrupt_fldt2 = b"FLdt" + struct.pack("<I", len(bad_4byte_payload)) + bad_4byte_payload
+    with pytest.raises(FLPParseError, match="Truncated 4-byte event payload"):
+        parse_flp(flhd + corrupt_fldt2)
+
+

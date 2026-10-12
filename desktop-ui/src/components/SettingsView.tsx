@@ -367,6 +367,37 @@ export function SettingsView({
           </div>
         )}
       </section>
+      <section className="panel space-y-3 p-5">
+        <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+          <ShieldCheck className="size-4 text-emerald-400" /> Legal & Privacy Safeguards
+        </div>
+        <p className="text-xs leading-relaxed text-zinc-400">
+          JaneConverter is free, open-source software by <span className="text-zinc-200 font-medium">project//aspyr</span>. All conversions, audio resampling, and project patchings run 100% locally on your hardware with zero telemetry. The software complies with DMCA § 1201 and does not decrypt or circumvent DRM. Use only with content you own or are legally authorized to convert.
+        </p>
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => void bridge.openUrl("https://github.com/jeongchaeul/JaneConverter/blob/main/DISCLAIMER.md")}
+            className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
+          >
+            <ExternalLink className="size-3" /> Legal Disclaimer & Terms
+          </button>
+          <button
+            type="button"
+            onClick={() => void bridge.openUrl("https://github.com/jeongchaeul/JaneConverter/blob/main/SECURITY.md")}
+            className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
+          >
+            <ExternalLink className="size-3" /> Security Policy
+          </button>
+          <button
+            type="button"
+            onClick={() => void bridge.openUrl("https://github.com/jeongchaeul/JaneConverter/blob/main/packaging/THIRD-PARTY-NOTICES.md")}
+            className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
+          >
+            <ExternalLink className="size-3" /> Third-Party Notices
+          </button>
+        </div>
+      </section>
       <div className={`rounded-lg border px-3 py-2 text-[11px] ${message ? "border-[#3b82f6]/15 bg-[#3b82f6]/[0.04] text-zinc-300" : "border-transparent text-zinc-600"}`} role="status" aria-live="polite">{message || "Update and relaunch results appear here."}</div>
       <div className="flex items-center gap-2 text-[11px] text-zinc-700"><ExternalLink size={12} /> {runtime?.packaged ? "Application data uses your OS user-data directory." : "Project-local storage is the default."} User-selected folders are always respected.</div>
     </div>

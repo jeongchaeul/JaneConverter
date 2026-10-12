@@ -256,8 +256,15 @@ macOS arm64 or x86_64 must be built natively on the matching architecture. Insta
 
 Tagged `v*` releases and rolling `continuous` updater feeds are built and published by GitHub Actions with pinned FFmpeg asset SHA-256 digests. The release workflow uses GPL FFmpeg builds, so distributors must preserve the required notices and satisfy the corresponding source obligations.
 
-## Legal
+## Legal & Governance
 
-Use JaneConverter only with content you own or have permission to download. Platform terms and copyright law still apply. Local files remain local; update checks and online extraction make network requests.
+JaneConverter is distributed for lawful, personal, non-commercial media processing, educational research, and format interoperability.
 
-Released under the [MIT License](LICENSE). Copyright © 2026 project//aspyr.
+- [Legal Disclaimer & Acceptable Use Policy](DISCLAIMER.md)
+- [Security Policy & Vulnerability Reporting](SECURITY.md)
+- [Third-Party Software Notices & Licenses](packaging/THIRD-PARTY-NOTICES.md)
+- [Contributing Guidelines & DCO](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [MIT License](LICENSE)
+
+Copyright © 2026 project//aspyr. All third-party trademarks belong to their respective holders and are referenced for identification and interoperability purposes only.

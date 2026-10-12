@@ -348,8 +348,20 @@ def downgrade_flp_file(
     if out_dir and not os.path.exists(out_dir):
         os.makedirs(out_dir, exist_ok=True)
 
-    with open(target_dest, "wb") as f:
-        f.write(downgraded_bytes)
+    temp_target = f"{target_dest}.tmp.{os.getpid()}"
+    try:
+        with open(temp_target, "wb") as f:
+            f.write(downgraded_bytes)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_target, target_dest)
+    except Exception:
+        if os.path.exists(temp_target):
+            try:
+                os.remove(temp_target)
+            except OSError:
+                pass
+        raise
 
     # Calculate actual event count for summary
     try:

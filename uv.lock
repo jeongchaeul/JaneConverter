@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -444,7 +444,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=10.0.0,<13" },
     { name = "psutil", specifier = ">=5.9.0,<8" },
     { name = "requests", specifier = ">=2.31.0,<3" },
-    { name = "yt-dlp", extras = ["default"], specifier = ">=2025.1.0,<2027" },
+    { name = "yt-dlp", extras = ["default"], specifier = ">=2025.1.0,<2029" },
 ]
 
 [package.metadata.requires-dev]

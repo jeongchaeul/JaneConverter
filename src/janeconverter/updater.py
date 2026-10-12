@@ -529,13 +529,13 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None,
         log(f"Extractor engine is already up to date (v{info['current_version']}).")
         return False
 
-    target_version = info["latest_version"]
-    try:
-        target_major = int(str(target_version).split(".", 1)[0])
-    except (TypeError, ValueError):
+    target_version = str(info["latest_version"]).strip()
+    match = re.match(r"^(\d{4})(?:\.\d+)+$", target_version)
+    if not match:
         log(f"Extractor engine upgrade skipped: unsupported version '{target_version}'.")
         return False
-    if target_major >= 2027:
+    target_year = int(match.group(1))
+    if target_year < 2024 or target_year > 2029:
         log(f"Extractor engine upgrade skipped: v{target_version} is outside the tested dependency range.")
         return False
     log(f"New engine release detected: v{target_version}. Upgrading now...")

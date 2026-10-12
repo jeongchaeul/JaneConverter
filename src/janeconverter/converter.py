@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import shutil
+import errno
 import threading
 import subprocess
 import json
@@ -750,8 +751,22 @@ def _publish_staged_file(staged_path: str, output_dir: str, filename: str) -> st
                 os.rename(staged_path, candidate)
             else:
                 # POSIX rename replaces existing files. A same-volume hard link
-                # gives atomic no-clobber publication instead.
-                os.link(staged_path, candidate)
+                # gives atomic no-clobber publication when supported.
+                try:
+                    os.link(staged_path, candidate)
+                except OSError as err:
+                    # Fallback for filesystems lacking hardlink support (e.g. FAT32/exFAT/NFS)
+                    unsupported_codes = {errno.EPERM, errno.ENOSYS, errno.EXDEV}
+                    if hasattr(errno, "EOPNOTSUPP"):
+                        unsupported_codes.add(errno.EOPNOTSUPP)
+                    if hasattr(errno, "ENOTSUP"):
+                        unsupported_codes.add(errno.ENOTSUP)
+                    if err.errno in unsupported_codes:
+                        if os.path.exists(candidate):
+                            raise FileExistsError(f"Candidate {candidate} exists.")
+                        shutil.move(staged_path, candidate)
+                    else:
+                        raise
         except FileExistsError:
             counter += 1
             candidate = os.path.join(output_dir, f"{stem}_{counter}{extension}")

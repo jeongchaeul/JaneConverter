@@ -37,6 +37,9 @@ export function Topbar({ runtime }: { runtime: RuntimeInfo | null }) {
             <p><span className="text-zinc-200">Convert:</span> paste a supported public link or choose a local media file, select your output settings, then start the conversion.</p>
             <p><span className="text-zinc-200">Need details?</span> Open Live console to see extraction, FFmpeg, and failure messages.</p>
             <p><span className="text-zinc-200">Where are files?</span> Converted media uses the {runtime?.packaged ? "OS user-data directory" : "project-local converted folder"} unless you choose another export folder.</p>
+            <p className="border-t border-white/[0.06] pt-2 text-[11px] text-zinc-400">
+              <span className="text-zinc-300">Legal & Privacy:</span> 100% local processing with zero telemetry. Complies with DMCA § 1201 (no DRM circumvention). See Settings for full disclaimer and security policies.
+            </p>
           </div>
           <button type="button" onClick={() => setHelpOpen(false)} className="subtle-button mt-5 px-3 py-2 text-xs">Close</button>
         </section>

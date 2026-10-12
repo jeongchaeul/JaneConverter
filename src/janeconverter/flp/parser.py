@@ -75,13 +75,23 @@ def parse_flp(data: bytes) -> FLPProject:
                 ev_id = ev_id_byte[0]
                 if ev_id < 64:
                     ev_data = data_stream.read(1)
+                    if len(ev_data) < 1:
+                        raise FLPParseError(f"Truncated 1-byte event payload for event {ev_id}.")
                 elif ev_id < 128:
                     ev_data = data_stream.read(2)
+                    if len(ev_data) < 2:
+                        raise FLPParseError(f"Truncated 2-byte event payload for event {ev_id}.")
                 elif ev_id < 192:
                     ev_data = data_stream.read(4)
+                    if len(ev_data) < 4:
+                        raise FLPParseError(f"Truncated 4-byte event payload for event {ev_id}.")
                 else:
                     var_len = parse_varint(data_stream)
                     ev_data = data_stream.read(var_len)
+                    if len(ev_data) < var_len:
+                        raise FLPParseError(
+                            f"Truncated variable-length payload for event {ev_id}: expected {var_len} bytes, got {len(ev_data)}."
+                        )
                 events.append(FLPEvent(event_id=ev_id, data=ev_data))
         else:
             # Skip unknown or auxiliary chunks (e.g., sample chunks or metadata)
