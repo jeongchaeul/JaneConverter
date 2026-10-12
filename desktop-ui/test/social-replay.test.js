@@ -1,9 +1,14 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
 import { expect, test } from "vitest";
 
-const rust = readFileSync(resolve(process.cwd(), "src-tauri/src/social_photo_capture.rs"), "utf8");
+const candidatePaths = [
+  resolve(process.cwd(), "src-tauri/src/social_photo_capture.rs"),
+  resolve(process.cwd(), "desktop-ui/src-tauri/src/social_photo_capture.rs"),
+];
+const rustPath = candidatePaths.find(existsSync) ?? candidatePaths[0];
+const rust = readFileSync(rustPath, "utf8");
 const start = rust.indexOf('r#"(() => {{');
 const script = rust.slice(start + 3, rust.indexOf('"#', start))
   .replace("{nonce_json}", '"fixture"').replace("{platform_json}", '"twitter"')

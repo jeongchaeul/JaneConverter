@@ -149,6 +149,24 @@ def identify_source_type(url_or_path: str) -> str:
         return "pinterest"
     if matches("twitch.tv"):
         return "twitch"
+    if matches("bilibili.com", "b23.tv"):
+        return "bilibili"
+    if matches("vimeo.com"):
+        return "vimeo"
+    if matches("dailymotion.com", "dai.ly"):
+        return "dailymotion"
+    if matches("rumble.com"):
+        return "rumble"
+    if matches("bandcamp.com"):
+        return "bandcamp"
+    if matches("patreon.com"):
+        return "patreon"
+    if matches("threads.net"):
+        return "threads"
+    if matches("bsky.app"):
+        return "bluesky"
+    if matches("streamable.com"):
+        return "streamable"
     return "generic_url"
 
 def is_playlist_url(url_or_path: str) -> bool:
@@ -198,14 +216,38 @@ def build_video_format_selector(resolution: str = "original") -> str:
     H.264/VP9 stream is available. The consumer-facing resolution choice should
     limit the maximum size only when the user explicitly requests one.
     """
+    res_str = (resolution or "original").strip().lower()
+    if res_str in ("original", "source", "best", "max"):
+        return "bv*+ba/b"
+
     max_heights = {
+        "8k": 4320,
         "4k": 2160,
+        "2k": 1440,
         "1440p": 1440,
+        "1440": 1440,
         "1080p": 1080,
+        "1080": 1080,
         "720p": 720,
+        "720": 720,
         "480p": 480,
+        "480": 480,
+        "360p": 360,
+        "360": 360,
+        "240p": 240,
+        "240": 240,
+        "144p": 144,
+        "144": 144,
     }
-    max_height = max_heights.get((resolution or "original").lower())
+    max_height = max_heights.get(res_str)
+    if max_height is None:
+        m = re.match(r"^(\d+)p?$", res_str)
+        if m:
+            try:
+                max_height = int(m.group(1))
+            except ValueError:
+                pass
+
     if max_height is None:
         return "bv*+ba/b"
     return f"bv*[height<={max_height}]+ba/b[height<={max_height}]/best[height<={max_height}]/b/best"
