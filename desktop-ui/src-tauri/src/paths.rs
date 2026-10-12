@@ -456,6 +456,7 @@ pub fn settings_get_internal() -> ConverterSettings {
         save_cover: parse_bool(&values, "save_cover", true),
         save_metadata: parse_bool(&values, "save_metadata", true),
         allow_png_fallback: parse_bool(&values, "allow_png_fallback", false),
+        open_in_browser: parse_bool(&values, "open_in_browser", false),
         retries: values
             .get("retries")
             .and_then(|value| value.parse().ok())
@@ -504,6 +505,14 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
         (
             "allow_png_fallback",
             if settings.allow_png_fallback {
+                "true"
+            } else {
+                "false"
+            },
+        ),
+        (
+            "open_in_browser",
+            if settings.open_in_browser {
                 "true"
             } else {
                 "false"

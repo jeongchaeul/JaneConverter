@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowRight, Check, Copy, FileAudio, FileImage, FileVideo, FolderOpen, HelpCircle, Inbox, RefreshCw, Trash2, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, ArrowRight, Check, CheckCircle2, Copy, FileAudio, FileImage, FileVideo, FolderOpen, HelpCircle, Inbox, Info, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import type { AccessStatus, ConverterSettings, FetchedMedia } from "../bridge";
 import { bridge } from "../bridge";
 
@@ -41,13 +41,15 @@ function isInside(root: string, candidate: string) {
   return candidateKey === rootKey || candidateKey.startsWith(rootKey + "\\");
 }
 
-export function FetchedMediaView({ access, settings, onSettings, onSelect, onDiscard, onStatus }: {
+export function FetchedMediaView({ access, settings, onSettings, onSelect, onDiscard, onStatus, onCreateAccess, onClearAccess }: {
   access: AccessStatus;
   settings: ConverterSettings;
   onSettings: (next: ConverterSettings) => void;
   onSelect: (item: FetchedMedia) => void;
   onDiscard: (item: FetchedMedia) => void;
   onStatus: (message: string) => void;
+  onCreateAccess?: () => Promise<AccessStatus>;
+  onClearAccess?: () => Promise<void>;
 }) {
   const [items, setItems] = useState<FetchedMedia[]>([]);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
@@ -57,6 +59,9 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
   const [refreshing, setRefreshing] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
+  const [accessBusy, setAccessBusy] = useState(false);
+  const [accessNotice, setAccessNotice] = useState<string | null>(null);
+  const [accessNoticeTone, setAccessNoticeTone] = useState<"info" | "success" | "error">("info");
   const refreshInFlight = useRef(false);
   const mountedRef = useRef(true);
   const thumbnailPaths = useRef(new Set<string>());
@@ -168,6 +173,52 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
     }
   };
 
+  async function handleCreateAccess() {
+    if (accessBusy) return;
+    setAccessBusy(true);
+    setAccessNotice(null);
+    try {
+      if (onCreateAccess) {
+        await onCreateAccess();
+      } else {
+        await bridge.createAccessLink("");
+      }
+      setAccessNoticeTone("success");
+      setAccessNotice("Access page opened in your browser. Complete pairing in the extension.");
+      onStatus("Access page opened. Complete pairing in the browser extension.");
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      setAccessNoticeTone("error");
+      setAccessNotice(msg);
+      onStatus(msg);
+    } finally {
+      setAccessBusy(false);
+    }
+  }
+
+  async function handleClearAccess() {
+    if (accessBusy) return;
+    setAccessBusy(true);
+    setAccessNotice(null);
+    try {
+      if (onClearAccess) {
+        await onClearAccess();
+      } else {
+        await bridge.clearAccessLink();
+      }
+      setAccessNoticeTone("info");
+      setAccessNotice("Browser access session cleared.");
+      onStatus("Browser access session cleared.");
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      setAccessNoticeTone("error");
+      setAccessNotice(msg);
+      onStatus(msg);
+    } finally {
+      setAccessBusy(false);
+    }
+  }
+
   return (
     <section className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -191,14 +242,93 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
         </div>
       </div>
 
+      {/* Browser Extension Bridge & Session Pairing Card */}
       <div className="panel p-5">
-        <div className="flex items-start gap-3">
-          <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-[#c52b68]/25 bg-[#c52b68]/[0.08]"><Inbox className="size-5 text-[#d75b88]" /></div>
-          <div>
-            <div className="text-sm font-medium text-zinc-200">One confirmed session, many captures</div>
-            <p className="mt-1 text-xs leading-relaxed text-zinc-600">JaneConverter stores only the media you explicitly capture. The selected folder is persistent, so clearing access ends the browser session without deleting these captured files.</p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+              <LockKeyhole className="size-4 text-zinc-400" />
+              <span>Browser Extension Bridge</span>
+              <span
+                className={`rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase ${
+                  access.bridgeConnected
+                    ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                    : access.browser
+                    ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                    : access.active
+                    ? "border-amber-400/30 bg-amber-400/10 text-amber-300"
+                    : "border-white/[0.10] bg-white/[0.03] text-zinc-400"
+                }`}
+              >
+                {access.bridgeConnected
+                  ? `Connected (${access.browser || "Active"})`
+                  : access.browser
+                  ? `Access in ${access.browser}`
+                  : access.active
+                  ? "Access page open"
+                  : "Standby"}
+              </span>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
+              {access.bridgeConnected
+                ? `Browser Capture extension is connected through ${access.browser || "your browser"}. Captured items stream directly into this tab.`
+                : access.active
+                ? "The authorization page is open in your browser. Open the JaneConverter Browser Capture extension and click confirm to begin sending media."
+                : "For websites with DRM or visual-only players that cannot be fetched by URL, pair the JaneConverter Browser Bridge extension to capture media from active browser tabs."}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowGuide(true)}
+              className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs text-pink-300 border-[#c52b68]/30 hover:border-[#c52b68]/60"
+            >
+              <HelpCircle className="size-3.5 text-[#d75b88]" /> Extension guide
+            </button>
+            {access.active ? (
+              <button
+                type="button"
+                disabled={accessBusy}
+                onClick={() => void handleClearAccess()}
+                className="subtle-button px-3 py-2 text-xs text-zinc-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {accessBusy ? "Disconnecting..." : "Clear access"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={accessBusy}
+                onClick={() => void handleCreateAccess()}
+                className="primary-button flex items-center gap-2 px-3.5 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {accessBusy ? <LoaderCircle className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />}
+                {accessBusy ? "Opening access page..." : "Create access link"}
+              </button>
+            )}
           </div>
         </div>
+        {accessNotice && (
+          <div
+            role="status"
+            aria-live="polite"
+            className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[11px] leading-relaxed ${
+              accessNoticeTone === "success"
+                ? "border-emerald-400/20 bg-emerald-400/[0.05] text-emerald-300"
+                : accessNoticeTone === "error"
+                ? "border-rose-400/20 bg-rose-400/[0.05] text-rose-300"
+                : "border-white/[0.08] bg-white/[0.025] text-zinc-400"
+            }`}
+          >
+            {accessNoticeTone === "success" ? (
+              <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" />
+            ) : accessNoticeTone === "error" ? (
+              <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+            ) : (
+              <Info className="mt-0.5 size-3.5 shrink-0" />
+            )}
+            <span>{accessNotice}</span>
+          </div>
+        )}
       </div>
 
       <div className="panel p-5">
@@ -212,7 +342,7 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
         </div>
       </div>
       {!items.length ? (
-        <div className="panel p-10 text-center text-sm text-zinc-500">{access.active ? "Your Media Capturer is ready. Capture media from the active browser page and it will appear here automatically." : "No captured media is saved yet. Create and confirm browser access from the Converter tab to begin."}</div>
+        <div className="panel p-10 text-center text-sm text-zinc-500">{access.active ? "Your Media Capturer is ready. Capture media from the active browser page and it will appear here automatically." : "No captured media is saved yet. Pair your browser extension above and capture media from any active tab to begin."}</div>
       ) : (
         <div className="space-y-2">
           {items.map((item, index) => (

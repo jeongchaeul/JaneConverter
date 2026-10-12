@@ -155,4 +155,39 @@ it("provides a quiet, clickable manual refresh control", async () => {
 
     await act(async () => { root.unmount(); });
     container.remove();
-  });});
+  });  it("opens a browser capture session from Media Capturer", async () => {
+    const onCreateAccess = vi.fn().mockResolvedValue({ active: true, link: "http://127.0.0.1:4321/access/test", browser: "", bridgeConnected: false });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <FetchedMediaView
+          access={{ active: false, link: "", browser: "", bridgeConnected: false }}
+          settings={{ outputDir: "converted", fetchedDir: "fetched", category: "Music", format: "mp3", bitrate: "320k", sampleRate: 48000, resolution: "original", normalize: false, useGpu: false, saveCover: true, saveMetadata: true, retries: 2 }}
+          onSettings={vi.fn()}
+          onSelect={vi.fn()}
+          onDiscard={vi.fn()}
+          onStatus={vi.fn()}
+          onCreateAccess={onCreateAccess}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const button = Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.includes("Create access link"));
+    expect(button).toBeDefined();
+
+    await act(async () => {
+      button?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("Access page opened");
+    expect(onCreateAccess).toHaveBeenCalled();
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+});

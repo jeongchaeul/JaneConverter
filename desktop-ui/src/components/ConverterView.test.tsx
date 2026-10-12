@@ -82,17 +82,20 @@ describe("Converter account access feedback", () => {
     bridge.openUrl.mockResolvedValue(undefined);
   });
 
-  it("opens a generic browser capture session without a source URL", async () => {
+  it("offers Open in browser button when source URL is provided", async () => {
     const view = renderView();
-    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.includes("Create access link"));
-
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Source media URL or local path"]');
     await act(async () => {
-      button?.click();
-      await Promise.resolve();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "https://music.apple.com/us/album/test/123");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+      input?.dispatchEvent(new Event("change", { bubbles: true }));
     });
 
-    expect(view.container.querySelector('[role="status"]')?.textContent).toContain("Access page opened");
-    expect(view.onCreateAccess).toHaveBeenCalledWith("");
+    const openBtn = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.includes("Open in browser"));
+    expect(openBtn).toBeDefined();
+
+    await act(async () => { openBtn?.click(); });
+    expect(bridge.openUrl).toHaveBeenCalledWith("https://music.apple.com/us/album/test/123");
 
     await act(async () => { view.root.unmount(); });
     view.container.remove();
@@ -194,33 +197,34 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
-  it("shows where the user is in the access handoff", async () => {
+  it("displays revised source notes for Apple Music Mahoraga fallback, Spotify, and browser session", async () => {
     const view = renderView();
-    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Source media URL or local path"]');
-    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.includes("Create access link"));
+    const notesBtn = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.includes("Source notes and fallback engine"));
+    expect(notesBtn).toBeDefined();
 
-    await act(async () => {
-      if (input) {
-        const setNativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-        setNativeValue?.call(input, "https://example.com/private-media");
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-      button?.click();
-      await Promise.resolve();
-    });
-
-    expect(view.container.querySelector('[role="status"]')?.textContent).toContain("Access page opened");
+    await act(async () => { notesBtn?.click(); });
+    expect(view.container.textContent).toContain("Apple Music (Mahoraga Fallback)");
+    expect(view.container.textContent).toContain("Spotify & Private Media");
+    expect(view.container.textContent).toContain("Media Capturer Extension");
 
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });
 
-  it("tells the user to capture media after browser access is confirmed", async () => {
-    const view = renderView(undefined, { active: true, link: "http://127.0.0.1:4321/access/test", browser: "Vivaldi", bridgeConnected: false });
+  it("auto-opens online source in browser when openInBrowser setting is enabled", async () => {
+    const onStart = vi.fn().mockResolvedValue(undefined);
+    const view = renderView(undefined, undefined, onStart, null, undefined, { openInBrowser: true });
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Source media URL or local path"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "https://www.facebook.com/reel/12345");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+      input?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
 
-    expect(view.container.querySelector('[role="status"]')?.textContent).toContain("Browser Capture extension");
-    expect(view.container.textContent).toContain("capture the visible media");
+    const convertBtn = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.includes("Convert media"));
+    await act(async () => { convertBtn?.click(); });
+
+    expect(bridge.openUrl).toHaveBeenCalledWith("https://www.facebook.com/reel/12345");
 
     await act(async () => { view.root.unmount(); });
     view.container.remove();

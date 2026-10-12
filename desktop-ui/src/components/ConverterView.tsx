@@ -14,6 +14,7 @@ import {
   Files,
   FileVideo,
   FolderOpen,
+  Inbox,
   Info,
   Link2,
   ListMusic,
@@ -786,6 +787,9 @@ export function ConverterView({
       return;
     }
     const trimmedSource = source.trim();
+    if (settings.openInBrowser && /^https?:\/\//i.test(trimmedSource)) {
+      void bridge.openUrl(trimmedSource).catch(() => {});
+    }
     const photoPlatform = socialPhotoPlatform(trimmedSource);
     const explicitVideoFormat = activeCategory === "Video" && isVideo && !isSourceFormat;
     if (explicitVideoFormat && (isFacebookPostLink(trimmedSource) || isInstagramVideoRoute(trimmedSource))) {
@@ -1095,81 +1099,16 @@ export function ConverterView({
           >
             <ListPlus className="size-3.5" /> Queue
           </button>
-        </div>
-
-        {/* Account Access */}
-        <div className="mt-5 border-t border-white/[0.06] pt-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-xs text-zinc-400">
-              <LockKeyhole className="size-3.5 text-zinc-600" /> Optional browser capture <span className="text-zinc-700">- session only</span>
-            </div>
-            <span
-              className={`text-[11px] ${
-                access.bridgeConnected
-                  ? "text-emerald-400"
-                  : access.browser
-                  ? "text-emerald-400"
-                  : access.active
-                  ? "text-amber-300"
-                  : "text-zinc-600"
-              }`}
+          {source.trim().startsWith("http") && (
+            <button
+              type="button"
+              disabled={facebookCaptureBusy || socialCaptureBusy}
+              onClick={() => void bridge.openUrl(source.trim())}
+              className="subtle-button flex items-center gap-1.5 px-3 text-xs text-zinc-300 hover:text-white"
+              title="Open this link in your default browser to view or warm up session cookies"
             >
-              {access.bridgeConnected
-                ? `Browser capture received through ${access.browser || "browser"}`
-                : access.browser
-                ? `Access confirmed in ${access.browser}`
-                : access.active
-                ? "Access page open"
-                : "Public access first"}
-            </span>
-          </div>
-          <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-zinc-600">
-            {selectedCapture
-              ? "Media Capturer item selected. Choose your output settings and convert it whenever you are ready."
-              : access.bridgeConnected
-              ? "Browser Capture connected for this session. Keep capturing from the active browser page; every item is kept temporarily in the Media Capturer tab. This access session does not affect unrelated URL or local-file conversions."
-              : access.active
-              ? "Open the media in this browser, sign in if needed, confirm access here, then open the JaneConverter Browser Capture extension. Choose Capture current media or Capture story sequence. Unrelated URL and local-file conversions remain public/local."
-              : "Public access is tried first. If a supported site requires sign-in, yt-dlp automatically retries using your default browser's existing session. Cookies are used temporarily and are not exported to a file. Browser Capture below offers another way to send visible media to JaneConverter."}
-          </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {access.active ? (
-              <button type="button" disabled={accessBusy} onClick={() => void clearAccess()} className="subtle-button px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">
-                {accessBusy ? "Working..." : "Clear access"}
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={accessBusy || running}
-                onClick={() => void createAccess()}
-                className="subtle-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {accessBusy ? <LoaderCircle className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />}{" "}
-                {accessBusy ? "Opening access page..." : "Create access link"}
-              </button>
-            )}
-          </div>
-          {accessNotice && (
-            <div
-              role="status"
-              aria-live="polite"
-              className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[11px] leading-relaxed ${
-                accessNoticeTone === "success"
-                  ? "border-emerald-400/20 bg-emerald-400/[0.05] text-emerald-300"
-                  : accessNoticeTone === "error"
-                  ? "border-rose-400/20 bg-rose-400/[0.05] text-rose-300"
-                  : "border-white/[0.08] bg-white/[0.025] text-zinc-400"
-              }`}
-            >
-              {accessNoticeTone === "success" ? (
-                <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" />
-              ) : accessNoticeTone === "error" ? (
-                <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
-              ) : (
-                <Info className="mt-0.5 size-3.5 shrink-0" />
-              )}
-              <span>{accessNotice}</span>
-            </div>
+              <ExternalLink className="size-3.5 text-zinc-400" /> Open in browser
+            </button>
           )}
         </div>
 
@@ -1178,21 +1117,27 @@ export function ConverterView({
           onClick={() => setNotesOpen((value) => !value)}
           className="mt-4 flex items-center gap-2 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
         >
-          <Info className="size-3.5" /> Source notes and common failures <span className="text-zinc-700">{notesOpen ? "Hide" : "Show"}</span>
+          <Info className="size-3.5" /> Source notes and fallback engine <span className="text-zinc-700">{notesOpen ? "Hide" : "Show"}</span>
         </button>
         {notesOpen && (
           <div className="mt-3 grid gap-3 rounded-xl border border-white/[0.06] bg-black/15 p-4 text-[11px] leading-relaxed text-zinc-500 md:grid-cols-3">
             <div>
-              <div className="mb-1 text-zinc-300">Apple Music</div>
-              Public catalog links provide metadata and artwork, not a normal downloadable subscription stream. Region restrictions, removed tracks, music videos, alternate versions, and missing public matches can fail. Direct song links with a track selector work best.
+              <div className="mb-1 flex items-center gap-1.5 font-medium text-zinc-300">
+                <Music2 className="size-3.5 text-pink-400" /> Apple Music (Mahoraga Fallback)
+              </div>
+              Direct audio extraction requires an active Apple Music subscription in your browser session. If you are not signed in, the initial direct stream fetch is expected to fail—JaneConverter automatically falls back to parse playlist metadata and match lossless audio across other public platforms.
             </div>
             <div>
-              <div className="mb-1 text-zinc-300">Spotify</div>
-              Spotify provides metadata; JaneConverter searches supported public sources for a matching stream. Private, deleted, region-locked, or mismatched tracks can fail.
+              <div className="mb-1 flex items-center gap-1.5 font-medium text-zinc-300">
+                <ShieldCheck className="size-3.5 text-emerald-400" /> Spotify & Private Media
+              </div>
+              Spotify tracklists are parsed into metadata; JaneConverter finds matching public streams automatically. For friends-only or login-gated posts (Facebook, Instagram, YouTube), JaneConverter reads your default browser's active session. Opening the link once in your browser freshens tokens.
             </div>
             <div>
-              <div className="mb-1 text-zinc-300">Other sources and files</div>
-              Age gates, login walls, bot checks, rate limits, provider changes, unreadable local files, FFmpeg availability, permissions, and free disk space can affect conversion. Console has the exact detail.
+              <div className="mb-1 flex items-center gap-1.5 font-medium text-zinc-300">
+                <Inbox className="size-3.5 text-sky-400" /> Media Capturer Extension
+              </div>
+              For streams locked behind DRM or players without direct audio/video URLs, use the JaneConverter Browser Bridge in the Media Capturer tab to record playback streams directly into your local library.
             </div>
           </div>
         )}

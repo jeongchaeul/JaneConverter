@@ -16,6 +16,8 @@ pub struct ConverterSettings {
     pub save_metadata: bool,
     #[serde(default)]
     pub allow_png_fallback: bool,
+    #[serde(default)]
+    pub open_in_browser: bool,
     pub retries: u8,
     #[serde(default)]
     pub start_time: Option<String>,

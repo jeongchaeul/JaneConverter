@@ -48,6 +48,7 @@ export interface ConverterSettings {
   saveCover: boolean;
   saveMetadata: boolean;
   allowPngFallback?: boolean;
+  openInBrowser?: boolean;
   retries: number;
   startTime?: string;
   endTime?: string;

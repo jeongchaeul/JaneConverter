@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Cpu, ExternalLink, FolderOpen, HardDrive, Paintbrush, Palette, Pipette, RefreshCw, RotateCcw, RotateCw, ShieldCheck, Zap } from "lucide-react";
+import { CheckCircle2, Cpu, ExternalLink, FolderOpen, Globe, HardDrive, Paintbrush, Palette, Pipette, RefreshCw, RotateCcw, RotateCw, ShieldCheck, Sparkles, Zap } from "lucide-react";
 import type { ConverterSettings, RuntimeInfo, UpdateCheckResult } from "../bridge";
 import { bridge } from "../bridge";
 
@@ -228,6 +228,71 @@ export function SettingsView({
             </div>
             <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">
               If a video uses an unusual format that the GPU rejects, JaneConverter automatically switches to multi-core CPU so the conversion still finishes cleanly.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Browser Integration & Session Warm-Up */}
+      <section className="panel space-y-4 p-5" aria-labelledby="browser-integration-heading">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+              <Globe size={16} style={{ color: "var(--accent-color, #c52b68)" }} />
+              <span id="browser-integration-heading">Source Browser Pre-Opening</span>
+              <span
+                className={
+                  "rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase " +
+                  (settings?.openInBrowser
+                    ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                    : "border-white/[0.10] bg-white/[0.03] text-zinc-400")
+                }
+              >
+                {settings?.openInBrowser ? "Enabled" : "Disabled"}
+              </span>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
+              Automatically opens online source URLs in your default browser when conversion starts. Warmed-up browser sessions solve anti-bot checks and provide fresh session cookies for private, members-only, or friends-only media.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={Boolean(settings?.openInBrowser)}
+            aria-label="Open source media in browser before conversion"
+            disabled={!settings || !onSettings}
+            onClick={() => {
+              if (settings && onSettings) {
+                onSettings({ ...settings, openInBrowser: !settings.openInBrowser });
+              }
+            }}
+            className={
+              "flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 " +
+              (settings?.openInBrowser
+                ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                : "subtle-button text-zinc-200")
+            }
+          >
+            <Globe className={"size-3.5 " + (settings?.openInBrowser ? "text-emerald-300" : "text-zinc-400")} />
+            {settings?.openInBrowser ? "Auto-Open Active" : "Enable Auto-Open"}
+          </button>
+        </div>
+
+        <div className="grid gap-2.5 border-t border-white/[0.06] pt-3.5 md:grid-cols-2">
+          <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-300">
+              <ShieldCheck className="size-3.5 shrink-0" /> Freshens Session Cookies
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">
+              Visiting the link in your browser completes anti-bot challenges and writes the latest authentication tokens to your local profile database (Vivaldi, Chrome, Edge, Brave, etc.).
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-sky-300">
+              <Sparkles className="size-3.5 shrink-0" /> Zero File Exports
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">
+              JaneConverter reads cookies directly in-memory through shadow-copy readers and clears them immediately after extraction. No credentials or cookie files are saved to disk.
             </p>
           </div>
         </div>
