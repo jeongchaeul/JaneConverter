@@ -18,7 +18,10 @@
   <img src="https://img.shields.io/badge/Image-JFIF%20%7C%20PNG%20%7C%20WebP%20%7C%20TIFF%20%7C%20more-green?style=flat-square" alt="Image Formats" />
 </p>
 
-JaneConverter downloads and converts media through a sleek Tauri desktop app or high-speed Python CLI. It supports audio, video, and image processing with studio-grade SoX resampling, zero-loss stream copy remuxing (`-c copy`), EBU R128 loudness normalization, and hardware-accelerated GPU encoding.
+> *"JaneConverter is tailored specifically for my personal needs and convenience. But I wanted to share it because it can be useful. I don't have a particular goal, it's just my personal toolbox. If you find it useful, then that's great."*  
+> — **Jane Cerys**
+
+JaneConverter is a personal media toolbox and format conversion studio designed by Jane Cerys (`project//aspyr`). Built for personal workflow convenience, high-fidelity audio engineering, video transcode tasks, and social media archival, it runs locally through a sleek Tauri desktop app or high-speed Python CLI—featuring studio-grade SoX resampling, zero-loss stream copy remuxing (`-c copy`), EBU R128 loudness normalization, and hardware-accelerated GPU encoding.
 
 [Latest release](https://github.com/jeongchaeul/JaneConverter/releases/latest) · [Changelog](CHANGELOG.md)
 
@@ -256,9 +259,9 @@ macOS arm64 or x86_64 must be built natively on the matching architecture. Insta
 
 Tagged `v*` releases and rolling `continuous` updater feeds are built and published by GitHub Actions with pinned FFmpeg asset SHA-256 digests. The release workflow uses GPL FFmpeg builds, so distributors must preserve the required notices and satisfy the corresponding source obligations.
 
-## Legal & Governance
+## About & Legal Governance
 
-JaneConverter is distributed for lawful, personal, non-commercial media processing, educational research, and format interoperability.
+JaneConverter is an independent personal media toolbox developed by Jane Cerys (`project//aspyr`), tailored specifically for personal workflow convenience, and shared freely with the open-source community under the MIT License without commercial motives or corporate agendas.
 
 - [Legal Disclaimer & Acceptable Use Policy](DISCLAIMER.md)
 - [Security Policy & Vulnerability Reporting](SECURITY.md)
