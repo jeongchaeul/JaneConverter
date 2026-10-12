@@ -265,6 +265,64 @@ def detect_default_browser_session() -> Optional[str]:
     return None
 
 
+def detect_installed_browser_sessions() -> list[str]:
+    """Return all supported browsers with installed profiles on the current host.
+
+    The default browser is always prioritized first, followed by other detected
+    browsers. This allows JaneConverter to autonomously locate active login
+    sessions across all browsers on the system without user intervention.
+    """
+    default_browser = detect_default_browser_session()
+    installed: list[str] = []
+    if default_browser:
+        installed.append(default_browser)
+
+    if os.name == "nt":
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        app_data = os.environ.get("APPDATA", "")
+        paths = {
+            "chrome": os.path.join(local_app_data, "Google", "Chrome", "User Data"),
+            "edge": os.path.join(local_app_data, "Microsoft", "Edge", "User Data"),
+            "brave": os.path.join(local_app_data, "BraveSoftware", "Brave-Browser", "User Data"),
+            "vivaldi": os.path.join(local_app_data, "Vivaldi", "User Data"),
+            "opera": os.path.join(app_data, "Opera Software", "Opera Stable"),
+            "firefox": os.path.join(app_data, "Mozilla", "Firefox", "Profiles"),
+            "chromium": os.path.join(local_app_data, "Chromium", "User Data"),
+        }
+        for b, path in paths.items():
+            if b not in installed and os.path.exists(path):
+                installed.append(b)
+    elif sys.platform == "darwin":
+        app_paths = {
+            "chrome": "/Applications/Google Chrome.app",
+            "edge": "/Applications/Microsoft Edge.app",
+            "brave": "/Applications/Brave Browser.app",
+            "vivaldi": "/Applications/Vivaldi.app",
+            "opera": "/Applications/Opera.app",
+            "firefox": "/Applications/Firefox.app",
+            "safari": "/Applications/Safari.app",
+        }
+        for b, path in app_paths.items():
+            if b not in installed and os.path.exists(path):
+                installed.append(b)
+    else:
+        home = os.path.expanduser("~")
+        paths = {
+            "chrome": os.path.join(home, ".config", "google-chrome"),
+            "chromium": os.path.join(home, ".config", "chromium"),
+            "brave": os.path.join(home, ".config", "BraveSoftware", "Brave-Browser"),
+            "vivaldi": os.path.join(home, ".config", "vivaldi"),
+            "opera": os.path.join(home, ".config", "opera"),
+            "firefox": os.path.join(home, ".mozilla", "firefox"),
+            "edge": os.path.join(home, ".config", "microsoft-edge"),
+        }
+        for b, path in paths.items():
+            if b not in installed and os.path.exists(path):
+                installed.append(b)
+
+    return installed
+
+
 def _browser_from_signal(signal: Optional[str]) -> Optional[str]:
     """Map a Windows ProgId or association command to a yt-dlp browser name."""
     normalized = str(signal or "").strip().lower()

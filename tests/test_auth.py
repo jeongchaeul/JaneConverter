@@ -185,10 +185,45 @@ def test_fetch_media_stream_uses_direct_browser_capture_without_cookie_options(t
     assert info["source_type"] == "facebook"
 
 
-def test_fetch_media_stream_requires_direct_capture_for_authenticated_access(tmp_path):
-    with pytest.raises(RuntimeError, match="Browser Capture extension"):
-        extractor.fetch_media_stream(
-            "https://www.facebook.com/watch/?v=123",
-            str(tmp_path),
-            auth_browser="Vivaldi",
-        )
+def test_fetch_media_stream_passes_auth_browser_to_extractor(tmp_path, monkeypatch):
+    called_browser = []
+
+    def fake_extract_with_fallback(ydl, opts, query, download, browser=None, **kwargs):
+        called_browser.append(browser)
+        dummy_file = tmp_path / "work" / "Test Video_123.mp4"
+        dummy_file.write_bytes(b"data")
+        return {
+            "id": "123",
+            "title": "Test Video",
+            "uploader": "Creator",
+            "ext": "mp4",
+        }
+
+    monkeypatch.setattr(extractor, "extract_with_browser_fallback", fake_extract_with_fallback)
+    (tmp_path / "work").mkdir()
+
+    info = extractor.fetch_media_stream(
+        "https://www.facebook.com/watch/?v=123",
+        str(tmp_path / "work"),
+        auth_browser="Vivaldi",
+    )
+    assert called_browser == ["vivaldi"]
+    assert info["title"] == "Test Video"
+
+
+def test_detect_installed_browser_sessions():
+    sessions = auth.detect_installed_browser_sessions()
+    assert isinstance(sessions, list)
+    for s in sessions:
+        assert s in auth._BROWSER_ALIASES
+
+
+def test_session_domains_dynamic_and_expanded_platforms():
+    from janeconverter.browser_session_fallback import session_domains
+    assert session_domains("https://www.bilibili.com/video/BV1xx411c7mD") == ("bilibili.com",)
+    assert session_domains("https://artist.bandcamp.com/track/song") == ("bandcamp.com",)
+    assert session_domains("https://www.patreon.com/posts/123") == ("patreon.com",)
+    assert "youtube.com" in session_domains("https://music.youtube.com/watch?v=123")
+    assert session_domains("https://threads.net/@user/post/123") == ("threads.net",)
+    assert session_domains("https://bsky.app/profile/user/post/123") == ("bsky.app",)
+

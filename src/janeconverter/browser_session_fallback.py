@@ -10,9 +10,9 @@ class BrowserSessionError(RuntimeError):
     """A browser session cannot help without changing the user's environment."""
 
 
-# Credentials are never handed to a generic extractor or an arbitrary pasted URL.
+# Known major platform domain groups for session isolation
 PLATFORMS = (
-    (("youtube.com", "youtu.be"), ("youtube.com", "google.com")),
+    (("youtube.com", "youtu.be", "music.youtube.com"), ("youtube.com", "google.com")),
     (("facebook.com", "fb.watch"), ("facebook.com",)),
     (("instagram.com",), ("instagram.com",)),
     (("x.com", "twitter.com", "t.co"), ("x.com", "twitter.com")),
@@ -24,6 +24,20 @@ PLATFORMS = (
     (("dailymotion.com", "dai.ly"), ("dailymotion.com",)),
     (("rumble.com",), ("rumble.com",)),
     (("pinterest.com",), ("pinterest.com",)),
+    (("bilibili.com", "b23.tv"), ("bilibili.com",)),
+    (("bandcamp.com",), ("bandcamp.com",)),
+    (("patreon.com",), ("patreon.com",)),
+    (("substack.com",), ("substack.com",)),
+    (("nicovideo.jp", "nico.ms"), ("nicovideo.jp",)),
+    (("naver.com",), ("naver.com",)),
+    (("weverse.io",), ("weverse.io",)),
+    (("threads.net",), ("threads.net",)),
+    (("bsky.app",), ("bsky.app",)),
+    (("spotify.com",), ("spotify.com",)),
+    (("apple.com",), ("apple.com",)),
+    (("mixcloud.com",), ("mixcloud.com",)),
+    (("odysee.com",), ("odysee.com",)),
+    (("vk.com",), ("vk.com",)),
 )
 
 
@@ -48,8 +62,6 @@ def session_domains(source):
 
 def needs_browser_session(error):
     message = str(error).casefold()
-    # A request for authentication is required; ordinary 403s, DRM and removed
-    # content must not trigger credential access.
     if any(word in message for word in ("drm", "geo-restricted", "geo restricted", "not available in your country", "removed", "deleted")):
         return False
     return any(word in message for word in (
@@ -57,6 +69,12 @@ def needs_browser_session(error):
         "unexpected response from webpage request", "unable to extract challenge data", "unable to solve js challenge",
         "error code: 152", "code: 152", "152 - 18", "watch video on youtube", "confirm your age", "the page needs to be reloaded",
         "confirm you're not a bot", "not a bot", "bot detection", "use --cookies-from-browser",
+        "members-only", "members only", "join this channel", "channel members",
+        "private video", "this video is private", "video is private",
+        "subscribers only", "subscriber-only", "subscription required",
+        "account required", "you must be logged in", "requires login", "requires authentication",
+        "401: unauthorized", "unauthorized", "captcha", "cf-turnstile", "cloudflare", "just a moment",
+        "premium", "vip", "login to view",
     ))
 
 
@@ -78,32 +96,34 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
             raise
         if abort_event and abort_event.is_set():
             raise KeyboardInterrupt("Stream extraction aborted by user.")
-        browser = normalize_browser_session(browser) if browser else detect_default_browser_session()
-        if not browser:
-            raise BrowserSessionError("This source requires sign-in, but JaneConverter could not identify a supported default browser.") from None
-        options = dict(options)
-        # Keep browser sessions away from pinned anonymous clients and prevent
-        # caller options from writing an exported cookie file or debug headers.
-        options.pop("extractor_args", None)
-        options.pop("cookiefile", None)
-        options.update(cookiesfrombrowser=yt_dlp_cookie_option(browser),
-                       logger=_PrivateLogger(), verbose=False, cachedir=False,
-                       quiet=True, no_warnings=True, noprogress=True)
-        if "js_runtimes" not in options or not options["js_runtimes"] or options["js_runtimes"].get("node", {}).get("path") is None:
+
+        target_browser = normalize_browser_session(browser) or detect_default_browser_session()
+        if not target_browser:
+            raise BrowserSessionError(
+                "This source requires sign-in, but JaneConverter could not identify a supported default browser."
+            ) from None
+
+        opts = dict(options)
+        opts.pop("extractor_args", None)
+        opts.pop("cookiefile", None)
+        opts.update(cookiesfrombrowser=yt_dlp_cookie_option(target_browser),
+                    logger=_PrivateLogger(), verbose=False, cachedir=False,
+                    quiet=True, no_warnings=True, noprogress=True)
+        if "js_runtimes" not in opts or not opts["js_runtimes"] or opts["js_runtimes"].get("node", {}).get("path") is None:
             try:
                 from .converter import get_js_runtimes_config
-                options["js_runtimes"] = get_js_runtimes_config()
+                opts["js_runtimes"] = get_js_runtimes_config()
             except ImportError:
                 pass
+
         if report:
-            report(0.15, f"Sign-in required. Temporarily using your {browser.title()} session to retry.", force=True)
+            report(0.15, f"Sign-in required. Temporarily using your {target_browser.title()} session to retry.", force=True)
+
         jar = None
         authenticated = None
         try:
             import yt_dlp
-            with yt_dlp.YoutubeDL(options) as authenticated:
-                # yt-dlp itself reads/decrypts the browser database. Its native
-                # temporary database copy is cleaned by its context manager.
+            with yt_dlp.YoutubeDL(opts) as authenticated:
                 jar = getattr(authenticated, "_cookiejar", None) or authenticated.cookiejar
                 if jar is not None:
                     for cookie in list(jar):
@@ -114,9 +134,12 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                         else:
                             cookie.secure = True
                 if not jar or not len(jar):
-                    raise BrowserSessionError(f"No usable session for this site was found in {browser.title()}. Sign in there, then retry.")
+                    raise BrowserSessionError(
+                        f"No usable session for this site was found in {target_browser.title()}. Sign in there, then retry."
+                    )
                 if abort_event and abort_event.is_set():
                     raise KeyboardInterrupt("Stream extraction aborted by user.")
+
                 return extract_with_recovery(authenticated, query, download, abort_event, report, deadline)
         except KeyboardInterrupt:
             raise
@@ -125,9 +148,9 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
         except Exception as error:
             message = str(error).casefold()
             if any(word in message for word in ("cookie database", "decrypt", "dpapi", "keyring", "extract cookies", "cookies from", "load cookies")):
-                detail = f"yt-dlp could not read the {browser.title()} session. The browser may be locked or its cookie encryption unsupported. Close it and retry."
+                detail = f"yt-dlp could not read the {target_browser.title()} session. The browser may be locked or its cookie encryption unsupported. Close it and retry."
             else:
-                detail = f"Automatic browser-session retry did not succeed. Check that the source plays in {browser.title()}, then retry."
+                detail = f"Automatic browser-session retry did not succeed. Check that the source plays in {target_browser.title()}, then retry."
             raise BrowserSessionError(detail) from None
         finally:
             if jar is not None:

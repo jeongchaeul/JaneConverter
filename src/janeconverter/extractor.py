@@ -1006,11 +1006,7 @@ def fetch_media_stream(
             "source_type": source_type,
             "is_local": False,
         }
-    if auth_browser:
-        raise RuntimeError(
-            "Account access is ready, but no browser capture has arrived. "
-            "Open the JaneConverter Browser Capture extension and capture the visible media first."
-        )
+
 
     # 1. Local File
     if source_type == "local_file":
@@ -1423,11 +1419,7 @@ def fetch_playlist_entries(
     source_type = identify_source_type(url)
     clean_url = url.strip()
     auth_browser = normalize_browser_session(auth_browser)
-    if auth_browser:
-        raise RuntimeError(
-            "Playlist account access requires direct media capture. "
-            "Use the public playlist loader, or capture individual visible media items with the Browser Capture extension."
-        )
+
 
     if source_type == "apple_music":
         return fetch_apple_music_playlist_entries(clean_url, progress_callback=progress_callback)
@@ -1518,7 +1510,9 @@ def fetch_playlist_entries(
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             report(0.3, "Extracting playlist index and track listings...")
-            info = ydl.extract_info(clean_url, download=False)
+            info = extract_with_browser_fallback(
+                ydl, ydl_opts, clean_url, download=False, browser=auth_browser, report=report
+            )
             if not info:
                 raise ValueError("Could not extract playlist information from URL.")
 
