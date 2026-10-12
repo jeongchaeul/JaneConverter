@@ -1655,7 +1655,7 @@ export function ConverterView({
       <section className="panel overflow-hidden p-4">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-center">
           {/* Left Column: Export Destination */}
-          <div className="lg:col-span-7">
+          <div className="lg:col-span-5">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-xs font-medium text-zinc-200">
                 <FolderOpen className="size-3.5 text-zinc-400" /> Export folder
@@ -1679,15 +1679,15 @@ export function ConverterView({
           </div>
 
           {/* Right Column: Compact Convert Action & High-Visibility Progress Bar */}
-          <div className="flex flex-col justify-center border-t border-white/[0.06] pt-3 lg:col-span-5 lg:border-t-0 lg:border-l lg:pl-5 lg:pt-0">
+          <div className="flex flex-col justify-center border-t border-white/[0.06] pt-3 lg:col-span-7 lg:border-t-0 lg:border-l lg:pl-5 lg:pt-0">
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 disabled={isOperationActive && !(!queueRunning && queue.some((it) => it.status === "queued"))}
                 onClick={() => void convert()}
-                className="primary-button flex h-9.5 flex-1 items-center justify-center gap-2 px-4 text-xs font-semibold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                className="primary-button inline-flex h-9.5 flex-1 min-w-[124px] items-center justify-center gap-2 px-3.5 text-xs font-semibold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap"
               >
-                <Play className="size-3.5 fill-current" />
+                <Play className="size-3.5 fill-current shrink-0" />
                 {queue.length > 0 && !queueRunning && queue.some((it) => it.status === "queued")
                   ? `Start queue (${queue.filter((it) => it.status === "queued").length} pending)`
                   : "Convert media"}
@@ -1697,10 +1697,10 @@ export function ConverterView({
                   type="button"
                   disabled={facebookCaptureBusy || socialCaptureBusy}
                   onClick={() => addToQueue()}
-                  className="subtle-button flex h-9.5 items-center gap-1.5 px-3 text-xs font-medium text-pink-300 hover:text-pink-200 border-pink-500/25 bg-pink-500/[0.06] disabled:opacity-40"
+                  className="subtle-button inline-flex h-9.5 shrink-0 items-center gap-1.5 px-3 text-xs font-medium text-pink-300 hover:text-pink-200 border-pink-500/25 bg-pink-500/[0.06] disabled:opacity-40 whitespace-nowrap"
                   title="Add current source to conversion queue"
                 >
-                  <ListPlus className="size-3.5" />
+                  <ListPlus className="size-3.5 shrink-0" />
                   Add to queue
                 </button>
               )}
@@ -1709,19 +1709,19 @@ export function ConverterView({
                   <button
                     type="button"
                     onClick={() => void handlePauseToggle()}
-                    className="subtle-button flex h-9.5 items-center gap-1.5 px-3 text-xs font-medium text-amber-300 hover:text-amber-200"
+                    className="subtle-button inline-flex h-9.5 shrink-0 items-center gap-1.5 px-3 text-xs font-medium text-amber-300 hover:text-amber-200 whitespace-nowrap"
                     aria-label={effectivePaused ? "Resume operation" : "Pause operation"}
                   >
-                    {effectivePaused ? <Play className="size-3 fill-current" /> : <Pause className="size-3" />}
+                    {effectivePaused ? <Play className="size-3 fill-current shrink-0" /> : <Pause className="size-3 shrink-0" />}
                     {effectivePaused ? "Resume" : "Pause"}
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleAbort()}
-                    className="danger-button flex h-9.5 items-center gap-1.5 px-3 text-xs"
+                    className="danger-button inline-flex h-9.5 shrink-0 items-center gap-1.5 px-3 text-xs whitespace-nowrap"
                     aria-label="Abort operation"
                   >
-                    <Square className="size-3" /> Abort
+                    <Square className="size-3 shrink-0" /> Abort
                   </button>
                 </>
               )}

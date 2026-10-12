@@ -99,9 +99,9 @@ select option:disabled {
   background-color: #080611;
 }
 .subtle-button { border: 1px solid rgba(255,255,255,.09); background: rgba(255,255,255,.035); color: #c7c7cf; border-radius: 10px; transition: background .18s ease, border-color .18s ease, color .18s ease; }
-.subtle-button:hover { background: rgba(255,255,255,.075); border-color: rgba(255,255,255,.16); color: #fff; }
+.subtle-button:not(:disabled):hover { background: rgba(255,255,255,.075); border-color: rgba(255,255,255,.16); color: #fff; }
 .primary-button { background: var(--accent-color, #c52b68) !important; color: white !important; border-radius: 11px; transition: background .18s ease, transform .18s ease, filter .18s ease; }
-.primary-button:hover { filter: brightness(1.15); transform: translateY(-1px); }
+.primary-button:not(:disabled):hover { filter: brightness(1.15); transform: translateY(-1px); }
 .preset-category-button[aria-pressed="true"] { border-bottom-color: var(--accent-color); background: var(--accent-subtle); color: var(--accent-color); }
 .preset-choice-button[aria-pressed="true"] { border-color: var(--accent-color); background: var(--accent-color); color: #fff; font-weight: 500; box-shadow: 0 1px 9px var(--accent-glow); }
 .preset-choice-button:not([aria-pressed="true"]):hover { border-color: var(--accent-glow); color: #fff; }
@@ -187,7 +187,7 @@ select option:disabled {
   color: #ffffff !important;
 }
 
-[data-theme="light"] .primary-button:hover {
+[data-theme="light"] .primary-button:not(:disabled):hover {
   filter: brightness(1.15);
 }
 
