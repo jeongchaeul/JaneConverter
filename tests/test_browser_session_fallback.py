@@ -223,3 +223,9 @@ def test_ytsearch_triggers_browser_fallback_on_bot_check(browser, monkeypatch):
     assert browser[1].call_count == 1
 
 
+def test_facebook_cannot_parse_data_triggers_browser_session_fallback():
+    assert fallback.needs_browser_session("ERROR: [facebook] 1937589916952086: Cannot parse data; please report this issue")
+    assert fallback.needs_browser_session("ERROR: [facebook] The video is not available, Facebook said: You must log in")
+    assert fallback.needs_browser_session("Main webpage is locked behind the login page")
+
+

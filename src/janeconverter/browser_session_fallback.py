@@ -74,6 +74,9 @@ def needs_browser_session(error):
         "subscribers only", "subscriber-only", "subscription required",
         "account required", "you must be logged in", "requires login", "requires authentication",
         "401: unauthorized", "unauthorized", "captcha", "cf-turnstile", "cloudflare", "just a moment",
+        "cannot parse data", "cannot parse json", "unable to extract", "this content is unreachable",
+        "locked behind the login page", "this content isn't available", "not available, facebook said",
+        "you must log in",
         "premium", "vip", "login to view",
     ))
 
