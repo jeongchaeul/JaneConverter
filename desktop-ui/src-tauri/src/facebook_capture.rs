@@ -233,7 +233,21 @@ pub fn initialization_script(nonce: &str) -> String {
   let lastPauseTick = 0;
   let lastViewerImageUrl = sessionStorage.getItem(viewerImageKey) || "";
   let navigatingFromId = "";
+  let navigatingFromTicks = 0;
+  let viewerInitAttempts = 0;
   let currentPageScannedId = "";
+  const knownIdsKey = "janeFacebookKnownPhotoIds";
+  const lastProgressKey = "janeFacebookLastProgressAt";
+  let knownIds;
+  try {{ knownIds = JSON.parse(sessionStorage.getItem(knownIdsKey) || "[]"); }}
+  catch (_) {{ knownIds = []; }}
+  const recordKnownId = (id) => {{
+    if (/^[0-9]{{5,30}}$/.test(id) && !knownIds.includes(id)) {{
+      knownIds.push(id);
+      sessionStorage.setItem(knownIdsKey, JSON.stringify(knownIds));
+    }}
+  }};
+  let lastProgressAt = Number(sessionStorage.getItem(lastProgressKey)) || Date.now();
   let expansionClicks = 0;
   let lastExpansionClickAttempt = 0;
   let finished = false;
@@ -287,7 +301,27 @@ pub fn initialization_script(nonce: &str) -> String {
     }}
     return total;
   }};
+  const discoverPostPhotoIds = () => {{
+    for (const anchor of document.querySelectorAll('a[href*="fbid="]')) {{
+      try {{
+        const href = new URL(anchor.href, location.href);
+        const photoId = href.searchParams.get("fbid") || "";
+        if (photoId) recordKnownId(photoId);
+      }} catch (_) {{}}
+    }}
+    for (const script of document.scripts) {{
+      const text = script.textContent || "";
+      if (!text.includes("fbid=") && !text.includes("nextMediaAfterNodeId") && !text.includes("all_subattachments")) continue;
+      for (const match of text.matchAll(/photo\.php\?fbid=([0-9]{{5,30}})/g)) {{
+        recordKnownId(match[1]);
+      }}
+      for (const match of text.matchAll(/"nextMediaAfterNodeId"\s*:\s*\{{\s*"__typename"\s*:\s*"Photo"\s*,\s*"id"\s*:\s*"([0-9]{{5,30}})"/g)) {{
+        recordKnownId(match[1]);
+      }}
+    }}
+  }};
   const discoverExpectedPhotoCount = () => {{
+    discoverPostPhotoIds();
     const onAlbumPage = location.pathname.toLowerCase().includes("/media/set/");
     const sources = [
       {{value: readPageTitle(), includeUnqualifiedCounts: !onAlbumPage}},
@@ -307,6 +341,9 @@ pub fn initialization_script(nonce: &str) -> String {
     ).filter(Boolean));
     const exact = exactCounts.size === 1 ? [...exactCounts][0] : 0;
     let lowerBound = 0;
+    if (knownIds.length >= 2 && knownIds.length <= MAX_PHOTOS) {{
+      lowerBound = Math.max(lowerBound, knownIds.length);
+    }}
     const galleryLinks = Array.from(document.querySelectorAll('a[href*="fbid="][href*="set=pcb."], a[href*="fbid="][href*="set=gm."]'));
     if (galleryLinks.length === 4 || galleryLinks.length === 5) {{
       const overlayText = (galleryLinks[galleryLinks.length - 1].innerText || "")
@@ -372,9 +409,16 @@ pub fn initialization_script(nonce: &str) -> String {
         && dialog.querySelector('button[aria-label*="log in" i], button[type="submit"]'));
       const identifiesLogin = /log in to facebook|log in or sign up|sign up for facebook|see more on facebook/i.test(text)
         || (hasLoginForm && /see more from/i.test(text));
-      return identifiesLogin && hasLoginForm && hasVisiblePublicPhoto();
+      const isViewer = dialog.querySelector('[aria-label="Photo Viewer"], [aria-label*="media viewer" i], a[href*="fbid="] img');
+      return (identifiesLogin && hasLoginForm && hasVisiblePublicPhoto())
+        || (identifiesLogin && !isViewer && /log in|sign up|create account|see more/i.test(text));
     }});
     if (prompt) {{
+      const dismissBtn = Array.from(prompt.querySelectorAll('button, [role="button"], a')).find((el) => {{
+        const label = [el.getAttribute("aria-label"), el.getAttribute("title"), el.innerText].filter(Boolean).join(" ");
+        return /^(?:close|not now|dismiss|cancel)$/i.test(label.trim());
+      }});
+      if (dismissBtn) {{ try {{ dismissBtn.click(); }} catch (_) {{}} }}
       let overlay = prompt;
       for (let parent = prompt.parentElement; parent && parent !== document.body; parent = parent.parentElement) {{
         const rect = parent.getBoundingClientRect();
@@ -470,6 +514,12 @@ pub fn initialization_script(nonce: &str) -> String {
           return {{anchor: null, url: photoUrl.href, needsDirectNavigation: true}};
         }}
       }}
+      if (knownIds.length > 0) {{
+        const photoUrl = new URL("/photo/", location.href);
+        photoUrl.searchParams.set("fbid", knownIds[0]);
+        photoUrl.searchParams.set("set", pageSet);
+        return {{anchor: null, url: photoUrl.href, needsDirectNavigation: true}};
+      }}
     }}
     return "";
   }};
@@ -521,6 +571,69 @@ pub fn initialization_script(nonce: &str) -> String {
     }}
     return findScriptViewerPhoto(photoId);
   }};
+  const triggerClick = (element) => {{
+    if (!element) return false;
+    try {{ element.focus(); }} catch (_) {{}}
+    try {{
+      element.dispatchEvent(new PointerEvent("pointerdown", {{bubbles: true, cancelable: true, view: window}}));
+      element.dispatchEvent(new MouseEvent("mousedown", {{bubbles: true, cancelable: true, view: window}}));
+      element.dispatchEvent(new PointerEvent("pointerup", {{bubbles: true, cancelable: true, view: window}}));
+      element.dispatchEvent(new MouseEvent("mouseup", {{bubbles: true, cancelable: true, view: window}}));
+      element.click();
+      return true;
+    }} catch (_) {{
+      try {{ element.click(); return true; }} catch (_) {{ return false; }}
+    }}
+  }};
+  const triggerNextKey = () => {{
+    try {{
+      const init = {{key: "ArrowRight", code: "ArrowRight", keyCode: 39, which: 39, bubbles: true, cancelable: true}};
+      window.dispatchEvent(new KeyboardEvent("keydown", init));
+      document.dispatchEvent(new KeyboardEvent("keydown", init));
+      window.dispatchEvent(new KeyboardEvent("keyup", init));
+      document.dispatchEvent(new KeyboardEvent("keyup", init));
+    }} catch (_) {{}}
+  }};
+  const findNextElement = () => {{
+    return Array.from(document.querySelectorAll('a[href], button, [role="button"]'))
+      .find((element) => /next\s*(photo|image)?/i.test([
+        element.getAttribute("aria-label"), element.getAttribute("title"), element.innerText
+      ].filter(Boolean).join(" ")));
+  }};
+  const findFallbackNextPhotoUrl = (currentId) => {{
+    const albumSet = sessionStorage.getItem(albumSetKey) || new URL(location.href).searchParams.get("set") || findPostAlbumSet();
+    const nextUnscanned = knownIds.find((id) => id !== currentId && !scanned.has(id));
+    if (nextUnscanned) {{
+      const nextUrl = new URL("/photo/", location.href);
+      nextUrl.searchParams.set("fbid", nextUnscanned);
+      if (albumSet) nextUrl.searchParams.set("set", albumSet);
+      return nextUrl.href;
+    }}
+    for (const script of document.scripts) {{
+      const text = script.textContent || "";
+      if (!text.includes("nextMediaAfterNodeId")) continue;
+      const match = /"nextMediaAfterNodeId"\s*:\s*\{{\s*"__typename"\s*:\s*"Photo"\s*,\s*"id"\s*:\s*"([0-9]{{5,30}})"/.exec(text);
+      if (match && match[1] && match[1] !== currentId && !scanned.has(match[1])) {{
+        const nextUrl = new URL("/photo/", location.href);
+        nextUrl.searchParams.set("fbid", match[1]);
+        if (albumSet) nextUrl.searchParams.set("set", albumSet);
+        return nextUrl.href;
+      }}
+    }}
+    for (const anchor of document.querySelectorAll('a[href*="fbid="]')) {{
+      try {{
+        const href = new URL(anchor.href, location.href);
+        const id = href.searchParams.get("fbid") || "";
+        if (/^[0-9]{{5,30}}$/.test(id) && id !== currentId && !scanned.has(id)) {{
+          const nextUrl = new URL("/photo/", location.href);
+          nextUrl.searchParams.set("fbid", id);
+          if (albumSet) nextUrl.searchParams.set("set", albumSet);
+          return nextUrl.href;
+        }}
+      }} catch (_) {{}}
+    }}
+    return "";
+  }};
   const findNextPhotoUrl = () => {{
     const hasPhotosFrom = Array.from(document.querySelectorAll("a"))
       .some((anchor) => (anchor.innerText || "").includes("Photos from"));
@@ -543,12 +656,15 @@ pub fn initialization_script(nonce: &str) -> String {
         if (targetUrl.searchParams.has("fbid") && targetUrl.searchParams.get("fbid") !== currentId) return target;
       }} catch (_) {{}}
     }}
-    const labelledNext = Array.from(document.querySelectorAll('a[href], button, [role="button"]'))
-      .find((element) => /next\s*(photo|image)?/i.test([
-        element.getAttribute("aria-label"), element.getAttribute("title"), element.innerText
-      ].filter(Boolean).join(" ")));
+    const labelledNext = findNextElement();
     if (labelledNext?.href) return normalizeFacebookUrl(labelledNext.href);
-    if (labelledNext) {{ labelledNext.click(); return "clicked"; }}
+    if (labelledNext) {{
+      triggerNextKey();
+      triggerClick(labelledNext);
+      return "clicked";
+    }}
+    const fallbackNext = findFallbackNextPhotoUrl(currentId);
+    if (fallbackNext) return fallbackNext;
     if (/^[0-9]{{5,30}}$/.test(currentId)) {{
       const albumSet = sessionStorage.getItem(albumSetKey) || new URL(location.href).searchParams.get("set") || findPostAlbumSet();
       for (const script of document.scripts) {{
@@ -661,6 +777,7 @@ pub fn initialization_script(nonce: &str) -> String {
     }}
     if (expectedCount) sessionStorage.setItem(expectedCountKey, String(expectedCount));
     if (Date.now() - startedAt >= MAX_CAPTURE_MS
+      || (Date.now() - lastProgressAt >= 40000 && attempts >= 40)
       || (captureMode !== "viewer" && attempts >= MAX_ATTEMPTS)) {{
       finished = true;
       const error = expectedCount > scanned.size
@@ -727,9 +844,10 @@ pub fn initialization_script(nonce: &str) -> String {
     }}
     if (captureMode === "viewer") {{
       if (!location.pathname.toLowerCase().includes("/photo")) {{
+        viewerInitAttempts += 1;
         const startPhoto = findAlbumStartPhoto();
         if (startPhoto && (startPhoto.needsDirectNavigation || hasVisiblePublicPhoto())) {{
-          if (startPhoto.needsDirectNavigation || !startPhoto.anchor) {{
+          if (viewerInitAttempts >= 2 || startPhoto.needsDirectNavigation || !startPhoto.anchor) {{
             location.replace(startPhoto.url);
             return;
           }}
@@ -738,28 +856,57 @@ pub fn initialization_script(nonce: &str) -> String {
         scheduleScan(VIEWER_POLL_MS);
         return;
       }}
+      viewerInitAttempts = 0;
       const savedTitle = sessionStorage.getItem("janeFacebookCaptureTitle");
       const title = savedTitle || pageTitle() || "Facebook Photo Album";
       const currentPhoto = findCurrentViewerPhoto();
       if (currentPhoto) {{
-        if (navigatingFromId === currentPhoto.id
-          || (!scanned.has(currentPhoto.id) && currentPhoto.url === lastViewerImageUrl)) {{
+        if (navigatingFromId === currentPhoto.id) {{
+          navigatingFromTicks += 1;
+          if (navigatingFromTicks >= 2 && navigatingFromTicks < 6) {{
+            triggerNextKey();
+            const nextEl = findNextElement();
+            if (nextEl) triggerClick(nextEl);
+          }}
+          if (navigatingFromTicks >= 6) {{
+            navigatingFromId = "";
+            navigatingFromTicks = 0;
+            const fallbackUrl = findFallbackNextPhotoUrl(currentPhoto.id);
+            if (fallbackUrl && fallbackUrl !== location.href) {{
+              location.replace(fallbackUrl);
+              return;
+            }}
+          }} else {{
+            scheduleScan(VIEWER_POLL_MS);
+            return;
+          }}
+        }} else {{
+          navigatingFromTicks = 0;
+        }}
+        if (!scanned.has(currentPhoto.id) && currentPhoto.url === lastViewerImageUrl) {{
           scheduleScan(VIEWER_POLL_MS);
           return;
         }}
         const isNewPhotoForPage = currentPageScannedId !== currentPhoto.id;
         const wrappedAround = isNewPhotoForPage && scanned.has(currentPhoto.id);
         navigatingFromId = "";
+        navigatingFromTicks = 0;
         if (!wrappedAround && isNewPhotoForPage) {{
           currentPageScannedId = currentPhoto.id;
           scanned.add(currentPhoto.id);
           sessionStorage.setItem(scannedIdsKey, JSON.stringify(Array.from(scanned)));
           lastViewerImageUrl = currentPhoto.url;
           sessionStorage.setItem(viewerImageKey, lastViewerImageUrl);
+          lastProgressAt = Date.now();
+          sessionStorage.setItem(lastProgressKey, String(lastProgressAt));
           pending.push(currentPhoto);
         }}
         if (scanned.size === previousCount) unchanged += 1;
-        else unchanged = 0;
+        else {{
+          unchanged = 0;
+          lastProgressAt = Date.now();
+          sessionStorage.setItem(lastProgressKey, String(lastProgressAt));
+        }}
         previousCount = scanned.size;
         if (pending.length && awaitingSequence === 0) {{
           awaitingSequence = ++nextSequence;
@@ -772,6 +919,7 @@ pub fn initialization_script(nonce: &str) -> String {
             const nextPhotoUrl = findNextPhotoUrl();
             if (nextPhotoUrl === "clicked") {{
               navigatingFromId = currentPhoto.id;
+              navigatingFromTicks = 0;
               currentPageScannedId = "";
               scheduleScan(VIEWER_POLL_MS);
               return;
@@ -781,8 +929,24 @@ pub fn initialization_script(nonce: &str) -> String {
               if (nextId && scanned.has(nextId)) endConfirmed = true;
               else {{ location.replace(nextPhotoUrl); return; }}
             }}
-            if (!nextPhotoUrl && unchanged >= 3 && Date.now() - lastRelevantMutationAt >= 2500)
-              endConfirmed = true;
+            if (!nextPhotoUrl) {{
+              const fallbackUrl = findFallbackNextPhotoUrl(currentPhoto.id);
+              if (fallbackUrl && fallbackUrl !== location.href) {{
+                location.replace(fallbackUrl);
+                return;
+              }}
+              const albumSet = sessionStorage.getItem(albumSetKey) || "";
+              if (expectedCount > scanned.size && unchanged >= 6 && albumSet.startsWith("pcb.")) {{
+                sessionStorage.setItem(captureModeKey, "grid");
+                sessionStorage.setItem(attemptsKey, "0");
+                const albumUrl = new URL("/media/set/", location.href);
+                albumUrl.searchParams.set("set", albumSet);
+                location.replace(albumUrl.href);
+                return;
+              }}
+              if (unchanged >= 3 && Date.now() - lastRelevantMutationAt >= 2500)
+                endConfirmed = true;
+            }}
           }}
           if (endConfirmed && !countConflict && scanned.size >= 1
             && (expectedCount === 0 || scanned.size >= expectedCount)
@@ -1015,5 +1179,10 @@ mod tests {
         assert!(script.contains("getComputedStyle(parent).position === \"fixed\""));
         assert!(script.contains("overlay.remove()"));
         assert!(script.contains("document.body.style.overflow = \"\""));
+        assert!(script.contains("ArrowRight"));
+        assert!(script.contains("findFallbackNextPhotoUrl"));
+        assert!(script.contains("triggerNextKey"));
+        assert!(script.contains("janeFacebookKnownPhotoIds"));
+        assert!(script.contains("janeFacebookLastProgressAt"));
     }
 }
