@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Cpu, ExternalLink, FolderOpen, Globe, HardDrive, Paintbrush, Palette, Pipette, RefreshCw, RotateCcw, RotateCw, ShieldCheck, Sparkles, Zap } from "lucide-react";
+import { CheckCircle2, Cpu, ExternalLink, FolderOpen, Globe, HardDrive, KeyRound, Lock, Paintbrush, Palette, Pipette, RefreshCw, RotateCcw, RotateCw, ShieldAlert, ShieldCheck, Sparkles, XCircle, Zap } from "lucide-react";
 import type { ConverterSettings, RuntimeInfo, UpdateCheckResult } from "../bridge";
 import { bridge } from "../bridge";
 
@@ -66,6 +66,17 @@ export function SettingsView({
     const nextMessage = nextUseGpu
       ? `Adaptive GPU Acceleration enabled (${runtime?.gpuLabel || "GPU when supported, CPU otherwise"}).`
       : "Adaptive GPU Acceleration disabled. Conversions will use CPU multi-core mode.";
+    setMessage(nextMessage);
+    onStatus(nextMessage);
+  }
+
+  function toggleBrowserCookies() {
+    if (!settings || !onSettings) return;
+    const nextValue = !settings.readBrowserCookies;
+    onSettings({ ...settings, readBrowserCookies: nextValue });
+    const nextMessage = nextValue
+      ? "Browser session cookie reading enabled. Private and friends-only media can now use your browser sessions."
+      : "Browser session cookie reading disabled. Conversions will use strictly public air-gapped extraction.";
     setMessage(nextMessage);
     onStatus(nextMessage);
   }
@@ -296,6 +307,161 @@ export function SettingsView({
             </p>
           </div>
         </div>
+      </section>
+
+      {/* Read Browser Cookies (Session Recovery) */}
+      <section className="panel space-y-4 p-5" aria-labelledby="read-browser-cookies-heading">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+              <KeyRound size={16} style={{ color: "var(--accent-color, #c52b68)" }} />
+              <span id="read-browser-cookies-heading">Read Browser Cookies (Session Recovery)</span>
+              <span
+                className={
+                  "rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase " +
+                  (settings?.readBrowserCookies
+                    ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                    : "border-white/[0.10] bg-white/[0.03] text-zinc-400")
+                }
+              >
+                {settings?.readBrowserCookies ? "Enabled (Session Recovery)" : "Disabled (Air-Gap Mode)"}
+              </span>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
+              Controls whether JaneConverter is permitted to read session cookies from your desktop browsers (Vivaldi, Chrome, Edge, Brave, Firefox, etc.) to resolve private, friends-only, or anti-bot restricted media.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={Boolean(settings?.readBrowserCookies)}
+            aria-label="Read browser cookies for session recovery"
+            disabled={!settings || !onSettings}
+            onClick={toggleBrowserCookies}
+            className={
+              "flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 " +
+              (settings?.readBrowserCookies
+                ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                : "subtle-button text-zinc-200")
+            }
+          >
+            {settings?.readBrowserCookies ? (
+              <>
+                <ShieldCheck className="size-3.5 text-emerald-300" />
+                Session Reading Active
+              </>
+            ) : (
+              <>
+                <Lock className="size-3.5 text-zinc-400" />
+                Enable Cookie Reading
+              </>
+            )}
+          </button>
+        </div>
+
+        {settings?.readBrowserCookies ? (
+          <div className="grid gap-2.5 border-t border-white/[0.06] pt-3.5 md:grid-cols-2">
+            <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-300">
+                <Sparkles className="size-3.5 shrink-0" /> What works when enabled
+              </div>
+              <ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-zinc-300">
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="size-3 shrink-0 text-emerald-400 mt-0.5" />
+                  <span><strong>Friends-only Facebook Reels & posts</strong>: Automatically extracts media when you are logged into your browser.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="size-3 shrink-0 text-emerald-400 mt-0.5" />
+                  <span><strong>Age-restricted YouTube & anti-bot screens</strong>: Transparently bypasses Error 152 and login-gated videos.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="size-3 shrink-0 text-emerald-400 mt-0.5" />
+                  <span><strong>Subscriber & members-only media</strong>: Resolves streams from accounts you have authenticated sessions for.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="size-3 shrink-0 text-emerald-400 mt-0.5" />
+                  <span><strong>Frictionless recovery</strong>: Zero manual cookie export files (.txt) or password entry needed.</span>
+                </li>
+              </ul>
+            </div>
+            <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-sky-300">
+                <ShieldCheck className="size-3.5 shrink-0" /> Air-gapped privacy guarantees
+              </div>
+              <ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-zinc-300">
+                <li className="flex items-start gap-1.5">
+                  <span className="font-mono text-sky-400 shrink-0 font-bold">•</span>
+                  <span><strong>RAM only (0 bytes to disk)</strong>: Cookies exist temporarily in memory during extraction and are instantly purged. Never written to disk.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <span className="font-mono text-sky-400 shrink-0 font-bold">•</span>
+                  <span><strong>Domain-scoped</strong>: Only cookies matching the target link (e.g. facebook.com, youtube.com) are queried. All other sites are ignored.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <span className="font-mono text-sky-400 shrink-0 font-bold">•</span>
+                  <span><strong>Non-locking shadow copy</strong>: Reads browser SQLite tables via safe snapshot so your browser is never locked or disrupted.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <span className="font-mono text-sky-400 shrink-0 font-bold">•</span>
+                  <span><strong>100% local, zero telemetry</strong>: JaneConverter has no cloud servers and transmits zero telemetry or credentials anywhere.</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-2.5 border-t border-white/[0.06] pt-3.5 md:grid-cols-2">
+            <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-300">
+                <CheckCircle2 className="size-3.5 shrink-0" /> What works when disabled
+              </div>
+              <ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-zinc-300">
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="size-3 shrink-0 text-emerald-400 mt-0.5" />
+                  <span><strong>All public media</strong>: 1,000+ platforms (YouTube, SoundCloud, Spotify, Reddit, Vimeo, TikTok, etc.) convert normally.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="size-3 shrink-0 text-emerald-400 mt-0.5" />
+                  <span><strong>Public photo albums</strong>: Public Facebook albums and public Instagram videos/posts work out-of-the-box.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="size-3 shrink-0 text-emerald-400 mt-0.5" />
+                  <span><strong>Local media & FLP projects</strong>: Full local audio, video, image transcoding and FL Studio downgrade features work without web dependencies.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="size-3 shrink-0 text-emerald-400 mt-0.5" />
+                  <span><strong>Browser Extension Bridge</strong>: Captures media from active browser tabs without accessing any browser database files on disk.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="size-3 shrink-0 text-emerald-400 mt-0.5" />
+                  <span><strong>Zero browser file access</strong>: Local browser SQLite files are strictly never opened, inspected, or queried.</span>
+                </li>
+              </ul>
+            </div>
+            <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-amber-300">
+                <XCircle className="size-3.5 shrink-0" /> What won't work when disabled
+              </div>
+              <ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-zinc-300">
+                <li className="flex items-start gap-1.5">
+                  <XCircle className="size-3 shrink-0 text-amber-400 mt-0.5" />
+                  <span><strong>Friends-only Facebook Reels & posts</strong>: Facebook blocks guest access with "Cannot parse data / Sign-in required".</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <XCircle className="size-3 shrink-0 text-amber-400 mt-0.5" />
+                  <span><strong>Age-gated & bot-checked YouTube videos</strong>: Videos requiring sign-in (Error 152) cannot verify your session.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <XCircle className="size-3 shrink-0 text-amber-400 mt-0.5" />
+                  <span><strong>Private or followers-only accounts</strong>: Instagram private posts and subscriber-only streams will fail without session access.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <XCircle className="size-3 shrink-0 text-amber-400 mt-0.5" />
+                  <span><strong>Apple Music full catalog playback</strong>: Apple Music requires sign-in for complete audio streams; without cookies, JaneConverter will automatically fall back to searching alternative public platforms.</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="panel p-5">

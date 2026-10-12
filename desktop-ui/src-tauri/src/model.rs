@@ -18,6 +18,8 @@ pub struct ConverterSettings {
     pub allow_png_fallback: bool,
     #[serde(default)]
     pub open_in_browser: bool,
+    #[serde(default)]
+    pub read_browser_cookies: bool,
     pub retries: u8,
     #[serde(default)]
     pub start_time: Option<String>,
@@ -41,6 +43,8 @@ pub struct ConversionRequest {
     pub save_metadata: bool,
     #[serde(default)]
     pub allow_png_fallback: bool,
+    #[serde(default)]
+    pub read_browser_cookies: bool,
     pub retries: u8,
     pub playlist_indexes: Option<String>,
     pub browser_session: Option<String>,

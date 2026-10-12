@@ -2691,6 +2691,7 @@ mod tests {
             allow_png_fallback: false,
             retries: 2,
             playlist_indexes: None,
+            read_browser_cookies: false,
             browser_session: None,
             browser_capture_path: None,
             facebook_capture_id: None,

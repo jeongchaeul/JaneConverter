@@ -146,11 +146,16 @@ Paste a public Instagram post/Reel (`/{username}/p/{shortcode}/`, `/p/{shortcode
 
 The one-link capture flow also includes code paths for Reddit image galleries, Tumblr photo posts, and Pinterest Pins, boards, and sections. Pinterest boards are scanned as a collection, while post carousels and gallery viewers are advanced in sequence. Captures are limited to image URLs rendered by the public page and validated against that platform's image CDN; incomplete captures are not saved. Secret/private boards and posts that require sign-in are not supported. Snapchat Public Stories are not implemented because guest access through its desktop browser has not been verified.
 
-JaneConverter prioritizes public access first. When an online media platform reports that a stream requires sign-in, enforces an age restriction (such as YouTube Error 152), or restricts access to friends or subscribers, the engine autonomously probes available browser profiles (Vivaldi, Google Chrome, Microsoft Edge, Brave) to recover the media.
+JaneConverter prioritizes public access first. When an online media platform reports that a stream requires sign-in, enforces an age restriction (such as YouTube Error 152), or restricts access to friends or subscribers, JaneConverter can use your active browser sessions to recover the media.
 
-### Transparent Browser Session Security & Privacy
+### Transparent Browser Session Security & Privacy (Opt-In)
 
-To be completely transparent: **JaneConverter does read your active browser session cookies for the specific media domain being converted**, but it does so under strict, defense-in-depth safety constraints:
+Reading session cookies is strictly **opt-in** and managed via **Settings > Read Browser Cookies (Session Recovery)** (disabled by default):
+
+- **When Disabled (Default Air-Gap Mode)**: JaneConverter runs in strictly public mode. Local browser profiles and SQLite databases are never opened, queried, or inspected. Public media across 1,000+ sites, public photo albums, local conversions, and the Browser Extension Bridge work normally. Sign-in-gated posts (friends-only Facebook posts, YouTube Error 152) will prompt you to enable the setting or use the extension.
+- **When Enabled (Automatic Session Recovery)**: If a media link requires authentication, the engine autonomously probes installed desktop browser profiles (Vivaldi, Google Chrome, Microsoft Edge, Brave, Firefox, Opera) in-memory to recover the media without requiring manual credential input or cookie file exports.
+
+To be completely honest and transparent about how this works: **JaneConverter reads active browser session cookies for the specific media domain being converted**, but operates under rigorous, defense-in-depth safety constraints:
 
 1. **Strictly Local & Air-Gapped**: The entire process occurs 100% on your machine. JaneConverter has no tracking servers, telemetry, cloud relays, or analytics. Your session data never leaves your computer.
 2. **Ephemeral In-Memory Only (Zero Disk Writes)**: Cookies are read directly into temporary RAM (`RequestsCookieJar`). JaneConverter **never writes, exports, or stores cookie files** (no `.txt`, `.cookies`, or Netscape files) to your hard drive.
@@ -160,7 +165,9 @@ To be completely transparent: **JaneConverter does read your active browser sess
 6. **Instant RAM Purge**: The moment extraction finishes (or if the job aborts or fails), the in-memory cookie jar is immediately wiped from memory.
 
 > [!TIP]
-> **Source Browser Pre-Opening**: In **Settings**, you can enable **Source Browser Pre-Opening** (`openInBrowser`). When enabled, JaneConverter will automatically open media links in your browser before conversion starts. This warms up anti-bot verification challenges and writes fresh session cookies to your local browser profile so private, friends-only, or members-only conversions succeed seamlessly on the first attempt.
+> **Source Browser Pre-Opening**: In **Settings**, you can also enable **Source Browser Pre-Opening** (`openInBrowser`). When enabled, JaneConverter will automatically open media links in your browser before conversion starts. This warms up anti-bot verification challenges and writes fresh session cookies to your local browser profile so private, friends-only, or members-only conversions succeed seamlessly on the first attempt.
+>
+> **Apple Music Behavior**: For Apple Music links, direct playback streams naturally fail if you are not actively logged into an active Apple Music browser session. However, you don't need to be logged in: JaneConverter's built-in **Mahoraga Fallback Engine** automatically catches the failed stream, parses the track catalog metadata, and discovers matching high-fidelity audio sources across alternative public platforms (YouTube Music, Spotify, catalog mirrors).
 
 For users who prefer interactive capture or encounter heavy DRM/player protections, the **Browser Extension** (`JaneConverter Browser Bridge`) remains available as an optional companion. Captured items appear in the dedicated **Media Capturer** tab and are saved in the configured media capturer folder. The default is a `fetched` folder beside the converted library; clearing access ends the browser session without deleting those files. Each item supports **Open file**, **Open path**, **Use for conversion**, and **Discard**.
 

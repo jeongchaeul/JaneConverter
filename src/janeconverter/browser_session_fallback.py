@@ -90,7 +90,8 @@ class _PrivateLogger:
 
 
 def extract_with_browser_fallback(ydl, options, query, download, browser=None,
-                                  abort_event=None, report=None, deadline=None):
+                                  abort_event=None, report=None, deadline=None,
+                                  allow_cookies=True):
     patch_yt_dlp_cookie_database_reader()
     try:
         return extract_with_recovery(ydl, query, download, abort_event, report, deadline)
@@ -101,7 +102,16 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
         if abort_event and abort_event.is_set():
             raise KeyboardInterrupt("Stream extraction aborted by user.")
 
-        target_browser = normalize_browser_session(browser) or detect_default_browser_session()
+        raw_browser = str(browser or "").strip().lower()
+        if not allow_cookies or raw_browser in ("none", "disabled", "off", "false", "public", "public only"):
+            raise BrowserSessionError(
+                "This source requires sign-in or active session cookies, but 'Read Browser Cookies' is currently disabled in Settings. "
+                "Enable it in Settings to allow JaneConverter to use your local browser session, or use the Browser Extension."
+            ) from None
+
+        target_browser = normalize_browser_session(browser)
+        if not target_browser or target_browser == "auto":
+            target_browser = detect_default_browser_session()
         if not target_browser:
             raise BrowserSessionError(
                 "This source requires sign-in, but JaneConverter could not identify a supported default browser."

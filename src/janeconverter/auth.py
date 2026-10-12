@@ -25,8 +25,13 @@ BROWSER_SESSION_CHOICES = (
 
 _BROWSER_ALIASES = {
     "none": None,
+    "disabled": None,
+    "off": None,
+    "false": None,
     "public": None,
     "public only": None,
+    "auto": "auto",
+    "default": "auto",
     "chrome": "chrome",
     "edge": "edge",
     "firefox": "firefox",
@@ -135,7 +140,11 @@ def normalize_browser_session(selection: Optional[str]) -> Optional[str]:
 def browser_session_label(selection: Optional[str]) -> str:
     """Return the stable user-facing label for a browser selection."""
     browser = normalize_browser_session(selection)
-    return PUBLIC_SESSION_LABEL if browser is None else browser.title()
+    if browser is None:
+        return PUBLIC_SESSION_LABEL
+    if browser == "auto":
+        return "Auto-detect"
+    return browser.title()
 
 
 def yt_dlp_cookie_option(selection: Optional[str]) -> Optional[Tuple[str, None, None, None]]:
@@ -143,6 +152,10 @@ def yt_dlp_cookie_option(selection: Optional[str]) -> Optional[Tuple[str, None, 
     browser = normalize_browser_session(selection)
     if browser is None:
         return None
+    if browser == "auto":
+        browser = detect_default_browser_session()
+        if not browser:
+            return None
     # yt-dlp accepts (browser, profile, keyring, container). Leaving the
     # optional values empty lets it select the user's default profile.
     return (browser, None, None, None)

@@ -464,14 +464,23 @@ pub fn build_conversion_args_with_capture(
     if request.allow_png_fallback && request.format == "source" && request.category == "Image" {
         args.push("--allow-lossless-png-recovery".into());
     }
-    if let Some(browser) = browser
-        .or_else(|| request.browser_session.clone())
-        .filter(|value| !value.trim().is_empty())
-    {
+    let explicit_browser = browser.or_else(|| request.browser_session.clone());
+    let browser_enabled = request.read_browser_cookies
+        || explicit_browser.as_ref().map_or(false, |b| {
+            !b.trim().is_empty() && b.trim().to_lowercase() != "none"
+        });
+
+    if browser_enabled {
+        let selected_browser = explicit_browser
+            .filter(|value| !value.trim().is_empty() && value.trim().to_lowercase() != "none")
+            .unwrap_or_else(|| "auto".into());
         args.extend([
             "--browser-session".into(),
-            normalize_browser_session_arg(&browser)?,
+            normalize_browser_session_arg(&selected_browser)?,
+            "--browser-cookies".into(),
         ]);
+    } else {
+        args.push("--no-browser-cookies".into());
     }
     if let Some(path) = browser_media_path {
         if !path.is_file() {
@@ -517,6 +526,8 @@ fn normalize_browser_session_arg(value: &str) -> Result<String, String> {
     if matches!(
         normalized.as_str(),
         "none"
+            | "auto"
+            | "default"
             | "chrome"
             | "edge"
             | "firefox"
@@ -1012,6 +1023,7 @@ mod tests {
             allow_png_fallback: false,
             retries: 2,
             playlist_indexes: None,
+            read_browser_cookies: false,
             browser_session: Some("Chrome".into()),
             browser_capture_path: None,
             facebook_capture_id: None,
@@ -1026,6 +1038,7 @@ mod tests {
             .position(|value| value == "--browser-session")
             .expect("browser session flag should be forwarded");
         assert_eq!(args[flag + 1], "chrome");
+        assert!(args.contains(&"--browser-cookies".into()));
         request.category = "Image".into();
         request.format = "source".into();
         request.allow_png_fallback = true;
@@ -1050,6 +1063,7 @@ mod tests {
             allow_png_fallback: false,
             retries: 2,
             playlist_indexes: None,
+            read_browser_cookies: false,
             browser_session: None,
             browser_capture_path: None,
             facebook_capture_id: Some("01234567-89ab-cdef-0123-456789abcdef".into()),
@@ -1089,6 +1103,7 @@ mod tests {
             allow_png_fallback: false,
             retries: 2,
             playlist_indexes: None,
+            read_browser_cookies: false,
             browser_session: None,
             browser_capture_path: None,
             facebook_capture_id: None,
@@ -1125,6 +1140,7 @@ mod tests {
             allow_png_fallback: false,
             retries: 2,
             playlist_indexes: None,
+            read_browser_cookies: false,
             browser_session: None,
             browser_capture_path: None,
             facebook_capture_id: None,
@@ -1135,6 +1151,7 @@ mod tests {
         let args = build_conversion_args_with_capture(&request, None, None, false)
             .expect("public conversion should be valid");
         assert!(!args.iter().any(|value| value == "--browser-session"));
+        assert!(args.contains(&"--no-browser-cookies".into()));
     }
 
     #[test]
@@ -1154,6 +1171,7 @@ mod tests {
             allow_png_fallback: false,
             retries: 2,
             playlist_indexes: None,
+            read_browser_cookies: false,
             browser_session: None,
             browser_capture_path: None,
             facebook_capture_id: None,
@@ -1172,5 +1190,40 @@ mod tests {
             .position(|a| a == "--end-time")
             .expect("end-time present");
         assert_eq!(args[e_pos + 1], "00:03:45");
+    }
+
+    #[test]
+    fn read_browser_cookies_enables_auto_session_and_browser_cookies_flag() {
+        let request = ConversionRequest {
+            source: "https://www.facebook.com/reel/123456789".into(),
+            output_dir: "out".into(),
+            category: "Video".into(),
+            format: "mp4".into(),
+            bitrate: "original".into(),
+            sample_rate: 48000,
+            resolution: "original".into(),
+            normalize: false,
+            use_gpu: false,
+            save_cover: true,
+            save_metadata: true,
+            allow_png_fallback: false,
+            retries: 2,
+            playlist_indexes: None,
+            read_browser_cookies: true,
+            browser_session: None,
+            browser_capture_path: None,
+            facebook_capture_id: None,
+            social_capture_id: None,
+            start_time: None,
+            end_time: None,
+        };
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        let session_pos = args
+            .iter()
+            .position(|a| a == "--browser-session")
+            .expect("browser session present");
+        assert_eq!(args[session_pos + 1], "auto");
+        assert!(args.contains(&"--browser-cookies".into()));
+        assert!(!args.contains(&"--no-browser-cookies".into()));
     }
 }

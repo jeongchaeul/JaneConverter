@@ -229,3 +229,16 @@ def test_facebook_cannot_parse_data_triggers_browser_session_fallback():
     assert fallback.needs_browser_session("Main webpage is locked behind the login page")
 
 
+def test_disabled_cookie_setting_refuses_to_read_browser_cookies(browser):
+    public = Mock(params={})
+    public.extract_info.side_effect = RuntimeError("Please sign in. Use --cookies-from-browser")
+
+    with pytest.raises(fallback.BrowserSessionError) as exc_info:
+        fallback.extract_with_browser_fallback(public, {}, URL, True, browser="none", allow_cookies=False)
+
+    assert "Read Browser Cookies" in str(exc_info.value)
+    assert browser[0].call_count == 0
+    assert browser[1].call_count == 0
+
+
+

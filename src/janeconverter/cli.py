@@ -931,9 +931,19 @@ def main():
                         help="Library category. Image captures are stored under Images; Miscellaneous stores media under Audio or Videos.")
     parser.add_argument(
         "--browser-session",
-        choices=("none", "chrome", "edge", "firefox", "brave", "vivaldi", "opera", "chromium", "safari"),
+        choices=("none", "auto", "default", "chrome", "edge", "firefox", "brave", "vivaldi", "opera", "chromium", "safari"),
         default="none",
         help="Use an existing logged-in browser session for authorized content; no password or cookie file is stored.",
+    )
+    parser.add_argument(
+        "--no-browser-cookies",
+        action="store_true",
+        help="Disable reading browser session cookies; restrict conversion to public access only.",
+    )
+    parser.add_argument(
+        "--browser-cookies",
+        action="store_true",
+        help="Enable reading browser session cookies from local browser profiles when sign-in is required.",
     )
     parser.add_argument("--browser-media-path", help=argparse.SUPPRESS)
     parser.add_argument("--facebook-photo-manifest-stdin", action="store_true", help=argparse.SUPPRESS)
@@ -1053,6 +1063,11 @@ def main():
     save_cover = not args.no_cover_art
     save_meta = not args.no_metadata
     use_gpu = not args.no_gpu
+
+    if args.no_browser_cookies:
+        args.browser_session = "none"
+    elif args.browser_cookies and args.browser_session in (None, "none"):
+        args.browser_session = "auto"
 
     if args.list_playlist:
         args.browser_session = normalize_browser_session(args.browser_session)

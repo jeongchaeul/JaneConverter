@@ -288,4 +288,76 @@ describe("Settings updates", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("toggles readBrowserCookies and shows detailed explanations for ON and OFF states", async () => {
+    const onSettings = vi.fn();
+    const onStatus = vi.fn();
+    const initialSettings = {
+      category: "Audio" as const,
+      format: "MP3",
+      bitrate: "320k",
+      sampleRate: 48000,
+      resolution: "original",
+      outputDir: "./converted",
+      fetchedDir: "./fetched",
+      retries: 2,
+      useGpu: false,
+      saveCover: false,
+      saveMetadata: true,
+      normalize: false,
+      readBrowserCookies: false,
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <SettingsView
+          runtime={sourceRuntime}
+          settings={initialSettings}
+          onSettings={onSettings}
+          onStatus={onStatus}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("Read Browser Cookies (Session Recovery)");
+    expect(container.textContent).toContain("Disabled (Air-Gap Mode)");
+    expect(container.textContent).toContain("What works when disabled");
+    expect(container.textContent).toContain("What won't work when disabled");
+    expect(container.textContent).toContain("Friends-only Facebook Reels & posts");
+
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="Read browser cookies for session recovery"]');
+    expect(toggle).toBeDefined();
+    expect(toggle?.getAttribute("aria-checked")).toBe("false");
+
+    await act(async () => {
+      toggle?.click();
+      await Promise.resolve();
+    });
+
+    expect(onSettings).toHaveBeenCalledWith({ ...initialSettings, readBrowserCookies: true });
+    expect(onStatus).toHaveBeenCalledWith(expect.stringContaining("Browser session cookie reading enabled"));
+
+    // Now render with readBrowserCookies: true
+    await act(async () => {
+      root.render(
+        <SettingsView
+          runtime={sourceRuntime}
+          settings={{ ...initialSettings, readBrowserCookies: true }}
+          onSettings={onSettings}
+          onStatus={onStatus}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("Enabled (Session Recovery)");
+    expect(container.textContent).toContain("What works when enabled");
+    expect(container.textContent).toContain("Air-gapped privacy guarantees");
+    expect(container.textContent).toContain("RAM only (0 bytes to disk)");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });

@@ -49,6 +49,7 @@ export interface ConverterSettings {
   saveMetadata: boolean;
   allowPngFallback?: boolean;
   openInBrowser?: boolean;
+  readBrowserCookies?: boolean;
   retries: number;
   startTime?: string;
   endTime?: string;
@@ -283,6 +284,8 @@ const demoSettings: ConverterSettings = {
   saveCover: true,
   saveMetadata: true,
   allowPngFallback: false,
+  openInBrowser: false,
+  readBrowserCookies: false,
   retries: 2,
   startTime: "",
   endTime: "",

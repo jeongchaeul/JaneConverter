@@ -970,7 +970,12 @@ def fetch_media_stream(
                 preexisting_stream_files[os.path.abspath(entry_path)] = (entry_stat.st_size, entry_stat.st_mtime_ns)
     except OSError:
         preexisting_stream_files = {}
-    auth_browser = normalize_browser_session(auth_browser)
+    raw_browser = str(auth_browser or "").strip().lower()
+    allow_browser_cookies = raw_browser not in ("none", "disabled", "off", "false", "public", "public only")
+    if not allow_browser_cookies:
+        effective_auth_browser = "none"
+    else:
+        effective_auth_browser = normalize_browser_session(auth_browser) or "auto"
 
     last_report_time = [0.0]
 
@@ -1239,8 +1244,9 @@ def fetch_media_stream(
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             def extract(query, download):
                 return extract_with_browser_fallback(
-                    ydl, ydl_opts, query, download, browser=auth_browser,
+                    ydl, ydl_opts, query, download, browser=effective_auth_browser,
                     abort_event=abort_event, report=report, deadline=recovery_deadline,
+                    allow_cookies=allow_browser_cookies,
                 )
 
             for query_item in candidates:
@@ -1460,7 +1466,12 @@ def fetch_playlist_entries(
 
     source_type = identify_source_type(url)
     clean_url = url.strip()
-    auth_browser = normalize_browser_session(auth_browser)
+    raw_browser = str(auth_browser or "").strip().lower()
+    allow_browser_cookies = raw_browser not in ("none", "disabled", "off", "false", "public", "public only")
+    if not allow_browser_cookies:
+        effective_auth_browser = "none"
+    else:
+        effective_auth_browser = normalize_browser_session(auth_browser) or "auto"
 
 
     if source_type == "apple_music":
@@ -1553,7 +1564,8 @@ def fetch_playlist_entries(
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             report(0.3, "Extracting playlist index and track listings...")
             info = extract_with_browser_fallback(
-                ydl, ydl_opts, clean_url, download=False, browser=auth_browser, report=report
+                ydl, ydl_opts, clean_url, download=False, browser=effective_auth_browser,
+                report=report, allow_cookies=allow_browser_cookies,
             )
             if not info:
                 raise ValueError("Could not extract playlist information from URL.")

@@ -457,6 +457,7 @@ pub fn settings_get_internal() -> ConverterSettings {
         save_metadata: parse_bool(&values, "save_metadata", true),
         allow_png_fallback: parse_bool(&values, "allow_png_fallback", false),
         open_in_browser: parse_bool(&values, "open_in_browser", false),
+        read_browser_cookies: parse_bool(&values, "read_browser_cookies", false),
         retries: values
             .get("retries")
             .and_then(|value| value.parse().ok())
@@ -513,6 +514,14 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
         (
             "open_in_browser",
             if settings.open_in_browser {
+                "true"
+            } else {
+                "false"
+            },
+        ),
+        (
+            "read_browser_cookies",
+            if settings.read_browser_cookies {
                 "true"
             } else {
                 "false"
