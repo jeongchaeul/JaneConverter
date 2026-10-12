@@ -208,7 +208,7 @@ def build_video_format_selector(resolution: str = "original") -> str:
     max_height = max_heights.get((resolution or "original").lower())
     if max_height is None:
         return "bv*+ba/b"
-    return f"bv*[height<={max_height}]+ba/b[height<={max_height}]/best[height<={max_height}]"
+    return f"bv*[height<={max_height}]+ba/b[height<={max_height}]/best[height<={max_height}]/b/best"
 
 MAX_THUMBNAIL_BYTES = 15 * 1024 * 1024  # 15 MiB limit for cover art
 MAX_THUMBNAIL_PIXELS = 16_000_000      # 16 Megapixels decompression bomb protection

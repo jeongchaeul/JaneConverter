@@ -57,7 +57,13 @@ def extract_with_recovery(ydl, query, download, abort_event=None, report=None, d
                     raise
                 if report:
                     report(0.15, f"Extraction recovery: {category.value}; attempt {attempt + 2}/3.", force=True)
-                if category in (ExtractionCategory.FORMAT, ExtractionCategory.LAYOUT):
+                if category == ExtractionCategory.FORMAT:
+                    if not hasattr(ydl, "params") or attempt > 0:
+                        raise
+                    ydl.params.pop("extractor_args", None)
+                    ydl.params["format"] = "bv*+ba/b/best"
+                    continue
+                if category == ExtractionCategory.LAYOUT:
                     if not hasattr(ydl, "params") or attempt > 0:
                         raise
                     # Re-extract fresh metadata using the provider's maintained defaults.

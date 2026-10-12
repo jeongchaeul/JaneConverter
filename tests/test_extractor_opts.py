@@ -11,7 +11,7 @@ def test_video_format_selector_prioritizes_resolution_over_codec():
     four_k = build_video_format_selector("4k")
 
     assert original == "bv*+ba/b"
-    assert four_k == "bv*[height<=2160]+ba/b[height<=2160]/best[height<=2160]"
+    assert four_k == "bv*[height<=2160]+ba/b[height<=2160]/best[height<=2160]/b/best"
     assert "vcodec^=av01" not in four_k
     assert "vcodec^=vp9" not in four_k
 
