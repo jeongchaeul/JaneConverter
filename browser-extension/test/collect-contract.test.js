@@ -74,7 +74,7 @@ test("collect mode skips a repeated image after its CDN URL changes", async () =
   };
   vm.runInNewContext(read("media-utils.js"), context);
   vm.runInNewContext(read("collect.js"), context);
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
   control({ type: "jane-collect-control", enabled: true }, null, () => {});
   await settle();
   assert.equal(uploads.length, 1);

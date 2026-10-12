@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -365,6 +366,7 @@ def test_recovery_output_summary_contains_properties_without_metadata(monkeypatc
     assert "hidden-source" not in summary
 
 
+@pytest.mark.skipif(not shutil.which(converter.get_ffmpeg_binary()), reason="requires FFmpeg on PATH")
 def test_requested_audio_metadata_survives_real_conversion(tmp_path):
     source = tmp_path / "tone.wav"
     cover = tmp_path / "cover.jpg"
@@ -384,6 +386,7 @@ def test_requested_audio_metadata_survives_real_conversion(tmp_path):
     assert tags["comment"] == "Converted by JaneConverter"
 
 
+@pytest.mark.skipif(not shutil.which(converter.get_ffmpeg_binary()), reason="requires FFmpeg on PATH")
 def test_requested_video_properties_survive_real_conversion(tmp_path, monkeypatch):
     monkeypatch.setattr(converter, "record_local_success", lambda *_args: None)
     source = tmp_path / "clip.mp4"
@@ -418,6 +421,7 @@ def test_requested_video_properties_survive_real_conversion(tmp_path, monkeypatc
     assert any("Recovered from hardware" in message for message in messages)
 
 
+@pytest.mark.skipif(not shutil.which(converter.get_ffmpeg_binary()), reason="requires FFmpeg on PATH")
 def test_audio_container_recovery_reencodes_to_requested_flac(tmp_path, monkeypatch):
     monkeypatch.setattr(converter, "record_local_success", lambda *_args: None)
     source = tmp_path / "tone.mp3"

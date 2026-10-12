@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 
 import pytest
@@ -36,6 +37,7 @@ def test_video_requires_a_decodable_stream(tmp_path, monkeypatch):
         validate_capture(str(capture), "video")
 
 
+@pytest.mark.skipif(not shutil.which(get_ffmpeg_binary()), reason="requires FFmpeg on PATH")
 def test_rendered_webm_without_duration_still_requires_playable_frames(tmp_path):
     capture = tmp_path / "rendered.webm.part"
     subprocess.run([get_ffmpeg_binary(), "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=64x64:rate=10",

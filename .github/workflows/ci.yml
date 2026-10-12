@@ -38,7 +38,20 @@ jobs:
 
       - name: Install FFmpeg (Windows)
         if: runner.os == 'Windows'
-        run: choco install ffmpeg -y --no-progress
+        shell: pwsh
+        run: |
+          $tag = "autobuild-2026-09-30-13-08"
+          $name = "ffmpeg-N-127021-ge0c94b2d1c-win64-gpl.zip"
+          $expected = "85c4a4636b93d681a07588ffa6f1d8f5c064d9c3fb0622066662906b6fd718a1"
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/$tag/$name"
+          Invoke-WebRequest -Uri $url -OutFile $name
+          $actual = (Get-FileHash -Algorithm SHA256 $name).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "FFmpeg SHA256 verification failed." }
+          Expand-Archive -LiteralPath $name -DestinationPath ffmpeg-static
+          $ffmpeg = (Get-ChildItem ffmpeg-static -Recurse -Filter ffmpeg.exe -File | Select-Object -First 1).FullName
+          if (-not $ffmpeg) { throw "Verified FFmpeg archive did not contain ffmpeg.exe." }
+          $binDir = Split-Path $ffmpeg
+          $binDir >> $env:GITHUB_PATH
 
       - name: Install FFmpeg (Linux)
         if: runner.os == 'Linux'
@@ -47,6 +60,11 @@ jobs:
       - name: Install FFmpeg (macOS)
         if: runner.os == 'macOS'
         run: brew install ffmpeg
+
+      - name: Verify FFmpeg
+        run: |
+          ffmpeg -version
+          ffprobe -version
 
       - name: Install dependencies
         run: uv sync --locked

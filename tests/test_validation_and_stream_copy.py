@@ -3,6 +3,7 @@ Tests for output validation, stream-copy guardrails, and SoX resampler logic.
 """
 
 import os
+import shutil
 import subprocess
 import pytest
 from janeconverter.converter import (
@@ -111,6 +112,7 @@ def test_build_ffmpeg_args_stream_copy():
     assert video_cmd[video_cmd.index("-c:a") + 1] == "copy"
 
 
+@pytest.mark.skipif(not shutil.which(get_ffmpeg_binary()), reason="requires FFmpeg on PATH")
 def test_convert_media_stream_copy_e2e(tmp_path):
     ffmpeg = get_ffmpeg_binary()
     source_mp3 = tmp_path / "source.mp3"
@@ -143,6 +145,7 @@ def test_convert_media_stream_copy_e2e(tmp_path):
     assert any(s.get("codec_name") == "mp3" for s in info.get("streams", []))
 
 
+@pytest.mark.skipif(not shutil.which(get_ffmpeg_binary()), reason="requires FFmpeg on PATH")
 def test_convert_media_preserve_quality_source_format(tmp_path):
     ffmpeg = get_ffmpeg_binary()
     source_mp4 = tmp_path / "source.mp4"
