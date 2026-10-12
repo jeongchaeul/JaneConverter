@@ -17,6 +17,10 @@ pub struct ConverterSettings {
     #[serde(default)]
     pub allow_png_fallback: bool,
     pub retries: u8,
+    #[serde(default)]
+    pub start_time: Option<String>,
+    #[serde(default)]
+    pub end_time: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -41,6 +45,10 @@ pub struct ConversionRequest {
     pub browser_capture_path: Option<String>,
     pub facebook_capture_id: Option<String>,
     pub social_capture_id: Option<String>,
+    #[serde(default)]
+    pub start_time: Option<String>,
+    #[serde(default)]
+    pub end_time: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

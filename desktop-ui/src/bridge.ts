@@ -49,6 +49,8 @@ export interface ConverterSettings {
   saveMetadata: boolean;
   allowPngFallback?: boolean;
   retries: number;
+  startTime?: string;
+  endTime?: string;
 }
 
 export interface UpdateCheckResult {
@@ -281,6 +283,8 @@ const demoSettings: ConverterSettings = {
   saveMetadata: true,
   allowPngFallback: false,
   retries: 2,
+  startTime: "",
+  endTime: "",
 };
 
 const demoBridge: JaneBridge = {

@@ -35,7 +35,9 @@ from .converter import (
     SUPPORTED_AUDIO_FORMATS,
     SUPPORTED_IMAGE_FORMATS,
     SUPPORTED_VIDEO_FORMATS,
-    get_best_hardware_encoder
+    get_best_hardware_encoder,
+    sanitize_time_offset,
+    parse_time_offset_seconds,
 )
 from .updater import check_for_engine_updates, check_for_repo_updates
 from .version import __version__
@@ -239,6 +241,8 @@ def process_conversion(
     social_photo_manifest: Optional[Dict[str, Any]] = None,
     facebook_refresh_candidates: Optional[Callable[[str], list[str]]] = None,
     allow_lossless_png_recovery: bool = False,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
 ) -> str:
     """
     Orchestrates downloading/extracting stream, embedding cover art, exporting credits,
@@ -435,6 +439,8 @@ def process_conversion(
             abort_event=abort_event,
             progress_callback=report,
             allow_lossless_png_recovery=allow_lossless_png_recovery,
+            start_time=start_time,
+            end_time=end_time,
         )
 
         report(1.0, f"Ready! File exported to: {os.path.basename(result_path)}")
@@ -878,6 +884,22 @@ def validate_cli_args(args, parser: argparse.ArgumentParser):
     if args.playlist and not is_url(args.source):
         parser.error("--playlist requires a URL; a local file path cannot be a playlist.")
 
+    if getattr(args, "start_time", None):
+        try:
+            args.start_time = sanitize_time_offset(args.start_time)
+        except ValueError as e:
+            parser.error(str(e))
+    if getattr(args, "end_time", None):
+        try:
+            args.end_time = sanitize_time_offset(args.end_time)
+        except ValueError as e:
+            parser.error(str(e))
+    if getattr(args, "start_time", None) and getattr(args, "end_time", None):
+        s = parse_time_offset_seconds(args.start_time)
+        e = parse_time_offset_seconds(args.end_time)
+        if s is not None and e is not None and s >= e:
+            parser.error(f"Start time ({args.start_time}) must be before end time ({args.end_time}).")
+
     return fmt, bitrate
 
 def main():
@@ -889,6 +911,8 @@ def main():
     parser.add_argument("--sample-rate", "-r", type=int, default=48000, help="Audio sample rate in Hz (44100, 48000, 96000)")
     parser.add_argument("--normalize", "-n", action="store_true", help="Apply EBU R128 loudness normalization")
     parser.add_argument("--resolution", default="original", help="Video resolution (original, 4k, 1440p, 1080p, 720p, 480p)")
+    parser.add_argument("--start-time", help="Start time offset for media clipping/trimming (e.g. 01:30, 90, 00:01:30)")
+    parser.add_argument("--end-time", help="End time offset for media clipping/trimming (e.g. 03:45, 225, 00:03:45)")
     parser.add_argument("--no-gpu", action="store_true", help="Disable hardware GPU acceleration (use multi-core CPU libx264)")
     parser.add_argument("--allow-lossless-png-recovery", action="store_true", help="If source image validation fails, allow a validated PNG output and show the format change")
     parser.add_argument("--keep-temp", action="store_true", help="Keep intermediate downloaded stream files in temp directory")
@@ -1127,6 +1151,8 @@ def main():
             social_photo_manifest=social_photo_manifest,
             facebook_refresh_candidates=refresh_callback,
             allow_lossless_png_recovery=args.allow_lossless_png_recovery,
+            start_time=args.start_time,
+            end_time=args.end_time,
         )
 
 if __name__ == "__main__":

@@ -1548,6 +1548,30 @@ export function ConverterView({
                     disabled={hardwareAccelerationDisabled}
                   />
                 </div>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <label className="block min-w-0">
+                    <span className="mb-2 block text-[11px] font-medium text-zinc-500">Trim start time (optional)</span>
+                    <input
+                      type="text"
+                      placeholder="e.g. 00:15 or 90"
+                      value={settings.startTime ?? ""}
+                      onChange={(e) => update({ startTime: e.target.value })}
+                      className="field w-full px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600"
+                    />
+                    <span className="mt-1.5 block text-[10px] leading-relaxed text-zinc-600">Start timestamp (HH:MM:SS, MM:SS, or seconds)</span>
+                  </label>
+                  <label className="block min-w-0">
+                    <span className="mb-2 block text-[11px] font-medium text-zinc-500">Trim end time (optional)</span>
+                    <input
+                      type="text"
+                      placeholder="e.g. 02:45 or 165"
+                      value={settings.endTime ?? ""}
+                      onChange={(e) => update({ endTime: e.target.value })}
+                      className="field w-full px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600"
+                    />
+                    <span className="mt-1.5 block text-[10px] leading-relaxed text-zinc-600">End timestamp (HH:MM:SS, MM:SS, or seconds)</span>
+                  </label>
+                </div>
                 {isImage && isSourceFormat && (
                   <div className="mt-3 max-w-md">
                     <Toggle

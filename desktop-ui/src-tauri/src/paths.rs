@@ -461,6 +461,8 @@ pub fn settings_get_internal() -> ConverterSettings {
             .and_then(|value| value.parse().ok())
             .unwrap_or(2)
             .min(5),
+        start_time: values.get("start_time").cloned(),
+        end_time: values.get("end_time").cloned(),
     }
 }
 
@@ -472,6 +474,8 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
     let fetched_dir = crate::library::clean_windows_path(&settings.fetched_dir);
     let sample_rate = settings.sample_rate.to_string();
     let retries = settings.retries.min(5).to_string();
+    let start_time = settings.start_time.clone().unwrap_or_default();
+    let end_time = settings.end_time.clone().unwrap_or_default();
     let body = [
         ("output_dir", output_dir.as_str()),
         ("fetched_dir", fetched_dir.as_str()),
@@ -506,6 +510,8 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
             },
         ),
         ("retries", retries.as_str()),
+        ("start_time", start_time.as_str()),
+        ("end_time", end_time.as_str()),
     ]
     .iter()
     .map(|(key, value)| format!("{key}={value}\n"))

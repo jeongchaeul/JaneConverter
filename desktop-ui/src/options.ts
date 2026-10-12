@@ -5,7 +5,7 @@ export const audioFormats = [
   "alac", "ac3", "mp2", "wma", "caf", "au",
 ];
 export const videoFormats = [
-  "mp4", "mkv", "webm", "mov", "gif", "avi", "flv", "m4v", "ts",
+  "mp4", "mkv", "webm", "av1", "mov", "gif", "avi", "flv", "m4v", "ts",
   "m2ts", "mpeg", "mpg", "vob", "3gp", "wmv", "asf",
 ];
 export const imageFormats = [
@@ -186,6 +186,19 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: false,
     useGpu: false,
+  },
+  {
+    id: "av1-archive",
+    name: "AV1 Next-Gen Archive",
+    description: "Modern high-efficiency AV1 video encoding with GPU acceleration (NVENC/AMF/QSV) or SVT-AV1 CPU",
+    group: "Video",
+    category: "Video",
+    format: "av1",
+    bitrate: "balanced",
+    sampleRate: 48000,
+    resolution: "original",
+    normalize: false,
+    useGpu: true,
   },
   {
     id: "lossless-image",

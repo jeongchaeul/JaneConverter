@@ -2695,6 +2695,8 @@ mod tests {
             browser_capture_path: None,
             facebook_capture_id: None,
             social_capture_id: None,
+            start_time: None,
+            end_time: None,
         };
         assert!(
             crate::process::build_conversion_args_with_capture(&request, None, None, false)

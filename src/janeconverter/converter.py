@@ -28,14 +28,14 @@ SUPPORTED_AUDIO_FORMATS = {
     "alac", "ac3", "mp2", "wma", "caf", "au",
 }
 SUPPORTED_VIDEO_FORMATS = {
-    "mp4", "mkv", "webm", "mov", "gif", "avi", "flv", "m4v", "ts",
+    "mp4", "mkv", "webm", "av1", "mov", "gif", "avi", "flv", "m4v", "ts",
     "m2ts", "mpeg", "mpg", "vob", "3gp", "wmv", "asf",
 }
 SUPPORTED_IMAGE_FORMATS = {
     "jpg", "jpeg", "jfif", "png", "webp", "bmp", "tif", "tiff", "gif",
     "ico", "tga", "ppm", "pgm", "pbm",
 }
-OUTPUT_FILE_EXTENSIONS = {"alac": "m4a"}
+OUTPUT_FILE_EXTENSIONS = {"alac": "m4a", "av1": "mkv"}
 
 # Static image outputs are normalized through Pillow so output support is not
 # tied to which optional image encoders happen to be present in a platform's
@@ -46,10 +46,11 @@ IMAGE_FFMPEG_ENCODERS = {
     "tga": "targa", "ppm": "ppm", "pgm": "pgm", "pbm": "pbm",
 }
 
-HARDWARE_VIDEO_FORMATS = {"mp4", "mkv", "mov", "m4v", "ts", "m2ts"}
+HARDWARE_VIDEO_FORMATS = {"mp4", "mkv", "av1", "mov", "m4v", "ts", "m2ts"}
 VIDEO_ENCODER_PROFILES = {
     "mp4": ("libx264", "aac"),
     "mkv": ("libx264", "aac"),
+    "av1": ("libsvtav1", "aac"),
     "mov": ("libx264", "aac"),
     "m4v": ("libx264", "aac"),
     "ts": ("libx264", "aac"),
@@ -136,6 +137,48 @@ def build_loudnorm_filter(measured: Optional[Dict[str, str]] = None) -> str:
             f":linear=true:print_format=json"
         )
     return LOUDNORM_FILTER + ":print_format=json"
+
+
+def sanitize_time_offset(value: Optional[str]) -> Optional[str]:
+    """
+    Validates and normalizes time offsets for FFmpeg / yt-dlp.
+    Accepts seconds (e.g. '90', '45.5') or timestamp formats (e.g. '01:30', '00:01:30', '01:15:20.5').
+    Rejects malformed input.
+    """
+    if value is None:
+        return None
+    val = str(value).strip()
+    if not val:
+        return None
+    if re.match(r"^(?:\d+)(?::\d{2}){0,2}(?:\.\d+)?$", val):
+        return val
+    try:
+        f = float(val)
+        if f >= 0 and math.isfinite(f):
+            return str(val)
+    except (ValueError, TypeError):
+        pass
+    raise ValueError(f"Invalid time offset: '{val}'. Expected seconds (e.g. 90) or timestamp (e.g. 01:30, 00:01:30).")
+
+
+def parse_time_offset_seconds(val: Optional[str]) -> Optional[float]:
+    """Parse a sanitized time string ('90', '01:30', '00:01:30.5') into seconds."""
+    if not val:
+        return None
+    val_str = str(val).strip()
+    if not val_str:
+        return None
+    parts = val_str.split(":")
+    try:
+        if len(parts) == 1:
+            return float(parts[0])
+        elif len(parts) == 2:
+            return float(parts[0]) * 60.0 + float(parts[1])
+        elif len(parts) == 3:
+            return float(parts[0]) * 3600.0 + float(parts[1]) * 60.0 + float(parts[2])
+    except (ValueError, TypeError):
+        return None
+    return None
 
 def measure_audio_loudness(
     input_path: str,
@@ -500,7 +543,23 @@ def validate_output_intent(
             output_duration = float(output.get("format", {}).get("duration") or 0)
         except (TypeError, ValueError):
             source_duration = output_duration = 0
-        if source_duration > 0 and output_duration > 0:
+        is_trimmed = bool(intent.start_time or intent.end_time)
+        if is_trimmed:
+            if output_duration <= 0:
+                raise RuntimeError("ValidationFailed: the trimmed output has zero or invalid duration.")
+            s_sec = parse_time_offset_seconds(intent.start_time) or 0.0
+            e_sec = parse_time_offset_seconds(intent.end_time)
+            if e_sec is not None and e_sec > s_sec:
+                expected_trim_duration = e_sec - s_sec
+            elif source_duration > s_sec:
+                expected_trim_duration = source_duration - s_sec
+            else:
+                expected_trim_duration = None
+            if expected_trim_duration is not None and expected_trim_duration > 0:
+                max_diff = max(2.5, expected_trim_duration * 0.15)
+                if abs(expected_trim_duration - output_duration) > max_diff:
+                    raise RuntimeError("ValidationFailed: the output audio duration changed unexpectedly.")
+        elif source_duration > 0 and output_duration > 0:
             if abs(source_duration - output_duration) > max(0.5, source_duration * 0.02):
                 raise RuntimeError("ValidationFailed: the output audio duration changed unexpectedly.")
         if intent.sample_rate and str(audio.get("sample_rate")) != str(intent.sample_rate):
@@ -552,7 +611,23 @@ def validate_output_intent(
             output_duration = float(output.get("format", {}).get("duration") or 0)
         except (TypeError, ValueError):
             source_duration = output_duration = 0
-        if source_duration > 0 and output_duration > 0:
+        is_trimmed = bool(intent.start_time or intent.end_time)
+        if is_trimmed:
+            if output_duration <= 0:
+                raise RuntimeError("ValidationFailed: the trimmed output video has zero or invalid duration.")
+            s_sec = parse_time_offset_seconds(intent.start_time) or 0.0
+            e_sec = parse_time_offset_seconds(intent.end_time)
+            if e_sec is not None and e_sec > s_sec:
+                expected_trim_duration = e_sec - s_sec
+            elif source_duration > s_sec:
+                expected_trim_duration = source_duration - s_sec
+            else:
+                expected_trim_duration = None
+            if expected_trim_duration is not None and expected_trim_duration > 0:
+                max_diff = max(2.5, expected_trim_duration * 0.15)
+                if abs(expected_trim_duration - output_duration) > max_diff:
+                    raise RuntimeError("ValidationFailed: the output video duration changed unexpectedly.")
+        elif source_duration > 0 and output_duration > 0:
             if abs(source_duration - output_duration) > max(0.5, source_duration * 0.02):
                 raise RuntimeError("ValidationFailed: the output video duration changed unexpectedly.")
     elif intent.fps:
@@ -855,17 +930,35 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
                 "encoder": "h264_nvenc", "encoder_label": "NVIDIA NVENC",
                 "args": ["-c:v", "h264_nvenc", "-preset", "p2", "-cq", "23", "-b:v", "0", "-pix_fmt", "yuv420p"]
             }
+        elif preferred_codec == "av1_nvenc":
+            return {
+                "has_gpu": True, "vendor": "nvidia", "gpu_name": "NVIDIA GPU", "short_name": "NVIDIA",
+                "encoder": "av1_nvenc", "encoder_label": "NVIDIA AV1 NVENC",
+                "args": ["-c:v", "av1_nvenc", "-preset", "p4", "-cq", "28", "-b:v", "0", "-pix_fmt", "yuv420p"]
+            }
         elif preferred_codec == "h264_amf":
             return {
                 "has_gpu": True, "vendor": "amd", "gpu_name": "AMD Radeon GPU", "short_name": "AMD",
                 "encoder": "h264_amf", "encoder_label": "AMD AMF",
                 "args": ["-c:v", "h264_amf", "-quality", "speed", "-pix_fmt", "yuv420p"]
             }
+        elif preferred_codec == "av1_amf":
+            return {
+                "has_gpu": True, "vendor": "amd", "gpu_name": "AMD Radeon GPU", "short_name": "AMD",
+                "encoder": "av1_amf", "encoder_label": "AMD AV1 AMF",
+                "args": ["-c:v", "av1_amf", "-quality", "speed", "-pix_fmt", "yuv420p"]
+            }
         elif preferred_codec == "h264_qsv":
             return {
                 "has_gpu": True, "vendor": "intel", "gpu_name": "Intel GPU", "short_name": "Intel",
                 "encoder": "h264_qsv", "encoder_label": "Intel Quick Sync",
                 "args": ["-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "23", "-pix_fmt", "nv12"]
+            }
+        elif preferred_codec == "av1_qsv":
+            return {
+                "has_gpu": True, "vendor": "intel", "gpu_name": "Intel GPU", "short_name": "Intel",
+                "encoder": "av1_qsv", "encoder_label": "Intel Quick Sync AV1",
+                "args": ["-c:v", "av1_qsv", "-preset", "veryfast", "-global_quality", "28", "-pix_fmt", "nv12"]
             }
         elif preferred_codec == "h264_videotoolbox":
             return {
@@ -879,11 +972,51 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
                 "encoder": "h264_vaapi", "encoder_label": "Linux VAAPI",
                 "args": list(VAAPI_ENCODER_ARGS)
             }
+        elif preferred_codec in ("libsvtav1", "libaom-av1"):
+            return {
+                "has_gpu": False, "vendor": "cpu", "gpu_name": "Multi-Core CPU", "short_name": "CPU Mode",
+                "encoder": "libsvtav1", "encoder_label": "CPU SVT-AV1",
+                "args": ["-c:v", "libsvtav1", "-preset", "6", "-crf", "28", "-pix_fmt", "yuv420p"]
+            }
         elif preferred_codec == "libx264":
             return {
                 "has_gpu": False, "vendor": "cpu", "gpu_name": "Multi-Core CPU", "short_name": "CPU Mode",
                 "encoder": "libx264", "encoder_label": "CPU Multi-Core",
                 "args": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p"]
+            }
+        elif preferred_codec == "av1":
+            gpus = get_host_gpus()
+            has_nvidia = any(any(k in g.lower() for k in ["nvidia", "geforce", "quadro", "rtx", "gtx", "tesla"]) for g in gpus)
+            has_amd = any(any(k in g.lower() for k in ["amd", "radeon"]) for g in gpus)
+            has_intel = any(any(k in g.lower() for k in ["intel", "arc", "iris", "uhd"]) for g in gpus)
+            if has_nvidia:
+                gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["nvidia", "geforce", "quadro", "rtx", "gtx", "tesla"])), "NVIDIA GPU")
+                short = gpu_name.replace("NVIDIA ", "").replace("GeForce ", "").strip()
+                return {
+                    "has_gpu": True, "vendor": "nvidia", "gpu_name": gpu_name, "short_name": short,
+                    "encoder": "av1_nvenc", "encoder_label": "NVIDIA AV1 NVENC",
+                    "args": ["-c:v", "av1_nvenc", "-preset", "p4", "-cq", "28", "-b:v", "0", "-pix_fmt", "yuv420p"]
+                }
+            if has_amd and sys.platform == "win32":
+                gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["amd", "radeon"])), "AMD Radeon GPU")
+                short = gpu_name.replace("AMD ", "").replace("Radeon(TM) ", "Radeon ").replace("Graphics", "").strip() or "Radeon"
+                return {
+                    "has_gpu": True, "vendor": "amd", "gpu_name": gpu_name, "short_name": short,
+                    "encoder": "av1_amf", "encoder_label": "AMD AV1 AMF",
+                    "args": ["-c:v", "av1_amf", "-quality", "speed", "-pix_fmt", "yuv420p"]
+                }
+            if has_intel:
+                gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["intel", "arc", "iris", "uhd"])), "Intel GPU")
+                short = gpu_name.replace("Intel(R) ", "").replace("Graphics", "").strip() or "Intel HD/Arc"
+                return {
+                    "has_gpu": True, "vendor": "intel", "gpu_name": gpu_name, "short_name": short,
+                    "encoder": "av1_qsv", "encoder_label": "Intel Quick Sync AV1",
+                    "args": ["-c:v", "av1_qsv", "-preset", "veryfast", "-global_quality", "28", "-pix_fmt", "nv12"]
+                }
+            return {
+                "has_gpu": False, "vendor": "cpu", "gpu_name": "Multi-Core CPU", "short_name": "CPU Mode",
+                "encoder": "libsvtav1", "encoder_label": "CPU SVT-AV1",
+                "args": ["-c:v", "libsvtav1", "-preset", "6", "-crf", "28", "-pix_fmt", "yuv420p"]
             }
 
     gpus = get_host_gpus()
@@ -1036,6 +1169,9 @@ def _apply_video_quality_to_encoder_args(
         return nvenc_args
     elif encoder == "h264_qsv":
         replace_value("-global_quality", crf)
+    elif encoder == "av1_qsv":
+        crf_val = {"best": "20", "high": "24", "balanced": "28", "small": "34"}.get((quality_name or "").lower(), "28")
+        replace_value("-global_quality", crf_val)
     elif encoder == "h264_vaapi":
         replace_value("-qp", crf)
     elif encoder == "h264_amf":
@@ -1045,6 +1181,26 @@ def _apply_video_quality_to_encoder_args(
             "balanced": "balanced",
             "small": "speed",
         }.get((quality_name or "").lower(), "balanced"))
+    elif encoder == "av1_amf":
+        replace_value("-quality", {
+            "best": "quality",
+            "high": "quality",
+            "balanced": "balanced",
+            "small": "speed",
+        }.get((quality_name or "").lower(), "balanced"))
+    elif encoder == "av1_nvenc":
+        quality_name = (quality_name or "").lower()
+        nvenc_preset = {"best": "p7", "high": "p5", "balanced": "p4", "small": "p2"}.get(quality_name, "p4")
+        cq_val = {"best": "20", "high": "24", "balanced": "28", "small": "34"}.get(quality_name, "28")
+        return [
+            "-c:v", "av1_nvenc", "-preset", nvenc_preset,
+            "-rc:v", "vbr", "-cq", cq_val, "-b:v", "0",
+            "-spatial-aq", "1", "-temporal-aq", "1", "-pix_fmt", "yuv420p"
+        ]
+    elif encoder == "libsvtav1":
+        preset = {"best": "4", "high": "5", "balanced": "6", "small": "8"}.get((quality_name or "").lower(), "6")
+        crf_val = {"best": "20", "high": "24", "balanced": "28", "small": "34"}.get((quality_name or "").lower(), "28")
+        return ["-c:v", "libsvtav1", "-preset", preset, "-crf", crf_val, "-pix_fmt", "yuv420p"]
     elif encoder == "h264_videotoolbox":
         replace_value("-q:v", {
             "best": "75",
@@ -1073,6 +1229,8 @@ def build_ffmpeg_args(
     stream_copy: bool = False,
     input_sample_rate: Optional[int] = None,
     measured_loudness: Optional[Dict[str, str]] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
 ) -> list:
     """Constructs command line argument list for FFmpeg transcode or instant stream remuxing."""
     target_format = target_format.lower().strip(".")
@@ -1085,7 +1243,12 @@ def build_ffmpeg_args(
     # Fast-path: Instant zero-loss stream copy when safe and requested
     if stream_copy:
         ffmpeg_bin = get_ffmpeg_binary()
-        cmd = [ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error", "-i", input_path]
+        cmd = [ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
+        if start_time:
+            cmd.extend(["-ss", start_time])
+        if end_time:
+            cmd.extend(["-to", end_time])
+        cmd.extend(["-i", input_path])
         if metadata:
             for k, v in metadata.items():
                 if v:
@@ -1115,10 +1278,18 @@ def build_ffmpeg_args(
         cmd.extend(["-hwaccel", "auto"])
 
     if can_embed_art:
+        if start_time:
+            cmd.extend(["-ss", start_time])
+        if end_time:
+            cmd.extend(["-to", end_time])
         cmd.extend(["-i", input_path])
         cmd.extend(["-i", cover_path])
         cmd.extend(["-map", "0:a", "-map", "1:v"])
     else:
+        if start_time:
+            cmd.extend(["-ss", start_time])
+        if end_time:
+            cmd.extend(["-to", end_time])
         cmd.extend(["-i", input_path])
 
     # Metadata tags
@@ -1380,6 +1551,8 @@ def _convert_media_impl(
     fps: Optional[int] = None,
     allow_stream_copy: bool = True,
     allow_lossless_png_recovery: bool = False,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
     _method_override: Optional[str] = None,
     _recovery: Optional[RecoveryCoordinator] = None,
 ) -> str:
@@ -1401,6 +1574,8 @@ def _convert_media_impl(
                              and target_format in HARDWARE_VIDEO_FORMATS),
             allow_png_fallback=allow_lossless_png_recovery,
             metadata=tuple((key, value) for key, value in (metadata or {}).items() if value),
+            start_time=start_time,
+            end_time=end_time,
         ))
 
     if target_format in ("source", "original", ""):
@@ -1429,9 +1604,21 @@ def _convert_media_impl(
         dest_filename = f"{raw_stem}.{actual_ext}" if not output_filename.lower().endswith(f".{actual_ext}") else output_filename
         destination_path = get_unique_target_path(output_dir, dest_filename)
 
-        report_raw(0.70, f"Preserving source quality: keeping raw {actual_ext.upper()} stream without re-encoding...")
-        if os.path.abspath(input_path) != os.path.abspath(destination_path):
-            shutil.copy2(input_path, destination_path)
+        if start_time or end_time:
+            report_raw(0.70, f"Lossless trimming: slicing raw {actual_ext.upper()} stream without re-encoding...")
+            cmd = [get_ffmpeg_binary(), "-y", "-hide_banner", "-loglevel", "error"]
+            if start_time:
+                cmd.extend(["-ss", start_time])
+            if end_time:
+                cmd.extend(["-to", end_time])
+            cmd.extend(["-i", input_path, "-c", "copy", "-threads", "0", destination_path])
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if res.returncode != 0:
+                raise RuntimeError(f"FFmpegProcessError: lossless stream trim failed: {res.stderr.decode('utf-8', errors='replace')}")
+        else:
+            report_raw(0.70, f"Preserving source quality: keeping raw {actual_ext.upper()} stream without re-encoding...")
+            if os.path.abspath(input_path) != os.path.abspath(destination_path):
+                shutil.copy2(input_path, destination_path)
 
         validate_output_file(destination_path, actual_ext)
         report_raw(1.0, f"Conversion complete: {os.path.basename(destination_path)}")
@@ -1587,6 +1774,8 @@ def _convert_media_impl(
             input_sample_rate=input_sample_rate,
             fps=fps,
             stream_copy=True,
+            start_time=start_time,
+            end_time=end_time,
         )
     else:
         measured_loudness = None
@@ -1612,6 +1801,8 @@ def _convert_media_impl(
             fps=fps,
             stream_copy=False,
             measured_loudness=measured_loudness,
+            start_time=start_time,
+            end_time=end_time,
         )
     # Request machine-readable progress on stdout (inserted before the output path)
     cmd = cmd[:-1] + ["-progress", "pipe:1", "-nostats"] + [cmd[-1]]
@@ -1768,6 +1959,7 @@ def _convert_media_impl(
                         progress_callback=progress_callback, fps=fps,
                         allow_stream_copy=False,
                         allow_lossless_png_recovery=allow_lossless_png_recovery,
+                        start_time=start_time, end_time=end_time,
                         _method_override="cover-normalized", _recovery=_recovery,
                     )
             return convert_media(
@@ -1789,6 +1981,8 @@ def _convert_media_impl(
                 fps=fps,
                 allow_stream_copy=False,
                 allow_lossless_png_recovery=allow_lossless_png_recovery,
+                start_time=start_time,
+                end_time=end_time,
                 _recovery=_recovery,
             )
         raise RuntimeError(f"FFmpegProcessError: {method} failed ({category.value}); no policy-safe recovery remains.") from e
@@ -1829,11 +2023,15 @@ def convert_media(
     fps: Optional[int] = None,
     allow_stream_copy: bool = True,
     allow_lossless_png_recovery: bool = False,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
     _method_override: Optional[str] = None,
     _recovery: Optional[RecoveryCoordinator] = None,
 ) -> str:
     """Stage and validate every attempt before publishing one completed output."""
     os.makedirs(output_dir, exist_ok=True)
+    start_time = sanitize_time_offset(start_time)
+    end_time = sanitize_time_offset(end_time)
     if _recovery is None:
         _recovery = RecoveryCoordinator(OutputIntent(
             target_format=target_format.lower().strip("."),
@@ -1847,6 +2045,8 @@ def convert_media(
                              and target_format.lower().strip(".") in HARDWARE_VIDEO_FORMATS),
             allow_png_fallback=allow_lossless_png_recovery,
             metadata=tuple((key, value) for key, value in (metadata or {}).items() if value),
+            start_time=start_time,
+            end_time=end_time,
         ))
 
     def staged_progress(value: float, message: str) -> None:
@@ -1860,6 +2060,7 @@ def convert_media(
             resolution=resolution, use_nvenc=use_nvenc, use_gpu=use_gpu,
             gpu_codec=gpu_codec, metadata=metadata, cover_path=cover_path,
             abort_event=abort_event, progress_callback=staged_progress, fps=fps,
+            start_time=start_time, end_time=end_time,
         )
         effective_target = target_format.lower().strip(".")
         try:

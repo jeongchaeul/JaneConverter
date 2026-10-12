@@ -25,6 +25,8 @@ const defaultSettings: ConverterSettings = {
   saveMetadata: true,
   allowPngFallback: false,
   retries: 2,
+  startTime: "",
+  endTime: "",
 };
 
 const HISTORY_STORAGE_KEY = "janecoverter.conversionHistory";

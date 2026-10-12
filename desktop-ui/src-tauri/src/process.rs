@@ -499,6 +499,16 @@ pub fn build_conversion_args_with_capture(
             ]);
         }
     }
+    if let Some(start) = &request.start_time {
+        if !start.trim().is_empty() {
+            args.extend(["--start-time".into(), start.trim().into()]);
+        }
+    }
+    if let Some(end) = &request.end_time {
+        if !end.trim().is_empty() {
+            args.extend(["--end-time".into(), end.trim().into()]);
+        }
+    }
     Ok(args)
 }
 
@@ -1006,6 +1016,8 @@ mod tests {
             browser_capture_path: None,
             facebook_capture_id: None,
             social_capture_id: None,
+            start_time: None,
+            end_time: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false)
             .expect("display labels should be accepted");
@@ -1042,6 +1054,8 @@ mod tests {
             browser_capture_path: None,
             facebook_capture_id: Some("01234567-89ab-cdef-0123-456789abcdef".into()),
             social_capture_id: None,
+            start_time: None,
+            end_time: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, true).unwrap();
 
@@ -1079,6 +1093,8 @@ mod tests {
             browser_capture_path: None,
             facebook_capture_id: None,
             social_capture_id: None,
+            start_time: None,
+            end_time: None,
         };
 
         let args =
@@ -1113,9 +1129,48 @@ mod tests {
             browser_capture_path: None,
             facebook_capture_id: None,
             social_capture_id: None,
+            start_time: None,
+            end_time: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false)
             .expect("public conversion should be valid");
         assert!(!args.iter().any(|value| value == "--browser-session"));
+    }
+
+    #[test]
+    fn conversion_forwards_trim_range_offsets() {
+        let request = ConversionRequest {
+            source: "https://example.com/stream.mp4".into(),
+            output_dir: "out".into(),
+            category: "Video".into(),
+            format: "mp4".into(),
+            bitrate: "balanced".into(),
+            sample_rate: 48000,
+            resolution: "1080p".into(),
+            normalize: false,
+            use_gpu: true,
+            save_cover: false,
+            save_metadata: false,
+            allow_png_fallback: false,
+            retries: 2,
+            playlist_indexes: None,
+            browser_session: None,
+            browser_capture_path: None,
+            facebook_capture_id: None,
+            social_capture_id: None,
+            start_time: Some("00:01:15".into()),
+            end_time: Some("00:03:45".into()),
+        };
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        let s_pos = args
+            .iter()
+            .position(|a| a == "--start-time")
+            .expect("start-time present");
+        assert_eq!(args[s_pos + 1], "00:01:15");
+        let e_pos = args
+            .iter()
+            .position(|a| a == "--end-time")
+            .expect("end-time present");
+        assert_eq!(args[e_pos + 1], "00:03:45");
     }
 }
