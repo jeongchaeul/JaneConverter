@@ -17,6 +17,37 @@ def test_catalog_rejects_wrong_artist_version_duration_and_ambiguity():
         choose_catalog_match(wanted, [correct, {**correct, "id": "two"}])
 
 
+def test_catalog_matches_multi_artist_and_featured_tracks():
+    wanted = {"title": "throw it up", "artist": "ericdoa, glaive", "duration": 157}
+    # Official video on primary artist's channel without featured artist in title
+    primary_official = {"id": "one", "title": "throw it up", "uploader": "ericdoa", "channel": "ericdoa", "duration": 158}
+    score = match_score(wanted, primary_official)
+    assert score is not None and score >= 0.9
+
+    # Both artists present in title
+    both_artists = {"id": "two", "title": "throw it up (feat. glaive)", "uploader": "ericdoa", "channel": "ericdoa", "duration": 157}
+    score_both = match_score(wanted, both_artists)
+    assert score_both is not None and score_both >= score
+
+
+def test_catalog_disambiguates_same_channel_releases():
+    wanted = {"title": "song for when the bar closes", "artist": "ericdoa", "duration": 104}
+    c0 = {
+        "id": "one", "title": "song for when the bar closes",
+        "uploader": "ericdoa", "channel": "ericdoa", "channel_id": "UC_channel_123",
+        "duration": 105
+    }
+    c1 = {
+        "id": "two", "title": "song for when the bar closes",
+        "uploader": "ericdoa", "channel": "ericdoa", "channel_id": "UC_channel_123",
+        "duration": 105
+    }
+    # Should not raise "uncertain" because both are from the exact same channel
+    chosen = choose_catalog_match(wanted, [c0, c1])
+    assert chosen["id"] == "one"
+
+
+
 @pytest.mark.parametrize("message,category", [
     ("HTTP 429", ExtractionCategory.RATE_LIMIT), ("Sign in to view", ExtractionCategory.ACCESS),
     ("Video deleted", ExtractionCategory.REMOVED), ("Connection timed out", ExtractionCategory.NETWORK),

@@ -325,22 +325,28 @@ def build_search_candidates(artist: str, title: str) -> list:
     """
     Builds prioritized search queries to locate the best matching audio stream.
     Strips search syntax operators (colons, slashes, commas, question marks)
-    that cause YouTube/SoundCloud search engines to drop matches.
+    and control characters that cause YouTube/SoundCloud search engines to drop matches.
     """
     def clean(s: str) -> str:
+        s = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', str(s or ""))
         s = s.replace("\xa0", " ").replace(":", " ").replace("/", " ").replace("\\", " ").replace(",", " ")
         s = re.sub(r'[\?\"\'\!\*\<\>\|\^]', ' ', s)
         return re.sub(r'\s+', ' ', s).strip()
 
     c_art = clean(artist) if artist and artist != "Unknown Artist" else ""
     c_tit = clean(title) if title else ""
-    prim_art = clean(artist.split(",")[0]) if artist and artist != "Unknown Artist" else ""
+    prim_art_str = re.split(r'[,&]|\bfeat\b|\bft\b', str(artist or ""), flags=re.IGNORECASE)[0].strip()
+    prim_art = clean(prim_art_str) if prim_art_str and prim_art_str != "Unknown Artist" else ""
 
     candidates = []
     if c_art and c_tit:
         candidates.append(f"ytsearch1:{c_art} {c_tit}")
     if prim_art and c_tit and prim_art != c_art:
         candidates.append(f"ytsearch1:{prim_art} {c_tit}")
+    if c_art and c_tit:
+        candidates.append(f"ytsearch1:{c_art} {c_tit} topic")
+    if prim_art and c_tit:
+        candidates.append(f"ytsearch1:{prim_art} {c_tit} topic")
     if c_tit and prim_art:
         candidates.append(f"ytsearch1:{c_tit} {prim_art}")
     if c_tit:
@@ -529,13 +535,13 @@ def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
                 if m_data:
                     data = json.loads(m_data.group(1))
                     entity = data.get("props", {}).get("pageProps", {}).get("state", {}).get("data", {}).get("entity", {})
-                    title = entity.get("title") or title
+                    title = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', entity.get("title") or title).strip()
                     duration = int(entity.get("duration") or 0) // 1000
-                    artist_list = [a.get("name") for a in entity.get("artists", []) if a.get("name")]
+                    artist_list = [re.sub(r'[\x00-\x1f\x7f-\x9f]', '', a.get("name")).strip() for a in entity.get("artists", []) if a.get("name")]
                     if artist_list:
                         artist = ", ".join(artist_list)
                     elif entity.get("subtitle"):
-                        artist = entity.get("subtitle")
+                        artist = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', entity.get("subtitle")).strip()
 
                     rel_date = entity.get("releaseDate", {}).get("isoString", "")
                     if rel_date and len(rel_date) >= 4:
@@ -1286,8 +1292,8 @@ def fetch_playlist_entries(
         report(0.7, f"Extracting {len(raw_tracks)} tracks from {playlist_title}...")
         entries = []
         for idx, t in enumerate(raw_tracks, 1):
-            t_title = t.get("title") or f"Track {idx}"
-            t_artist = t.get("subtitle") or ""
+            t_title = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', t.get("title") or f"Track {idx}").strip()
+            t_artist = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', t.get("subtitle") or "").strip()
             t_dur_ms = t.get("duration", 0) or 0
             t_dur_sec = t_dur_ms // 1000
             uri = t.get("uri", "")
