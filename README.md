@@ -38,9 +38,9 @@ JaneConverter is a personal media toolbox and format conversion studio designed 
 - **Drag-and-Drop, Batch Queue & Completion Summary**: Drag local media files or web links directly into the converter. Dropping multiple files populates the sequential batch queue with live per-item progress, **Pause / Resume** and **Abort** operation controls, and host taskbar attention/glow notifications upon completion or failure, followed by a completion summary modal with output format/quality details, elapsed time, fallback notes, and one-click **Play / Open file** and **Open folder** actions.
 - **Converted Library & Conversion History**: Browse exports across **Explorer**, **Recent**, and **Conversion History** tabs with **All**, **Audios**, **Videos**, **Images**, and **Metadata** filters, thumbnail and cover-art previews, per-item conversion duration badges, and native file drag-and-drop into external applications.
 - **1-Click Intent Presets**: Goal-oriented presets grouped under Audio, Video, and Image tabs, including *Preserve Quality (raw stream without re-encoding)*, *Studio Master (32-bit WAV)*, *Universal Music (320k MP3)*, *Lossless FLAC (24-bit)*, *Universal Video (1080p MP4)*, *Studio Cinematic (Original MKV)*, and *Lossless Image (PNG)*. Clicking an active preset again clears it, and the **Advanced settings** switch unlocks manual parameter customization.
-- **Online Extraction & Smart Social Routing**: yt-dlp-powered media extraction (with bundled `yt-dlp-ejs`), native modal playlist track selection, public Spotify and Apple Music catalog matching, parallel fragment downloading, and automatic handoff from social photo capture to the video conversion pipeline when a link points to a Reel or video post.
-- **Automatic Sandboxed Session Recovery**: Public access is always attempted first. When yt-dlp reports that a supported media platform requires sign-in or cookies, the engine automatically retries once using your default browser's local session. To protect privacy, unrelated site cookies are stripped, HTTPS is enforced, no cookie files are ever saved to disk, and the temporary cookie jar is immediately wiped from memory upon job completion.
-- **Air-Gapped Browser Bridge**: Optional local companion extension to capture active media (**Capture current media**, **Collect mode**, **Network Compatibility Mode**, and adaptive **Story sequence** capture) from authenticated browser pages without ever exporting or reading cookies, session tokens, or passwords.
+- **Online Extraction & Smart Social Routing**: yt-dlp-powered media extraction (with bundled `yt-dlp-ejs`), native modal playlist track selection, public Spotify and Apple Music catalog matching with the Mahoraga Fallback Engine, parallel fragment downloading, and automatic handoff from social photo capture to the video conversion pipeline when a link points to a Reel or video post.
+- **Autonomous Multi-Browser Session Probing & Sandboxed Recovery**: Public, unauthenticated extraction is always attempted first. When a media platform enforces a sign-in wall, age-gate (e.g. YouTube Error 152), or friends-only/members-only restriction (Facebook Reels, Instagram, TikTok), the engine autonomously probes installed desktop browser profiles (Vivaldi, Chrome, Edge, Brave). To ensure complete user security, session cookies are read through non-locking shadow copies into volatile process memory only: unrelated site cookies are stripped, passwords are never touched, zero cookie files are ever written to disk, and the in-memory cookie jar is instantly purged upon completion.
+- **Air-Gapped Browser Bridge (Last Resort Companion)**: An optional local companion extension to capture active media (**Capture current media**, **Collect mode**, **Network Compatibility Mode**, and adaptive **Story sequence** capture) directly from browser tabs when direct engine extraction is blocked by heavy DRM or interactive web players. Communicates exclusively over a local authenticated loopback token (`127.0.0.1`).
 - **Signed In-App Updates**: Cryptographically signed desktop update packages via the rolling `continuous` release feed and tagged releases, with automatic GitHub Atom feed fallback when unauthenticated API requests are rate-limited.
 - **FL Studio (.flp) Project Downgrade (Experimental)**: Native project header inspector and surgical binary patcher designed for music producers collaborating across different FL Studio versions. Inspects project tempo (BPM), PPQ timebase, channel count, and build numbers, auto-detects locally installed FL Studio versions on Windows, and patches Event 0xC7 / 0x9F version and build identifiers.
 
@@ -64,8 +64,8 @@ JaneConverter is a personal media toolbox and format conversion studio designed 
 
 ### Primary Audio Converter
 
-- **SoundCloud, Spotify, YouTube**: Verified working.
-- **Apple Music**: Subscription-based — requires the **Browser Extension** (`JaneConverter Browser Bridge`).
+- **SoundCloud, Spotify, YouTube**: Verified working with direct extraction and catalog metadata resolution.
+- **Apple Music**: Dual-mode extraction. When logged in through a desktop browser, direct audio streams can be read via browser session recovery. When logged out or unauthenticated, the **Mahoraga Fallback Engine** automatically identifies the track metadata and discovers matching high-fidelity audio sources across alternative platforms (YouTube Music, Spotify, catalog databases). The Browser Bridge extension remains available as an interactive capture fallback.
 
 ### Story Grabber
 
@@ -76,16 +76,16 @@ JaneConverter is a personal media toolbox and format conversion studio designed 
 
 | Platform or workflow | Implemented path | Verification status |
 | --- | --- | --- |
-| Instagram (`Single Photo`, `Multiple Photo`, `Reel`) | Hidden guest-page capture + video handoff | **Verified working** |
-| Facebook (`Single Photo`, `Multiple Photo`, `Group Post`, `Reel`) | Hidden guest-page capture + video handoff | **Verified working** |
-| TikTok (`Photo`, `Multiple Photos`, `Videos`) | Hidden guest-page capture + yt-dlp extraction | **Verified working** |
+| Instagram (`Single Photo`, `Multiple Photo`, `Reel`) | Hidden guest-page capture + video handoff + browser session fallback | **Verified working** |
+| Facebook (`Single Photo`, `Multiple Photo`, `Group Post`, `Reel`) | Hidden guest-page capture + video handoff + browser session fallback | **Verified working** |
+| TikTok (`Photo`, `Multiple Photos`, `Videos`) | Hidden guest-page capture + yt-dlp extraction + browser session fallback | **Verified working** |
 | YouTube, SoundCloud, Spotify | yt-dlp media extraction + public catalog metadata matching | **Verified working** |
-| Apple Music | Browser Bridge capture (subscription-based) + public catalog matching | Requires the **Browser Extension** for subscription playback capture |
+| Apple Music | Dual-mode: Browser session / Mahoraga Fallback Engine + Browser Bridge | **Verified working** (Catalog discovery + public source fallback; Browser Bridge available for active tab capture) |
 | Story Grabber | Browser Bridge (`Capture current media`, `Collect mode`, `Story sequence`) | Requires the **Browser Extension** (subject to platform layout changes; actively maintained with adaptive updates) |
 | X/Twitter post photos, Reddit galleries, Tumblr photo posts, Pinterest Pins/boards/sections | Hidden guest-page capture | Code paths and automated checks are present; not part of the verified set above |
 | Snapchat Public Stories | None | Not implemented; guest access in a desktop browser has not been verified |
 
-Social photo capture without the extension only reads images rendered to logged-out visitors. Private or sign-in-gated posts require the **Browser Extension** or are not supported.
+Social photo and video extraction prioritizes public access first. If a post is private, friends-only, or sign-in gated, JaneConverter autonomously uses your active desktop browser session (or the Browser Bridge extension as a last resort) to recover the media.
 
 ## Supported Formats
 
@@ -146,11 +146,23 @@ Paste a public Instagram post/Reel (`/{username}/p/{shortcode}/`, `/p/{shortcode
 
 The one-link capture flow also includes code paths for Reddit image galleries, Tumblr photo posts, and Pinterest Pins, boards, and sections. Pinterest boards are scanned as a collection, while post carousels and gallery viewers are advanced in sequence. Captures are limited to image URLs rendered by the public page and validated against that platform's image CDN; incomplete captures are not saved. Secret/private boards and posts that require sign-in are not supported. Snapchat Public Stories are not implemented because guest access through its desktop browser has not been verified.
 
-JaneConverter tries public access first. When yt-dlp reports that a supported media site requires sign-in or cookies, the engine automatically retries once using the supported default browser's existing session. yt-dlp reads the browser cookies locally; JaneConverter removes unrelated-site cookies before the authenticated request and clears the job's cookie jar afterward. No exported cookie file is saved. yt-dlp may make a temporary browser-database copy during extraction and removes it afterward. This fallback requires an existing authorized login and can fail if the browser database is locked or its encryption is unsupported; Browser Capture remains available. The Browser Bridge extension itself still does not read cookies.
+JaneConverter prioritizes public access first. When an online media platform reports that a stream requires sign-in, enforces an age restriction (such as YouTube Error 152), or restricts access to friends or subscribers, the engine autonomously probes available browser profiles (Vivaldi, Google Chrome, Microsoft Edge, Brave) to recover the media.
 
-SoundCloud, Spotify, and YouTube are verified working with the primary audio converter. Because Apple Music is subscription-based, use the **Browser Extension** (`JaneConverter Browser Bridge`) to capture Apple Music streams.
+### Transparent Browser Session Security & Privacy
 
-Browser-captured files appear in the **Media Capturer** tab and are saved in the configured media capturer folder. The default is a `fetched` folder beside the converted library; clearing access ends the browser session without deleting those files. Each item supports **Open file**, **Open path**, **Use for conversion**, and **Discard**.
+To be completely transparent: **JaneConverter does read your active browser session cookies for the specific media domain being converted**, but it does so under strict, defense-in-depth safety constraints:
+
+1. **Strictly Local & Air-Gapped**: The entire process occurs 100% on your machine. JaneConverter has no tracking servers, telemetry, cloud relays, or analytics. Your session data never leaves your computer.
+2. **Ephemeral In-Memory Only (Zero Disk Writes)**: Cookies are read directly into temporary RAM (`RequestsCookieJar`). JaneConverter **never writes, exports, or stores cookie files** (no `.txt`, `.cookies`, or Netscape files) to your hard drive.
+3. **Domain-Isolated Scoping**: Only cookies matching the target media domain (e.g. `facebook.com`, `instagram.com`, `youtube.com`) are loaded. Sensitive unrelated cookies—such as online banking, email, cloud services, and password vaults—are never touched or accessed.
+4. **No Password Decryption**: JaneConverter only reads HTTP session cookies already created by your browser. It cannot access, decrypt, or read your saved account passwords.
+5. **Non-Locking Shadow Copy**: Browser databases are accessed using temporary, non-locking shadow copies. Your browser remains fully open and usable during conversion, and no browser files are ever modified.
+6. **Instant RAM Purge**: The moment extraction finishes (or if the job aborts or fails), the in-memory cookie jar is immediately wiped from memory.
+
+> [!TIP]
+> **Source Browser Pre-Opening**: In **Settings**, you can enable **Source Browser Pre-Opening** (`openInBrowser`). When enabled, JaneConverter will automatically open media links in your browser before conversion starts. This warms up anti-bot verification challenges and writes fresh session cookies to your local browser profile so private, friends-only, or members-only conversions succeed seamlessly on the first attempt.
+
+For users who prefer interactive capture or encounter heavy DRM/player protections, the **Browser Extension** (`JaneConverter Browser Bridge`) remains available as an optional companion. Captured items appear in the dedicated **Media Capturer** tab and are saved in the configured media capturer folder. The default is a `fetched` folder beside the converted library; clearing access ends the browser session without deleting those files. Each item supports **Open file**, **Open path**, **Use for conversion**, and **Discard**.
 
 ### FL Studio Project (.flp) Downgrade (Experimental)
 
@@ -165,7 +177,9 @@ JaneConverter includes an experimental workflow for music producers and audio en
 The **JaneConverter Browser Bridge** is an optional companion extension that lets you capture active audio, video, and story media from browser tabs directly into the JaneConverter desktop inbox. It supports **Capture current media**, **Collect mode** (for continuous story advancing), **Network Compatibility Mode** (tab-scoped network response capture), and experimental **Story sequence** capture with 14-day local structural adaptation.
 
 > [!NOTE]
-> **Privacy First & Air-Gapped**: The extension is strictly local and runs entirely on your machine. It **never** reads, exports, or stores your cookies, login tokens, browsing history, or passwords. It only forwards direct media stream URLs or user-selected media bytes to your local JaneConverter instance via an authenticated local loopback token.
+> **Privacy First & Honest Security Architecture**:
+> - **The Browser Bridge Extension**: Operates strictly within the active browser tab as an interactive media pipe. It observes media elements, streaming manifests, and media responses to stream direct URLs or raw media bytes to your local desktop app via an authenticated loopback connection (`127.0.0.1`). The extension itself does not read your browser's cookie database, access stored passwords, or inspect browsing history outside the active tab.
+> - **Desktop Engine vs. Extension**: While the extension acts as a tab-level media collector, JaneConverter's desktop engine reads local browser session cookies directly when converting gated links so you don't have to manually export credentials. In both cases, operations are 100% local, ephemeral in-memory, zero-telemetry, and strictly air-gapped.
 
 Because the extension is a local power-user tool and not distributed through the Chrome Web Store or Firefox Add-ons, install it manually in **under 60 seconds**:
 
@@ -186,7 +200,7 @@ Because the extension is a local power-user tool and not distributed through the
    - Select the `browser-extension` folder from Step 1.
 5. **Pin & Connect**:
    - Pin the JaneConverter icon to your browser extensions toolbar.
-   - In the JaneConverter desktop app, click **Create access link** on the **Converter** or **Media Capturer** tab to generate a pairing session.
+   - In the JaneConverter desktop app, click **Create access link** on the **Media Capturer** tab to generate a pairing session.
    - Confirm access in your browser, then open the extension popup from the toolbar to capture media straight to your desktop queue.
 
 ## Command line

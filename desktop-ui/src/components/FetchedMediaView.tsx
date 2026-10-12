@@ -393,7 +393,7 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
             <div className="mono-label">AIR-GAPPED BROWSER BRIDGE</div>
             <h2 id="extension-guide-title" className="mt-2 text-xl font-semibold text-white">How to Install & Use the Browser Extension</h2>
             <p className="mt-2 text-xs leading-relaxed text-zinc-400">
-              The JaneConverter Browser Bridge lets you capture media directly from your active browser tabs. It operates with strict air-gapped privacy: <strong>it never reads, exports, or shares cookies, passwords, or session tokens</strong>.
+              The JaneConverter Browser Bridge lets you capture media directly from your active browser tabs as a companion tool. It operates with strict air-gapped privacy: <strong>the extension captures media streams directly from the tab and never accesses passwords or writes files to disk</strong>.
             </p>
             <div className="mt-4 space-y-3 text-xs leading-relaxed text-zinc-300">
               <div className="rounded-xl border border-white/[0.06] bg-black/25 p-3">
