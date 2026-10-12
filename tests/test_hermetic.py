@@ -135,6 +135,118 @@ def test_resolve_apple_music_metadata_catalog_lookup(monkeypatch):
     assert calls[0][1]["params"]["id"] == "1616728075"
 
 
+def test_identify_apple_music_playlist_links():
+    playlist = "https://music.apple.com/us/playlist/julies-mix/pl.u-V9D7J5au3mKq4EL"
+    playlist_track = "https://music.apple.com/us/playlist/julies-mix/pl.u-V9D7J5au3mKq4EL?i=1590921434"
+    assert identify_source_type(playlist) == "apple_music"
+    assert identify_source_type(playlist_track) == "apple_music"
+    assert is_playlist_url(playlist) is True
+    assert is_playlist_url(playlist_track) is False
+
+
+def test_apple_artwork_url_template():
+    tmpl = "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/image.jpg/{w}x{h}bb.{f}"
+    res = extractor._apple_artwork_url(tmpl, size=1000)
+    assert res == "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/image.jpg/1000x1000bb.jpg"
+
+
+def test_fetch_apple_music_playlist_entries_hermetic(monkeypatch):
+    import json
+    playlist_url = "https://music.apple.com/us/playlist/julies-mix/pl.u-V9D7J5au3mKq4EL"
+    mock_payload = {
+        "data": [{
+            "data": {
+                "sections": [
+                    {
+                        "itemKind": "containerDetailHeaderLockup",
+                        "items": [{
+                            "title": "Julie's Ultimate Mix",
+                            "subtitleLinks": [{"title": "Julie"}],
+                            "artwork": {
+                                "dictionary": {
+                                    "url": "https://is1-ssl.mzstatic.com/image/header/{w}x{h}bb.{f}"
+                                }
+                            }
+                        }]
+                    },
+                    {
+                        "itemKind": "trackLockup",
+                        "items": [
+                            {
+                                "title": "OG!",
+                                "artistName": "JPEGMAFIA",
+                                "duration": 95070,
+                                "tertiaryLinks": [{"title": "LP!"}],
+                                "contentDescriptor": {
+                                    "identifiers": {"storeAdamID": "1590921434"},
+                                    "url": "https://music.apple.com/us/album/og/1590920785?i=1590921434"
+                                },
+                                "artwork": {
+                                    "dictionary": {
+                                        "url": "https://is1-ssl.mzstatic.com/image/track1/{w}x{h}bb.{f}"
+                                    }
+                                }
+                            },
+                            {
+                                "title": "Floor 555",
+                                "artistName": "XXXTENTACION",
+                                "duration": 93186,
+                                "tertiaryLinks": [{"title": "?"}],
+                                "contentDescriptor": {
+                                    "identifiers": {"storeAdamID": "1359292520"},
+                                    "url": "https://music.apple.com/us/album/floor-555/1359292515?i=1359292520"
+                                },
+                                "artwork": {
+                                    "dictionary": {
+                                        "url": "https://is1-ssl.mzstatic.com/image/track2/{w}x{h}bb.{f}"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        }]
+    }
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head><title>Apple Music</title></head>
+    <body>
+    <script type="application/json" id="serialized-server-data">{json.dumps(mock_payload)}</script>
+    </body>
+    </html>
+    """
+
+    def fake_get(url, **kwargs):
+        return FakeResponse(200, text=html_content)
+
+    monkeypatch.setattr(extractor.requests, "get", fake_get)
+
+    pdata = fetch_playlist_entries(playlist_url)
+    assert pdata["playlist_title"] == "Julie's Ultimate Mix"
+    assert pdata["total_count"] == 2
+    assert pdata["thumbnail_url"] == "https://is1-ssl.mzstatic.com/image/header/1000x1000bb.jpg"
+    assert len(pdata["entries"]) == 2
+
+    e1 = pdata["entries"][0]
+    assert e1["index"] == 1
+    assert e1["title"] == "OG!"
+    assert e1["artist"] == "JPEGMAFIA"
+    assert e1["album"] == "LP!"
+    assert e1["duration_str"] == "1:35"
+    assert e1["url"] == "https://music.apple.com/us/album/og/1590920785?i=1590921434"
+    assert e1["thumbnail"] == "https://is1-ssl.mzstatic.com/image/track1/1000x1000bb.jpg"
+
+    e2 = pdata["entries"][1]
+    assert e2["index"] == 2
+    assert e2["title"] == "Floor 555"
+    assert e2["artist"] == "XXXTENTACION"
+    assert e2["album"] == "?"
+    assert e2["duration_str"] == "1:33"
+
+
 def test_fetch_media_stream_rejects_preexisting_stale_stream(tmp_path, monkeypatch):
     stale = tmp_path / "old_audio.mp3"
     stale.write_bytes(b"old")
