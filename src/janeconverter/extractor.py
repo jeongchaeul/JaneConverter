@@ -381,23 +381,36 @@ def build_search_candidates(artist: str, title: str) -> list:
     prim_art_str = re.split(r'[,&]|\bfeat\b|\bft\b', str(artist or ""), flags=re.IGNORECASE)[0].strip()
     prim_art = clean(prim_art_str) if prim_art_str and prim_art_str != "Unknown Artist" else ""
 
+    # Clean base title without parenthetical annotations or remaster tags
+    clean_base_tit = re.sub(r'\s*[\(\[].*?[\)\]]', '', c_tit).strip()
+    clean_base_tit = re.sub(r'\s*-\s*(?:remaster|remastered|bonus track|single version|radio edit|edit).*$', '', clean_base_tit, flags=re.IGNORECASE).strip()
+    clean_base_tit = clean(clean_base_tit)
+
     candidates = []
     if c_art and c_tit:
         candidates.append(f"ytsearch1:{c_art} {c_tit}")
     if prim_art and c_tit and prim_art != c_art:
         candidates.append(f"ytsearch1:{prim_art} {c_tit}")
+    if clean_base_tit and clean_base_tit != c_tit and prim_art:
+        candidates.append(f"ytsearch1:{prim_art} {clean_base_tit}")
     if c_art and c_tit:
         candidates.append(f"ytsearch1:{c_art} {c_tit} topic")
     if prim_art and c_tit:
         candidates.append(f"ytsearch1:{prim_art} {c_tit} topic")
+    if clean_base_tit and prim_art:
+        candidates.append(f"ytsearch1:{clean_base_tit} {prim_art} topic")
     if c_tit and prim_art:
         candidates.append(f"ytsearch1:{c_tit} {prim_art}")
     if c_tit:
         candidates.append(f"ytsearch1:{c_tit}")
+    if clean_base_tit and clean_base_tit != c_tit:
+        candidates.append(f"ytsearch1:{clean_base_tit}")
     if c_art and c_tit:
         candidates.append(f"scsearch1:{c_art} {c_tit}")
     if prim_art and c_tit:
         candidates.append(f"scsearch1:{prim_art} {c_tit}")
+    if clean_base_tit and prim_art:
+        candidates.append(f"scsearch1:{prim_art} {clean_base_tit}")
 
     seen = set()
     result = []
@@ -1265,7 +1278,7 @@ def fetch_media_stream(
                             raise ValueError("Catalog candidate has no direct source link.")
                         report(0.15, f"Catalog match selected from {identify_source_type(selected_url)}: {selected.get('title', '')}. This is an alternate public recording, not catalog audio.", force=True)
                         cand_info = extract(selected_url, True)
-                        if not cand_info or match_score(catalog_meta, cand_info) is None:
+                        if not cand_info or match_score(catalog_meta, cand_info, relaxed=True) is None:
                             raise ValueError("The selected recording changed identity during download; it was not accepted.")
                     else:
                         cand_info = extract(query_item, True)

@@ -136,3 +136,24 @@ def test_catalog_downloads_only_the_confident_preview_candidate(tmp_path, monkey
         assert result["webpage_url"] == candidate["webpage_url"]
         assert result["requested_catalog_url"] == "https://open.spotify.com/track/example"
         assert result["matched_source_title"] == candidate["title"]
+
+
+def test_mahoraga_adaptive_catalog_match_relaxes_duration_and_video_noise():
+    wanted = {"title": "Drama", "artist": "aespa", "duration": 215}
+    # Candidate with 10s video intro difference (strict check rejects because 10s > max(5, 215*0.05=10.75) wait, let's make it 12s difference where strict threshold is 10.75s)
+    # 215s + 12s = 227s
+    strict_rejected_candidate = {
+        "id": "vid1",
+        "title": "aespa 에스파 'Drama' MV (Color Coded Lyrics)",
+        "uploader": "SMTOWN",
+        "channel": "SMTOWN",
+        "duration": 227,
+    }
+    # Strict match fails due to duration difference (12s > 10.75s)
+    assert match_score(wanted, strict_rejected_candidate, relaxed=False) is None
+    # Mahoraga adaptive match succeeds under relaxed tier
+    relaxed_score = match_score(wanted, strict_rejected_candidate, relaxed=True)
+    assert relaxed_score is not None and relaxed_score >= 0.65
+    chosen = choose_catalog_match(wanted, [strict_rejected_candidate])
+    assert chosen["id"] == "vid1"
+

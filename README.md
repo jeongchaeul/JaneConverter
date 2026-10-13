@@ -44,6 +44,52 @@ JaneConverter is a personal media toolbox and format conversion studio designed 
 - **Signed In-App Updates**: Cryptographically signed desktop update packages via the rolling `continuous` release feed and tagged releases, with automatic GitHub Atom feed fallback when unauthenticated API requests are rate-limited.
 - **FL Studio (.flp) Project Downgrade (Experimental)**: Native project header inspector and surgical binary patcher designed for music producers collaborating across different FL Studio versions. Inspects project tempo (BPM), PPQ timebase, channel count, and build numbers, auto-detects locally installed FL Studio versions on Windows, and patches Event 0xC7 / 0x9F version and build identifiers.
 
+## The Mahoraga Fallback Engine (Adaptive Architecture)
+
+JaneConverter's core engineering philosophy is anchored in the **Mahoraga Engine**—an adaptive resilience framework inspired by Mahoraga's adaptation ability from *Jujutsu Kaisen*. When encountering an obstacle, resistance, or unexpected failure, it does not simply break; it analyzes the challenge, learns from the roadblock, and continuously discovers alternative routes until its objective is achieved.
+
+In JaneConverter, this adaptation logic governs every media processing and extraction pipeline. Instead of failing immediately when a stream is blocked, an audio source is unavailable, or a platform alters its layout, the engine dynamically reroutes around points of failure:
+
+```mermaid
+flowchart TD
+    Task["Conversion / Extraction Request"] --> TryPrimary["Primary Execution Route"]
+    TryPrimary -- Success --> Goal["Goal Accomplished (Exported Media)"]
+    TryPrimary -- Failure Detected --> Analyze["Mahoraga Engine: Classify & Adapt"]
+    
+    Analyze --> PathCatalog{"Catalog / Streaming Issue?"}
+    PathCatalog -- "Track Missing / DRM Gated" --> AdaptCatalog["Dynamic Query Relaxation & Cross-Platform Audio Discovery (YouTube Music / SoundCloud / Mirrors)"]
+    AdaptCatalog --> Goal
+    
+    Analyze --> PathSocial{"DOM / Guest Session Block?"}
+    PathSocial -- "Deadlock / Login CTA" --> AdaptSocial["Synthesize Pointer+Keys -> Direct URL Mutation -> Mode Switch (Viewer to Grid)"]
+    AdaptSocial --> Goal
+    
+    Analyze --> PathTranscode{"Hardware / Transcode Error?"}
+    PathTranscode -- "NVENC / Codec Failure" --> AdaptTranscode["Stream Copy -> GPU Transcode -> CPU Software Encoding -> Format Normalization"]
+    AdaptTranscode --> Goal
+    
+    Analyze --> PathAuth{"Age Gate / Access Barrier?"}
+    PathAuth -- "Error 152 / Friends-Only" --> AdaptAuth["Autonomous Browser Shadow-Session Probe -> Local Companion Bridge"]
+    AdaptAuth --> Goal
+```
+
+### Key Pillars of the Mahoraga Adaptation Logic
+
+1. **Cross-Platform Audio Recovery (Spotify & Apple Music)**:
+   - When converting streaming playlists or individual tracks from catalog platforms (which do not serve unprotected raw audio bytes), the engine extracts authoritative catalog metadata (title, artist, album, duration, ISRC) and initiates an adaptive cross-platform audio search.
+   - If an audio source becomes unavailable, region-locked, or mismatched on one provider (e.g. Spotify), the engine adapts by querying alternative high-fidelity public sources (YouTube Music, SoundCloud, artist topic channels) with relaxed syntax matching, ensuring playlist conversions complete even when individual sources drop.
+
+2. **Autonomous DOM & Guest Navigation Adaptation (Facebook, Instagram, TikTok)**:
+   - In guest-mode social media archival, platform layouts and dynamic React buttons frequently drop clicks or trigger pop-up barriers.
+   - The engine adapts through multi-tiered navigation: synthesizing pointer and keyboard navigation events, auto-dismissing non-standard login callouts, breaking deadlocks by direct URL parameter mutation, and seamlessly switching extraction paradigms (e.g. falling back from individual photo viewer mode to whole-album grid mode).
+
+3. **Multi-Tiered Transcode & Encoding Resilience**:
+   - Conversions dynamically progress through bounded recovery stages: zero-loss stream copy (`-c copy`) -> hardware-accelerated GPU transcoding (NVENC, AMF, QSV) -> multi-core CPU software encoding -> container format normalization.
+   - Local conversion successes and failure categories are recorded into local recovery evidence (`recovery-evidence.json`), allowing the engine to learn which methods successfully resolve specific container or encoder quirks.
+
+4. **Multi-Browser Session Self-Healing**:
+   - When encountering age restrictions (YouTube Error 152) or private/friends-only posts, the engine autonomously probes active desktop browsers (Vivaldi, Chrome, Edge, Brave) using ephemeral, air-gapped memory probes, bypassing authentication barriers without requiring user credential configuration.
+
 ## Platform Coverage and Verification
 
 ### Verified Working — Media Catcher

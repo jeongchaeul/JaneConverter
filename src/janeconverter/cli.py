@@ -591,8 +591,9 @@ def process_playlist_conversion(
 
     converted_files = []
     failed_files = []
-    consecutive_failures = 0
-    MAX_CONSECUTIVE_FAILURES = 5
+    deferred_queue = []
+    consecutive_network_failures = 0
+    MAX_CONSECUTIVE_NETWORK_FAILURES = 5
 
     for i, entry in enumerate(selected_entries):
         if abort_event and abort_event.is_set():
@@ -711,7 +712,7 @@ def process_playlist_conversion(
             )
 
             converted_files.append(result_path)
-            consecutive_failures = 0
+            consecutive_network_failures = 0
             print(f"[+] Converted: {os.path.basename(result_path)}")
 
         except KeyboardInterrupt:
@@ -725,14 +726,22 @@ def process_playlist_conversion(
                 "error": str(e),
                 "attempts": 1 if conversion_started else fetch_attempts,
             })
-            consecutive_failures += 1
+            if not conversion_started:
+                deferred_queue.append((entry, raw_title, artist, clean_title, ordered_filename, idx))
+            if active_gpu and any(w in str(e).lower() for w in ("nvenc", "amf", "qsv", "cuda", "hardware device", "no capable devices")):
+                print("[!] Hardware encoder failure detected. Mahoraga Engine: Adapting session to CPU encoding for remaining tracks.", flush=True)
+                active_gpu = False
+            is_net_err = any(word in str(e).lower() for word in ("connection reset", "connection refused", "name or service not known", "nodename nor servname", "network is unreachable", "timed out"))
+            if is_net_err:
+                consecutive_network_failures += 1
+            else:
+                consecutive_network_failures = 0
             print(f"[!] Error converting track #{idx} '{raw_title}': {e}")
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            if consecutive_network_failures >= MAX_CONSECUTIVE_NETWORK_FAILURES:
                 remaining = total_items - (i + 1)
                 print(
-                    f"[!] {MAX_CONSECUTIVE_FAILURES} tracks failed in a row - aborting batch "
-                    f"({remaining} remaining tracks skipped). The network connection or source "
-                    "service appears unavailable."
+                    f"[!] {MAX_CONSECUTIVE_NETWORK_FAILURES} network failures in a row - aborting batch "
+                    f"({remaining} remaining tracks skipped). The network connection appears unavailable."
                 )
                 break
         finally:
@@ -741,6 +750,87 @@ def process_playlist_conversion(
                     shutil.rmtree(track_work_dir, ignore_errors=True)
                 except Exception:
                     pass
+
+    # Mahoraga Engine: Deferred Adaptation Pass for un-downloaded tracks
+    if deferred_queue and not (abort_event and abort_event.is_set()):
+        print(f"\n[*] Mahoraga Engine: Adapting and retrying {len(deferred_queue)} deferred track(s) with alternate route discovery...", flush=True)
+        for def_item in deferred_queue:
+            if abort_event and abort_event.is_set():
+                raise KeyboardInterrupt("Playlist conversion aborted by user.")
+            entry, raw_title, artist, clean_title, ordered_filename, idx = def_item
+            item_url = entry.get("url", "")
+            report_overall(1.0, f"[Mahoraga] Retrying #{idx}: {clean_title} via alternate audio paths...")
+            alt_title = re.sub(r'\s*[\(\[].*?[\)\]]', '', raw_title).strip()
+            alt_artist = re.split(r'[,&]|\bfeat\b|\bft\b', str(artist or ""), flags=re.IGNORECASE)[0].strip()
+
+            track_work_dir = None
+            try:
+                track_job_id = uuid.uuid4().hex[:8]
+                track_work_dir = os.path.join(DEFAULT_TEMP_DIR, f"track_mahoraga_{track_job_id}")
+                os.makedirs(track_work_dir, exist_ok=True)
+                stream_info = fetch_media_stream(
+                    source=item_url,
+                    output_dir=track_work_dir,
+                    audio_only=is_audio_target,
+                    resolution=resolution,
+                    fallback_title=alt_title or raw_title,
+                    fallback_artist=alt_artist or artist,
+                    abort_event=abort_event,
+                    auth_browser=auth_browser,
+                )
+                input_media = stream_info["media_path"]
+                track_artist = artist or stream_info.get("artist", "")
+                track_cover = stream_info.get("thumbnail_path") or (playlist_cover_dest if os.path.exists(playlist_cover_dest) else None)
+                if save_cover_art and stream_info.get("thumbnail_path"):
+                    track_jpg = os.path.join(metadata_dir, f"{ordered_filename}.jpg")
+                    try:
+                        shutil.copy2(stream_info["thumbnail_path"], track_jpg)
+                    except OSError as exc:
+                        _warn_optional_output(f"Track #{idx} cover art", exc)
+                if save_metadata:
+                    track_credits = os.path.join(metadata_dir, f"{ordered_filename}_credits.txt")
+                    try:
+                        write_credits_file(track_credits, stream_info)
+                    except (OSError, TypeError, ValueError) as exc:
+                        _warn_optional_output(f"Track #{idx} credits", exc)
+
+                metadata = {
+                    "title": clean_title,
+                    "artist": track_artist,
+                    "album": playlist_title,
+                    "track": f"{idx}"
+                }
+                if stream_info.get("year"):
+                    metadata["date"] = stream_info["year"]
+                if stream_info.get("description"):
+                    metadata["comment"] = stream_info["description"][:1000]
+
+                result_path = convert_media(
+                    input_path=input_media,
+                    output_dir=playlist_dir,
+                    output_filename=ordered_filename,
+                    target_format=target_format,
+                    bitrate=bitrate,
+                    sample_rate=sample_rate,
+                    normalize_audio=normalize_audio,
+                    resolution=resolution,
+                    use_nvenc=active_gpu,
+                    use_gpu=active_gpu,
+                    metadata=metadata,
+                    cover_path=track_cover if save_cover_art else None,
+                    abort_event=abort_event,
+                )
+                converted_files.append(result_path)
+                failed_files = [f for f in failed_files if f.get("index") != idx]
+                print(f"[+] Mahoraga Adapted & Converted: {os.path.basename(result_path)}", flush=True)
+            except Exception as retry_err:
+                print(f"[!] Mahoraga Pass: Track #{idx} '{raw_title}' could not be resolved: {retry_err}", flush=True)
+            finally:
+                if not keep_temp and track_work_dir and os.path.exists(track_work_dir):
+                    try:
+                        shutil.rmtree(track_work_dir, ignore_errors=True)
+                    except Exception:
+                        pass
 
     # Save overall playlist credits index inside metadata folder
     if save_metadata:
