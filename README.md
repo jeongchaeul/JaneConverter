@@ -289,7 +289,7 @@ flowchart TD
 | **Stories (IG / FB / TT)** | Ephemeral Stories | Browser Bridge Extension (`Collect mode`) | Extension Required |
 
 > [!NOTE]
-> **Guest Capture & Public Defaults**: By default, and in this capture mode, JaneConverter does not sign in, bypass private-content gates, or read browser cookies. Public photo albums and video streams are captured in an isolated, temporary guest session. For friends-only posts, private media, or age-gated streams (such as YouTube Error 152), enable **Session Recovery** in Settings or use the **Browser Bridge** extension.
+> **Guest Capture in Air-Gap Mode**: In Air-Gap mode (default), public photo albums and video streams are captured in an isolated, temporary guest session without accessing your browser profiles or saved cookies. For friends-only posts, private media, or age-gated streams (such as YouTube Error 152), enable **Session Recovery** in Settings or use the **Browser Bridge** extension.
 
 ---
 
@@ -335,8 +335,8 @@ Python, FFmpeg, FFprobe, and Node.js runtimes are bundled automatically.
 
 ### Privacy & Session Recovery (Opt-In)
 
-- **Air-Gap Default**: By default, and in standard public capture mode, JaneConverter does not sign in, bypass private-content gates, or read browser cookies. Local browser SQLite databases are strictly never opened, inspected, or queried.
-- **Session Recovery (Settings > Read Browser Cookies)**: Enables ephemeral, in-memory reading of active desktop browser sessions (Chrome, Edge, Brave, Vivaldi, Firefox, Opera) to bypass YouTube Error 152 (age-gate) or friends-only walls.
+- **Air-Gap Mode (Default)**: In Air-Gap mode (default), extractions run in an isolated guest environment without accessing local browser profiles or reading cookies. Local browser databases remain untouched.
+- **Session Recovery (Settings > Read Browser Cookies)**: Enables ephemeral, in-memory reading of active desktop browser sessions (Chrome, Edge, Brave, Vivaldi, Firefox, Opera) to resolve streams blocked by YouTube Error 152 (age-gate) or friends-only restrictions.
   - **Local & Ephemeral**: Strictly in-memory RAM (`RequestsCookieJar`); zero cookie files are ever written to disk.
   - **Domain-Isolated**: Only loads cookies for the exact target domain (e.g. `youtube.com`). Passwords, banking, and email data are never accessed.
   - **Instant RAM Wipe**: Session cookies are flushed immediately once the stream download finishes.
