@@ -305,3 +305,150 @@ def test_probe_media_streams_decodes_utf8_arabic_metadata(tmp_path, monkeypatch)
     assert captured_kwargs.get("errors") == "replace"
     assert probed is not None
     assert probed["format"]["tags"]["title"].startswith("فيديو رائع")
+
+
+def test_pinterest_candidate_urls():
+    from janeconverter.social_photo_capture import _pinterest_candidate_urls
+
+    # 1. 236x thumbnail produces originals first (with original and alt extensions), then display buckets, then fallback
+    thumb_url = "https://i.pinimg.com/236x/8d/33/65/8d3365853fcf58b4566cf2be30a7d515.jpg"
+    candidates = _pinterest_candidate_urls(thumb_url)
+    assert candidates[0] == "https://i.pinimg.com/originals/8d/33/65/8d3365853fcf58b4566cf2be30a7d515.jpg"
+    assert "https://i.pinimg.com/originals/8d/33/65/8d3365853fcf58b4566cf2be30a7d515.png" in candidates
+    assert "https://i.pinimg.com/1200x/8d/33/65/8d3365853fcf58b4566cf2be30a7d515.jpg" in candidates
+    assert "https://i.pinimg.com/736x/8d/33/65/8d3365853fcf58b4566cf2be30a7d515.jpg" in candidates
+    assert candidates[-1] == thumb_url
+
+    # 2. Already originals URL has that URL as the first candidate
+    orig_url = "https://i.pinimg.com/originals/8d/33/65/8d3365853fcf58b4566cf2be30a7d515.jpg"
+    candidates_orig = _pinterest_candidate_urls(orig_url)
+    assert candidates_orig[0] == orig_url
+
+    # 3. Non-pinterest URL returns [url]
+    other_url = "https://pbs.twimg.com/media/example.jpg"
+    assert _pinterest_candidate_urls(other_url) == [other_url]
+
+
+def test_pinterest_get_photo_upgrades_to_highest_available_candidate():
+    from janeconverter.social_photo_capture import _get_photo
+
+    requested_urls: list[str] = []
+
+    class _MockResponse:
+        def __init__(self, url: str, status_code: int):
+            self.url = url
+            self.status_code = status_code
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class _MockSession:
+        def __init__(self, available_urls: set[str]):
+            self.available_urls = available_urls
+            self.headers = {}
+
+        def get(self, url: str, **_kwargs):
+            requested_urls.append(url)
+            status = 200 if url in self.available_urls else 403
+            return _MockResponse(url, status)
+
+    # Scenario A: originals.jpg is 403, but originals.png is 200 (uploaded as PNG)
+    png_original = "https://i.pinimg.com/originals/c3/ce/f8/c3cef8d24599723ec08d132649bca022.png"
+    thumb_a = "https://i.pinimg.com/236x/c3/ce/f8/c3cef8d24599723ec08d132649bca022.jpg"
+    session_a = _MockSession(available_urls={png_original, thumb_a})
+
+    requested_urls.clear()
+    resp_a = _get_photo(session_a, thumb_a, "pinterest")
+    assert resp_a.status_code == 200
+    assert resp_a.url == png_original
+
+    # Scenario B: all originals are 403, but 736x is available
+    res_736 = "https://i.pinimg.com/736x/8d/33/65/8d3365853fcf58b4566cf2be30a7d515.jpg"
+    thumb_b = "https://i.pinimg.com/236x/8d/33/65/8d3365853fcf58b4566cf2be30a7d515.jpg"
+    session_b = _MockSession(available_urls={res_736, thumb_b})
+
+    requested_urls.clear()
+    resp_b = _get_photo(session_b, thumb_b, "pinterest")
+    assert resp_b.status_code == 200
+    assert resp_b.url == res_736
+
+
+def test_is_pinterest_newshub_url():
+    from janeconverter.social_photo_capture import is_pinterest_newshub_url
+
+    assert is_pinterest_newshub_url("https://ph.pinterest.com/news_hub/3943610033677608128/") is True
+    assert is_pinterest_newshub_url("https://www.pinterest.com/news_hub/123456789") is True
+    assert is_pinterest_newshub_url("https://pinterest.com/notifications/987654321") is True
+    assert is_pinterest_newshub_url("https://ph.pinterest.com/pin/123456789/") is False
+    assert is_pinterest_newshub_url("https://instagram.com/p/abc123xyz") is False
+    assert is_pinterest_newshub_url("not a url") is False
+
+
+def test_fetch_pinterest_newshub_manifest(monkeypatch):
+    import io
+    import json
+    from http.cookiejar import Cookie
+    from janeconverter.social_photo_capture import fetch_pinterest_newshub_manifest
+
+    fake_cookie = Cookie(
+        version=0, name="csrftoken", value="fake_csrf", port=None, port_specified=False,
+        domain=".pinterest.com", domain_specified=True, domain_initial_dot=True,
+        path="/", path_specified=True, secure=True, expires=None, discard=False,
+        comment=None, comment_url=None, rest={}, rfc2109=False,
+    )
+    fake_auth_cookie = Cookie(
+        version=0, name="_auth", value="1", port=None, port_specified=False,
+        domain=".pinterest.com", domain_specified=True, domain_initial_dot=True,
+        path="/", path_specified=True, secure=True, expires=None, discard=False,
+        comment=None, comment_url=None, rest={}, rfc2109=False,
+    )
+
+    import http.cookiejar
+    class FakeCookieJar(http.cookiejar.CookieJar):
+        filename = None
+
+    fake_jar = FakeCookieJar()
+    fake_jar.set_cookie(fake_cookie)
+    fake_jar.set_cookie(fake_auth_cookie)
+
+    import yt_dlp
+    monkeypatch.setattr(yt_dlp.cookies, "extract_cookies_from_browser", lambda b, *a, **kw: fake_jar if b == "vivaldi" else [])
+
+    fake_api_response = {
+        "resource_response": {
+            "data": [
+                {
+                    "detail_header": "Made the cut",
+                    "content_items": [
+                        {
+                            "action_object": {
+                                "image_square_url": "https://i.pinimg.com/150x150/f1/83/2e/f1832e0bb5921309a831495f78a913f9.jpg"
+                            }
+                        },
+                        {
+                            "action_object": {
+                                "image_url": "https://i.pinimg.com/236x/ab/cd/ef/abcdef0123456789abcdef0123456789.jpg"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    class FakeOpener:
+        def open(self, req):
+            assert "NewsHubDetailsResource" in req.full_url
+            return io.BytesIO(json.dumps(fake_api_response).encode("utf-8"))
+
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: FakeOpener())
+
+    manifest = fetch_pinterest_newshub_manifest("https://ph.pinterest.com/news_hub/3943610033677608128/")
+    assert manifest["platform"] == "pinterest"
+    assert manifest["title"] == "Made the cut"
+    assert len(manifest["photos"]) == 2
+    assert manifest["photos"][0]["url"] == "https://i.pinimg.com/originals/f1/83/2e/f1832e0bb5921309a831495f78a913f9.jpg"
+    assert manifest["photos"][1]["url"] == "https://i.pinimg.com/originals/ab/cd/ef/abcdef0123456789abcdef0123456789.jpg"
+
+

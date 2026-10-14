@@ -93,6 +93,19 @@ function isInstagramVideoRoute(value: string): boolean {
   }
 }
 
+function isPinterestNotificationRoute(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.toLowerCase();
+    if (!(host === "pinterest.com" || host.endsWith(".pinterest.com") || host === "pin.it")) return false;
+    const segs = path.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+    return segs.length >= 2 && (segs[0] === "news_hub" || segs[0] === "notifications");
+  } catch {
+    return false;
+  }
+}
+
 function socialPhotoPlatform(value: string): SocialPhotoPlatform | null {
   try {
     const url = new URL(value.trim());
@@ -103,8 +116,17 @@ function socialPhotoPlatform(value: string): SocialPhotoPlatform | null {
     if ((host === "tiktok.com" || host.endsWith(".tiktok.com")) && (/\/photo\/\d+/.test(path) || path.startsWith("/t/") || path.startsWith("/share/photo/"))) return "tiktok";
     if ((host === "reddit.com" || host.endsWith(".reddit.com")) && (/\/comments\//.test(path) || path.startsWith("/gallery/"))) return "reddit";
     if ((host === "tumblr.com" || host.endsWith(".tumblr.com")) && (/\/post\/\d+/.test(path) || /^\/[^/]+\/\d+/.test(path))) return "tumblr";
-    if ((host === "pinterest.com" || host.endsWith(".pinterest.com") || host === "pin.it")
-      && (host === "pin.it" || path.startsWith("/pin/") || /^\/[^/]+\/[^/]+(?:\/[^/]+)?\/?$/.test(path))) return "pinterest";
+    if (host === "pinterest.com" || host.endsWith(".pinterest.com") || host === "pin.it") {
+      if (host === "pin.it" || path.startsWith("/pin/") || path.startsWith("/multi-pin-share/")) return "pinterest";
+      const segs = path.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+      if (
+        segs.length >= 2 &&
+        segs.length <= 3 &&
+        !/^(?:search|ideas|explore|business|news_hub|notifications|settings|messages|edit|following|feed|today|login|signup|logout|about|resource|multi-pin-share)$/i.test(segs[0])
+      ) {
+        return "pinterest";
+      }
+    }
     return null;
   } catch {
     return null;
@@ -787,6 +809,11 @@ export function ConverterView({
       return;
     }
     const trimmedSource = source.trim();
+    if (isPinterestNotificationRoute(trimmedSource)) {
+      onStatus("Reading Pinterest collection using your browser session...");
+      await onStart(trimmedSource, indexes);
+      return;
+    }
     if (settings.openInBrowser && /^https?:\/\//i.test(trimmedSource)) {
       void bridge.openUrl(trimmedSource).catch(() => {});
     }

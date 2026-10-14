@@ -23,7 +23,7 @@
 
 JaneConverter is a high-speed personal media toolbox and format conversion studio designed by Jane Cerys (`project//aspyr`). Built for audio engineering, video transcode workflows, and social media archival, it runs locally through a modern Tauri desktop app or Python CLI.
 
-[Latest Release](https://github.com/jeongchaeul/JaneConverter/releases/latest) · [Changelog](CHANGELOG.md) · [Rebuild Guide](packaging/REBUILD.md)
+[Latest Release](https://github.com/jeongchaeul/JaneConverter/releases/latest) · [Changelog](CHANGELOG.md) · [Rebuild Guide](packaging/REBUILD.md) · [Mahoraga Engine Guide](docs/MAHORAGA_ENGINE.md)
 
 ---
 
@@ -43,7 +43,7 @@ JaneConverter is a high-speed personal media toolbox and format conversion studi
 
 ## The Mahoraga Fallback Engine (Adaptive Architecture)
 
-JaneConverter's core engineering philosophy is anchored in the **Mahoraga Engine**—an adaptive resilience framework inspired by Mahoraga's ability from *Jujutsu Kaisen*. When encountering an obstacle, resistance, or unexpected failure, it does not crash; it analyzes the roadblock and continuously discovers alternative routes until the conversion succeeds:
+JaneConverter's core engineering philosophy is anchored in the **Mahoraga Engine**—an adaptive resilience framework inspired by Mahoraga's ability from *Jujutsu Kaisen*. When encountering an obstacle, resistance, or unexpected failure, it does not crash; it analyzes the roadblock and continuously discovers alternative routes until the conversion succeeds. For a comprehensive breakdown of the internal logic, algorithms, and developer guidelines, see [docs/MAHORAGA_ENGINE.md](docs/MAHORAGA_ENGINE.md).
 
 ```mermaid
 flowchart TD

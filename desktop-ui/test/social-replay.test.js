@@ -12,6 +12,7 @@ const rust = readFileSync(rustPath, "utf8");
 const start = rust.indexOf('r#"(() => {{');
 const script = rust.slice(start + 3, rust.indexOf('"#', start))
   .replace("{nonce_json}", '"fixture"').replace("{platform_json}", '"twitter"')
+  .replace("{target_url_json}", '"https://x.com/jane/status/123"')
   .replaceAll("{{", "{").replaceAll("}}", "}");
 
 async function replay(expected, declaredUrl = "https://x.com/jane/status/123") {

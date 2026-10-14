@@ -130,13 +130,41 @@ pub fn validate_post_url(value: &str) -> Result<(SocialPlatform, Url), String> {
         .split('/')
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>();
+    if pinterest_host
+        && matches!(
+            pinterest_segments.first().copied(),
+            Some("news_hub" | "notifications")
+        )
+    {
+        return Err("Pinterest notification links require account sign-in. In Pinterest, use the Share button to copy a public share link, or use Browser Capture with your active browser session.".into());
+    }
     let pinterest = pinterest_host
         && (host == "pin.it"
             || path.starts_with("/pin/")
+            || path.starts_with("/multi-pin-share/")
             || (2..=3).contains(&pinterest_segments.len())
                 && !matches!(
                     pinterest_segments.first().copied(),
-                    Some("search" | "ideas" | "explore" | "business")
+                    Some(
+                        "search"
+                            | "ideas"
+                            | "explore"
+                            | "business"
+                            | "news_hub"
+                            | "notifications"
+                            | "settings"
+                            | "messages"
+                            | "edit"
+                            | "following"
+                            | "feed"
+                            | "today"
+                            | "login"
+                            | "signup"
+                            | "logout"
+                            | "about"
+                            | "resource"
+                            | "multi-pin-share"
+                    )
                 ));
     if url.scheme() != "https" || url.username() != "" || url.password().is_some() {
         return Err("Paste a secure public post, gallery, or board link.".into());
@@ -230,17 +258,46 @@ pub fn validate_completion(message: &PageMessage, received: usize) -> Result<(),
     Ok(())
 }
 
-pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
+pub fn initialization_script(nonce: &str, platform: SocialPlatform, target_url: &str) -> String {
     let nonce_json = serde_json::to_string(nonce).expect("nonce is a string");
     let platform_json = serde_json::to_string(platform.key()).expect("platform is a string");
+    let target_url_json = serde_json::to_string(target_url).expect("target_url is a string");
     format!(
         r#"(() => {{
   const nonce = {nonce_json};
   const platform = {platform_json};
+  const targetUrl = {target_url_json};
   const platformLabel = {{instagram:"Instagram",twitter:"X/Twitter",tiktok:"TikTok",reddit:"Reddit",tumblr:"Tumblr",pinterest:"Pinterest"}}[platform] || platform;
   const prefix = "__JANE_SOCIAL_PHOTO_CAPTURE__" + nonce + "__";
   const ackKey = "__JANE_SOCIAL_PHOTO_ACK__" + nonce;
-  window[ackKey] = 0;
+  let currentAck = 0;
+  const checkEarlyFinish = () => {{
+    if (!finished && expectedCount !== null && !countConflict && photos.size === expectedCount && !waiting && !pending.length) {{
+      finishPhotos(pageTitle());
+      return true;
+    }}
+    return false;
+  }};
+  try {{
+    Object.defineProperty(window, ackKey, {{
+      get: () => currentAck,
+      set: (val) => {{
+        currentAck = val;
+        if (waiting && currentAck === waiting) {{
+          waiting = 0;
+          inFlight = null;
+          if (pending.length) {{
+            flush(pageTitle());
+          }} else {{
+            checkEarlyFinish();
+          }}
+        }}
+      }},
+      configurable: true,
+    }});
+  }} catch (_) {{
+    window[ackKey] = 0;
+  }}
   const photos = new Map();
   const originalTitle = document.title;
   let expectedCount = null;
@@ -306,13 +363,29 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
   }};
   const chooseImage = (image) => {{
     const candidates = [];
-    const add = (url, width) => {{ if (url && isCdn(url)) candidates.push({{url, width: Number(width) || 0}}); }};
+    const add = (url, width) => {{
+      if (url && isCdn(url)) {{
+        let effectiveWidth = Number(width) || 0;
+        if (platform === "pinterest") {{
+          const match = /\/(\d+)x\//.exec(url);
+          if (match) effectiveWidth = Math.max(effectiveWidth, Number(match[1]) || 0);
+        }}
+        candidates.push({{url, width: effectiveWidth}});
+      }}
+    }};
     add(image.currentSrc, image.naturalWidth);
     add(image.src, image.naturalWidth);
     add(image.getAttribute("data-src"), image.naturalWidth);
     for (const entry of (image.getAttribute("srcset") || "").split(",")) {{
       const parts = entry.trim().split(/\s+/);
-      if (parts[0]) add(parts[0], parseInt(parts[1] || "0", 10));
+      if (parts[0]) {{
+        const desc = parts[1] || "";
+        let w = 0;
+        if (desc.endsWith("w")) w = parseInt(desc, 10);
+        else if (desc.endsWith("x")) w = Math.round(parseFloat(desc) * (image.naturalWidth || 236));
+        else w = parseInt(desc, 10) || 0;
+        add(parts[0], w);
+      }}
     }}
     candidates.sort((a, b) => b.width - a.width);
     return candidates[0] || null;
@@ -336,7 +409,11 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
     const article = document.querySelector("article");
     const text = article && article.innerText ? article.innerText.slice(0, 140) : "";
     const fallback = {{instagram:"Instagram Post",twitter:"X Post",tiktok:"TikTok Photo Post",reddit:"Reddit Gallery",tumblr:"Tumblr Photo Post",pinterest:"Pinterest Collection"}}[platform];
-    return ((meta && meta.content) || text || originalTitle || fallback).slice(0, 200);
+    let candidate = ((meta && meta.content) || text || originalTitle || fallback).trim();
+    if (platform === "pinterest" && candidate.toLowerCase() === "pinterest") {{
+      candidate = fallback;
+    }}
+    return candidate.slice(0, 200);
   }};
   const closeGuestPrompt = () => {{
     // Social photo viewers use the same generic close label as account
@@ -412,6 +489,11 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
       return null;
     }}
     if (platform === "pinterest") {{
+      const pinPath = location.pathname.toLowerCase();
+      if (pinPath.startsWith("/pin/")) {{
+        const closeup = document.querySelector('[data-test-id="closeup-body"], [data-test-id="pin-closeup-image"], [data-test-id="visual-content-container"], [data-test-id="pin-closeup-container"], article');
+        if (closeup) return closeup;
+      }}
       return document.querySelector('[data-test-id="board-pin-grid"], [data-test-id="pinGrid"], main') || document;
     }}
     if (platform === "tiktok") {{
@@ -477,7 +559,7 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
   }};
   const flush = (title) => {{
     if (!pending.length || waiting) return false;
-    const batch = pending.splice(0, 2);
+    const batch = pending.splice(0, 15);
     waiting = ++sequence;
     inFlight = {{kind:"photos",sequence,photos:batch,title,platform}};
     retryCount = 0;
@@ -515,6 +597,47 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
         }}
       }} catch (_) {{}}
     }}
+    if (platform === "pinterest") {{
+      const isSinglePin = location.pathname.toLowerCase().startsWith("/pin/");
+      if (isSinglePin) {{
+        if (!counts.length) counts.push(1);
+      }} else {{
+        const titleSources = [
+          document.title,
+          document.querySelector('meta[property="og:title"]')?.content,
+          document.querySelector('meta[name="twitter:title"]')?.content,
+        ];
+        for (const candidate of titleSources) {{
+          if (!candidate) continue;
+          const match = /(?:^|\b)(\d{{1,3}})\s+(?:ideas?|pins?)\b/i.exec(candidate);
+          if (match) {{
+            const num = Number(match[1]);
+            if (num > 0 && num <= 500) counts.push(num);
+          }}
+        }}
+        for (const script of document.querySelectorAll('script:not([type="application/ld+json"])')) {{
+          const text = script.textContent || "";
+          if (text.includes('"pin_count"')) {{
+            const m = /"pin_count":\s*(\d+)/.exec(text);
+            if (m) {{
+              const num = Number(m[1]);
+              if (num > 0 && num <= 500) counts.push(num);
+            }}
+          }}
+        }}
+        for (const el of document.querySelectorAll('h1, h2, [role="heading"], [data-test-id*="count"], [data-test-id*="pin"]')) {{
+          const text = el.innerText || "";
+          const m = /(?:^|\b)(\d{{1,3}})\s+(?:ideas?|pins?)\b/i.exec(text);
+          if (m) {{
+            const num = Number(m[1]);
+            if (num > 0 && num <= 500) counts.push(num);
+          }}
+        }}
+      }}
+    }}
+    if (platform === "twitter" && !counts.length) {{
+      if (container.querySelector('div[aria-label="Image"]')) counts.push(1);
+    }}
     for (const count of counts) {{
       if (expectedCount !== null && expectedCount !== count) countConflict = true;
       expectedCount = count;
@@ -541,10 +664,27 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
       retryAfterAttempt = attempts + 3;
     }}
     closeGuestPrompt();
-    const path = location.pathname.toLowerCase();
-    const loginPath = path.includes("/accounts/login") || path.includes("/i/flow/login") || path.includes("/challenge/") || path.includes("/checkpoint/") || path.includes("/login");
+    const path = location.pathname.toLowerCase().replace(/\/+$/, "") || "/";
+    const isRootOrFeed = path === "/" || path === "/home" || path === "/feed" || path === "/today" || path === "/explore";
+    if (isRootOrFeed) {{
+      sendFinal({{kind:"error",error:platformLabel + " redirected to the home feed. This post or collection is either private, requires sign-in, or was moved. Use Browser Capture with your active browser session."}});
+      return;
+    }}
+    const loginPath = path.includes("/accounts/login")
+      || path.includes("/i/flow/login")
+      || path.includes("/challenge/")
+      || path.includes("/checkpoint/")
+      || path.includes("/login")
+      || path.startsWith("/news_hub")
+      || path.startsWith("/notifications");
     if (loginPath) {{
-      sendFinal({{kind:"error",error:platformLabel + " requires sign-in to view this collection. JaneConverter only captures photos visible to logged-out visitors."}});
+      const isNotification = path.startsWith("/news_hub") || path.startsWith("/notifications");
+      sendFinal({{
+        kind: "error",
+        error: isNotification
+          ? platformLabel + " notification collections require account sign-in. In Pinterest, use the Share button to copy a public share link, or use Browser Capture with your active browser session."
+          : platformLabel + " requires sign-in to view this collection. JaneConverter only captures photos visible to logged-out visitors."
+      }});
       return;
     }}
     collectPhotos();
@@ -555,6 +695,7 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
       return;
     }}
     if (pending.length && !waiting) {{ flush(title); }}
+    if (checkEarlyFinish()) return;
     const currentCount = photos.size;
     if (currentCount === lastCount) unchanged = Math.min(unchanged + 1, 20);
     else unchanged = 0;
@@ -564,13 +705,13 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
       if (next && next.getAttribute("aria-disabled") !== "true" && !next.disabled) {{
         next.click();
         unchanged = 0;
-        setTimeout(scan, 850);
+        setTimeout(scan, 500);
         return;
       }}
     }}
     const isPinterestBoard = platform === "pinterest" && !path.startsWith("/pin/");
     const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 24;
-    if (isPinterestBoard && photos.size < 500) {{
+    if (isPinterestBoard && (expectedCount === null || photos.size < expectedCount) && photos.size < 500) {{
       window.scrollTo(0, Math.min(window.scrollY + Math.max(400, window.innerHeight * 0.8), document.documentElement.scrollHeight));
     }}
     const noPhotoWait = platform === "instagram" && !postContainer() ? 15 : isPinterestBoard ? 16 : 6;
@@ -584,12 +725,20 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
       if (hasMoreSlides || (isPinterestBoard && !(atBottom && unchanged >= 8))) {{
         sendFinal({{kind:"error",error:platformLabel + " collection exceeds the 500-photo capture limit; nothing was saved."}});
       }} else if (settled) {{
+        if (isPinterestBoard && atBottom && unchanged >= 8 && expectedCount === null) {{
+          expectedCount = photos.size;
+        }}
         finishPhotos(title);
       }}
       if (finished) return;
     }}
     if (attempts >= noPhotoWait && settled && !waiting && !pending.length) {{
-      if (photos.size) finishPhotos(title);
+      if (photos.size) {{
+        if (isPinterestBoard && atBottom && unchanged >= 8 && expectedCount === null) {{
+          expectedCount = photos.size;
+        }}
+        finishPhotos(title);
+      }}
       else if (hasVideoPost()) sendFinal({{kind:"video",count:0,title,platform}});
       else if (platform === "twitter") sendFinal({{kind:"no_photos",count:0,title,platform}});
       else sendFinal({{kind:"error",error:"No public " + platformLabel + " photos were visible in this post."}});
@@ -599,10 +748,10 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform) -> String {
       sendFinal({{kind:"error",error:platformLabel + " did not expose a complete public photo collection in time."}});
       return;
     }}
-    setTimeout(scan, 900);
+    setTimeout(scan, 450);
   }};
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => setTimeout(scan, 1000), {{once:true}});
-  else setTimeout(scan, 1000);
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => setTimeout(scan, 350), {{once:true}});
+  else setTimeout(scan, 350);
 }})();"#
     )
 }
@@ -692,6 +841,15 @@ mod tests {
             validate_post_url("https://pin.it/abc123").unwrap().0,
             SocialPlatform::Pinterest
         );
+        assert_eq!(
+            validate_post_url("https://www.pinterest.com/multi-pin-share/4154954936010891184/")
+                .unwrap()
+                .0,
+            SocialPlatform::Pinterest
+        );
+        let news_err =
+            validate_post_url("https://ph.pinterest.com/news_hub/3943610033677608128").unwrap_err();
+        assert!(news_err.contains("Pinterest notification links require account sign-in"));
         assert!(validate_post_url("https://evilreddit.com/r/test/comments/abc123").is_err());
         assert!(validate_post_url("http://www.pinterest.com/creator/board/").is_err());
     }
@@ -749,7 +907,7 @@ mod tests {
                 "log in to pinterest|sign in to pinterest|sign up for pinterest",
             ),
         ] {
-            let script = initialization_script("session-1", platform);
+            let script = initialization_script("session-1", platform, "https://example.com/post/1");
             assert!(script.contains(prompt));
             assert!(script.contains("commonPromptPattern"));
             assert!(script.contains("log in or sign up|sign in or sign up|log in to continue|sign in to continue|see more from|see more on"));
@@ -763,6 +921,8 @@ mod tests {
             assert!(script.contains("window.scrollTo(0, Math.min(window.scrollY"));
             assert!(script.contains("photos.size >= 500 && !waiting && !pending.length"));
             assert!(script.contains("collection exceeds the 500-photo capture limit"));
+            assert!(script.contains("redirected to the home feed"));
+            assert!(script.contains("notification collections require account sign-in"));
         }
     }
 
@@ -782,6 +942,38 @@ mod tests {
         let parsed = message_from_title(&doc_title, "nonce-1").expect("valid message");
         assert_eq!(parsed.title, arabic_title);
         assert!(parsed.title.chars().count() <= 500);
+    }
+
+    #[test]
+    fn pinterest_script_observes_counts_and_confirms_settled_board() {
+        let script = initialization_script(
+            "test-nonce",
+            SocialPlatform::Pinterest,
+            "https://www.pinterest.com/user/board",
+        );
+        assert!(script.contains("pin_count"));
+        assert!(script.contains("ideas?|pins?"));
+        assert!(script
+            .contains("isPinterestBoard && atBottom && unchanged >= 8 && expectedCount === null"));
+        assert!(script.contains("closeup-body"));
+        assert!(script.contains("Pinterest Collection"));
+
+        let mut message: PageMessage = serde_json::from_str(
+            r#"{
+            "kind": "done",
+            "count": 15,
+            "expectedCount": 15,
+            "endConfirmed": true,
+            "countConflict": false,
+            "completion": "complete",
+            "title": "15 ideas I found on Pinterest"
+        }"#,
+        )
+        .unwrap();
+        assert!(validate_completion(&message, 15).is_ok());
+
+        message.count = 14;
+        assert!(validate_completion(&message, 15).is_err());
     }
 }
 

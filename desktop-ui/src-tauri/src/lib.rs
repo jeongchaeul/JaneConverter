@@ -1126,7 +1126,8 @@ async fn capture_social_post_photos(
     let nonce_for_title = nonce.clone();
     let sender_for_title = sender.clone();
     let platform_for_title = platform;
-    let initial_script = social_photo_capture::initialization_script(&nonce, platform);
+    let initial_script =
+        social_photo_capture::initialization_script(&nonce, platform, source_url.as_str());
     let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(source_url))
         .title(format!("Reading public {} photos", platform.label()))
         .inner_size(940.0, 700.0)
@@ -1148,7 +1149,7 @@ async fn capture_social_post_photos(
             match message.kind.as_str() {
                 "photos" => {
                     if message.photos.is_empty()
-                        || message.photos.len() > 2
+                        || message.photos.len() > 25
                         || message.sequence == 0
                     {
                         return;

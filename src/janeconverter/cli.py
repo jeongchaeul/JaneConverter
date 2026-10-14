@@ -46,7 +46,12 @@ from .auth import normalize_browser_session
 from .browser_session_fallback import BrowserSessionError
 from .extraction_recovery import classify_extraction, ExtractionCategory
 from .facebook_capture import download_facebook_photo_manifest
-from .social_photo_capture import MEDIA_HOSTS as SOCIAL_PHOTO_MEDIA_HOSTS, download_social_photo_manifest
+from .social_photo_capture import (
+    MEDIA_HOSTS as SOCIAL_PHOTO_MEDIA_HOSTS,
+    download_social_photo_manifest,
+    is_pinterest_newshub_url,
+    fetch_pinterest_newshub_manifest,
+)
 from .hardware_snapshot import get_hardware_snapshot
 
 MIN_FREE_DISK_BYTES = 256 * 1024 * 1024  # keep a reasonable minimum without rejecting small conversions
@@ -309,6 +314,14 @@ def process_conversion(
         print(f"DONE! Exported: {album['folder_path']}")
         print("=" * 60)
         return album["folder_path"]
+
+    if social_photo_manifest is None and is_pinterest_newshub_url(source):
+        report(0.02, "Reading Pinterest notification collection via browser session cookies...")
+        social_photo_manifest = fetch_pinterest_newshub_manifest(
+            source,
+            browser=auth_browser,
+            progress_callback=report,
+        )
 
     if social_photo_manifest is not None:
         platform = social_photo_manifest.get("platform")
