@@ -452,3 +452,94 @@ def test_fetch_pinterest_newshub_manifest(monkeypatch):
     assert manifest["photos"][1]["url"] == "https://i.pinimg.com/originals/ab/cd/ef/abcdef0123456789abcdef0123456789.jpg"
 
 
+def test_instagram_shortcode_and_url_helpers():
+    from janeconverter.social_photo_capture import _shortcode_to_pk, is_instagram_post_url
+
+    assert _shortcode_to_pk("DFMyvpiSgxW") == 3552437382828133462
+    assert is_instagram_post_url("https://www.instagram.com/p/DFMyvpiSgxW/") is True
+    assert is_instagram_post_url("https://instagram.com/reel/DFMyvpiSgxW") is True
+    assert is_instagram_post_url("https://instagr.am/p/DFMyvpiSgxW/") is True
+    assert is_instagram_post_url("https://www.instagram.com/user/p/DFMyvpiSgxW/") is True
+    assert is_instagram_post_url("https://pinterest.com/pin/123456") is False
+    assert is_instagram_post_url("invalid") is False
+
+
+def test_fetch_instagram_manifest(monkeypatch):
+    import io
+    import json
+    import http.cookiejar
+    from http.cookiejar import Cookie
+    from janeconverter.social_photo_capture import fetch_instagram_manifest
+
+    fake_session_cookie = Cookie(
+        version=0, name="sessionid", value="fake_session", port=None, port_specified=False,
+        domain=".instagram.com", domain_specified=True, domain_initial_dot=True,
+        path="/", path_specified=True, secure=True, expires=None, discard=False,
+        comment=None, comment_url=None, rest={}, rfc2109=False,
+    )
+    fake_user_cookie = Cookie(
+        version=0, name="ds_user_id", value="12345", port=None, port_specified=False,
+        domain=".instagram.com", domain_specified=True, domain_initial_dot=True,
+        path="/", path_specified=True, secure=True, expires=None, discard=False,
+        comment=None, comment_url=None, rest={}, rfc2109=False,
+    )
+
+    class FakeCookieJar(http.cookiejar.CookieJar):
+        filename = None
+
+    fake_jar = FakeCookieJar()
+    fake_jar.set_cookie(fake_session_cookie)
+    fake_jar.set_cookie(fake_user_cookie)
+
+    import yt_dlp
+    monkeypatch.setattr(yt_dlp.cookies, "extract_cookies_from_browser", lambda b, *a, **kw: fake_jar if b == "vivaldi" else [])
+
+    fake_api_response = {
+        "items": [
+            {
+                "pk": 3552437382828133462,
+                "media_type": 8,
+                "user": {"username": "test_artist"},
+                "caption": {"text": "Studio setup and master bounce\nSecond line"},
+                "carousel_media": [
+                    {
+                        "pk": 1111111111,
+                        "image_versions2": {
+                            "candidates": [
+                                {"url": "https://instagram.fbag4-1.fna.fbcdn.net/v/photo1_high.webp", "width": 1440, "height": 1800},
+                                {"url": "https://instagram.fbag4-1.fna.fbcdn.net/v/photo1_low.webp", "width": 640, "height": 800},
+                            ]
+                        }
+                    },
+                    {
+                        "pk": 2222222222,
+                        "image_versions2": {
+                            "candidates": [
+                                {"url": "https://instagram.fbag4-1.fna.fbcdn.net/v/photo2_high.webp", "width": 1440, "height": 1800},
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    class FakeOpener:
+        def open(self, req):
+            assert "i.instagram.com/api/v1/media/3552437382828133462/info/" in req.full_url
+            assert req.get_header("X-ig-app-id") == "936619743392459" or req.headers.get("X-ig-app-id") == "936619743392459" or req.headers.get("X-IG-App-ID") == "936619743392459"
+            return io.BytesIO(json.dumps(fake_api_response).encode("utf-8"))
+
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: FakeOpener())
+
+    manifest = fetch_instagram_manifest("https://www.instagram.com/p/DFMyvpiSgxW/")
+    assert manifest is not None
+    assert manifest["platform"] == "instagram"
+    assert manifest["title"] == "Studio setup and master bounce"
+    assert len(manifest["photos"]) == 2
+    assert manifest["photos"][0]["url"] == "https://instagram.fbag4-1.fna.fbcdn.net/v/photo1_high.webp"
+    assert manifest["photos"][0]["width"] == 1440
+    assert manifest["photos"][1]["url"] == "https://instagram.fbag4-1.fna.fbcdn.net/v/photo2_high.webp"
+
+
+

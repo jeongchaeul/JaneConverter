@@ -865,6 +865,11 @@ export function ConverterView({
         await onStart(trimmedSource, indexes, undefined, undefined, "video");
         return;
       }
+      if (photoPlatform === "instagram" && access.active) {
+        onStatus("Reading Instagram post using your active browser session...");
+        await onStart(trimmedSource, indexes);
+        return;
+      }
       const captureId = crypto.randomUUID();
       socialCaptureIdRef.current = captureId;
       setSocialCaptureBusy(true);

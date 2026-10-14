@@ -424,3 +424,148 @@ def fetch_pinterest_newshub_manifest(
         "title": detail_header,
         "photos": photos
     }
+
+
+def _shortcode_to_pk(shortcode: str) -> int:
+    """Convert an Instagram alphanumeric shortcode to its numeric media PK."""
+    clean = shortcode.split("?")[0].split("#")[0].strip()
+    if len(clean) > 28:
+        clean = clean[:-28]
+    table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    n = 0
+    for char in clean:
+        idx = table.find(char)
+        if idx >= 0:
+            n = n * 64 + idx
+    return n
+
+
+def is_instagram_post_url(url: str) -> bool:
+    """Identify if a URL is an Instagram post, photo, or reel link."""
+    try:
+        parsed = urllib.parse.urlparse(str(url or "").strip())
+        host = (parsed.hostname or "").lower()
+        if not (host == "instagram.com" or host.endswith(".instagram.com") or host == "instagr.am"):
+            return False
+        path = parsed.path.lower()
+        return bool(re.search(r"^/(?:[^/]+/)?(?:p|reel|reels)/([A-Za-z0-9_-]+)", path))
+    except Exception:
+        return False
+
+
+def fetch_instagram_manifest(
+    url: str,
+    browser: Optional[str] = None,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+) -> Optional[dict[str, Any]]:
+    """Extract photos from an Instagram post using browser session cookies and internal media API."""
+    patch_yt_dlp_cookie_database_reader()
+    import yt_dlp
+
+    def report(pct: float, msg: str):
+        if progress_callback:
+            progress_callback(pct, msg)
+
+    match = re.search(r"/(?:p|reel|reels)/([A-Za-z0-9_-]+)", url)
+    if not match:
+        raise ValueError(f"Invalid Instagram URL: {url}")
+    shortcode = match.group(1)
+    media_pk = _shortcode_to_pk(shortcode)
+    if media_pk <= 0:
+        return None
+
+    report(0.04, "Searching desktop browsers for an active Instagram session...")
+    preferred = [browser] if browser and browser.lower() not in ("none", "auto", "public", "public only") else []
+    candidates = preferred + [b for b in ("vivaldi", "firefox", "chrome", "edge", "brave", "opera") if b not in preferred]
+
+    jar = None
+    found_browser = None
+    for b in candidates:
+        try:
+            ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
+            candidate_jar = ydl.cookiejar
+            ig_cookies = [c for c in candidate_jar if "instagram" in getattr(c, "domain", "")]
+            if ig_cookies and any(getattr(c, "name", None) in ("sessionid", "ds_user_id") for c in ig_cookies):
+                jar = candidate_jar
+                found_browser = b
+                break
+        except Exception:
+            continue
+
+    if found_browser:
+        report(0.06, f"Connected to Instagram session via {found_browser.title()}. Requesting post info...")
+
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar)) if jar else urllib.request.build_opener()
+    api_url = f"https://i.instagram.com/api/v1/media/{media_pk}/info/"
+
+    req = urllib.request.Request(
+        api_url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+            ),
+            "X-IG-App-ID": "936619743392459",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": f"https://www.instagram.com/p/{shortcode}/",
+            "Accept": "*/*",
+        }
+    )
+
+    try:
+        resp = opener.open(req)
+        res_data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        report(0.08, f"Instagram direct API request unavailable ({type(exc).__name__}). Falling back...")
+        return None
+
+    items = res_data.get("items", [])
+    if not items:
+        return None
+    item = items[0]
+    media_type = item.get("media_type")
+
+    # If it is purely a video/reel (media_type == 2) and has no carousel_media, signal video handoff
+    if media_type == 2 and not item.get("carousel_media"):
+        return {"platform": "instagram", "media_kind": "video", "title": shortcode}
+
+    user = item.get("user", {}).get("username") or "instagram_post"
+    caption_text = item.get("caption", {}).get("text") or ""
+    clean_caption = sanitize_filename(caption_text.split("\n")[0][:60], max_length=60)
+    title = clean_caption if clean_caption and clean_caption != "media_file" else f"Instagram Post by @{user}"
+
+    photos = []
+    carousel = item.get("carousel_media", [])
+    if carousel:
+        for idx, sub in enumerate(carousel, start=1):
+            candidates = sub.get("image_versions2", {}).get("candidates", [])
+            if not candidates:
+                continue
+            best = max(candidates, key=lambda c: c.get("width", 0))
+            photo_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(sub.get("pk") or f"{media_pk}_{idx}"))[:200]
+            photos.append({
+                "id": photo_id,
+                "url": best["url"],
+                "width": best.get("width", 1080),
+            })
+    else:
+        candidates = item.get("image_versions2", {}).get("candidates", [])
+        if candidates:
+            best = max(candidates, key=lambda c: c.get("width", 0))
+            photo_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(item.get("pk") or media_pk))[:200]
+            photos.append({
+                "id": photo_id,
+                "url": best["url"],
+                "width": best.get("width", 1080),
+            })
+
+    if not photos:
+        return None
+
+    report(0.08, f"Found {len(photos)} photos in '{title}'. Starting download...")
+    return {
+        "platform": "instagram",
+        "title": title,
+        "photos": photos,
+        "media_kind": "photo",
+    }

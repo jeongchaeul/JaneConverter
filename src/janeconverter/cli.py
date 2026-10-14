@@ -51,6 +51,8 @@ from .social_photo_capture import (
     download_social_photo_manifest,
     is_pinterest_newshub_url,
     fetch_pinterest_newshub_manifest,
+    is_instagram_post_url,
+    fetch_instagram_manifest,
 )
 from .hardware_snapshot import get_hardware_snapshot
 
@@ -322,6 +324,19 @@ def process_conversion(
             browser=auth_browser,
             progress_callback=report,
         )
+
+    if social_photo_manifest is None and is_instagram_post_url(source):
+        try:
+            report(0.02, "Reading Instagram post via browser session API...")
+            ig_manifest = fetch_instagram_manifest(
+                source,
+                browser=auth_browser,
+                progress_callback=report,
+            )
+            if ig_manifest and ig_manifest.get("photos"):
+                social_photo_manifest = ig_manifest
+        except Exception as ig_err:
+            report(0.05, f"Instagram direct API bypassed ({type(ig_err).__name__}). Proceeding to standard stream extractor...")
 
     if social_photo_manifest is not None:
         platform = social_photo_manifest.get("platform")
