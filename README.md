@@ -286,7 +286,8 @@ flowchart TD
 | **Facebook** | Single/Multi Photos, Group Sets (`gm.`), Reels | Sandboxed Guest WebView + Grid Mode Switch | Verified |
 | **TikTok** | Photos, Slideshows, Videos | Direct Stream Extractor + yt-dlp fallback | Verified |
 | **Pinterest** | Pins, Collections (`news_hub`), Boards | Direct NewsHub API / Candidate Probe + Originals CDN | Verified |
-| **X/Twitter, Reddit** | Photos, Galleries, Posts | Guest Page Scraper | Supported |
+| **X/Twitter** | Photos, Galleries, Videos, Audio | Direct Stream Extractor / Guest Scraper + Video Fast-Path | Verified |
+| **Reddit** | Videos, Audio, Galleries, Posts | Direct Stream Extractor + Session Recovery / Guest Scraper | Verified |
 | **Stories (IG / FB / TT)** | Ephemeral Stories | Browser Bridge Extension (`Collect mode`) | Extension Required |
 
 > [!NOTE]
