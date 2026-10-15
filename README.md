@@ -33,7 +33,7 @@ JaneConverter is a high-speed personal media toolbox and format conversion studi
 - **Audiophile Sound Engine**: 64-bit float SoX resampler (`soxr`, precision 28), EBU R128 loudness normalization (`-14 LUFS`), cover-art muxing (`attached_pic`), and strict `ffprobe` stream validation.
 - **Zero-Loss Stream Copy**: Instant container remuxing (`-c copy`) when source codecs match the target, bypassing unnecessary re-encoding.
 - **Adaptive GPU Acceleration**: Hardware-accelerated encoding via NVIDIA NVENC, AMD AMF, Intel QSV, or Linux VAAPI, with transparent multi-core CPU software fallback.
-- **Smart Online & Social Extraction**: Powered by `yt-dlp` and `yt-dlp-ejs`. Public Spotify and Apple Music catalog matching, plus public guest-mode scraping for Facebook, Instagram, TikTok, Twitter/X, and Reddit photo albums.
+- **Smart Online & Social Extraction**: Powered by `yt-dlp` and `yt-dlp-ejs`. Public Spotify and Apple Music catalog matching, direct internal API & session recovery for Instagram and Pinterest (`news_hub`, boards, pins), plus guest-mode scraping for Facebook, TikTok, Twitter/X, and Reddit photo albums.
 - **Batch Queue & Library Explorer**: Drag-and-drop links or files, sequential batch processing, real-time conversion speed/progress, pause/resume, and converted library explorer.
 - **Air-Gapped Privacy & Session Recovery**: 100% local by default. Opt-in ephemeral in-memory browser session probing for age-gated (YouTube Error 152) or friends-only content with zero disk writes.
 - **Browser Bridge Companion**: Optional extension to pipe audio, video, or story streams directly from active browser tabs over authenticated loopback (`127.0.0.1`).
@@ -65,7 +65,7 @@ flowchart TD
         CheckInput -- "Browser Bridge Capture" --> BridgeFast["Browser Bridge Fast Path<br/>(Local Loopback 127.0.0.1)"]:::intake
         CheckInput -- "FL Studio Project (.flp)" --> FLPRoute["FLP Binary Patcher & Inspector<br/>(Header Event 0xC7 / 0x9F / 0xD4)"]:::intake
         CheckInput -- "Catalog Link (Spotify / Apple Music)" --> CatRoute["Streaming Catalog Resolution"]:::intake
-        CheckInput -- "Social Photo / Album Link" --> SocRoute["Social Guest-Page Scraping<br/>(Facebook / IG / TikTok / X / Reddit)"]:::intake
+        CheckInput -- "Social Photo / Album Link" --> SocRoute["Social Media & Collection Scraping<br/>(FB / IG / TT / Pinterest / X / Reddit)"]:::intake
         CheckInput -- "Standard Media Stream URL" --> WebRoute["yt-dlp Universal Stream Extractor"]:::intake
     end
 
@@ -282,10 +282,11 @@ flowchart TD
 | :--- | :--- | :--- | :--- |
 | **YouTube, SoundCloud** | Audio, Video, Playlists | Direct yt-dlp + Node.js EJS | Verified |
 | **Spotify, Apple Music** | Tracks, Albums, Playlists | Catalog Metadata + Public Source Matching | Verified |
-| **Instagram** | Single/Multi Photos, Reels | Sandboxed Guest WebView + Video Handoff | Verified |
+| **Instagram** | Single/Multi Photos, Reels | Direct Internal API / Guest WebView + Video Handoff | Verified |
 | **Facebook** | Single/Multi Photos, Group Sets (`gm.`), Reels | Sandboxed Guest WebView + Grid Mode Switch | Verified |
 | **TikTok** | Photos, Slideshows, Videos | Direct Stream Extractor + yt-dlp fallback | Verified |
-| **X/Twitter, Reddit, Pinterest** | Photos, Galleries, Pins | Guest Page Scraper | Supported |
+| **Pinterest** | Pins, Collections (`news_hub`), Boards | Direct NewsHub API / Candidate Probe + Originals CDN | Verified |
+| **X/Twitter, Reddit** | Photos, Galleries, Posts | Guest Page Scraper | Supported |
 | **Stories (IG / FB / TT)** | Ephemeral Stories | Browser Bridge Extension (`Collect mode`) | Extension Required |
 
 > [!NOTE]
