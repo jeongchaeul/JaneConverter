@@ -41,3 +41,7 @@ JaneConverterDesktop.exe
 JaneConverterNative.exe
 frontend.preference
 native_ui/
+recovery-evidence.json
+quarantine/
+tasks/
+.kilo/
