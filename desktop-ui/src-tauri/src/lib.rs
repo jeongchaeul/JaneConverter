@@ -1222,16 +1222,10 @@ async fn capture_social_post_photos(
                     let _ = window.close();
                 }
                 "video" => {
-                    let has_photos = accumulator_for_title
-                        .lock()
-                        .map(|collected| !collected.photos.is_empty())
-                        .unwrap_or(true);
-                    if !has_photos {
-                        let title = message.title.chars().take(500).collect();
-                        let _ = sender_for_title
-                            .send(Ok(social_photo_capture::CaptureOutcome::Video(title)));
-                        let _ = window.close();
-                    }
+                    let title = message.title.chars().take(500).collect();
+                    let _ = sender_for_title
+                        .send(Ok(social_photo_capture::CaptureOutcome::Video(title)));
+                    let _ = window.close();
                 }
                 "no_photos"
                     if platform_for_title == social_photo_capture::SocialPlatform::Twitter =>

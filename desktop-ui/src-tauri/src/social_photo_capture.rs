@@ -253,7 +253,7 @@ pub fn validate_completion(message: &PageMessage, received: usize) -> Result<(),
         || message.count != received
         || !(1..=500).contains(&received)
     {
-        return Err(format!("Collection completeness could not be verified (received {received} photos). No partial collection was saved. Keep the full post open and retry, or use Browser Capture for individual visible items."));
+        return Err(format!("Collection completeness could not be verified (received {received} media). No partial collection was saved. Keep the full post open and retry, or use Browser Capture for individual visible items."));
     }
     Ok(())
 }
@@ -515,9 +515,15 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform, target_url: 
     const container = postContainer();
     const visibleVideo = !!container && Array.from(container.querySelectorAll("video")).some((video) => {{
       const rect = video.getBoundingClientRect();
-      return rect.width >= 220 && rect.height >= 220 && (video.currentSrc || video.src || video.readyState > 0 || video.poster);
+      return rect.width >= 100 && rect.height >= 100 && (video.currentSrc || video.src || video.readyState > 0 || video.poster);
     }});
-    return visibleVideo || !!document.querySelector('meta[property="og:video"], meta[property="og:video:url"]');
+    const hasTwitterVideo = platform === "twitter" && !!(
+      (container && container.querySelector('[data-testid="videoPlayer"], [data-testid="videoComponent"], [data-testid="playButton"]'))
+      || document.querySelector('[data-testid="videoPlayer"], [data-testid="videoComponent"], [data-testid="playButton"]')
+      || Array.from(document.querySelectorAll('img[src*="video_thumb"], img[src*="amplify_video_thumb"]')).length > 0
+      || Array.from(document.querySelectorAll('a[href*="/video/"]')).length > 0
+    );
+    return visibleVideo || hasTwitterVideo || !!document.querySelector('meta[property="og:video"], meta[property="og:video:url"], meta[name="twitter:player"]');
   }};
   const collectPhotos = () => {{
     const container = postContainer();
@@ -690,6 +696,10 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform, target_url: 
     collectPhotos();
     observeCount();
     const title = pageTitle();
+    if (platform === "twitter" && hasVideoPost()) {{
+      sendFinal({{kind:"video",count:0,title,platform}});
+      return;
+    }}
     if (!photos.size && !pending.length && attempts >= 3 && hasVideoPost()) {{
       sendFinal({{kind:"video",count:0,title,platform}});
       return;
@@ -733,7 +743,8 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform, target_url: 
       if (finished) return;
     }}
     if (attempts >= noPhotoWait && settled && !waiting && !pending.length) {{
-      if (photos.size) {{
+      if (platform === "twitter" && hasVideoPost()) sendFinal({{kind:"video",count:0,title,platform}});
+      else if (photos.size) {{
         if (isPinterestBoard && atBottom && unchanged >= 8 && expectedCount === null) {{
           expectedCount = photos.size;
         }}

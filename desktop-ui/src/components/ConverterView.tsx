@@ -819,8 +819,12 @@ export function ConverterView({
     }
     const photoPlatform = socialPhotoPlatform(trimmedSource);
     const explicitVideoFormat = activeCategory === "Video" && isVideo && !isSourceFormat;
-    if (explicitVideoFormat && (isFacebookPostLink(trimmedSource) || isInstagramVideoRoute(trimmedSource))) {
-      const platformLabel = isFacebookPostLink(trimmedSource) ? "Facebook" : "Instagram";
+    if (explicitVideoFormat && (isFacebookPostLink(trimmedSource) || isInstagramVideoRoute(trimmedSource) || photoPlatform === "twitter")) {
+      const platformLabel = isFacebookPostLink(trimmedSource)
+        ? "Facebook"
+        : photoPlatform === "twitter"
+          ? "X/Twitter"
+          : "Instagram";
       onStatus(`Sending this ${platformLabel} post to the video converter...`);
       await onStart(trimmedSource, indexes);
       return;
@@ -886,11 +890,11 @@ export function ConverterView({
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (photoPlatform === "twitter" && message === "NO_PUBLIC_PHOTOS") {
-          onStatus("No X/Twitter photos found. Passing the post to the standard media downloader...");
-          await onStart(trimmedSource, indexes, undefined, undefined, "video");
-        } else if (/cancelled|canceled/i.test(message)) {
+        if (/cancelled|canceled/i.test(message)) {
           onStatus(message);
+        } else if (photoPlatform === "twitter") {
+          onStatus("Adapting: Passing the X/Twitter post to the media downloader...");
+          await onStart(trimmedSource, indexes, undefined, undefined, "video");
         } else {
           onError(message);
         }

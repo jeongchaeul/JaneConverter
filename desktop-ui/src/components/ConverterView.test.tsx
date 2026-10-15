@@ -428,6 +428,32 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
+  it("sends an X/Twitter post to video conversion when the video preset is selected", async () => {
+    const source = "https://x.com/Naskomusic/status/2110194682684956686?s=20";
+    const onStart = vi.fn().mockResolvedValue(undefined);
+    bridge.captureSocialPostPhotos.mockReset();
+    const view = renderView(undefined, undefined, onStart, null, vi.fn(), {
+      category: "Video",
+      format: "mp4",
+      bitrate: "balanced",
+      resolution: "1080p",
+    });
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, source);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
+    await act(async () => { button?.click(); await Promise.resolve(); });
+    expect(onStart).toHaveBeenCalledWith(source, undefined);
+    expect(bridge.captureSocialPostPhotos).not.toHaveBeenCalled();
+    expect(view.onStatus).toHaveBeenCalledWith("Sending this X/Twitter post to the video converter...");
+    expect(button?.textContent?.trim()).toBe("Convert media");
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
   it("does not lock output controls to an unselected browser capture", async () => {
     const view = renderView(undefined, {
       active: true,
