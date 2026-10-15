@@ -23,7 +23,7 @@
 
 JaneConverter is a personal media downloader and format conversion toolbox designed by Jane Cerys (`project//aspyr`). Originally built to handle sample libraries, video editing transcodes, social media archival, and cross-version FL Studio project downgrades, it runs locally through a modern desktop app (Tauri 2 + React) or directly via Python CLI.
 
-[Latest Release](https://github.com/jeongchaeul/JaneConverter/releases/latest) · [Changelog](CHANGELOG.md) · [Rebuild Guide](packaging/REBUILD.md)
+[Latest Release](https://github.com/jeongchaeul/JaneConverter/releases/latest) · [Changelog](CHANGELOG.md) · [Rebuild Guide](packaging/REBUILD.md) · [Mahoraga Engine](docs/MAHORAGA_ENGINE.md)
 
 <p align="center">
   <img src="docs/photos/Screenshot_260.png" alt="JaneConverter Desktop UI" width="94%" />
@@ -41,6 +41,24 @@ JaneConverter is a personal media downloader and format conversion toolbox desig
 - **FL Studio (.flp) Project Downgrade**: Inspects project tempo, PPQ, channel count, and build numbers, and patches header event bytes to help collaborate with producers on older FL Studio versions.
 - **Queue & Library Explorer**: Batch drag-and-drop, real-time conversion progress, and an organized converted media library.
 - **Optional Browser Companion**: Extension to pipe audio, video, or story streams directly from active browser tabs over a local loopback port (`127.0.0.1`).
+
+---
+
+## Adaptive Resilience: The Mahoraga Engine
+
+> *"With this treasure, I summon..."*
+
+Behind JaneConverter is an adaptive recovery architecture inspired by **Mahoraga** from *Jujutsu Kaisen*. When downloading or converting media across the web, roadblocks are frequent: aggressive anti-bot JavaScript challenges, login walls, rate limits, audio container mismatches, or GPU driver crashes.
+
+Instead of crashing or failing, JaneConverter treats runtime errors as signals to rotate its adaptation wheel—analyzing roadblocks and pivoting to alternative fallback routes until pristine media is delivered.
+
+<p align="center">
+  <a href="docs/MAHORAGA_ENGINE.md">
+    <img src="docs/photos/mahoraga-pipeline.svg" width="100%" alt="Mahoraga Adaptive Pipeline Architecture" />
+  </a>
+</p>
+
+*For the complete technical breakdown of adaptation tiers and recovery algorithms, see the [Mahoraga Engine Reference](docs/MAHORAGA_ENGINE.md).*
 
 ---
 

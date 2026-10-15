@@ -1,0 +1,292 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 780" width="1600" height="780" style="background:#0b0d14; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <defs>
+    <linearGradient id="bgGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0d1017"/>
+      <stop offset="100%" stop-color="#06080d"/>
+    </linearGradient>
+    <linearGradient id="goldWheel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fde047"/>
+      <stop offset="50%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="cardBlue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#141c2c"/>
+      <stop offset="100%" stop-color="#0d1422"/>
+    </linearGradient>
+    <linearGradient id="cardRed" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#241117"/>
+      <stop offset="100%" stop-color="#180a0e"/>
+    </linearGradient>
+    <linearGradient id="cardGreen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0c231c"/>
+      <stop offset="100%" stop-color="#061611"/>
+    </linearGradient>
+    <filter id="goldGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Background Base Canvas -->
+  <rect width="1600" height="780" fill="url(#bgGradient)"/>
+  <rect x="1" y="1" width="1598" height="778" rx="16" fill="none" stroke="#1f293d" stroke-width="1.5"/>
+
+  <!-- ==================== HEADER BANNER ==================== -->
+  <g transform="translate(50, 42)">
+    <!-- Mahoraga Eight-Spoke Wheel Emblem -->
+    <g transform="translate(0, -6)">
+      <circle cx="24" cy="24" r="23" fill="none" stroke="url(#goldWheel)" stroke-width="2.5" filter="url(#goldGlow)"/>
+      <circle cx="24" cy="24" r="6" fill="url(#goldWheel)"/>
+      <!-- 8 Spoke Wheels -->
+      <line x1="24" y1="2" x2="24" y2="46" stroke="url(#goldWheel)" stroke-width="2"/>
+      <line x1="2" y1="24" x2="46" y2="24" stroke="url(#goldWheel)" stroke-width="2"/>
+      <line x1="8.5" y1="8.5" x2="39.5" y2="39.5" stroke="url(#goldWheel)" stroke-width="2"/>
+      <line x1="8.5" y1="39.5" x2="39.5" y2="8.5" stroke="url(#goldWheel)" stroke-width="2"/>
+    </g>
+
+    <text x="62" y="17" fill="#ffffff" font-size="23" font-weight="800" letter-spacing="1.5">THE MAHORAGA ENGINE</text>
+    <text x="62" y="38" fill="#94a3b8" font-size="13" font-weight="500">Adaptive Pipeline Architecture · Continuous Strategy Rotation &amp; Automated Recovery</text>
+    <rect x="390" y="2" width="155" height="22" rx="11" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+    <text x="467.5" y="17" fill="#38bdf8" font-size="10.5" font-weight="700" text-anchor="middle" letter-spacing="1">JJK-INSPIRED LOGIC</text>
+  </g>
+
+  <!-- Legend & Badges (Right Header) -->
+  <g transform="translate(1120, 36)">
+    <rect x="0" y="0" width="430" height="46" rx="10" fill="#101522" stroke="#1e293b" stroke-width="1"/>
+    
+    <circle cx="24" cy="23" r="5" fill="#38bdf8"/>
+    <text x="36" y="27" fill="#cbd5e1" font-size="12" font-weight="600">Standard Pipeline</text>
+
+    <circle cx="160" cy="23" r="5" fill="#f43f5e"/>
+    <text x="172" y="27" fill="#cbd5e1" font-size="12" font-weight="600">Roadblock / Failure</text>
+
+    <circle cx="300" cy="23" r="5" fill="#34d399"/>
+    <text x="312" y="27" fill="#cbd5e1" font-size="12" font-weight="600">Mahoraga Adapts</text>
+  </g>
+
+  <!-- ==================== HORIZONTAL FLOW ARROWS ==================== -->
+  <path d="M 330 200 L 360 200" stroke="#38bdf8" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="364,200 354,195 354,205" fill="#38bdf8"/>
+
+  <path d="M 640 200 L 670 200" stroke="#38bdf8" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="674,200 664,195 664,205" fill="#38bdf8"/>
+
+  <path d="M 950 200 L 980 200" stroke="#38bdf8" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="984,200 974,195 974,205" fill="#38bdf8"/>
+
+  <path d="M 1260 200 L 1290 200" stroke="#38bdf8" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="1294,200 1284,195 1284,205" fill="#38bdf8"/>
+
+  <!-- ==================== STAGE 1: INTAKE & ROUTING ==================== -->
+  <g transform="translate(50, 110)">
+    <!-- Stage Header Tab -->
+    <rect x="0" y="0" width="280" height="32" rx="6" fill="#1e293b" stroke="#334155"/>
+    <text x="140" y="21" fill="#f8fafc" font-size="12.5" font-weight="700" text-anchor="middle" letter-spacing="0.5">01. INTAKE &amp; ROUTING</text>
+
+    <!-- Normal Pipeline Card -->
+    <rect x="0" y="44" width="280" height="180" rx="10" fill="url(#cardBlue)" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="16" y="72" fill="#38bdf8" font-size="14" font-weight="700">Source Classification</text>
+    <text x="16" y="96" fill="#94a3b8" font-size="11.5">
+      <tspan x="16" dy="0">• Media URL (YouTube, TikTok, X, etc.)</tspan>
+      <tspan x="16" dy="18">• Music Track (Spotify / Apple Music)</tspan>
+      <tspan x="16" dy="18">• Social Album (FB / IG / Pinterest)</tspan>
+      <tspan x="16" dy="18">• Local Files (Audio / Video / Image)</tspan>
+      <tspan x="16" dy="18">• FL Studio Project (.flp)</tspan>
+      <tspan x="16" dy="18">• Browser Bridge Stream Handoff</tspan>
+    </text>
+
+    <!-- Failure Card -->
+    <rect x="0" y="238" width="280" height="180" rx="10" fill="url(#cardRed)" stroke="#f43f5e" stroke-width="1.5"/>
+    <text x="16" y="266" fill="#fb7185" font-size="13" font-weight="700">Points of Failure</text>
+    <text x="16" y="292" fill="#cbd5e1" font-size="11.5">
+      <tspan x="16" dy="0">✖ Obfuscated / Shortened link URL</tspan>
+      <tspan x="16" dy="18">✖ Video post submitted as photo route</tspan>
+      <tspan x="16" dy="18">✖ Unsupported raw container suffix</tspan>
+      <tspan x="16" dy="18">✖ Target FL Studio version mismatch</tspan>
+    </text>
+
+    <!-- Mahoraga Adaptation Card -->
+    <rect x="0" y="432" width="280" height="248" rx="10" fill="url(#cardGreen)" stroke="#34d399" stroke-width="1.5"/>
+    <text x="16" y="460" fill="#34d399" font-size="13" font-weight="700">Mahoraga Adaptation</text>
+    <text x="16" y="484" fill="#e2e8f0" font-size="11">
+      <tspan x="16" dy="0" font-weight="600" fill="#a7f3d0">→ Autonomous URL Expander:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Unwinds redirects &amp; canonicalizes source</tspan>
+      <tspan x="16" dy="22" font-weight="600" fill="#a7f3d0">→ Automatic Video Handoff:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Redirects video posts to video pipeline</tspan>
+      <tspan x="16" dy="22" font-weight="600" fill="#a7f3d0">→ Binary FLP Header Patcher:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Surgically rewrites Event 0xC7/0x9F/0xD4</tspan>
+    </text>
+  </g>
+
+  <!-- ==================== STAGE 2: STREAM & NETWORK ==================== -->
+  <g transform="translate(360, 110)">
+    <!-- Stage Header Tab -->
+    <rect x="0" y="0" width="280" height="32" rx="6" fill="#1e293b" stroke="#334155"/>
+    <text x="140" y="21" fill="#f8fafc" font-size="12.5" font-weight="700" text-anchor="middle" letter-spacing="0.5">02. STREAM &amp; NETWORK</text>
+
+    <!-- Normal Pipeline Card -->
+    <rect x="0" y="44" width="280" height="180" rx="10" fill="url(#cardBlue)" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="16" y="72" fill="#38bdf8" font-size="14" font-weight="700">Extraction Engine</text>
+    <text x="16" y="96" fill="#94a3b8" font-size="11.5">
+      <tspan x="16" dy="0">• yt-dlp direct stream extractor</tspan>
+      <tspan x="16" dy="18">• Node.js runtime challenge solver</tspan>
+      <tspan x="16" dy="18">• Parallel fragment downloading</tspan>
+      <tspan x="16" dy="18">• Fast direct audio demuxing</tspan>
+      <tspan x="16" dy="18">• Safe public CDN domain filtering</tspan>
+      <tspan x="16" dy="18">• Resilient format sorting</tspan>
+    </text>
+
+    <!-- Failure Card -->
+    <rect x="0" y="238" width="280" height="180" rx="10" fill="url(#cardRed)" stroke="#f43f5e" stroke-width="1.5"/>
+    <text x="16" y="266" fill="#fb7185" font-size="13" font-weight="700">Points of Failure</text>
+    <text x="16" y="292" fill="#cbd5e1" font-size="11.5">
+      <tspan x="16" dy="0">✖ YouTube JS challenge &amp; nsig drift</tspan>
+      <tspan x="16" dy="18">✖ HTTP 429 Rate Limit / 5xx error</tspan>
+      <tspan x="16" dy="18">✖ YouTube Error 152 (18+ Age Gate)</tspan>
+      <tspan x="16" dy="18">✖ Bot-check / Sign-in required wall</tspan>
+    </text>
+
+    <!-- Mahoraga Adaptation Card -->
+    <rect x="0" y="432" width="280" height="248" rx="10" fill="url(#cardGreen)" stroke="#34d399" stroke-width="1.5"/>
+    <text x="16" y="460" fill="#34d399" font-size="13" font-weight="700">Mahoraga Adaptation</text>
+    <text x="16" y="484" fill="#e2e8f0" font-size="11">
+      <tspan x="16" dy="0" font-weight="600" fill="#a7f3d0">→ Bundled EJS Runtime Solver:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Bypasses nsig/JS challenges locally</tspan>
+      <tspan x="16" dy="22" font-weight="600" fill="#a7f3d0">→ Exponential Jitter Backoff:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Retries 429/503 errors (delay = 2^attempt)</tspan>
+      <tspan x="16" dy="22" font-weight="600" fill="#a7f3d0">→ In-RAM Session Recovery:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Ephemeral cookie borrow or loopback bridge</tspan>
+    </text>
+  </g>
+
+  <!-- ==================== STAGE 3: CATALOG & SOCIAL ==================== -->
+  <g transform="translate(670, 110)">
+    <!-- Stage Header Tab -->
+    <rect x="0" y="0" width="280" height="32" rx="6" fill="#1e293b" stroke="#334155"/>
+    <text x="140" y="21" fill="#f8fafc" font-size="12.5" font-weight="700" text-anchor="middle" letter-spacing="0.5">03. CATALOG &amp; SOCIAL</text>
+
+    <!-- Normal Pipeline Card -->
+    <rect x="0" y="44" width="280" height="180" rx="10" fill="url(#cardBlue)" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="16" y="72" fill="#38bdf8" font-size="14" font-weight="700">Metadata &amp; Guest View</text>
+    <text x="16" y="96" fill="#94a3b8" font-size="11.5">
+      <tspan x="16" dy="0">• Spotify &amp; Apple Music metadata</tspan>
+      <tspan x="16" dy="18">• Pinterest NewsHub API &amp; candidate probe</tspan>
+      <tspan x="16" dy="18">• Instagram &amp; Facebook album capture</tspan>
+      <tspan x="16" dy="18">• Sandboxed Guest WebView session</tspan>
+      <tspan x="16" dy="18">• High-res CDN media discovery</tspan>
+      <tspan x="16" dy="18">• Public oEmbed &amp; OpenGraph scrapers</tspan>
+    </text>
+
+    <!-- Failure Card -->
+    <rect x="0" y="238" width="280" height="180" rx="10" fill="url(#cardRed)" stroke="#f43f5e" stroke-width="1.5"/>
+    <text x="16" y="266" fill="#fb7185" font-size="13" font-weight="700">Points of Failure</text>
+    <text x="16" y="292" fill="#cbd5e1" font-size="11.5">
+      <tspan x="16" dy="0">✖ Spotify/Apple Music 404 or stream-gated</tspan>
+      <tspan x="16" dy="18">✖ Guest login CTA modal backdrop wall</tspan>
+      <tspan x="16" dy="18">✖ React synthetic carousel click drop</tspan>
+      <tspan x="16" dy="18">✖ 403 Media token expiry mid-collection</tspan>
+    </text>
+
+    <!-- Mahoraga Adaptation Card -->
+    <rect x="0" y="432" width="280" height="248" rx="10" fill="url(#cardGreen)" stroke="#34d399" stroke-width="1.5"/>
+    <text x="16" y="460" fill="#34d399" font-size="13" font-weight="700">Mahoraga Adaptation</text>
+    <text x="16" y="484" fill="#e2e8f0" font-size="11">
+      <tspan x="16" dy="0" font-weight="600" fill="#a7f3d0">→ Levenshtein Public Matcher:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Matches title/artist/duration on YT/SoundCloud</tspan>
+      <tspan x="16" dy="22" font-weight="600" fill="#a7f3d0">→ DOM Login Dismissal:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Prunes popup backdrops, unlocks body scroll</tspan>
+      <tspan x="16" dy="22" font-weight="600" fill="#a7f3d0">→ 5-Stage Pointer Dispatch &amp; Grid Mode:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Bypasses deadlocks via pointerdown/up</tspan>
+    </text>
+  </g>
+
+  <!-- ==================== STAGE 4: TRANSCODE STUDIO ==================== -->
+  <g transform="translate(980, 110)">
+    <!-- Stage Header Tab -->
+    <rect x="0" y="0" width="280" height="32" rx="6" fill="#1e293b" stroke="#334155"/>
+    <text x="140" y="21" fill="#f8fafc" font-size="12.5" font-weight="700" text-anchor="middle" letter-spacing="0.5">04. TRANSCODE STUDIO</text>
+
+    <!-- Normal Pipeline Card -->
+    <rect x="0" y="44" width="280" height="180" rx="10" fill="url(#cardBlue)" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="16" y="72" fill="#38bdf8" font-size="14" font-weight="700">FFmpeg &amp; Pillow Studio</text>
+    <text x="16" y="96" fill="#94a3b8" font-size="11.5">
+      <tspan x="16" dy="0">• Zero-loss stream copy (-c copy)</tspan>
+      <tspan x="16" dy="18">• Adaptive GPU encoding (NVENC/AMF/QSV)</tspan>
+      <tspan x="16" dy="18">• 64-bit SoX resampler (precision 28)</tspan>
+      <tspan x="16" dy="18">• EBU R128 loudness normalization</tspan>
+      <tspan x="16" dy="18">• Cover art attached_pic muxing</tspan>
+      <tspan x="16" dy="18">• Format-specific bit depth controllers</tspan>
+    </text>
+
+    <!-- Failure Card -->
+    <rect x="0" y="238" width="280" height="180" rx="10" fill="url(#cardRed)" stroke="#f43f5e" stroke-width="1.5"/>
+    <text x="16" y="266" fill="#fb7185" font-size="13" font-weight="700">Points of Failure</text>
+    <text x="16" y="292" fill="#cbd5e1" font-size="11.5">
+      <tspan x="16" dy="0">✖ Stream copy container tag mismatch</tspan>
+      <tspan x="16" dy="18">✖ GPU Crash / VRAM OOM / Driver fault</tspan>
+      <tspan x="16" dy="18">✖ Attached_pic artwork muxing failure</tspan>
+      <tspan x="16" dy="18">✖ True-peak headroom clipped in audio</tspan>
+    </text>
+
+    <!-- Mahoraga Adaptation Card -->
+    <rect x="0" y="432" width="280" height="248" rx="10" fill="url(#cardGreen)" stroke="#34d399" stroke-width="1.5"/>
+    <text x="16" y="460" fill="#34d399" font-size="13" font-weight="700">Mahoraga Adaptation</text>
+    <text x="16" y="484" fill="#e2e8f0" font-size="11">
+      <tspan x="16" dy="0" font-weight="600" fill="#a7f3d0">→ Lossless Transcode Escalation:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Bypasses copy and engages re-encode</tspan>
+      <tspan x="16" dy="22" font-weight="600" fill="#a7f3d0">→ Multi-Core CPU Degradation:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Purges GPU buffer &amp; finishes on CPU</tspan>
+      <tspan x="16" dy="22" font-weight="600" fill="#a7f3d0">→ Cover Art Normalizer:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Extracts 1st frame, converts to 24-bit RGB</tspan>
+    </text>
+  </g>
+
+  <!-- ==================== STAGE 5: OUTPUT & DELIVERY ==================== -->
+  <g transform="translate(1290, 110)">
+    <!-- Stage Header Tab -->
+    <rect x="0" y="0" width="260" height="32" rx="6" fill="#1e293b" stroke="#334155"/>
+    <text x="130" y="21" fill="#f8fafc" font-size="12.5" font-weight="700" text-anchor="middle" letter-spacing="0.5">05. OUTPUT &amp; DELIVERY</text>
+
+    <!-- Normal Pipeline Card -->
+    <rect x="0" y="44" width="260" height="180" rx="10" fill="url(#cardBlue)" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="16" y="72" fill="#38bdf8" font-size="14" font-weight="700">Verification &amp; Library</text>
+    <text x="16" y="96" fill="#94a3b8" font-size="11.5">
+      <tspan x="16" dy="0">• ffprobe stream verification</tspan>
+      <tspan x="16" dy="18">• Zero-byte file integrity guard</tspan>
+      <tspan x="16" dy="18">• Staged atomic file publication</tspan>
+      <tspan x="16" dy="18">• Track metadata &amp; badges set</tspan>
+      <tspan x="16" dy="18">• Converted library registration</tspan>
+      <tspan x="16" dy="18">• Real-time progress completion</tspan>
+    </text>
+
+    <!-- Failure Card -->
+    <rect x="0" y="238" width="260" height="180" rx="10" fill="url(#cardRed)" stroke="#f43f5e" stroke-width="1.5"/>
+    <text x="16" y="266" fill="#fb7185" font-size="13" font-weight="700">Points of Failure</text>
+    <text x="16" y="292" fill="#cbd5e1" font-size="11.5">
+      <tspan x="16" dy="0">✖ Windows Lock (WinError 32/33)</tspan>
+      <tspan x="16" dy="18">✖ Antivirus / Explorer handle collision</tspan>
+      <tspan x="16" dy="18">✖ Corrupt / truncated partial stream</tspan>
+      <tspan x="16" dy="18">✖ Target destination permission error</tspan>
+    </text>
+
+    <!-- Mahoraga Adaptation Card -->
+    <rect x="0" y="432" width="260" height="248" rx="10" fill="url(#cardGreen)" stroke="#34d399" stroke-width="1.5"/>
+    <text x="16" y="460" fill="#34d399" font-size="13" font-weight="700">Mahoraga Adaptation</text>
+    <text x="16" y="484" fill="#e2e8f0" font-size="11">
+      <tspan x="16" dy="0" font-weight="600" fill="#a7f3d0">→ Windows Lock Backoff:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">5 retry cycles with non-blocking delays</tspan>
+      <tspan x="16" dy="22" font-weight="600" fill="#a7f3d0">→ Atomic Publish Isolation:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Staged in temp dir until ffprobe passes</tspan>
+      <tspan x="16" dy="22" font-weight="600" fill="#a7f3d0">→ Local Evidence Cache:</tspan>
+      <tspan x="16" dy="16" fill="#94a3b8">Stores successful recovery paths locally</tspan>
+    </text>
+  </g>
+
+  <!-- ==================== BOTTOM STATUS RIBBON ==================== -->
+  <g transform="translate(50, 712)">
+    <rect x="0" y="0" width="1500" height="42" rx="8" fill="#101522" stroke="#1f2937" stroke-width="1"/>
+    <circle cx="24" cy="21" r="6" fill="#22c55e"/>
+    <text x="38" y="25" fill="#f8fafc" font-size="12.5" font-weight="700" letter-spacing="0.5">DELIVERY GUARANTEE:</text>
+    <text x="200" y="25" fill="#94a3b8" font-size="12.5">JaneConverter treats runtime errors as signals to rotate its adaptation wheel. If a path fails, it autonomously selects the next best strategy until pristine media is delivered.</text>
+  </g>
+</svg>
