@@ -299,3 +299,41 @@ def test_second_photo_failure_never_publishes_the_first(tmp_path, monkeypatch):
 
     assert not (tmp_path / "Public album").exists()
     assert not list(tmp_path.glob(".facebook-album-*"))
+
+
+def test_manifest_download_single_photo(tmp_path, monkeypatch):
+    session = _Session()
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session)
+    reports = []
+    manifest = {
+        "title": "Wonyoung Solo Post",
+        "photos": [
+            {"id": "999888777", "url": "https://scontent-1.xx.fbcdn.net/solo.jpg", "width": 1080},
+        ],
+    }
+
+    result = facebook_capture.download_facebook_photo_manifest(
+        manifest,
+        str(tmp_path),
+        progress_callback=lambda progress, message: reports.append((progress, message)),
+    )
+
+    album_dir = tmp_path / "Wonyoung Solo Post"
+    assert result["photo_count"] == 1
+    assert session.requested == ["https://scontent-1.xx.fbcdn.net/solo.jpg"]
+    saved = sorted(album_dir.glob("*.jpg"))
+    assert len(saved) == 1
+    with Image.open(saved[0]) as image:
+        assert image.size == (8, 8)
+    assert reports[-1] == (1.0, "Saved 1 Facebook photo.")
+    assert not list(tmp_path.glob(".facebook-album-*"))
+
+
+def test_manifest_empty_photos_raises(tmp_path):
+    manifest = {
+        "title": "Empty Post",
+        "photos": [],
+    }
+    with pytest.raises(RuntimeError, match="does not contain downloadable photos"):
+        facebook_capture.download_facebook_photo_manifest(manifest, str(tmp_path))
+

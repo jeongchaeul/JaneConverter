@@ -1004,7 +1004,7 @@ pub fn initialization_script(nonce: &str) -> String {
       endConfirmed = atBottom && !expanded && unchanged >= BOTTOM_PROBE_INTERVAL
         && Date.now() - lastRelevantMutationAt >= 2500;
       if (endConfirmed && !countConflict && pending.length === 0 && awaitingSequence === 0
-        && scanned.size >= 2 && (expectedCount === 0 || scanned.size >= expectedCount)
+        && scanned.size >= 1 && (expectedCount === 0 || scanned.size >= expectedCount)
         && (countSource !== "page-count" || scanned.size === expectedCount)) {{
         if (countSource !== "page-count") {{
           expectedCount = scanned.size;

@@ -311,7 +311,7 @@ def process_conversion(
             quality=bitrate if photo_format else "best",
             refresh_candidates=facebook_refresh_candidates,
         )
-        report(1.0, f"Downloaded all {album['photo_count']} public Facebook photos.")
+        report(1.0, f"Downloaded {'all ' if album['photo_count'] > 1 else ''}{album['photo_count']} public Facebook photo{'s' if album['photo_count'] != 1 else ''}.")
         print("\n" + "=" * 60)
         print(f"DONE! Exported: {album['folder_path']}")
         print("=" * 60)

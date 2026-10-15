@@ -105,8 +105,8 @@ def download_facebook_photo_manifest(
     if not isinstance(manifest, dict):
         raise ValueError("The Facebook photo list is missing or invalid.")
     raw_photos = manifest.get("photos")
-    if not isinstance(raw_photos, list) or len(raw_photos) < 2:
-        raise RuntimeError("This public Facebook post does not contain multiple downloadable photos.")
+    if not isinstance(raw_photos, list) or len(raw_photos) < 1:
+        raise RuntimeError("This public Facebook post does not contain downloadable photos.")
     if len(raw_photos) > MAX_PHOTOS:
         raise RuntimeError(f"This Facebook post exposes more than {MAX_PHOTOS} photos; nothing was downloaded.")
 
@@ -135,8 +135,8 @@ def download_facebook_photo_manifest(
                 url for url in dict.fromkeys(candidates) if url != existing["url"]
             ][:MAX_RENDITIONS - 1]
 
-    if len(photos) < 2:
-        raise RuntimeError("Facebook exposed fewer than two unique photos.")
+    if len(photos) < 1:
+        raise RuntimeError("Facebook exposed no unique photos.")
 
     raw_title = manifest.get("title")
     title = sanitize_filename(raw_title if isinstance(raw_title, str) else "", max_length=60)
@@ -250,7 +250,7 @@ def download_facebook_photo_manifest(
         if os.path.isdir(staging_dir):
             shutil.rmtree(staging_dir, ignore_errors=True)
 
-    report(1.0, f"Saved all {len(photos)} Facebook photos.")
+    report(1.0, f"Saved {'all ' if len(photos) > 1 else ''}{len(photos)} Facebook photo{'s' if len(photos) != 1 else ''}.")
     return {
         "title": title,
         "folder_path": os.path.abspath(target_dir),
