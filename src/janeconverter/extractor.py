@@ -729,7 +729,7 @@ def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
                     if imgs:
                         best = max(imgs, key=lambda x: x.get("maxWidth", 0))
                         thumbnail = best.get("url", "")
-        except Exception:
+        except (KeyError, TypeError, ValueError, AttributeError):
             pass
 
     # 2. Fallback to public oEmbed endpoint for thumbnail / title if needed
@@ -743,7 +743,7 @@ def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
                     title = data.get("title", title)
                 if not thumbnail:
                     thumbnail = data.get("thumbnail_url", "")
-        except Exception:
+        except (requests.RequestException, json.JSONDecodeError, KeyError, TypeError):
             pass
 
     # 3. Scrape OpenGraph description for album and artist fallback
@@ -762,7 +762,7 @@ def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
                     album = parts[1]
                 if len(parts) > 3 and not year and parts[-1].isdigit():
                     year = parts[-1]
-    except Exception:
+    except (requests.RequestException, IndexError, ValueError):
         pass
 
     candidates = build_search_candidates(artist, title)
@@ -844,7 +844,7 @@ def _fetch_tiktok_direct(
             parsed = resp.json()
             if parsed.get("code") == 0 and parsed.get("data"):
                 data = parsed.get("data")
-    except Exception:
+    except (requests.RequestException, json.JSONDecodeError, ValueError):
         pass
 
     if not data:
@@ -855,7 +855,7 @@ def _fetch_tiktok_direct(
                 parsed = resp.json()
                 if parsed.get("code") == 0 and parsed.get("data"):
                     data = parsed.get("data")
-        except Exception:
+        except (requests.RequestException, json.JSONDecodeError, ValueError):
             pass
 
     if not data:
@@ -906,7 +906,7 @@ def _fetch_tiktok_direct(
                         f.close()
                         if os.path.exists(target_filename):
                             os.remove(target_filename)
-                    except Exception:
+                    except OSError:
                         pass
                     raise KeyboardInterrupt("Stream extraction aborted by user.")
                 if chunk:
@@ -1033,7 +1033,7 @@ def fetch_media_stream(
                 meta_album = am_meta.get("album") or ""
                 meta_year = am_meta.get("year") or ""
                 meta_thumb_url = am_meta.get("thumbnail") or ""
-            except Exception:
+            except (requests.RequestException, ValueError, KeyError):
                 pass
         elif source_type == "spotify":
             try:
@@ -1043,7 +1043,7 @@ def fetch_media_stream(
                 meta_album = sp_meta.get("album") or ""
                 meta_year = sp_meta.get("year") or ""
                 meta_thumb_url = sp_meta.get("thumbnail") or ""
-            except Exception:
+            except (requests.RequestException, ValueError, KeyError):
                 pass
 
         if meta_thumb_url:

@@ -157,3 +157,24 @@ def test_mahoraga_adaptive_catalog_match_relaxes_duration_and_video_noise():
     chosen = choose_catalog_match(wanted, [strict_rejected_candidate])
     assert chosen["id"] == "vid1"
 
+def test_mahoraga_client_identity_rotation_on_layout_challenge():
+    ydl = Mock(params={"extractor_args": {"youtube": {"player_client": ["web"]}}})
+    calls = []
+
+    def extract(query, download):
+        calls.append(dict(ydl.params.get("extractor_args", {})))
+        if len(calls) == 1:
+            raise RuntimeError("Unable to solve JS challenge")
+        elif len(calls) == 2:
+            raise RuntimeError("Unable to extract challenge data")
+        return {"id": "success_via_ios"}
+
+    ydl.extract_info.side_effect = extract
+    result = extract_with_recovery(ydl, "https://youtube.com/watch?v=abc", False)
+    assert result["id"] == "success_via_ios"
+    # Call 1 had original 'web'
+    assert calls[0] == {"youtube": {"player_client": ["web"]}}
+    # Call 2 popped extractor_args to defaults
+    assert calls[1] == {}
+    # Call 3 rotated to IOS client
+    assert calls[2] == {"youtube": {"player_client": ["ios", "web"]}}

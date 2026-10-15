@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
 from urllib.parse import urlparse
+import json
 import requests
 import yt_dlp
 
@@ -56,7 +57,7 @@ def is_git_repo() -> bool:
     try:
         res = _run_git_cmd(["git", "rev-parse", "--is-inside-work-tree"], timeout=3.0)
         return res.returncode == 0 and res.stdout.strip() == "true"
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 def get_current_repo_commit() -> str:
@@ -65,7 +66,7 @@ def get_current_repo_commit() -> str:
         res = _run_git_cmd(["git", "rev-parse", "--short", "HEAD"], timeout=3.0)
         if res.returncode == 0:
             return res.stdout.strip()
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
     return "unknown"
 
@@ -77,7 +78,7 @@ def get_upstream_branch() -> str:
             upstream = res.stdout.strip()
             if upstream and "/" in upstream:
                 return upstream
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
     return "origin/main"
 
@@ -480,7 +481,7 @@ def check_for_engine_updates(timeout_seconds: float = 3.0) -> Dict[str, Any]:
             try:
                 from packaging import version
                 has_update = version.parse(latest_ver) > version.parse(current_ver)
-            except Exception:
+            except (ImportError, ValueError):
                 has_update = latest_ver != current_ver
 
             return {
@@ -489,7 +490,7 @@ def check_for_engine_updates(timeout_seconds: float = 3.0) -> Dict[str, Any]:
                 "latest_version": latest_ver,
                 "online": True
             }
-    except Exception:
+    except (requests.RequestException, json.JSONDecodeError, ValueError, OSError):
         pass
 
     return {

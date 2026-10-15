@@ -170,12 +170,12 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
             if jar is not None:
                 try:
                     jar.clear()
-                except Exception:
+                except (AttributeError, RuntimeError):
                     pass
             if authenticated is not None:
                 try:
                     auth_jar = getattr(authenticated, "_cookiejar", None)
                     if auth_jar is not None:
                         auth_jar.clear()
-                except Exception:
+                except (AttributeError, RuntimeError):
                     pass

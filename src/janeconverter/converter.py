@@ -21,7 +21,17 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
 
-from .recovery import FailureCategory, FailureEvidence, OutputIntent, RecoveryCoordinator, STRATEGIES, record_local_success
+from .paths import ensure_extended_length_path
+from .recovery import (
+    FailureCategory,
+    FailureEvidence,
+    OutputIntent,
+    RecoveryCoordinator,
+    STRATEGIES,
+    record_local_success,
+    record_local_failure,
+    quarantine_failure,
+)
 
 SUPPORTED_AUDIO_FORMATS = {
     "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus", "aiff", "aif",
@@ -228,7 +238,7 @@ def measure_audio_loudness(
                 "input_thresh": str(data.get("input_thresh", "-24")),
                 "target_offset": str(data.get("target_offset", "0")),
             }
-    except Exception:
+    except (subprocess.SubprocessError, json.JSONDecodeError, ValueError, OSError):
         pass
     return None
 # Explicit bit-depth selection for lossless containers (no substring sniffing)
@@ -381,7 +391,7 @@ def probe_media_duration(input_path: str) -> Optional[float]:
         )
         if res.returncode == 0 and res.stdout.strip():
             return float(res.stdout.strip())
-    except Exception:
+    except (subprocess.SubprocessError, ValueError, OSError):
         pass
     return None
 
@@ -413,7 +423,7 @@ def probe_media_streams(input_path: str) -> Optional[Dict[str, Any]]:
         )
         if res.returncode == 0 and res.stdout.strip():
             return json.loads(res.stdout)
-    except Exception:
+    except (subprocess.SubprocessError, json.JSONDecodeError, OSError):
         pass
     return None
 
@@ -801,14 +811,14 @@ def is_stream_copy_safe(
 def get_unique_target_path(directory: str, filename: str) -> str:
     """Appends an incrementing counter if a file already exists to prevent overwriting."""
     base_target = os.path.join(directory, filename)
-    if not os.path.exists(base_target):
+    if not os.path.exists(ensure_extended_length_path(base_target)):
         return base_target
 
     stem, ext = os.path.splitext(filename)
     counter = 1
     while True:
         candidate = os.path.join(directory, f"{stem}_{counter}{ext}")
-        if not os.path.exists(candidate):
+        if not os.path.exists(ensure_extended_length_path(candidate)):
             return candidate
         counter += 1
 
@@ -823,7 +833,9 @@ def _publish_staged_file(staged_path: str, output_dir: str, filename: str) -> st
             if os.name == "nt":
                 # Windows rename is same-volume and fails when the destination
                 # already exists, including on filesystems without hard links.
-                os.rename(staged_path, candidate)
+                src = ensure_extended_length_path(staged_path)
+                dst = ensure_extended_length_path(candidate)
+                os.rename(src, dst)
             else:
                 # POSIX rename replaces existing files. A same-volume hard link
                 # gives atomic no-clobber publication when supported.
@@ -869,11 +881,11 @@ def get_host_gpus() -> list:
                                     low = desc.lower()
                                     if not any(v in low for v in ["virtual", "mirage", "remote", "vbox", "parsec", "rdp"]):
                                         gpus.append(desc)
-                            except Exception:
+                            except OSError:
                                 pass
-                    except Exception:
+                    except OSError:
                         break
-        except Exception:
+        except OSError:
             pass
 
     elif sys.platform.startswith("linux"):
@@ -887,7 +899,7 @@ def get_host_gpus() -> list:
                         model = parts[-1].strip() if len(parts) >= 3 else line.strip()
                         if model and model not in gpus:
                             gpus.append(model)
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             pass
 
     elif sys.platform == "darwin":
@@ -896,12 +908,50 @@ def get_host_gpus() -> list:
             res = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=2.0, creationflags=no_win)
             if res.returncode == 0 and "apple" in res.stdout.lower():
                 gpus.append(f"{res.stdout.strip()} (GPU)")
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             pass
         if not gpus:
             gpus.append("Apple Silicon GPU")
 
     return gpus
+
+_probed_hardware_encoders: Dict[str, bool] = {}
+_hw_probe_lock = threading.Lock()
+
+def probe_hardware_encoder(encoder: str) -> bool:
+    """
+    Probes if a hardware encoder can initialize on local hardware without failing.
+    Results are cached in memory for the active session.
+    """
+    if not encoder or encoder.startswith("lib"):
+        return True
+    if os.environ.get("JANECONVERTER_SKIP_HW_PROBE"):
+        return True
+    with _hw_probe_lock:
+        if encoder in _probed_hardware_encoders:
+            return _probed_hardware_encoders[encoder]
+    ffmpeg_bin = get_ffmpeg_binary()
+    if not shutil.which(ffmpeg_bin):
+        return False
+    cmd = [
+        ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "color=s=32x32:d=0.04",
+        "-c:v", encoder, "-frames:v", "1", "-f", "null", "-",
+    ]
+    try:
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=1.5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        is_ok = (res.returncode == 0)
+    except (subprocess.SubprocessError, OSError):
+        is_ok = False
+    with _hw_probe_lock:
+        _probed_hardware_encoders[encoder] = is_ok
+    return is_ok
 
 def get_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -989,7 +1039,7 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
             has_nvidia = any(any(k in g.lower() for k in ["nvidia", "geforce", "quadro", "rtx", "gtx", "tesla"]) for g in gpus)
             has_amd = any(any(k in g.lower() for k in ["amd", "radeon"]) for g in gpus)
             has_intel = any(any(k in g.lower() for k in ["intel", "arc", "iris", "uhd"]) for g in gpus)
-            if has_nvidia:
+            if has_nvidia and probe_hardware_encoder("av1_nvenc"):
                 gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["nvidia", "geforce", "quadro", "rtx", "gtx", "tesla"])), "NVIDIA GPU")
                 short = gpu_name.replace("NVIDIA ", "").replace("GeForce ", "").strip()
                 return {
@@ -997,7 +1047,7 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
                     "encoder": "av1_nvenc", "encoder_label": "NVIDIA AV1 NVENC",
                     "args": ["-c:v", "av1_nvenc", "-preset", "p4", "-cq", "28", "-b:v", "0", "-pix_fmt", "yuv420p"]
                 }
-            if has_amd and sys.platform == "win32":
+            if has_amd and sys.platform == "win32" and probe_hardware_encoder("av1_amf"):
                 gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["amd", "radeon"])), "AMD Radeon GPU")
                 short = gpu_name.replace("AMD ", "").replace("Radeon(TM) ", "Radeon ").replace("Graphics", "").strip() or "Radeon"
                 return {
@@ -1005,7 +1055,7 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
                     "encoder": "av1_amf", "encoder_label": "AMD AV1 AMF",
                     "args": ["-c:v", "av1_amf", "-quality", "speed", "-pix_fmt", "yuv420p"]
                 }
-            if has_intel:
+            if has_intel and probe_hardware_encoder("av1_qsv"):
                 gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["intel", "arc", "iris", "uhd"])), "Intel GPU")
                 short = gpu_name.replace("Intel(R) ", "").replace("Graphics", "").strip() or "Intel HD/Arc"
                 return {
@@ -1026,7 +1076,7 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
     has_apple = (sys.platform == "darwin")
 
     # Priority 1: NVIDIA GPU (NVENC)
-    if has_nvidia:
+    if has_nvidia and probe_hardware_encoder("h264_nvenc"):
         gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["nvidia", "geforce", "quadro", "rtx", "gtx", "tesla"])), "NVIDIA GPU")
         short = gpu_name.replace("NVIDIA ", "").replace("GeForce ", "").strip()
         return {
@@ -1044,20 +1094,21 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
         gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["amd", "radeon"])), "AMD Radeon GPU")
         short = gpu_name.replace("AMD ", "").replace("Radeon(TM) ", "Radeon ").replace("Graphics", "").strip() or "Radeon"
         encoder = "h264_amf" if sys.platform == "win32" else "h264_vaapi"
-        label = "AMD AMF" if sys.platform == "win32" else "AMD VAAPI"
-        args = ["-c:v", encoder, "-quality", "speed", "-pix_fmt", "yuv420p"] if encoder == "h264_amf" else list(VAAPI_ENCODER_ARGS)
-        return {
-            "has_gpu": True,
-            "vendor": "amd",
-            "gpu_name": gpu_name,
-            "short_name": short,
-            "encoder": encoder,
-            "encoder_label": label,
-            "args": args
-        }
+        if probe_hardware_encoder(encoder):
+            label = "AMD AMF" if sys.platform == "win32" else "AMD VAAPI"
+            args = ["-c:v", encoder, "-quality", "speed", "-pix_fmt", "yuv420p"] if encoder == "h264_amf" else list(VAAPI_ENCODER_ARGS)
+            return {
+                "has_gpu": True,
+                "vendor": "amd",
+                "gpu_name": gpu_name,
+                "short_name": short,
+                "encoder": encoder,
+                "encoder_label": label,
+                "args": args
+            }
 
     # Priority 3: Intel GPU (QSV)
-    if has_intel:
+    if has_intel and probe_hardware_encoder("h264_qsv"):
         gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["intel", "arc", "iris", "uhd"])), "Intel GPU")
         short = gpu_name.replace("Intel(R) ", "").replace("Graphics", "").strip() or "Intel HD/Arc"
         return {
@@ -1210,6 +1261,71 @@ def _apply_video_quality_to_encoder_args(
         }.get((quality_name or "").lower(), "55"))
 
     return args
+
+
+def adapt_ffmpeg_command(cmd: list[str], stderr: bytes | str | None) -> Optional[list[str]]:
+    """
+    Mahoraga JIT Command Transformation:
+    Inspects process stderr for mutable argument errors and synthesizes an adapted command.
+    Returns None if no adaptation applies.
+    """
+    if not cmd or not stderr:
+        return None
+    text = (stderr.decode("utf-8", errors="ignore") if isinstance(stderr, bytes) else str(stderr)).lower()
+    mutated = list(cmd)
+    changed = False
+
+    # 1. Hardware acceleration device creation failure
+    hwaccel_errors = (
+        "device creation failed", "cannot load nvcuda", "failed to create direct3d",
+        "hwaccel initialization failed", "failed to initialise vaapi",
+        "error creating a mfx session", "no capable devices", "device setup failed",
+    )
+    if any(err in text for err in hwaccel_errors) and "-hwaccel" in mutated:
+        idx = mutated.index("-hwaccel")
+        if idx + 1 < len(mutated) and not mutated[idx + 1].startswith("-"):
+            del mutated[idx:idx + 2]
+        else:
+            del mutated[idx:idx + 1]
+        changed = True
+
+    # 2. Incompatible or unsupported pixel format
+    pix_fmt_errors = (
+        "incompatible pixel format", "specified pixel format",
+        "pixel format is not supported", "unsupported pixel format",
+    )
+    if any(err in text for err in pix_fmt_errors) and "-pix_fmt" in mutated:
+        idx = mutated.index("-pix_fmt")
+        if idx + 1 < len(mutated) and mutated[idx + 1] != "yuv420p":
+            mutated[idx + 1] = "yuv420p"
+            changed = True
+
+    # 3. Experimental codec gate requiring -strict -2
+    if ("is experimental" in text or "requires -strict" in text) and "-strict" not in mutated:
+        mutated.insert(-1, "-strict")
+        mutated.insert(-1, "-2")
+        changed = True
+
+    # 4. Audio channel layout unsupported
+    chan_errors = (
+        "channel layout not supported", "channels not supported", "audio channel layout",
+    )
+    if any(err in text for err in chan_errors) and "-ac" not in mutated:
+        mutated.insert(-1, "-ac")
+        mutated.insert(-1, "2")
+        changed = True
+
+    # 5. Presentation timestamp (PTS/DTS) corruption & A/V desync auto-healing
+    sync_errors = (
+        "non-monotonous dts", "timestamp discontinuity", "pts < dts", "invalid pts",
+        "dts < pcr", "corrupt decoded frame in stream",
+    )
+    if any(err in text for err in sync_errors) and "-fps_mode" not in mutated:
+        mutated.insert(-1, "-fps_mode")
+        mutated.insert(-1, "cfr")
+        changed = True
+
+    return mutated if changed else None
 
 
 def build_ffmpeg_args(
@@ -1566,6 +1682,11 @@ def _convert_media_impl(
     os.makedirs(output_dir, exist_ok=True)
     target_format = target_format.lower().strip(".")
     if _recovery is None:
+        try:
+            from .paths import APP_DATA_DIR
+            ev_path = os.path.join(APP_DATA_DIR, "recovery-evidence.json")
+        except Exception:
+            ev_path = None
         _recovery = RecoveryCoordinator(OutputIntent(
             target_format=target_format, quality=bitrate, sample_rate=sample_rate,
             resolution=resolution, normalize_audio=normalize_audio, fps=fps,
@@ -1576,7 +1697,7 @@ def _convert_media_impl(
             metadata=tuple((key, value) for key, value in (metadata or {}).items() if value),
             start_time=start_time,
             end_time=end_time,
-        ))
+        ), evidence_path=ev_path)
 
     if target_format in ("source", "original", ""):
         _recovery.start("source-preserve")
@@ -1806,111 +1927,132 @@ def _convert_media_impl(
         )
     # Request machine-readable progress on stdout (inserted before the output path)
     cmd = cmd[:-1] + ["-progress", "pipe:1", "-nostats"] + [cmd[-1]]
+    active_cmd = list(cmd)
+    command_adapted = False
 
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=no_window
-    )
-
-    stderr_chunks = []
-
-    def read_stderr():
-        try:
-            stderr_chunks.append(proc.stderr.read())
-        except Exception:
-            pass
-
-    duration = probe_media_duration(input_path)
-    transcode_base, transcode_span = 0.70, 0.25
-    last_report_time = [0.0]
-    cur_speed = [""]
-
-    def read_progress():
-        try:
-            for raw_line in iter(proc.stdout.readline, b""):
-                line = raw_line.decode("ascii", errors="ignore").strip()
-                if not line or "=" not in line:
-                    continue
-                key, _, value = line.partition("=")
-                if key == "speed":
-                    cur_speed[0] = value.strip()
-                if key == "progress" and value == "end":
-                    report(transcode_base + transcode_span, "Transcode finishing up...")
-                    continue
-                if duration and duration > 0 and key in ("out_time_us", "out_time_ms"):
-                    try:
-                        out_us = float(value)
-                    except ValueError:
-                        continue
-                    frac = max(0.0, min(1.0, out_us / (duration * 1_000_000.0)))
-                    now = time.time()
-                    if frac > 0 and now - last_report_time[0] >= 0.5:
-                        last_report_time[0] = now
-                        spd_info = f" (speed {cur_speed[0]})" if cur_speed[0] else ""
-                        report(
-                            transcode_base + transcode_span * frac,
-                            f"Transcoding {target_format.upper()}: {int(frac * 100)}%{spd_info}"
-                        )
-                elif not duration and key == "out_time":
-                    now = time.time()
-                    if now - last_report_time[0] >= 1.0:
-                        last_report_time[0] = now
-                        time_val = value.strip().split(".")[0]
-                        spd_info = f" speed {cur_speed[0]}" if cur_speed[0] else ""
-                        report(
-                            0.75,
-                            f"Transcoding {target_format.upper()} (time {time_val}{spd_info})..."
-                        )
-        except Exception:
-            pass
-
-    reader_thread = threading.Thread(target=read_stderr, daemon=True)
-    reader_thread.start()
-    progress_thread = threading.Thread(target=read_progress, daemon=True)
-    progress_thread.start()
-
     try:
-        while proc.poll() is None:
-            if abort_event and abort_event.is_set():
-                proc.kill()
-                proc.wait()
-                reader_thread.join(timeout=1.0)
-                progress_thread.join(timeout=1.0)
-                if os.path.exists(destination_path):
-                    try:
-                        os.remove(destination_path)
-                    except Exception:
-                        pass
-                raise KeyboardInterrupt("Conversion aborted by user.")
-            if len(_recovery.attempts) > 1 and (
-                time.monotonic() - _recovery.started_at > _recovery.max_recovery_seconds
-                or time.monotonic() - _recovery.attempts[-1].started_at > STRATEGIES[method].max_seconds
-            ):
-                proc.kill()
-                proc.wait()
-                reader_thread.join(timeout=1.0)
-                progress_thread.join(timeout=1.0)
-                if os.path.exists(destination_path):
-                    os.remove(destination_path)
-                raise RuntimeError("Conversion recovery stopped at its time limit.")
-            time.sleep(0.05)
+        while True:
+            proc = subprocess.Popen(
+                active_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=no_window
+            )
 
-        proc.wait()
-        reader_thread.join(timeout=2.0)
-        progress_thread.join(timeout=2.0)
-        stderr = stderr_chunks[0] if stderr_chunks else b""
+            stderr_chunks = []
 
-        if proc.returncode != 0:
-            raise subprocess.CalledProcessError(proc.returncode, cmd, output=b"", stderr=stderr)
-        if normalize_audio:
-            text = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else str(stderr)
-            modes = re.findall(r'"normalization_type"\s*:\s*"(linear|dynamic)"', text, re.I)
-            mode = modes[-1].lower() if modes else "unconfirmed"
-            report(0.99, f"Normalization mode: {mode}." + (" FFmpeg used dynamic processing to meet the loudness and peak targets." if mode == "dynamic" else ""))
+            def read_stderr():
+                try:
+                    stderr_chunks.append(proc.stderr.read())
+                except (OSError, ValueError):
+                    pass
+
+            duration = probe_media_duration(input_path)
+            transcode_base, transcode_span = 0.70, 0.25
+            last_report_time = [0.0]
+            cur_speed = [""]
+
+            def read_progress():
+                try:
+                    for raw_line in iter(proc.stdout.readline, b""):
+                        line = raw_line.decode("ascii", errors="ignore").strip()
+                        if not line or "=" not in line:
+                            continue
+                        key, _, value = line.partition("=")
+                        if key == "speed":
+                            cur_speed[0] = value.strip()
+                        if key == "progress" and value == "end":
+                            report(transcode_base + transcode_span, "Transcode finishing up...")
+                            continue
+                        if duration and duration > 0 and key in ("out_time_us", "out_time_ms"):
+                            try:
+                                out_us = float(value)
+                            except ValueError:
+                                continue
+                            frac = max(0.0, min(1.0, out_us / (duration * 1_000_000.0)))
+                            now = time.time()
+                            if frac > 0 and now - last_report_time[0] >= 0.5:
+                                last_report_time[0] = now
+                                spd_info = f" (speed {cur_speed[0]})" if cur_speed[0] else ""
+                                report(
+                                    transcode_base + transcode_span * frac,
+                                    f"Transcoding {target_format.upper()}: {int(frac * 100)}%{spd_info}"
+                                )
+                        elif not duration and key == "out_time":
+                            now = time.time()
+                            if now - last_report_time[0] >= 1.0:
+                                last_report_time[0] = now
+                                time_val = value.strip().split(".")[0]
+                                spd_info = f" speed {cur_speed[0]}" if cur_speed[0] else ""
+                                report(
+                                    0.75,
+                                    f"Transcoding {target_format.upper()} (time {time_val}{spd_info})..."
+                                )
+                except (OSError, ValueError):
+                    pass
+
+            reader_thread = threading.Thread(target=read_stderr, daemon=True)
+            reader_thread.start()
+            progress_thread = threading.Thread(target=read_progress, daemon=True)
+            progress_thread.start()
+
+            while proc.poll() is None:
+                if abort_event and abort_event.is_set():
+                    proc.kill()
+                    proc.wait()
+                    reader_thread.join(timeout=1.0)
+                    progress_thread.join(timeout=1.0)
+                    if os.path.exists(destination_path):
+                        try:
+                            os.remove(destination_path)
+                        except OSError:
+                            pass
+                    raise KeyboardInterrupt("Conversion aborted by user.")
+                if len(_recovery.attempts) > 1 and (
+                    time.monotonic() - _recovery.started_at > _recovery.max_recovery_seconds
+                    or time.monotonic() - _recovery.attempts[-1].started_at > STRATEGIES[method].max_seconds
+                ):
+                    proc.kill()
+                    proc.wait()
+                    reader_thread.join(timeout=1.0)
+                    progress_thread.join(timeout=1.0)
+                    if os.path.exists(destination_path):
+                        try:
+                            os.remove(destination_path)
+                        except OSError:
+                            pass
+                    raise RuntimeError("Conversion recovery stopped at its time limit.")
+                time.sleep(0.05)
+
+            proc.wait()
+            reader_thread.join(timeout=2.0)
+            progress_thread.join(timeout=2.0)
+            stderr = stderr_chunks[0] if stderr_chunks else b""
+
+            if proc.returncode == 0:
+                if normalize_audio:
+                    text = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else str(stderr)
+                    modes = re.findall(r'"normalization_type"\s*:\s*"(linear|dynamic)"', text, re.I)
+                    mode = modes[-1].lower() if modes else "unconfirmed"
+                    report(0.99, f"Normalization mode: {mode}." + (" FFmpeg used dynamic processing to meet the loudness and peak targets." if mode == "dynamic" else ""))
+                break
+
+            if not command_adapted:
+                adapted = adapt_ffmpeg_command(active_cmd, stderr)
+                if adapted is not None and adapted != active_cmd:
+                    if os.path.exists(destination_path):
+                        try:
+                            os.remove(destination_path)
+                        except OSError:
+                            pass
+                    report(0.72, "Mahoraga JIT Adaptation: Rewriting command parameters to resolve runtime flag incompatibility...")
+                    active_cmd = adapted
+                    command_adapted = True
+                    continue
+
+            raise subprocess.CalledProcessError(proc.returncode, active_cmd, output=b"", stderr=stderr)
 
     except KeyboardInterrupt:
         if proc.poll() is None:
@@ -1921,7 +2063,7 @@ def _convert_media_impl(
         if os.path.exists(destination_path):
             try:
                 os.remove(destination_path)
-            except Exception:
+            except OSError:
                 pass
         raise
 
@@ -1930,11 +2072,23 @@ def _convert_media_impl(
         if os.path.exists(destination_path):
             try:
                 os.remove(destination_path)
-            except Exception:
+            except OSError:
                 pass
 
         failure = FailureEvidence.ffmpeg(e.stderr)
         category = failure.category
+
+        try:
+            from .paths import APP_DATA_DIR
+            record_local_failure(
+                os.path.join(APP_DATA_DIR, "recovery-evidence.json"),
+                target=target_format,
+                failed_method=method,
+                category=category,
+            )
+        except OSError:
+            pass
+
         next_method = _recovery.next_method(failure)
         if next_method:
             report(0.75, f"{method} could not finish ({category.value}); trying {next_method}...")
@@ -1985,6 +2139,15 @@ def _convert_media_impl(
                 end_time=end_time,
                 _recovery=_recovery,
             )
+        try:
+            from .paths import APP_DATA_DIR
+            quarantine_failure(
+                os.path.join(APP_DATA_DIR, "quarantine"),
+                _recovery,
+                diagnostic=f"{method} failed ({category.value})"
+            )
+        except OSError:
+            pass
         raise RuntimeError(f"FFmpegProcessError: {method} failed ({category.value}); no policy-safe recovery remains.") from e
 
     try:
@@ -1993,7 +2156,7 @@ def _convert_media_impl(
         if os.path.exists(destination_path):
             try:
                 os.remove(destination_path)
-            except Exception:
+            except OSError:
                 pass
         raise RuntimeError(f"Output validation error: {val_err}") from val_err
 
@@ -2033,6 +2196,11 @@ def convert_media(
     start_time = sanitize_time_offset(start_time)
     end_time = sanitize_time_offset(end_time)
     if _recovery is None:
+        try:
+            from .paths import APP_DATA_DIR
+            ev_path = os.path.join(APP_DATA_DIR, "recovery-evidence.json")
+        except Exception:
+            ev_path = None
         _recovery = RecoveryCoordinator(OutputIntent(
             target_format=target_format.lower().strip("."),
             quality=bitrate,
@@ -2047,7 +2215,7 @@ def convert_media(
             metadata=tuple((key, value) for key, value in (metadata or {}).items() if value),
             start_time=start_time,
             end_time=end_time,
-        ))
+        ), evidence_path=ev_path)
 
     def staged_progress(value: float, message: str) -> None:
         if progress_callback and value < 1.0:
@@ -2088,7 +2256,7 @@ def convert_media(
             effective_target = "png"
             png_recovery = RecoveryCoordinator(replace(
                 _recovery.intent, target_format="png", allow_png_fallback=False,
-            ))
+            ), evidence_path=_recovery.evidence_path)
             staged_path = _convert_media_impl(
                 **common, target_format="png", allow_stream_copy=False,
                 allow_lossless_png_recovery=False, _recovery=png_recovery,

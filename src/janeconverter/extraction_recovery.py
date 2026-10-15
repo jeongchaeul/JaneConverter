@@ -41,8 +41,12 @@ def classify_extraction(error):
 def extract_with_recovery(ydl, query, download, abort_event=None, report=None, deadline=None):
     deadline = deadline or time.monotonic() + 45
     original = ydl.params.get("extractor_args") if hasattr(ydl, "params") else None
+    client_ladder = [
+        {"youtube": {"player_client": ["ios", "web"]}},
+        {"youtube": {"player_client": ["android", "web"]}},
+    ]
     try:
-        for attempt in range(3):
+        for attempt in range(4):
             if abort_event and abort_event.is_set():
                 raise KeyboardInterrupt("Stream extraction aborted by user.")
             if time.monotonic() >= deadline:
@@ -53,10 +57,10 @@ def extract_with_recovery(ydl, query, download, abort_event=None, report=None, d
                 raise
             except Exception as error:
                 category = classify_extraction(error)
-                if attempt == 2 or category in (ExtractionCategory.ACCESS, ExtractionCategory.REMOVED, ExtractionCategory.UNKNOWN):
+                if attempt == 3 or category in (ExtractionCategory.ACCESS, ExtractionCategory.REMOVED, ExtractionCategory.UNKNOWN):
                     raise
                 if report:
-                    report(0.15, f"Extraction recovery: {category.value}; attempt {attempt + 2}/3.", force=True)
+                    report(0.15, f"Extraction recovery: {category.value}; attempt {attempt + 2}/4.", force=True)
                 if category == ExtractionCategory.FORMAT:
                     if not hasattr(ydl, "params") or attempt > 0:
                         raise
@@ -64,11 +68,22 @@ def extract_with_recovery(ydl, query, download, abort_event=None, report=None, d
                     ydl.params["format"] = "bv*+ba/b/best"
                     continue
                 if category == ExtractionCategory.LAYOUT:
-                    if not hasattr(ydl, "params") or attempt > 0:
+                    if not hasattr(ydl, "params"):
                         raise
-                    # Re-extract fresh metadata using the provider's maintained defaults.
-                    ydl.params.pop("extractor_args", None)
-                    continue
+                    if attempt == 0:
+                        # Re-extract fresh metadata using provider defaults
+                        ydl.params.pop("extractor_args", None)
+                        continue
+                    elif attempt - 1 < len(client_ladder):
+                        # Mahoraga Client Identity Rotation (Anti-bot / Challenge bypass)
+                        rotation = client_ladder[attempt - 1]
+                        client_name = list(rotation.values())[0]["player_client"][0].upper()
+                        if report:
+                            report(0.15, f"Mahoraga Adaptation: Rotating streaming client identity to {client_name}...", force=True)
+                        ydl.params["extractor_args"] = rotation
+                        continue
+                    else:
+                        raise
                 retry_after = re.search(r"retry[- ]after\s*[:=]?\s*(\d+)", str(error), re.I)
                 delay = max(1, int(retry_after[1])) if retry_after else 2 ** attempt
                 if delay > 8 or time.monotonic() + delay >= deadline:

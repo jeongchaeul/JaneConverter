@@ -5,11 +5,11 @@ browser session is handed directly to yt-dlp for the active job.
 """
 
 import os
+import re
+import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Mapping
-
-from typing import Optional, Tuple
+from typing import Mapping, Optional, Tuple
 
 
 PUBLIC_SESSION_LABEL = "Public only"
@@ -401,7 +401,6 @@ def _macos_default_browser_signals() -> list[str]:
     signals: list[str] = []
     # 1. Ask LaunchServices via JXA / NSWorkspace
     try:
-        import subprocess
         script = 'ObjC.import("AppKit"); $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL($.NSURL.URLWithString("https://apple.com")).path.js'
         res = subprocess.run(
             ["osascript", "-l", "JavaScript", "-e", script],
@@ -409,13 +408,11 @@ def _macos_default_browser_signals() -> list[str]:
         )
         if res.returncode == 0 and res.stdout.strip():
             signals.append(res.stdout.strip().lower())
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
 
     # 2. Query LaunchServices secure plist via defaults
     try:
-        import re
-        import subprocess
         res = subprocess.run(
             ["defaults", "read", "com.apple.LaunchServices/com.apple.launchservices.secure", "LSHandlers"],
             capture_output=True, text=True, timeout=2.0
@@ -428,7 +425,7 @@ def _macos_default_browser_signals() -> list[str]:
                         m = re.search(r'LSHandlerRoleAll\s*=\s*"([^"]+)"', lines[j])
                         if m:
                             signals.append(m.group(1).lower())
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
 
     # 3. Check installed application bundles in priority order
@@ -451,24 +448,22 @@ def _posix_default_browser_signals() -> list[str]:
     """Query Linux XDG default browser associations."""
     signals: list[str] = []
     try:
-        import subprocess
         res = subprocess.run(
             ["xdg-settings", "get", "default-web-browser"],
             capture_output=True, text=True, timeout=2.0
         )
         if res.returncode == 0 and res.stdout.strip():
             signals.append(res.stdout.strip().lower())
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
     try:
-        import subprocess
         res = subprocess.run(
             ["xdg-mime", "query", "default", "x-scheme-handler/https"],
             capture_output=True, text=True, timeout=2.0
         )
         if res.returncode == 0 and res.stdout.strip():
             signals.append(res.stdout.strip().lower())
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
     return signals
 

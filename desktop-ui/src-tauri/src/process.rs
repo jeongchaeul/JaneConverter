@@ -142,6 +142,7 @@ fn exported_path_from_line(line: &str) -> Option<String> {
     Some(raw.to_owned())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn forward_output<R: Read + Send + 'static>(
     reader: R,
     app: tauri::AppHandle,
@@ -466,9 +467,9 @@ pub fn build_conversion_args_with_capture(
     }
     let explicit_browser = browser.or_else(|| request.browser_session.clone());
     let browser_enabled = request.read_browser_cookies
-        || explicit_browser.as_ref().map_or(false, |b| {
-            !b.trim().is_empty() && b.trim().to_lowercase() != "none"
-        });
+        || explicit_browser
+            .as_ref()
+            .is_some_and(|b| !b.trim().is_empty() && b.trim().to_lowercase() != "none");
 
     if browser_enabled {
         let selected_browser = explicit_browser
@@ -550,6 +551,7 @@ pub struct ConversionSlots {
     pub facebook_refresh: Option<FacebookRefreshHandler>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn start_conversion(
     app: tauri::AppHandle,
     job_id: String,

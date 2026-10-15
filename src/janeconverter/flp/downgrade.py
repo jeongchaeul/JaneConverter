@@ -237,7 +237,7 @@ def downgrade_flp_bytes(
                         + new_chunk
                         + data[chunk_pos + len(old_chunk) :]
                     )
-            except Exception:
+            except (ValueError, KeyError, IndexError):
                 pass
 
     # 4. Truncate modern 80-byte playlist clip arrangement records (Event 0xD4 / 212)

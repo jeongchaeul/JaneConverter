@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -19,6 +20,9 @@ from janeconverter.recovery import (
     STRATEGIES,
     classify_ffmpeg_failure,
     record_local_success,
+    record_local_failure,
+    rank_candidate_strategies,
+    quarantine_failure,
 )
 
 
@@ -440,3 +444,138 @@ def test_audio_container_recovery_reencodes_to_requested_flac(tmp_path, monkeypa
     assert audio["codec_name"] == "flac"
     assert audio["bits_per_raw_sample"] == "16"
     assert any("stream-copy could not finish" in message and "cpu-transcode" in message for message in messages)
+
+
+def test_rank_candidate_strategies_prioritizes_historical_success_and_penalties(tmp_path):
+    path = tmp_path / "evidence.json"
+    data = {
+        "version": 1,
+        "entries": {
+            "mp4|container|cpu-transcode": {"count": 8, "failures": 0, "updated": 1700000000},
+            "mp4|container|gpu-transcode": {"count": 1, "failures": 3, "updated": 1700000000},
+        }
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    ranked = rank_candidate_strategies(str(path), "mp4", FailureCategory.CONTAINER, ["gpu-transcode", "cpu-transcode"])
+    assert ranked == ["cpu-transcode", "gpu-transcode"]
+
+
+def test_record_local_failure_decrements_and_penalizes(tmp_path):
+    path = tmp_path / "evidence.json"
+    data = {
+        "version": 1,
+        "entries": {
+            "mp4|hardware|gpu-transcode": {"count": 2, "failures": 0, "updated": 1700000000},
+        }
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    record_local_failure(str(path), "mp4", "gpu-transcode", FailureCategory.HARDWARE)
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    entry = saved["entries"]["mp4|hardware|gpu-transcode"]
+    assert entry["count"] == 1
+    assert entry["failures"] == 1
+
+
+def test_recovery_coordinator_ranks_using_evidence(tmp_path):
+    path = tmp_path / "evidence.json"
+    data = {
+        "version": 1,
+        "entries": {
+            "mp4|container|cpu-transcode": {"count": 10, "failures": 0, "updated": 1700000000},
+        }
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    recovery = RecoveryCoordinator(_intent(), evidence_path=str(path))
+    recovery.start("stream-copy")
+    # Normally gpu-transcode comes first for container failure when gpu_allowed is True.
+    # But because cpu-transcode has proven success in evidence, it is ranked first!
+    assert recovery.next_method(FailureCategory.CONTAINER) == "cpu-transcode"
+
+
+def test_adapt_ffmpeg_command_transforms_arguments():
+    # 1. Hardware device creation error strips -hwaccel auto
+    cmd = ["ffmpeg", "-y", "-hwaccel", "auto", "-i", "in.mp4", "-c:v", "h264_nvenc", "out.mp4"]
+    stderr = b"Cannot load nvcuda.dll: Device creation failed: -19"
+    adapted = converter.adapt_ffmpeg_command(cmd, stderr)
+    assert adapted is not None
+    assert "-hwaccel" not in adapted
+    assert "auto" not in adapted
+    assert "-c:v" in adapted and "h264_nvenc" in adapted
+
+    # 2. Incompatible pixel format mutates to yuv420p
+    cmd2 = ["ffmpeg", "-y", "-i", "in.mp4", "-pix_fmt", "yuv422p10le", "out.mp4"]
+    stderr2 = b"Specified pixel format yuv422p10le is not supported"
+    adapted2 = converter.adapt_ffmpeg_command(cmd2, stderr2)
+    assert adapted2 is not None
+    assert adapted2[adapted2.index("-pix_fmt") + 1] == "yuv420p"
+
+    # 3. Experimental encoder injects -strict -2
+    cmd3 = ["ffmpeg", "-y", "-i", "in.wav", "-c:a", "vorbis", "out.ogg"]
+    stderr3 = b"The encoder 'vorbis' is experimental and requires -strict -2"
+    adapted3 = converter.adapt_ffmpeg_command(cmd3, stderr3)
+    assert adapted3 is not None
+    assert "-strict" in adapted3
+    assert adapted3[adapted3.index("-strict") + 1] == "-2"
+
+    # 4. Audio channel layout mismatch injects -ac 2
+    cmd4 = ["ffmpeg", "-y", "-i", "in.mkv", "-c:a", "aac", "out.mp4"]
+    stderr4 = b"Audio channel layout not supported"
+    adapted4 = converter.adapt_ffmpeg_command(cmd4, stderr4)
+    assert adapted4 is not None
+    assert "-ac" in adapted4
+    assert adapted4[adapted4.index("-ac") + 1] == "2"
+
+    # 5. Non-matching stderr returns None
+    assert converter.adapt_ffmpeg_command(cmd, b"Invalid data found") is None
+
+
+def test_probe_hardware_encoder_checks_cleanly():
+    # CPU encoders always return True
+    assert converter.probe_hardware_encoder("libx264") is True
+    assert converter.probe_hardware_encoder("libsvtav1") is True
+
+
+def test_quarantine_failure_sanitizes_and_bounds_directory(tmp_path):
+    recovery = RecoveryCoordinator(_intent())
+    recovery.start("stream-copy")
+    recovery.next_method(FailureCategory.CONTAINER)
+    quarantine_dir = tmp_path / "quarantine"
+
+    raw_diagnostic = "Failed processing D:\\Users\\Jane\\Projects\\JaneConverter\\input.mp4 via https://api.site.com/stream?token=secret123"
+    saved_path = quarantine_failure(str(quarantine_dir), recovery, diagnostic=raw_diagnostic)
+
+    assert saved_path is not None
+    saved_file = Path(saved_path)
+    assert saved_file.exists()
+
+    data = json.loads(saved_file.read_text(encoding="utf-8"))
+    assert data["version"] == 1
+    assert data["target_format"] == "mp4"
+    assert "<path>" in data["diagnostic"]
+    assert "<url>" in data["diagnostic"]
+    assert "Jane" not in data["diagnostic"]
+    assert "secret123" not in data["diagnostic"]
+
+def test_ensure_extended_length_path():
+    from janeconverter.paths import ensure_extended_length_path
+
+    # Short path is unchanged
+    short_path = "D:\\Music\\song.mp3"
+    assert ensure_extended_length_path(short_path) == short_path
+
+    if os.name == "nt":
+        # Long path >= 240 chars gets \?\ prefixed
+        long_path = "D:\\Music\\" + ("subfolder\\" * 30) + "track.flac"
+        assert len(long_path) >= 240
+        extended = ensure_extended_length_path(long_path)
+        assert extended.startswith("\\\\?\\D:\\")
+        assert "\\?\\D:\\" in extended
+
+
+def test_adapt_ffmpeg_command_handles_av_sync_discontinuity():
+    cmd = ["ffmpeg", "-y", "-i", "desync.mp4", "-c:v", "libx264", "out.mp4"]
+    stderr = b"Non-monotonous DTS in output stream 0:1; previous: 12345, current: 12300"
+    adapted = converter.adapt_ffmpeg_command(cmd, stderr)
+    assert adapted is not None
+    assert "-fps_mode" in adapted
+    assert adapted[adapted.index("-fps_mode") + 1] == "cfr"

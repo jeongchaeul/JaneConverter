@@ -53,7 +53,7 @@ def inspect_flp(project: FLPProject, file_path: Optional[str] = None) -> Dict[st
                 raw_ver = ev.data.decode("ascii", errors="ignore").strip("\x00 \t\r\n")
                 if raw_ver:
                     version_str = raw_ver
-            except Exception:
+            except (UnicodeDecodeError, AttributeError):
                 pass
 
         # Event 159 (0x9F): Build number (DWORD)
@@ -62,7 +62,7 @@ def inspect_flp(project: FLPProject, file_path: Optional[str] = None) -> Dict[st
                 b_val = struct.unpack("<I", ev.data[:4])[0]
                 if 0 < b_val < 100000:
                     build_num = b_val
-            except Exception:
+            except struct.error:
                 pass
 
         # Event 194 (0xC2): Project title

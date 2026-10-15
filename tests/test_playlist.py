@@ -160,7 +160,6 @@ def test_process_playlist_conversion_local_files():
 
 
 def test_fetch_playlist_entries_filters_private_and_deleted_videos(monkeypatch):
-    from unittest.mock import MagicMock
     import yt_dlp
 
     mock_info = {

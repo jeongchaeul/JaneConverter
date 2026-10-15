@@ -23,11 +23,27 @@ _local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
 LEGACY_APP_DATA_DIR = os.path.join(_local_app_data, "JaneConverter") if _local_app_data else ""
 
 
+def ensure_extended_length_path(path: str) -> str:
+    """
+    On Windows, converts absolute paths longer than 240 chars to the Win32 extended-length
+    syntax to bypass MAX_PATH (260 character) limits.
+    """
+    prefix = "\\\\?\\"
+    unc_prefix = "\\\\?\\UNC\\"
+    if os.name == "nt" and isinstance(path, str):
+        norm = os.path.normpath(path)
+        if len(norm) >= 240 and not norm.startswith(prefix):
+            if norm.startswith("\\\\"):
+                return unc_prefix + norm[2:]
+            if len(norm) >= 2 and norm[1] == ":" and norm[0].isalpha():
+                return prefix + norm
+    return path
+
 def _writable_directory(path: str) -> bool:
     """Return whether *path* can be created and written to."""
     probe = None
     try:
-        os.makedirs(path, exist_ok=True)
+        os.makedirs(ensure_extended_length_path(path), exist_ok=True)
         # Use an exclusive, unique probe so a real user file named
         # ``.write-test`` can never be overwritten or deleted by startup.
         with tempfile.NamedTemporaryFile(

@@ -152,6 +152,7 @@ class RecoveryCoordinator:
     max_attempts: int = 3
     max_recovery_seconds: int = 1800
     started_at: float = field(default_factory=time.monotonic)
+    evidence_path: str | None = None
 
     def start(self, method: str) -> None:
         if self.attempts and time.monotonic() - self.started_at > self.max_recovery_seconds:
@@ -179,6 +180,7 @@ class RecoveryCoordinator:
             return None
         if len(self.attempts) >= self.max_attempts or time.monotonic() - self.started_at > self.max_recovery_seconds:
             return None
+        candidates = []
         for candidate, strategy in STRATEGIES.items():
             if (current, category) not in strategy.after:
                 continue
@@ -192,8 +194,52 @@ class RecoveryCoordinator:
             ):
                 continue
             if not any(item.method == candidate for item in self.attempts):
-                return candidate
-        return None
+                candidates.append(candidate)
+        if not candidates:
+            return None
+        if len(candidates) > 1 and self.evidence_path:
+            candidates = rank_candidate_strategies(
+                self.evidence_path, self.intent.target_format, category, candidates
+            )
+        return candidates[0]
+
+
+def rank_candidate_strategies(
+    path: str,
+    target: str,
+    category: FailureCategory | str,
+    candidates: list[str],
+) -> list[str]:
+    """Rank candidate recovery methods by historical confidence, recency, and failure penalties."""
+    if not candidates or len(candidates) <= 1 or not path:
+        return list(candidates)
+    cat_str = category.value if isinstance(category, FailureCategory) else str(category)
+    scores: dict[str, float] = {}
+    now = time.time()
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > 65_536:
+            return list(candidates)
+        with open(path, "r", encoding="utf-8") as source:
+            data = json.load(source)
+        if data.get("version") == 1 and isinstance(data.get("entries"), dict):
+            entries = data["entries"]
+            for candidate in candidates:
+                key = f"{target}|{cat_str}|{candidate}"
+                entry = entries.get(key)
+                if isinstance(entry, dict):
+                    count = int(entry.get("count", 0))
+                    failures = int(entry.get("failures", 0))
+                    updated = int(entry.get("updated", 0))
+                    age_days = max(0.0, (now - updated) / 86400.0)
+                    recency = max(0.2, 1.0 - (age_days / 30.0))
+                    score = (count * recency) - (failures * 2.0)
+                    scores[candidate] = score
+                else:
+                    scores[candidate] = 0.0
+    except (OSError, ValueError, TypeError, AttributeError):
+        return list(candidates)
+
+    return sorted(candidates, key=lambda c: scores.get(c, 0.0), reverse=True)
 
 
 def record_local_success(path: str, coordinator: RecoveryCoordinator) -> None:
@@ -210,26 +256,31 @@ def record_local_success(path: str, coordinator: RecoveryCoordinator) -> None:
     key = f"{target}|{first.result.value}|{final.method}"
     entries = {}
     try:
-        if os.path.getsize(path) > 65_536:
-            raise ValueError("oversized recovery evidence")
-        with open(path, "r", encoding="utf-8") as source:
-            previous = json.load(source)
-        if previous.get("version") == 1 and isinstance(previous.get("entries"), dict):
-            entries = {
-                item_key: {
-                    "count": min(999, max(0, item_value["count"])),
-                    "updated": max(0, item_value["updated"]),
+        if os.path.isfile(path):
+            if os.path.getsize(path) > 65_536:
+                raise ValueError("oversized recovery evidence")
+            with open(path, "r", encoding="utf-8") as source:
+                previous = json.load(source)
+            if previous.get("version") == 1 and isinstance(previous.get("entries"), dict):
+                entries = {
+                    item_key: {
+                        "count": min(999, max(0, int(item_value.get("count", 0)))),
+                        "failures": min(999, max(0, int(item_value.get("failures", 0)))),
+                        "updated": max(0, int(item_value.get("updated", 0))),
+                    }
+                    for item_key, item_value in previous["entries"].items()
+                    if re.fullmatch(r"[a-z0-9]{2,6}\|[a-z_]+\|(?:cpu-transcode|gpu-transcode|cover-normalized|image-ffmpeg-frame|image-png)", item_key)
+                    and isinstance(item_value, dict)
                 }
-                for item_key, item_value in previous["entries"].items()
-                if re.fullmatch(r"[a-z0-9]{2,6}\|[a-z_]+\|(?:cpu-transcode|gpu-transcode|cover-normalized|image-ffmpeg-frame|image-png)", item_key)
-                and isinstance(item_value, dict)
-                and isinstance(item_value.get("count"), int)
-                and isinstance(item_value.get("updated"), int)
-            }
     except (OSError, ValueError, TypeError, AttributeError):
         pass
     now = int(time.time())
-    entries[key] = {"count": min(999, entries.get(key, {}).get("count", 0) + 1), "updated": now}
+    prev = entries.get(key, {})
+    entries[key] = {
+        "count": min(999, prev.get("count", 0) + 1),
+        "failures": max(0, prev.get("failures", 0) - 1),
+        "updated": now,
+    }
     entries = dict(sorted(entries.items(), key=lambda item: item[1]["updated"], reverse=True)[:64])
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
@@ -241,3 +292,112 @@ def record_local_success(path: str, coordinator: RecoveryCoordinator) -> None:
     finally:
         if os.path.exists(temporary_path):
             os.remove(temporary_path)
+
+
+def record_local_failure(
+    path: str,
+    target: str,
+    failed_method: str,
+    category: FailureCategory | str,
+) -> None:
+    """Record a strategy failure in adaptation memory to penalize its ranking."""
+    if not re.fullmatch(r"[a-z0-9]{2,6}", target):
+        return
+    cat_str = category.value if isinstance(category, FailureCategory) else str(category)
+    if failed_method not in {"cpu-transcode", "gpu-transcode", "cover-normalized", "image-ffmpeg-frame", "image-png"}:
+        return
+    key = f"{target}|{cat_str}|{failed_method}"
+    entries = {}
+    try:
+        if os.path.isfile(path) and os.path.getsize(path) <= 65_536:
+            with open(path, "r", encoding="utf-8") as source:
+                previous = json.load(source)
+            if previous.get("version") == 1 and isinstance(previous.get("entries"), dict):
+                entries = {
+                    item_key: {
+                        "count": min(999, max(0, int(item_value.get("count", 0)))),
+                        "failures": min(999, max(0, int(item_value.get("failures", 0)))),
+                        "updated": max(0, int(item_value.get("updated", 0))),
+                    }
+                    for item_key, item_value in previous["entries"].items()
+                    if isinstance(item_value, dict)
+                }
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+
+    now = int(time.time())
+    prev = entries.get(key, {"count": 0, "failures": 0, "updated": now})
+    entries[key] = {
+        "count": max(0, prev["count"] - 1),
+        "failures": min(999, prev.get("failures", 0) + 1),
+        "updated": now,
+    }
+    entries = dict(sorted(entries.items(), key=lambda item: item[1]["updated"], reverse=True)[:64])
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=directory, delete=False) as temporary:
+        json.dump({"version": 1, "entries": entries}, temporary, separators=(",", ":"))
+        temporary_path = temporary.name
+    try:
+        os.replace(temporary_path, path)
+    finally:
+        if os.path.exists(temporary_path):
+            os.remove(temporary_path)
+
+
+def quarantine_failure(
+    quarantine_dir: str,
+    coordinator: RecoveryCoordinator,
+    diagnostic: str | None = None,
+) -> str | None:
+    """Store a sanitized failure record for offline analysis and test fixture generation."""
+    try:
+        os.makedirs(quarantine_dir, exist_ok=True)
+        existing = [
+            os.path.join(quarantine_dir, f)
+            for f in os.listdir(quarantine_dir)
+            if f.startswith("failure_") and f.endswith(".json")
+        ]
+        if len(existing) >= 20:
+            existing.sort(key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0)
+            for old_file in existing[:len(existing) - 19]:
+                try:
+                    os.remove(old_file)
+                except OSError:
+                    pass
+
+        sanitized_diag = str(diagnostic or "")
+        sanitized_diag = re.sub(r"https?://[^\s\"']+", "<url>", sanitized_diag)
+        sanitized_diag = re.sub(r"[A-Za-z]:\\[^\s\"']+", "<path>", sanitized_diag)
+        sanitized_diag = re.sub(r"/(?:[a-zA-Z0-9._-]+/)+[a-zA-Z0-9._-]+", "<path>", sanitized_diag)
+        sanitized_diag = sanitized_diag[:500]
+
+        now = int(time.time())
+        token = hex(int(time.monotonic() * 1000) & 0xFFFFFF)[2:]
+        filename = f"failure_{now}_{token}.json"
+        target_path = os.path.join(quarantine_dir, filename)
+
+        payload = {
+            "version": 1,
+            "timestamp": now,
+            "target_format": coordinator.intent.target_format,
+            "intent_mode": coordinator.intent.mode.value,
+            "attempts": [
+                {"method": a.method, "result": a.result.value if a.result else None}
+                for a in coordinator.attempts
+            ],
+            "diagnostic": sanitized_diag,
+        }
+
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=quarantine_dir, delete=False) as temp_f:
+            json.dump(payload, temp_f, indent=2)
+            temp_path = temp_f.name
+        try:
+            os.replace(temp_path, target_path)
+            return target_path
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+    except Exception:
+        return None
+

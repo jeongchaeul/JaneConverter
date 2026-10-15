@@ -104,6 +104,11 @@ fn is_newer_updater_build(current: &str, latest: &str) -> bool {
         || matches!((current_build, latest_build), (None, Some(latest)) if latest > 0)
 }
 
+type FacebookManifestEntry = (String, FacebookPhotoManifest, std::time::Instant);
+type FacebookManifestStore = Arc<Mutex<std::collections::HashMap<String, FacebookManifestEntry>>>;
+type SocialManifestEntry = (String, SocialPhotoManifest, std::time::Instant);
+type SocialManifestStore = Arc<Mutex<std::collections::HashMap<String, SocialManifestEntry>>>;
+
 #[derive(Clone)]
 pub struct AppState {
     active_child: Arc<Mutex<Option<Arc<Mutex<std::process::Child>>>>>,
@@ -115,15 +120,9 @@ pub struct AppState {
     sequence: Arc<AtomicU64>,
     access: Arc<Mutex<Option<access::AccessServer>>>,
     facebook_captures: Arc<Mutex<std::collections::HashMap<String, FacebookCaptureSession>>>,
-    facebook_manifests: Arc<
-        Mutex<
-            std::collections::HashMap<String, (String, FacebookPhotoManifest, std::time::Instant)>,
-        >,
-    >,
+    facebook_manifests: FacebookManifestStore,
     social_captures: Arc<Mutex<std::collections::HashMap<String, WebviewWindow>>>,
-    social_manifests: Arc<
-        Mutex<std::collections::HashMap<String, (String, SocialPhotoManifest, std::time::Instant)>>,
-    >,
+    social_manifests: SocialManifestStore,
 }
 
 impl Default for AppState {
@@ -632,7 +631,7 @@ fn refresh_facebook_candidates(
             .refresh_waiters
             .lock()
             .map_err(|_| "The Facebook rendition refresh is unavailable.")?;
-        if waiters.len() >= 1 || waiters.contains_key(request_id) {
+        if !waiters.is_empty() || waiters.contains_key(request_id) {
             return Err("A Facebook rendition refresh is already in progress.".into());
         }
         waiters.insert(request_id.to_owned(), (photo_id.to_owned(), sender));
@@ -646,7 +645,7 @@ fn refresh_facebook_candidates(
         .map_err(|_| "The Facebook rendition refresh could not be prepared.")?;
     if let Err(error) = session
         .window
-        .eval(&format!("window[{function}]({request},{photo});"))
+        .eval(format!("window[{function}]({request},{photo});"))
     {
         if let Ok(mut waiters) = session.refresh_waiters.lock() {
             waiters.remove(request_id);
@@ -885,7 +884,7 @@ async fn capture_facebook_album(
                     let ack_key =
                         serde_json::to_string(&format!("__JANE_FACEBOOK_ACK__{nonce_for_title}"))
                             .expect("acknowledgment key is a string");
-                    let _ = window.eval(&format!("window[{ack_key}] = {sequence};"));
+                    let _ = window.eval(format!("window[{ack_key}] = {sequence};"));
                 }
                 "done" => {
                     let result = accumulator_for_title
@@ -1194,7 +1193,7 @@ async fn capture_social_post_photos(
                         "__JANE_SOCIAL_PHOTO_ACK__{nonce_for_title}"
                     ))
                     .expect("acknowledgment key is a string");
-                    let _ = window.eval(&format!("window[{ack_key}] = {};", message.sequence));
+                    let _ = window.eval(format!("window[{ack_key}] = {};", message.sequence));
                 }
                 "done" => {
                     let result = accumulator_for_title
@@ -1384,7 +1383,7 @@ fn start_conversion(
         }
     };
     let facebook_manifest = if let Some(capture_id) = facebook_capture_id.as_deref() {
-        if !valid_capture_id(&capture_id) {
+        if !valid_capture_id(capture_id) {
             return Err("The Facebook photo capture has expired. Capture the album again.".into());
         }
         let ready = state

@@ -160,7 +160,7 @@ def get_file_version_info(path: str) -> Optional[Tuple[str, str, int]]:
             full = f"{major}.{minor}.{patch}.{build}"
             base = f"{major}.{minor}.{patch}"
             return full, base, build
-    except Exception:
+    except (OSError, struct.error):
         pass
     return None
 
@@ -194,7 +194,7 @@ def detect_installed_fl_studios() -> List[Dict[str, Any]]:
                         exe32 = os.path.join(folder, "FL.exe")
                         if os.path.isfile(exe32):
                             candidate_exes.append(exe32)
-            except Exception:
+            except OSError:
                 pass
 
     # Windows Registry shell open commands and installation records
@@ -214,9 +214,9 @@ def detect_installed_fl_studios() -> List[Dict[str, Any]]:
                         cmd = parts[1] if len(parts) > 1 else val.split()[0]
                         if os.path.isfile(cmd):
                             candidate_exes.append(cmd)
-                except Exception:
+                except OSError:
                     pass
-        except Exception:
+        except OSError:
             pass
 
     for exe in candidate_exes:

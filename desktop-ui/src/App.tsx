@@ -29,8 +29,10 @@ const defaultSettings: ConverterSettings = {
   endTime: "",
 };
 
-const HISTORY_STORAGE_KEY = "janecoverter.conversionHistory";
-const TIMINGS_STORAGE_KEY = "janecoverter.conversionTimings";
+const HISTORY_STORAGE_KEY = "janeconverter.conversionHistory";
+const LEGACY_HISTORY_STORAGE_KEY = "janecoverter.conversionHistory";
+const TIMINGS_STORAGE_KEY = "janeconverter.conversionTimings";
+const LEGACY_TIMINGS_STORAGE_KEY = "janecoverter.conversionTimings";
 
 function cleanDisplayPath(rawPath: string): string {
   return rawPath.trim().replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "");
@@ -158,7 +160,7 @@ export default function App() {
   const [history, setHistory] = useState<ConversionHistoryItem[]>(() => {
     if (typeof window === "undefined") return [];
     try {
-      const raw = window.localStorage.getItem(HISTORY_STORAGE_KEY);
+      const raw = window.localStorage.getItem(HISTORY_STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_HISTORY_STORAGE_KEY);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item.id === "string" && typeof item.timestamp === "string" && typeof item.source === "string" && typeof item.fileName === "string" && typeof item.exportPath === "string" && typeof item.presetName === "string" && typeof item.formatLabel === "string" && typeof item.qualityLabel === "string" && Number.isInteger(item.elapsedMs) && item.elapsedMs >= 0 && ["succeeded", "failed", "partial"].includes(item.status)) : [];
@@ -169,7 +171,7 @@ export default function App() {
   const [conversionTimings, setConversionTimings] = useState<Record<string, number>>(() => {
     if (typeof window === "undefined") return {};
     try {
-      const raw = window.localStorage.getItem(TIMINGS_STORAGE_KEY);
+      const raw = window.localStorage.getItem(TIMINGS_STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_TIMINGS_STORAGE_KEY);
       if (!raw) return {};
       const parsed = JSON.parse(raw);
       return parsed && typeof parsed === "object" ? (parsed as Record<string, number>) : {};
@@ -291,8 +293,10 @@ export default function App() {
       const result = await bridge.conversionHistory(history);
       setHistory(result.history);
       setHistoryError(result.warning || "");
-      try { window.localStorage.removeItem(HISTORY_STORAGE_KEY); }
-      catch { setHistoryError("History was saved, but the legacy browser cache could not be cleared."); }
+      try {
+        window.localStorage.removeItem(HISTORY_STORAGE_KEY);
+        window.localStorage.removeItem(LEGACY_HISTORY_STORAGE_KEY);
+      } catch { setHistoryError("History was saved, but the legacy browser cache could not be cleared."); }
     });
   }, []);
   function recordHistoryEntry(entry: ConversionHistoryItem) {
@@ -328,6 +332,7 @@ export default function App() {
       setHistory(result.history);
       setConversionTimings({});
       window.localStorage.removeItem(TIMINGS_STORAGE_KEY);
+      window.localStorage.removeItem(LEGACY_TIMINGS_STORAGE_KEY);
       statusMessage("Cleared conversion history and timings.");
     });
   }

@@ -117,5 +117,5 @@ def patch_yt_dlp_cookie_database_reader() -> None:
             import yt_dlp.cookies
             yt_dlp.cookies._open_database_copy = robust_open_database_copy
             _PATCHED = True
-        except Exception:
+        except (ImportError, AttributeError):
             pass

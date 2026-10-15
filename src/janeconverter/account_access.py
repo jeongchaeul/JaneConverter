@@ -11,6 +11,7 @@ from hmac import compare_digest
 import json
 from pathlib import Path
 import secrets
+import sys
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -203,8 +204,8 @@ class AccountAccessServer:
         if first_confirmation and self.on_ready:
             try:
                 self.on_ready(detected_browser)
-            except Exception:
-                pass
+            except Exception as err:
+                sys.stderr.write(f"[account_access] on_ready callback failed: {err}\n")
 
     def _send_bridge_challenge(self, handler):
         origin = self._bridge_origin(handler)

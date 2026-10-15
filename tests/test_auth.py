@@ -1,7 +1,5 @@
 """Tests for opt-in browser-session authentication."""
 
-import http.cookiejar
-
 import pytest
 
 import janeconverter.auth as auth

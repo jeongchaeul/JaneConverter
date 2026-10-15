@@ -493,10 +493,7 @@ def process_conversion(
 
     finally:
         if not keep_temp and os.path.exists(work_dir):
-            try:
-                shutil.rmtree(work_dir, ignore_errors=True)
-            except Exception:
-                pass
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 def _retry_operation(operation: Callable[[], Any], label: str, max_retries: int) -> Any:
     """Retry one playlist operation with bounded exponential backoff."""
@@ -774,10 +771,7 @@ def process_playlist_conversion(
                 break
         finally:
             if not keep_temp and track_work_dir and os.path.exists(track_work_dir):
-                try:
-                    shutil.rmtree(track_work_dir, ignore_errors=True)
-                except Exception:
-                    pass
+                shutil.rmtree(track_work_dir, ignore_errors=True)
 
     # Mahoraga Engine: Deferred Adaptation Pass for un-downloaded tracks
     if deferred_queue and not (abort_event and abort_event.is_set()):
@@ -855,10 +849,7 @@ def process_playlist_conversion(
                 print(f"[!] Mahoraga Pass: Track #{idx} '{raw_title}' could not be resolved: {retry_err}", flush=True)
             finally:
                 if not keep_temp and track_work_dir and os.path.exists(track_work_dir):
-                    try:
-                        shutil.rmtree(track_work_dir, ignore_errors=True)
-                    except Exception:
-                        pass
+                    shutil.rmtree(track_work_dir, ignore_errors=True)
 
     # Save overall playlist credits index inside metadata folder
     if save_metadata:
