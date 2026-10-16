@@ -242,9 +242,7 @@
     const candidate = candidates()[0];
     if (!candidate) return;
     const key = keyFor(candidate);
-    if ((candidate.tag !== "video" || !candidate.playing) && state.lastKeys.has(key)) {
-      return;
-    }
+    // A reused media URL cannot establish that a story is unchanged.
     state.busy = true;
     try {
       const captured = await captureCandidate(candidate);
