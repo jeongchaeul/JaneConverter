@@ -89,7 +89,11 @@ async function requestOriginPermission(mediaUrl) {
   let granted = false;
   try {
     granted = await chrome.permissions.request({ origins: [origin] });
-  } catch (_) {
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    if (/must be declared/i.test(msg)) {
+      throw new Error(parsed.host + " is not an approved browser-capture host.");
+    }
     throw new Error("Allow access to " + parsed.host + " in the browser prompt, then try again.");
   }
   if (!granted) throw new Error("Permission for " + parsed.host + " was not approved.");

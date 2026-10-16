@@ -4,6 +4,7 @@ Performs binary surgical patching of version signatures, build numbers,
 extended playlist records, and chunk lengths with bit-perfect reliability.
 """
 
+import io
 import os
 import re
 import shutil
@@ -242,21 +243,61 @@ def downgrade_flp_bytes(
 
     # 4. Truncate modern 80-byte playlist clip arrangement records (Event 0xD4 / 212)
     if source_major >= 25 and target_maj <= 24:
-        pos = 0
-        while True:
-            d4_idx = data.find(b"\xd4\x50", pos)
-            if d4_idx == -1:
-                break
-            record_data = data[d4_idx + 2 : d4_idx + 2 + 80]
-            if len(record_data) == 80:
-                new_record = b"\xd4\x3c" + record_data[:60]
-                data = bytearray(
-                    data[:d4_idx] + new_record + data[d4_idx + 82 :]
-                )
-                records_adjusted += 1
-                pos = d4_idx + len(new_record)
-            else:
-                pos = d4_idx + 2
+        new_fldt_idx = data.find(b"FLdt")
+        if new_fldt_idx != -1 and len(data) >= new_fldt_idx + 8:
+            old_fldt_len = struct.unpack("<I", data[new_fldt_idx + 4 : new_fldt_idx + 8])[0]
+            fldt_data = data[new_fldt_idx + 8 : new_fldt_idx + 8 + old_fldt_len]
+            stream = io.BytesIO(fldt_data)
+            out_stream = io.BytesIO()
+            changed_records = 0
+
+            try:
+                from .parser import parse_varint
+
+                while stream.tell() < len(fldt_data):
+                    ev_id_raw = stream.read(1)
+                    if not ev_id_raw:
+                        break
+                    ev_id = ev_id_raw[0]
+                    if ev_id < 64:
+                        ev_payload = stream.read(1)
+                        out_stream.write(ev_id_raw)
+                        out_stream.write(ev_payload)
+                    elif ev_id < 128:
+                        ev_payload = stream.read(2)
+                        out_stream.write(ev_id_raw)
+                        out_stream.write(ev_payload)
+                    elif ev_id < 192:
+                        ev_payload = stream.read(4)
+                        out_stream.write(ev_id_raw)
+                        out_stream.write(ev_payload)
+                    else:
+                        var_len = parse_varint(stream)
+                        ev_payload = stream.read(var_len)
+                        if ev_id == 212 and len(ev_payload) > 0 and len(ev_payload) % 80 == 0:
+                            num_recs = len(ev_payload) // 80
+                            new_payload = bytearray()
+                            for r in range(num_recs):
+                                new_payload.extend(ev_payload[r * 80 : r * 80 + 60])
+                            changed_records += num_recs
+                            out_stream.write(ev_id_raw)
+                            out_stream.write(write_varint(len(new_payload)))
+                            out_stream.write(new_payload)
+                        else:
+                            out_stream.write(ev_id_raw)
+                            out_stream.write(write_varint(len(ev_payload)))
+                            out_stream.write(ev_payload)
+
+                if changed_records > 0:
+                    new_fldt_bytes = out_stream.getvalue()
+                    data = bytearray(
+                        data[: new_fldt_idx + 8]
+                        + new_fldt_bytes
+                        + data[new_fldt_idx + 8 + old_fldt_len :]
+                    )
+                    records_adjusted += changed_records
+            except Exception:
+                pass
 
     # 5. Synchronize FLdt chunk length
     new_fldt_idx = data.find(b"FLdt")

@@ -241,6 +241,8 @@ def download_social_photo_manifest(
             image_bytes = 0
             with open(download_path, "wb") as image_file:
                 for chunk in response.iter_content(chunk_size=256 * 1024):
+                    if abort_event and abort_event.is_set():
+                        raise KeyboardInterrupt(f"{platform} photo download aborted by user.")
                     if not chunk:
                         continue
                     image_bytes += len(chunk)

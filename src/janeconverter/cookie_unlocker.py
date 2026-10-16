@@ -64,6 +64,76 @@ def unlock_windows_file_lock(file_path: str) -> bool:
         return False
 
 
+def _win32_shared_copy(src: str, dst: str) -> bool:
+    """Attempt a low-level copy using Win32 API with full sharing flags (READ|WRITE|DELETE)."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.windll.kernel32
+
+        GENERIC_READ = 0x80000000
+        FILE_SHARE_READ = 0x00000001
+        FILE_SHARE_WRITE = 0x00000002
+        FILE_SHARE_DELETE = 0x00000004
+        OPEN_EXISTING = 3
+        FILE_ATTRIBUTE_NORMAL = 0x00000080
+        INVALID_HANDLE_VALUE = -1
+
+        handle = kernel32.CreateFileW(
+            src,
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        )
+        if handle == INVALID_HANDLE_VALUE or handle == 0:
+            return False
+
+        try:
+            chunk_size = 64 * 1024
+            buf = ctypes.create_string_buffer(chunk_size)
+            bytes_read = wintypes.DWORD(0)
+            with open(dst, "wb") as out_f:
+                while True:
+                    success = kernel32.ReadFile(handle, buf, chunk_size, ctypes.byref(bytes_read), None)
+                    if not success or bytes_read.value == 0:
+                        break
+                    out_f.write(buf.raw[:bytes_read.value])
+            return True
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        return False
+
+
+class AutoClosingCursor:
+    """Cursor proxy that closes its underlying sqlite3 connection when cursor.close() is called."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+        self._cursor = conn.cursor()
+
+    @property
+    def connection(self) -> sqlite3.Connection:
+        return self._conn
+
+    def close(self):
+        try:
+            self._cursor.close()
+        finally:
+            self._conn.close()
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+    def __iter__(self):
+        return iter(self._cursor)
+
+
 def robust_open_database_copy(database_path: str, tmpdir: str) -> sqlite3.Cursor:
     """Open a copy of an SQLite database, safely handling Windows file locks."""
     database_copy_path = os.path.join(tmpdir, "temporary.sqlite")
@@ -100,7 +170,7 @@ def robust_open_database_copy(database_path: str, tmpdir: str) -> sqlite3.Cursor
                 pass
 
     conn = sqlite3.connect(database_copy_path)
-    return conn.cursor()
+    return AutoClosingCursor(conn)  # type: ignore[return-value]
 
 
 _PATCHED = False

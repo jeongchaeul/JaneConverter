@@ -383,29 +383,35 @@ fn parse_bool(values: &HashMap<String, String>, key: &str, default: bool) -> boo
         .unwrap_or(default)
 }
 
+static GPU_CACHE: std::sync::OnceLock<(bool, String)> = std::sync::OnceLock::new();
+
 pub fn detect_gpu() -> (bool, String) {
-    let ffmpeg = find_ffmpeg();
-    let output = run_command(
-        ffmpeg.to_str().unwrap_or("ffmpeg"),
-        &["-hide_banner", "-encoders"],
-    );
-    let text = output
-        .ok()
-        .map(|value| String::from_utf8_lossy(&value.stdout).to_ascii_lowercase())
-        .unwrap_or_default();
-    if text.contains("h264_nvenc") {
-        return (true, "NVIDIA NVENC".into());
-    }
-    if text.contains("h264_amf") {
-        return (true, "AMD AMF".into());
-    }
-    if text.contains("h264_qsv") {
-        return (true, "Intel Quick Sync".into());
-    }
-    if text.contains("h264_videotoolbox") {
-        return (true, "Apple VideoToolbox".into());
-    }
-    (false, "CPU mode".into())
+    GPU_CACHE
+        .get_or_init(|| {
+            let ffmpeg = find_ffmpeg();
+            let output = run_command(
+                ffmpeg.to_str().unwrap_or("ffmpeg"),
+                &["-hide_banner", "-encoders"],
+            );
+            let text = output
+                .ok()
+                .map(|value| String::from_utf8_lossy(&value.stdout).to_ascii_lowercase())
+                .unwrap_or_default();
+            if text.contains("h264_nvenc") {
+                return (true, "NVIDIA NVENC".into());
+            }
+            if text.contains("h264_amf") {
+                return (true, "AMD AMF".into());
+            }
+            if text.contains("h264_qsv") {
+                return (true, "Intel Quick Sync".into());
+            }
+            if text.contains("h264_videotoolbox") {
+                return (true, "Apple VideoToolbox".into());
+            }
+            (false, "CPU mode".into())
+        })
+        .clone()
 }
 
 pub fn settings_get_internal() -> ConverterSettings {
@@ -472,20 +478,25 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
     if let Some(parent) = settings_path().parent() {
         fs::create_dir_all(parent)?;
     }
-    let output_dir = crate::library::clean_windows_path(&settings.output_dir);
-    let fetched_dir = crate::library::clean_windows_path(&settings.fetched_dir);
+    let clean = |v: &str| v.replace(['\r', '\n'], "");
+    let output_dir = clean(&crate::library::clean_windows_path(&settings.output_dir));
+    let fetched_dir = clean(&crate::library::clean_windows_path(&settings.fetched_dir));
+    let category = clean(&settings.category);
+    let format = clean(&settings.format);
+    let bitrate = clean(&settings.bitrate);
+    let resolution = clean(&settings.resolution);
     let sample_rate = settings.sample_rate.to_string();
     let retries = settings.retries.min(5).to_string();
-    let start_time = settings.start_time.clone().unwrap_or_default();
-    let end_time = settings.end_time.clone().unwrap_or_default();
+    let start_time = clean(&settings.start_time.clone().unwrap_or_default());
+    let end_time = clean(&settings.end_time.clone().unwrap_or_default());
     let body = [
         ("output_dir", output_dir.as_str()),
         ("fetched_dir", fetched_dir.as_str()),
-        ("category", settings.category.as_str()),
-        ("format", settings.format.as_str()),
-        ("bitrate", settings.bitrate.as_str()),
+        ("category", category.as_str()),
+        ("format", format.as_str()),
+        ("bitrate", bitrate.as_str()),
         ("sample_rate", sample_rate.as_str()),
-        ("resolution", settings.resolution.as_str()),
+        ("resolution", resolution.as_str()),
         (
             "normalize",
             if settings.normalize { "true" } else { "false" },

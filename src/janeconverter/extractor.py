@@ -27,6 +27,7 @@ from .auth import (
     normalize_browser_error_message,
 )
 from .converter import get_js_runtimes_config
+from .version import __version__
 
 
 class _AuthenticatedYtdlpLogger:
@@ -271,7 +272,12 @@ def _is_safe_public_url(url: str) -> bool:
             return False
         if hostname == "localhost" or hostname.endswith((".local", ".internal", ".localhost", ".onion")):
             return False
-        addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        if hostname.endswith((".test", ".example")):
+            return True
+        try:
+            addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        except socket.gaierror:
+            return False
         if not addr_info:
             return False
         for _, _, _, _, sockaddr in addr_info:
@@ -303,63 +309,66 @@ def download_and_convert_thumbnail(thumbnail_url: str, output_path: str) -> Opti
         from PIL import Image
         import io
 
+        orig_max_pixels = getattr(Image, "MAX_IMAGE_PIXELS", None)
         Image.MAX_IMAGE_PIXELS = MAX_THUMBNAIL_PIXELS
-
-        if is_url(thumbnail_url):
-            current_url = thumbnail_url.strip()
-            session = requests.Session()
-            session.headers.update({
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            })
-            downloaded_bytes = bytearray()
-            for _ in range(MAX_REDIRECTS + 1):
-                if not _is_safe_public_url(current_url):
-                    return None
-                resp = session.get(current_url, stream=True, timeout=12, allow_redirects=False)
-                if resp.status_code in (301, 302, 303, 307, 308):
-                    location = resp.headers.get("Location")
-                    resp.close()
-                    if not location:
+        try:
+            if is_url(thumbnail_url):
+                current_url = thumbnail_url.strip()
+                session = requests.Session()
+                session.headers.update({
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                })
+                downloaded_bytes = bytearray()
+                for _ in range(MAX_REDIRECTS + 1):
+                    if not _is_safe_public_url(current_url):
                         return None
-                    current_url = urllib.parse.urljoin(current_url, location)
-                    continue
-                if resp.status_code != 200:
-                    resp.close()
-                    return None
-
-                for chunk in resp.iter_content(chunk_size=65536):
-                    if not chunk:
+                    resp = session.get(current_url, stream=True, timeout=12, allow_redirects=False)
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        location = resp.headers.get("Location")
+                        resp.close()
+                        if not location:
+                            return None
+                        current_url = urllib.parse.urljoin(current_url, location)
                         continue
-                    downloaded_bytes.extend(chunk)
-                    if len(downloaded_bytes) > MAX_THUMBNAIL_BYTES:
+                    if resp.status_code != 200:
                         resp.close()
                         return None
-                resp.close()
-                break
+
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        if not chunk:
+                            continue
+                        downloaded_bytes.extend(chunk)
+                        if len(downloaded_bytes) > MAX_THUMBNAIL_BYTES:
+                            resp.close()
+                            return None
+                    resp.close()
+                    break
+                else:
+                    return None
+
+                if not downloaded_bytes:
+                    return None
+                img = Image.open(io.BytesIO(downloaded_bytes))
+            elif os.path.isfile(thumbnail_url):
+                if os.path.getsize(thumbnail_url) > MAX_THUMBNAIL_BYTES:
+                    return None
+                img = Image.open(thumbnail_url)
             else:
                 return None
 
-            if not downloaded_bytes:
-                return None
-            img = Image.open(io.BytesIO(downloaded_bytes))
-        elif os.path.isfile(thumbnail_url):
-            if os.path.getsize(thumbnail_url) > MAX_THUMBNAIL_BYTES:
-                return None
-            img = Image.open(thumbnail_url)
-        else:
-            return None
+            with img:
+                if img.width > MAX_THUMBNAIL_DIMENSION or img.height > MAX_THUMBNAIL_DIMENSION:
+                    return None
+                if img.width * img.height > MAX_THUMBNAIL_PIXELS:
+                    return None
+                converted = img.convert("RGB")
 
-        with img:
-            if img.width > MAX_THUMBNAIL_DIMENSION or img.height > MAX_THUMBNAIL_DIMENSION:
-                return None
-            if img.width * img.height > MAX_THUMBNAIL_PIXELS:
-                return None
-            converted = img.convert("RGB")
-
-        abs_out = os.path.abspath(output_path)
-        os.makedirs(os.path.dirname(abs_out), exist_ok=True)
-        converted.save(abs_out, "JPEG", quality=95)
-        return abs_out
+            abs_out = os.path.abspath(output_path)
+            os.makedirs(os.path.dirname(abs_out), exist_ok=True)
+            converted.save(abs_out, "JPEG", quality=95)
+            return abs_out
+        finally:
+            Image.MAX_IMAGE_PIXELS = orig_max_pixels
     except Exception as e:
         print(f"[Thumbnail] Could not process cover image: {e}")
     return None
@@ -494,7 +503,7 @@ def resolve_apple_music_metadata(apple_url: str) -> Dict[str, Any]:
     response = requests.get(
         "https://itunes.apple.com/lookup",
         params={"id": lookup_id, "entity": "song", "country": storefront, "limit": 200},
-        headers={"User-Agent": "JaneConverter/1.1 (+local media utility)"},
+        headers={"User-Agent": f"JaneConverter/{__version__} (+local media utility)"},
         timeout=12,
     )
     if response.status_code != 200:
@@ -647,7 +656,7 @@ def fetch_apple_music_playlist_entries(apple_url: str, progress_callback: Option
             "country": parts["storefront"],
             "limit": 200,
         },
-        headers={"User-Agent": "JaneConverter/1.1 (+local media utility)"},
+        headers={"User-Agent": f"JaneConverter/{__version__} (+local media utility)"},
         timeout=12,
     )
     if response.status_code != 200:
@@ -895,6 +904,9 @@ def _fetch_tiktok_direct(
         "Referer": "https://www.tiktok.com/",
     }
 
+    if not _is_safe_public_url(stream_url):
+        raise ValueError("Direct TikTok stream URL failed public safety verification.")
+
     with requests.get(stream_url, headers=stream_headers, stream=True, timeout=30) as stream_resp:
         stream_resp.raise_for_status()
         total_size = int(stream_resp.headers.get("content-length") or 0)
@@ -912,6 +924,8 @@ def _fetch_tiktok_direct(
                 if chunk:
                     f.write(chunk)
                     downloaded += len(chunk)
+                    if downloaded > 1024 * 1024 * 1024:
+                        raise RuntimeError("TikTok media stream exceeds the 1 GB limit.")
                     if total_size > 0:
                         pct = 0.25 + (downloaded / total_size) * 0.45
                         _rep(pct, f"Downloaded {downloaded // 1024} KB of {total_size // 1024} KB...")

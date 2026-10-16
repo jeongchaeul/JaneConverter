@@ -242,7 +242,9 @@
     const candidate = candidates()[0];
     if (!candidate) return;
     const key = keyFor(candidate);
-    // A reused media URL cannot establish that a story is unchanged.
+    if ((candidate.tag !== "video" || !candidate.playing) && state.lastKeys.has(key)) {
+      return;
+    }
     state.busy = true;
     try {
       const captured = await captureCandidate(candidate);
@@ -288,7 +290,11 @@
   function startWatching() {
     stopWatching();
     state.timer = setInterval(function () { void scan(); }, 900);
-    state.observer = new MutationObserver(function () { void scan(); });
+    let debounceTimer = null;
+    state.observer = new MutationObserver(function () {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(function () { void scan(); }, 250);
+    });
     if (document.documentElement) state.observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "poster", "class", "style"] });
     void scan();
   }

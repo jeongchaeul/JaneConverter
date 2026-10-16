@@ -20,6 +20,7 @@ import { bridge } from "../bridge";
 
 interface FlpConverterViewProps {
   onStatus: (message: string) => void;
+  initialFilePath?: string;
 }
 
 interface VersionPreset {
@@ -96,7 +97,7 @@ function formatBytes(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(2) + " MB";
 }
 
-export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
+export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterViewProps) {
   const [filePath, setFilePath] = useState<string>("");
   const [projectInfo, setProjectInfo] = useState<FlpProjectInfo | null>(null);
   const [installedFl, setInstalledFl] = useState<InstalledFlStudio[]>([]);
@@ -137,6 +138,12 @@ export function FlpConverterView({ onStatus }: FlpConverterViewProps) {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (initialFilePath && initialFilePath.trim()) {
+      void handleLoadProject(initialFilePath);
+    }
+  }, [initialFilePath]);
 
   async function handleLoadProject(path: string) {
     const clean = path.trim().replace(/^"|"$/g, "");

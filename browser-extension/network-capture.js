@@ -105,7 +105,7 @@
       pageUrl: String(entry.pageUrl || ""),
       platform: String(entry.platform || ""),
       pending: new Map(),
-      attached: false
+      attached: Boolean(entry.enabled)
     };
     states.set(tabId, state);
     return state;
@@ -231,7 +231,10 @@
     if (method === "Network.responseReceived") {
       const item = candidateForResponse(state.pageUrl, Object.assign({}, params && params.response || {}, { resourceType: params && params.type }));
       if (!item.accepted) return;
-      if (state.pending.size >= MAX_NETWORK_PENDING) return;
+      if (state.pending.size >= MAX_NETWORK_PENDING) {
+        const oldestKey = state.pending.keys().next().value;
+        state.pending.delete(oldestKey);
+      }
       item.requestId = String(params.requestId);
       item.target = targetForSource(source);
       state.pending.set(sourceKey(source, params.requestId), item);

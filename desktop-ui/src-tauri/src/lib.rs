@@ -545,16 +545,24 @@ fn clear_conversion_timings() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_url(url: String) -> Result<(), String> {
+fn open_url(state: State<'_, AppState>, url: String) -> Result<(), String> {
     let value = url.trim();
     if !(value.starts_with("http://") || value.starts_with("https://")) {
         return Err("Only http and https URLs can be opened.".into());
     }
+    let is_active_access_link = state
+        .access
+        .lock()
+        .ok()
+        .and_then(|access| access.as_ref().map(|server| server.link == value))
+        .unwrap_or(false);
+
     let lower = value.to_ascii_lowercase();
-    if lower.contains("localhost")
-        || lower.contains("127.0.0.1")
-        || lower.contains("0.0.0.0")
-        || lower.contains("[::1]")
+    if !is_active_access_link
+        && (lower.contains("localhost")
+            || lower.contains("127.0.0.1")
+            || lower.contains("0.0.0.0")
+            || lower.contains("[::1]"))
     {
         return Err("Opening local or loopback addresses in external browsers is blocked.".into());
     }
@@ -1953,6 +1961,23 @@ fn delete_library_entry(
         return Err(
             "Wait for the active conversion to finish before deleting library media.".into(),
         );
+    }
+    let settings = settings_get_internal();
+    let canonical_root = fs::canonicalize(root.trim())
+        .map_err(|error| format!("The library root is unavailable: {error}"))?;
+    let canonical_out = fs::canonicalize(settings.output_dir.trim()).ok();
+    let canonical_fetch = fs::canonicalize(settings.fetched_dir.trim()).ok();
+    let is_valid_root = canonical_out
+        .as_ref()
+        .map(|o| o == &canonical_root)
+        .unwrap_or(false)
+        || canonical_fetch
+            .as_ref()
+            .map(|f| f == &canonical_root)
+            .unwrap_or(false);
+
+    if !is_valid_root {
+        return Err("For safety, JaneConverter can only delete items inside the configured library or fetched directories.".into());
     }
     library::delete_inside(&root, &path)
 }

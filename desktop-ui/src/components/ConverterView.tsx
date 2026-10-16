@@ -262,7 +262,14 @@ export function ConverterView({
   progress: number;
   status: string;
   onSettings: (next: ConverterSettings) => void;
-  onStart: (source: string, playlistIndexes?: string, facebookCaptureId?: string, socialCaptureId?: string, detectedMediaKind?: "photo" | "video") => Promise<void | boolean>;
+  onStart: (
+    source: string,
+    playlistIndexes?: string,
+    facebookCaptureId?: string,
+    socialCaptureId?: string,
+    detectedMediaKind?: "photo" | "video",
+    customSettings?: ConverterSettings,
+  ) => Promise<void | boolean>;
   onCancel: () => Promise<void>;
   onPauseToggle?: () => Promise<void> | void;
   onCaptureBusyChange?: (busy: boolean, cancelCapture?: (() => Promise<void>) | null) => void;
@@ -273,6 +280,7 @@ export function ConverterView({
 }) {
   const [source, setSource] = useState("");
   const [converterTab, setConverterTab] = useState<"media" | "flp">("media");
+  const [droppedFlpPath, setDroppedFlpPath] = useState<string>("");
   const [playlist, setPlaylist] = useState<PlaylistCatalog | null>(null);
   const [loadingPlaylist, setLoadingPlaylist] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -694,7 +702,16 @@ export function ConverterView({
             } else if (event.payload.type === "drop") {
               setIsDraggingOver(false);
               if (event.payload.paths && event.payload.paths.length > 0) {
-                handleDroppedPaths(event.payload.paths);
+                if (converterTab === "flp") {
+                  const flp = event.payload.paths.find((p) => p.toLowerCase().endsWith(".flp"));
+                  if (flp) {
+                    setDroppedFlpPath(flp);
+                  } else {
+                    onStatus("Please drop a valid .flp project file.");
+                  }
+                } else {
+                  handleDroppedPaths(event.payload.paths);
+                }
               }
             }
           });
@@ -707,7 +724,7 @@ export function ConverterView({
     return () => {
       unlisten?.();
     };
-  }, [activeCategory]);
+  }, [activeCategory, converterTab, onStatus]);
 
   async function browseOutput() {
     const path = await bridge.chooseFolder();
@@ -784,11 +801,6 @@ export function ConverterView({
 
   async function openAccessLink() {
     try {
-      if (/localhost|127\.0\.0\.1|::1/i.test(access.link)) {
-        setAccessNotice("Direct extraction is active in JaneConverter. Localhost pages do not need to be opened in your browser.");
-        setAccessNoticeTone("neutral");
-        return;
-      }
       await bridge.openUrl(access.link);
       setAccessNotice("Access page opened in your browser.");
       setAccessNoticeTone("neutral");
@@ -1069,7 +1081,7 @@ export function ConverterView({
       </div>
 
       {converterTab === "flp" ? (
-        <FlpConverterView onStatus={onStatus} />
+        <FlpConverterView onStatus={onStatus} initialFilePath={droppedFlpPath} />
       ) : (
         <>
           {/* Source Input Section */}

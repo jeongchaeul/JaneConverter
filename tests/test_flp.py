@@ -121,6 +121,34 @@ def test_downgrade_flp_to_24():
     assert new_proj.events[1].data == b"A" * 60
 
 
+def test_downgrade_flp_multi_record_212():
+    # FL 25 project with 2 x 80-byte playlist records in Event 212 (160 bytes total)
+    clip1 = b"B" * 60 + b"1" * 20
+    clip2 = b"C" * 60 + b"2" * 20
+    multi_playlist_160 = clip1 + clip2
+    proj = FLPProject(
+        format=0,
+        channels=4,
+        ppq=96,
+        events=[
+            FLPEvent(event_id=199, data=b"25.1.0.4000\x00"),
+            FLPEvent(event_id=212, data=multi_playlist_160),
+            FLPEvent(event_id=68, data=struct.pack("<H", 1400)),
+        ],
+    )
+
+    result = downgrade_flp(proj, target_version_key="24")
+    summary = result["summary"]
+    new_proj: FLPProject = result["project"]
+
+    assert summary["success"] is True
+    assert summary["recordsAdjusted"] == 2
+    assert new_proj.events[1].event_id == 212
+    # Truncated from 160 to 120 bytes (2 * 60 bytes)
+    assert len(new_proj.events[1].data) == 120
+    assert new_proj.events[1].data == (b"B" * 60) + (b"C" * 60)
+
+
 def test_downgrade_flp_file(tmp_path):
     proj = FLPProject(
         format=0,

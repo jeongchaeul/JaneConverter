@@ -545,23 +545,35 @@ export default function App() {
   }
 
   function updateSettings(next: ConverterSettings) {
+    settingsRef.current = next;
     setSettings(next);
     void bridge.settingsSave(next).catch((error) => errorMessage(error instanceof Error ? error.message : String(error)));
   }
 
-  async function start(source: string, playlistIndexes?: string, facebookCaptureId?: string, socialCaptureId?: string, detectedMediaKind?: "photo" | "video"): Promise<boolean> {
+  async function start(
+    source: string,
+    playlistIndexes?: string,
+    facebookCaptureId?: string,
+    socialCaptureId?: string,
+    detectedMediaKind?: "photo" | "video",
+    customSettings?: ConverterSettings,
+  ): Promise<boolean> {
     try {
       const normalizedSource = source.trim();
       const accessSource = access.source?.trim() || "";
       const browserSession = accessSource && normalizedSource && accessSource === normalizedSource ? access.browser || undefined : undefined;
-      let effectiveSettings = settings;
+      let effectiveSettings = customSettings ?? settingsRef.current;
+      if (customSettings) {
+        settingsRef.current = customSettings;
+        setSettings(customSettings);
+      }
       let forcedVideoFallback = false;
-      if (detectedMediaKind === "video" && settings.category === "Image") {
+      if (detectedMediaKind === "video" && effectiveSettings.category === "Image") {
         effectiveSettings = {
-          ...settings,
+          ...effectiveSettings,
           category: "Video",
-          format: settings.format === "source" ? "source" : "mp4",
-          bitrate: settings.format === "source" ? "best" : "balanced",
+          format: effectiveSettings.format === "source" ? "source" : "mp4",
+          bitrate: effectiveSettings.format === "source" ? "best" : "balanced",
         };
         forcedVideoFallback = true;
         setSettings(effectiveSettings);
