@@ -49,6 +49,7 @@ function renderView(
   document.body.appendChild(container);
   const root = createRoot(container);
   const onStatus = vi.fn();
+  const onError = vi.fn();
 
   act(() => {
     root.render(
@@ -67,12 +68,12 @@ function renderView(
         onCreateAccess={onCreateAccess}
         onClearAccess={vi.fn().mockResolvedValue(undefined)}
         onStatus={onStatus}
-        onError={vi.fn()}
+        onError={onError}
       />,
     );
   });
 
-  return { container, root, onCreateAccess, onStatus, onSettings };
+  return { container, root, onCreateAccess, onStatus, onSettings, onError };
 }
 
 describe("Converter account access feedback", () => {
@@ -340,6 +341,29 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
+  it("falls back to onStart when Facebook guest capture redirects to sign-in", async () => {
+    const source = "https://www.facebook.com/share/p/1EZzZ7RdBe/";
+    const onStart = vi.fn().mockResolvedValue(undefined);
+    bridge.captureFacebookAlbum.mockReset();
+    bridge.captureFacebookAlbum.mockRejectedValue(
+      new Error("Facebook redirected the post or photo viewer to a sign-in page before JaneConverter could reach its public photos.")
+    );
+    const view = renderView(undefined, undefined, onStart);
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, source);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
+    await act(async () => { button?.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(bridge.captureFacebookAlbum).toHaveBeenCalledWith(source, expect.any(String));
+    expect(onStart).toHaveBeenCalledWith(source, undefined);
+    expect(view.onError).not.toHaveBeenCalled();
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
   it("inspects an Instagram /p/ post and routes to video conversion when video is detected", async () => {
     const source = "https://www.instagram.com/p/DdwWRyTRMut/";
     const onStart = vi.fn().mockResolvedValue(undefined);
@@ -398,6 +422,50 @@ describe("Converter account access feedback", () => {
     await act(async () => { button?.click(); await Promise.resolve(); });
     expect(bridge.captureSocialPostPhotos).toHaveBeenCalledWith(source, expect.any(String));
     expect(onStart).toHaveBeenCalledWith(source, undefined, undefined, "12345678-1234-1234-1234-123456789abc");
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("bypasses slow guest capture and directly starts conversion when readBrowserCookies is enabled for Instagram", async () => {
+    const source = "https://www.instagram.com/p/DeRahM1CQLf/";
+    const onStart = vi.fn().mockResolvedValue(undefined);
+    bridge.captureSocialPostPhotos.mockReset();
+    const view = renderView(undefined, undefined, onStart, null, vi.fn(), {
+      readBrowserCookies: true,
+    });
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, source);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
+    await act(async () => { button?.click(); await Promise.resolve(); });
+    expect(bridge.captureSocialPostPhotos).not.toHaveBeenCalled();
+    expect(onStart).toHaveBeenCalledWith(source, undefined);
+    expect(view.onStatus).toHaveBeenCalledWith("Reading Instagram post using your active browser session...");
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("bypasses slow guest capture and directly starts conversion when readBrowserCookies is enabled for Facebook", async () => {
+    const source = "https://www.facebook.com/share/p/1EpX6FjAuC/";
+    const onStart = vi.fn().mockResolvedValue(undefined);
+    bridge.captureFacebookAlbum.mockReset();
+    const view = renderView(undefined, undefined, onStart, null, vi.fn(), {
+      readBrowserCookies: true,
+    });
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, source);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
+    await act(async () => { button?.click(); await Promise.resolve(); });
+    expect(bridge.captureFacebookAlbum).not.toHaveBeenCalled();
+    expect(onStart).toHaveBeenCalledWith(source, undefined);
+    expect(view.onStatus).toHaveBeenCalledWith("Reading Facebook post using your active browser session...");
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });

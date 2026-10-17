@@ -17,7 +17,11 @@ class ExtractionCategory(str, Enum):
 def classify_extraction(error):
     message = str(error).casefold()
     if any(word in message for word in (
-        "drm", "private video", "sign in", "login", "log in", "401", "403", "age-restricted", "geo restricted", "captcha", "not a bot",
+        "confirm you're not a bot", "confirm you’re not a bot", "not a bot", "bot detection",
+    )):
+        return ExtractionCategory.LAYOUT
+    if any(word in message for word in (
+        "drm", "private video", "sign in", "login", "log in", "401", "403", "age-restricted", "geo restricted", "captcha",
         "error code: 152", "code: 152", "152 - 18", "watch video on youtube", "confirm your age", "the page needs to be reloaded",
     )):
         return ExtractionCategory.ACCESS
@@ -42,8 +46,8 @@ def extract_with_recovery(ydl, query, download, abort_event=None, report=None, d
     deadline = deadline or time.monotonic() + 45
     original = ydl.params.get("extractor_args") if hasattr(ydl, "params") else None
     client_ladder = [
-        {"youtube": {"player_client": ["ios", "web"]}},
-        {"youtube": {"player_client": ["android", "web"]}},
+        {"youtube": {"player_client": ["web_embedded", "android"]}},
+        {"youtube": {"player_client": ["android", "ios"]}},
     ]
     try:
         for attempt in range(4):

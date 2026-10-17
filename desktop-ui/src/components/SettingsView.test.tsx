@@ -18,6 +18,8 @@ vi.mock("../bridge", () => ({
     relaunch: relaunch.run,
     chooseFolder: chooseFolder.run,
     setDataRoot: setDataRoot.run,
+    getChromiumCookiePolicy: vi.fn().mockResolvedValue(false),
+    setChromiumCookiePolicy: vi.fn().mockImplementation(async (v) => v),
   },
 }));
 
@@ -37,7 +39,7 @@ describe("Settings updates", () => {
     const root = createRoot(container);
 
     await act(async () => {
-      root.render(<SettingsView runtime={sourceRuntime} onStatus={vi.fn()} />);
+      root.render(<SettingsView runtime={sourceRuntime} onStatus={vi.fn()} initialTab="system" />);
     });
 
     const check = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Check now"));
@@ -71,7 +73,7 @@ describe("Settings updates", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
-    await act(async () => { root.render(<SettingsView runtime={sourceRuntime} onStatus={vi.fn()} />); });
+    await act(async () => { root.render(<SettingsView runtime={sourceRuntime} onStatus={vi.fn()} initialTab="system" />); });
 
     const check = () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Check now"));
     await act(async () => { check()?.click(); await Promise.resolve(); });
@@ -103,7 +105,7 @@ describe("Settings updates", () => {
     const root = createRoot(container);
 
     await act(async () => {
-      root.render(<SettingsView runtime={sourceRuntime} onStatus={vi.fn()} />);
+      root.render(<SettingsView runtime={sourceRuntime} onStatus={vi.fn()} initialTab="hardware" />);
     });
 
     const relaunchButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Relaunch now"));
@@ -128,7 +130,7 @@ describe("Settings updates", () => {
     const root = createRoot(container);
 
     await act(async () => {
-      root.render(<SettingsView runtime={{ ...sourceRuntime, dataRoot: "C:/Users/User/AppData/Local/JaneConverter" }} onStatus={vi.fn()} />);
+      root.render(<SettingsView runtime={{ ...sourceRuntime, dataRoot: "C:/Users/User/AppData/Local/JaneConverter" }} onStatus={vi.fn()} initialTab="hardware" />);
     });
 
     await act(async () => {
@@ -156,7 +158,7 @@ describe("Settings updates", () => {
     const root = createRoot(container);
 
     await act(async () => {
-      root.render(<SettingsView runtime={{ mode: "tauri", pythonReady: true, ffmpegReady: true, ffmpegPath: "resources/runtime/bin/ffmpeg", pythonPath: "resources/runtime/engine/JaneConverterEngine", dataRoot: "/home/user/.local/share/JaneConverter", projectRoot: "resources/runtime", gpuAvailable: false, gpuLabel: "CPU mode", packaged: true }} onStatus={vi.fn()} />);
+      root.render(<SettingsView runtime={{ mode: "tauri", pythonReady: true, ffmpegReady: true, ffmpegPath: "resources/runtime/bin/ffmpeg", pythonPath: "resources/runtime/engine/JaneConverterEngine", dataRoot: "/home/user/.local/share/JaneConverter", projectRoot: "resources/runtime", gpuAvailable: false, gpuLabel: "CPU mode", packaged: true }} onStatus={vi.fn()} initialTab="hardware" />);
     });
 
     expect(container.textContent).toContain("Running from a production package");
@@ -185,6 +187,7 @@ describe("Settings updates", () => {
           onBgColorChange={onBgColorChange}
           onResetColors={onResetColors}
           onStatus={vi.fn()}
+          initialTab="theme"
         />,
       );
     });
@@ -264,6 +267,7 @@ describe("Settings updates", () => {
           settings={initialSettings}
           onSettings={onSettings}
           onStatus={onStatus}
+          initialTab="hardware"
         />,
       );
     });
@@ -356,6 +360,54 @@ describe("Settings updates", () => {
     expect(container.textContent).toContain("What works when enabled");
     expect(container.textContent).toContain("Air-gapped privacy guarantees");
     expect(container.textContent).toContain("RAM only (0 bytes to disk)");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it('toggles Direct Edge and Chrome Cookie Access policy', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onStatus = vi.fn();
+
+    await act(async () => {
+      root.render(<SettingsView runtime={sourceRuntime} onStatus={onStatus} />);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('Direct Edge & Chrome Cookie Access');
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="Direct Edge & Chrome Cookie Access"]');
+    expect(toggle).toBeDefined();
+    expect(toggle?.getAttribute('aria-checked')).toBe('false');
+
+    await act(async () => {
+      toggle?.click();
+      await Promise.resolve();
+    });
+
+    expect(onStatus).toHaveBeenCalledWith(expect.stringContaining('Direct Edge & Chrome cookie access enabled'));
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it('renders the User Manual guide and allows tab navigation', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<SettingsView runtime={sourceRuntime} onStatus={vi.fn()} initialTab="guide" />);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('User Manual & Quick Reference');
+    expect(container.textContent).toContain('Quick Start: Convert in 3 Steps');
+    expect(container.textContent).toContain('Supported Platforms & What They Do');
+    expect(container.textContent).toContain('FL Studio (.flp) Project Downgrader');
+    expect(container.textContent).toContain('Presets & Format Cheat Sheet');
+    expect(container.textContent).toContain('Quick Troubleshooting & FAQ');
 
     await act(async () => { root.unmount(); });
     container.remove();

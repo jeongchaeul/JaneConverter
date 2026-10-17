@@ -20,6 +20,8 @@ pub struct ConverterSettings {
     pub open_in_browser: bool,
     #[serde(default)]
     pub read_browser_cookies: bool,
+    #[serde(default)]
+    pub browser_session: Option<String>,
     pub retries: u8,
     #[serde(default)]
     pub start_time: Option<String>,

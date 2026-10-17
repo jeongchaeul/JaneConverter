@@ -542,4 +542,58 @@ def test_fetch_instagram_manifest(monkeypatch):
     assert manifest["photos"][1]["url"] == "https://instagram.fbag4-1.fna.fbcdn.net/v/photo2_high.webp"
 
 
+def test_fetch_instagram_manifest_handles_null_caption_and_single_photo(monkeypatch):
+    import http.cookiejar
+    from http.cookiejar import Cookie
+    import json
+    import yt_dlp
+
+    fake_session_cookie = Cookie(
+        version=0, name="sessionid", value="fake_session", port=None, port_specified=False,
+        domain=".instagram.com", domain_specified=True, domain_initial_dot=True,
+        path="/", path_specified=True, secure=True, expires=None, discard=False,
+        comment=None, comment_url=None, rest={}, rfc2109=False,
+    )
+    class FakeCookieJar(http.cookiejar.CookieJar):
+        filename = None
+
+    fake_jar = FakeCookieJar()
+    fake_jar.set_cookie(fake_session_cookie)
+    empty_jar = FakeCookieJar()
+    monkeypatch.setattr(yt_dlp.cookies, "extract_cookies_from_browser", lambda b, *a, **kw: fake_jar if b == "vivaldi" else empty_jar)
+
+    fake_api_response = {
+        "items": [
+            {
+                "pk": 4006878054114504149,
+                "media_type": 1,
+                "user": {"username": "yanya_uxu"},
+                "caption": None,
+                "carousel_media": None,
+                "image_versions2": {
+                    "candidates": [
+                        {"url": "https://instagram.fbag4-1.fna.fbcdn.net/v/single_high.webp", "width": 1440, "height": 1800},
+                        {"url": "https://instagram.fbag4-1.fna.fbcdn.net/v/single_low.webp", "width": 640, "height": 800},
+                    ]
+                }
+            }
+        ]
+    }
+
+    class FakeOpener:
+        def open(self, req):
+            return io.BytesIO(json.dumps(fake_api_response).encode("utf-8"))
+
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: FakeOpener())
+
+    manifest = social_photo_capture.fetch_instagram_manifest("https://www.instagram.com/p/DebSlxhza3V/")
+    assert manifest is not None
+    assert manifest["platform"] == "instagram"
+    assert manifest["title"] == "Instagram Post by @yanya_uxu"
+    assert len(manifest["photos"]) == 1
+    assert manifest["photos"][0]["url"] == "https://instagram.fbag4-1.fna.fbcdn.net/v/single_high.webp"
+    assert manifest["photos"][0]["width"] == 1440
+
+
+
 

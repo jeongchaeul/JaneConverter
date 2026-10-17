@@ -1242,6 +1242,12 @@ def fetch_media_stream(
         ydl_opts["retries"] = 1
         ydl_opts["fragment_retries"] = 1
         ydl_opts["file_access_retries"] = 1
+        if "extractor_args" not in ydl_opts:
+            ydl_opts["extractor_args"] = {}
+        if "youtube" not in ydl_opts["extractor_args"]:
+            ydl_opts["extractor_args"]["youtube"] = {
+                "player_client": ["web_embedded", "android", "ios"],
+            }
 
     is_tiktok_source = (
         source_type == "tiktok"

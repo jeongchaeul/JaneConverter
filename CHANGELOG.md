@@ -3,18 +3,18 @@
 All notable changes to JaneConverter are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.3.1] - 2026-10-18 - User Manual, Resilient YouTube Extraction & Direct Chromium Cookies
 
 ### Added
-- Added comprehensive legal paperwork framework: `DISCLAIMER.md` (Acceptable Use Policy, DMCA § 1201 Anti-Circumvention Declaration, Trademark Independence, FL Studio DAW Interoperability Statement, and Limitation of Liability), `SECURITY.md` (Security Policy, Responsible Disclosure SLAs, and Air-Gapped Zero-Telemetry guarantees), `CONTRIBUTING.md` (Developer Certificate of Origin 1.1 and Multi-Tier Quality Verification Gates), and `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).
-- Added in-app "Legal & Privacy Safeguards" panel to `SettingsView` and updated `Topbar` quick guide dialog with direct links to legal documentation and DMCA compliance statements.
-- Added comprehensive Third-Party License inventory in `packaging/THIRD-PARTY-NOTICES.md` cataloging FFmpeg/FFprobe, yt-dlp, Tauri, React, Lucide, Framer Motion, and runtime dependencies.
+- Added comprehensive `USER_MANUAL.md` guide in the repository root and a built-in interactive **User Manual** tab inside the desktop app **Settings** providing a clean, accessible breakdown of quick start steps, supported platforms, browser cookie sessions, FL Studio downgrades, presets, and troubleshooting.
+- Added opt-in **Direct Edge & Chrome Cookie Access** setting in `SettingsView`, allowing JaneConverter to read active sessions directly from Microsoft Edge and Google Chrome via standard DPAPI with zero browser extensions or manual exports.
+- Added structured Settings category tabs (`Browser & Sessions`, `Hardware & Engine`, `Appearance`, `System & Updates`, `User Manual`) to declutter the settings interface and streamline configuration.
 
 ### Fixed
-- Fixed impending 2027 engine update cutoff in `updater.py` and `pyproject.toml` by supporting multi-year CalVer yt-dlp releases through 2029.
-- Fixed non-atomic FLP file writes in `flp/downgrade.py` by staging to `.tmp` files with `os.fsync` before atomic replacement via `os.replace`.
-- Fixed silent truncation of malformed variable-length FLP event payloads in `flp/parser.py`, raising explicit `FLPParseError` on payload shortages.
-- Fixed POSIX publication failure on filesystems lacking hard links (FAT32, exFAT, network shares) in `converter.py` by catching `OSError` and falling back cleanly to atomic moving.
+- Fixed unauthenticated public YouTube downloads encountering `Sign in to confirm you're not a bot` bot-detection challenges by proactively configuring resilient player clients (`web_embedded`, `android`, `ios`) and reclassifying anti-bot challenges in `extraction_recovery.py` to trigger immediate Mahoraga client identity rotation before falling back to browser sessions.
+- Fixed Instagram photo extraction crashing on posts with null or empty captions (`AttributeError: 'NoneType' object has no attribute 'get'`).
+- Fixed unnecessary 60-second headless WebView guest session delay when `Read Browser Cookies` is enabled, immediately starting native browser session extraction.
+- Fixed Edge and Chrome cookie database reading and decryption using temporary atomic snapshot copies to prevent locked database conflicts.
 
 ## [2.3.0] - 2026-10-12 - Performance, Updater Resilience & Loudness Consistency
 

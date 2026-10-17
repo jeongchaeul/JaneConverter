@@ -125,6 +125,9 @@ def test_manifest_converts_photo_to_selected_png(tmp_path, monkeypatch):
         "http://scontent.xx.fbcdn.net/photo.jpg",
         "https://example.com/photo.jpg",
         "https://user@example.xx.fbcdn.net/photo.jpg",
+        "https://scontent.xx.fbcdn.net/v/t39.1997-6/sticker.png",
+        "https://scontent.xx.fbcdn.net/stickers/reaction.png",
+        "https://static.xx.fbcdn.net/images/emoji.php/v9/t6d/1/16/1f3ce.png",
     ],
 )
 def test_manifest_rejects_non_public_or_non_cdn_urls(tmp_path, url):
@@ -336,4 +339,154 @@ def test_manifest_empty_photos_raises(tmp_path):
     }
     with pytest.raises(RuntimeError, match="does not contain downloadable photos"):
         facebook_capture.download_facebook_photo_manifest(manifest, str(tmp_path))
+
+
+def test_is_facebook_post_url():
+    assert facebook_capture.is_facebook_post_url("https://www.facebook.com/share/p/1EZzZ7RdBe/") is True
+    assert facebook_capture.is_facebook_post_url("https://www.facebook.com/permalink.php?story_fbid=123&id=456") is True
+    assert facebook_capture.is_facebook_post_url("https://www.facebook.com/user/posts/12345678") is True
+    assert facebook_capture.is_facebook_post_url("https://www.facebook.com/photo/?fbid=12345678") is True
+    assert facebook_capture.is_facebook_post_url("https://fb.watch/xyz123/") is True
+    assert facebook_capture.is_facebook_post_url("https://youtube.com/watch?v=123") is False
+    assert facebook_capture.is_facebook_post_url("https://instagram.com/p/123") is False
+    assert facebook_capture.is_facebook_post_url("") is False
+
+
+def test_fetch_facebook_manifest_disabled_browser():
+    assert facebook_capture.fetch_facebook_manifest("https://www.facebook.com/share/p/1EZzZ7RdBe/", browser="none") is None
+    assert facebook_capture.fetch_facebook_manifest("https://www.facebook.com/share/p/1EZzZ7RdBe/", browser="disabled") is None
+
+
+def test_fetch_facebook_manifest_mocked(monkeypatch):
+    class _MockCookie:
+        def __init__(self, name, value, domain=".facebook.com", path="/"):
+            self.name = name
+            self.value = value
+            self.domain = domain
+            self.path = path
+
+    class _MockYDL:
+        def __init__(self, *args, **kwargs):
+            self.cookiejar = [_MockCookie("c_user", "10001"), _MockCookie("xs", "secret")]
+
+    import yt_dlp
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _MockYDL)
+
+    html_content = (
+        '<html><head><title>Test Album - Facebook</title></head><body>'
+        '<script>'
+        '{"all_subattachments":{"count":2,"nodes":['
+        '{"media":{"__typename":"Photo","id":"112233","is_playable":false,"image":{"uri":"https:\\/\\/scontent-1.xx.fbcdn.net\\/photo1.jpg","width":1080,"height":1080}}},'
+        '{"media":{"__typename":"Photo","id":"445566","is_playable":false,"image":{"uri":"https:\\/\\/scontent-2.xx.fbcdn.net\\/photo2.jpg","width":720,"height":720}}}'
+        ']}}'
+        '</script></body></html>'
+    )
+
+    class _MockSession:
+        def __init__(self):
+            self.cookies = {}
+            self.headers = {}
+        def set_cookie(self, name, value, domain=None, path=None):
+            pass
+        def get(self, url, **kwargs):
+            class _Resp:
+                status_code = 200
+                url = "https://www.facebook.com/permalink.php?story_fbid=112233"
+                text = html_content
+            return _Resp()
+
+    class _MockCookiesObj:
+        def set(self, name, value, domain=None, path=None):
+            pass
+
+    mock_sess = _MockSession()
+    mock_sess.cookies = _MockCookiesObj()
+
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: mock_sess)
+
+    manifest = facebook_capture.fetch_facebook_manifest("https://www.facebook.com/share/p/1EZzZ7RdBe/", browser="vivaldi")
+    assert manifest is not None
+    assert manifest["platform"] == "facebook"
+    assert manifest["title"] == "Test Album"
+    assert len(manifest["photos"]) == 2
+    assert manifest["photos"][0]["id"] == "112233"
+    assert manifest["photos"][0]["width"] == 1080
+    assert "https://scontent-1.xx.fbcdn.net/photo1.jpg" in manifest["photos"][0]["url"]
+
+
+def test_clean_fb_photo_url():
+    raw = "https://scontent.xx.fbcdn.net/v/t39.30808-6/123_n.jpg?stp=dst-jpg&cstp=mx1536x2048&ctp=s960x960&_nc_cat=104"
+    cleaned = facebook_capture._clean_fb_photo_url(raw)
+    assert "ctp=s960x960" not in cleaned
+    assert "cstp=mx1536x2048" in cleaned
+    assert cleaned.startswith("https://scontent.xx.fbcdn.net/")
+
+
+def test_fetch_facebook_manifest_mediaset_complete_album(monkeypatch):
+    class _MockCookie:
+        def __init__(self, name, value, domain=".facebook.com", path="/"):
+            self.name = name
+            self.value = value
+            self.domain = domain
+            self.path = path
+
+    class _MockYDL:
+        def __init__(self, *args, **kwargs):
+            self.cookiejar = [_MockCookie("c_user", "10001"), _MockCookie("xs", "secret")]
+
+    import yt_dlp
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _MockYDL)
+
+    post_html = (
+        '<html><head><title>Album Post - Facebook</title></head><body>'
+        '<script>'
+        '{"mediaset_token":"pcb.998877",'
+        '"all_subattachments":{"count":15,"nodes":[{"media":{"__typename":"Photo","id":"111","image":{"uri":"https:\\/\\/scontent-1.xx.fbcdn.net\\/p1.jpg"}}}]}}'
+        '</script>'
+        # Unrelated suggested post in the feed with arbitrary Photo typename
+        '<script>{"suggested":{"__typename":"Photo","id":"999999","image":{"uri":"https:\\/\\/scontent-9.xx.fbcdn.net\\/meme.jpg"}}}</script>'
+        '</body></html>'
+    )
+
+    mediaset_html = (
+        '<html><head><title>Photos in Album - Facebook</title></head><body>'
+        '<script>'
+        '{"media":{"edges":['
+        + ",".join(
+            f'{{"node":{{"__typename":"Photo","id":"{i}","image":{{"uri":"https:\\/\\/scontent-1.xx.fbcdn.net\\/photo{i}.jpg?ctp=s960x960","width":720,"height":960}}}}}}'
+            for i in range(1, 16)
+        )
+        + '],"page_info":{"has_next_page":false}}}'
+        '</script></body></html>'
+    )
+
+    class _MockSession:
+        def __init__(self):
+            self.cookies = type("MockCookies", (), {"set": lambda *args, **kwargs: None})()
+            self.headers = {}
+        def get(self, url, **kwargs):
+            class _Resp:
+                def __init__(self, text, resp_url):
+                    self.status_code = 200
+                    self.text = text
+                    self.url = resp_url
+            if "media/set" in url:
+                return _Resp(mediaset_html, url)
+            return _Resp(post_html, url)
+
+    monkeypatch.setattr(facebook_capture.requests, "Session", _MockSession)
+
+    manifest = facebook_capture.fetch_facebook_manifest("https://www.facebook.com/share/p/19RLsXCtZM/", browser="vivaldi")
+    assert manifest is not None
+    assert manifest["title"] == "Album Post"
+    assert len(manifest["photos"]) == 15
+    # Ensure all 15 album photos were retrieved
+    for i in range(1, 16):
+        assert any(p["id"] == str(i) for p in manifest["photos"])
+    # Ensure unrelated suggestion photo 999999 was NOT included
+    assert not any(p["id"] == "999999" for p in manifest["photos"])
+    # Ensure ctp=s960x960 was stripped to preserve full resolution
+    assert "ctp=s960x960" not in manifest["photos"][0]["url"]
+
+
 

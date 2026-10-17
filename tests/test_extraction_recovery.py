@@ -57,6 +57,8 @@ def test_catalog_disambiguates_same_channel_releases():
     ("Unable to extract challenge data", ExtractionCategory.LAYOUT),
     ("This video is unavailable. Error code: 152 - 18 Watch video on YouTube", ExtractionCategory.ACCESS),
     ("Sign in to confirm your age", ExtractionCategory.ACCESS),
+    ("Sign in to confirm you're not a bot", ExtractionCategory.LAYOUT),
+    ("Sign in to confirm you’re not a bot", ExtractionCategory.LAYOUT),
 ])
 def test_extraction_failures_have_distinct_recovery_categories(message, category):
     assert classify_extraction(message) == category
@@ -167,14 +169,14 @@ def test_mahoraga_client_identity_rotation_on_layout_challenge():
             raise RuntimeError("Unable to solve JS challenge")
         elif len(calls) == 2:
             raise RuntimeError("Unable to extract challenge data")
-        return {"id": "success_via_ios"}
+        return {"id": "success_via_client_rotation"}
 
     ydl.extract_info.side_effect = extract
     result = extract_with_recovery(ydl, "https://youtube.com/watch?v=abc", False)
-    assert result["id"] == "success_via_ios"
+    assert result["id"] == "success_via_client_rotation"
     # Call 1 had original 'web'
     assert calls[0] == {"youtube": {"player_client": ["web"]}}
     # Call 2 popped extractor_args to defaults
     assert calls[1] == {}
-    # Call 3 rotated to IOS client
-    assert calls[2] == {"youtube": {"player_client": ["ios", "web"]}}
+    # Call 3 rotated to web_embedded / android client
+    assert calls[2] == {"youtube": {"player_client": ["web_embedded", "android"]}}

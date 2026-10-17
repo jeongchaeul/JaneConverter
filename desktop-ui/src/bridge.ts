@@ -50,6 +50,7 @@ export interface ConverterSettings {
   allowPngFallback?: boolean;
   openInBrowser?: boolean;
   readBrowserCookies?: boolean;
+  browserSession?: string;
   retries: number;
   startTime?: string;
   endTime?: string;
@@ -269,6 +270,8 @@ export interface JaneBridge {
   flpDowngrade(source: string, targetVersion: string, targetBuild?: number, outputPath?: string, overwrite?: boolean): Promise<FlpDowngradeResult>;
   exportLogFile(content: string, defaultFilename?: string): Promise<string | null>;
   setTaskbarProgress(progress?: number, status?: "normal" | "paused" | "error" | "none" | "indeterminate"): Promise<void>;
+  getChromiumCookiePolicy(): Promise<boolean>;
+  setChromiumCookiePolicy(enabled: boolean): Promise<boolean>;
 }
 
 const demoSettings: ConverterSettings = {
@@ -285,7 +288,7 @@ const demoSettings: ConverterSettings = {
   saveMetadata: true,
   allowPngFallback: false,
   openInBrowser: false,
-  readBrowserCookies: false,
+  readBrowserCookies: true,
   retries: 2,
   startTime: "",
   endTime: "",
@@ -405,6 +408,8 @@ const demoBridge: JaneBridge = {
     return defaultFilename;
   },
   async setTaskbarProgress() {},
+  async getChromiumCookiePolicy() { return false; },
+  async setChromiumCookiePolicy(enabled: boolean) { return enabled; },
 };
 
 const isTauriRuntime = () => "__TAURI_INTERNALS__" in window;
@@ -471,6 +476,8 @@ const tauriBridge: JaneBridge = {
       progress: progress !== undefined ? Math.round(progress) : null,
       status: status ?? null,
     }),
+  getChromiumCookiePolicy: () => invoke<boolean>("get_chromium_cookie_policy"),
+  setChromiumCookiePolicy: (enabled: boolean) => invoke<boolean>("set_chromium_cookie_policy", { enabled }),
 };
 
 export const bridge: JaneBridge = isTauriRuntime() ? tauriBridge : demoBridge;

@@ -178,7 +178,7 @@ _LOCK = threading.Lock()
 
 
 def patch_yt_dlp_cookie_database_reader() -> None:
-    """Monkey-patch yt-dlp's database reader with our robust lock-aware reader."""
+    """Monkey-patch yt-dlp's database reader with our robust lock-aware reader and safe v20 handler."""
     global _PATCHED
     with _LOCK:
         if _PATCHED:
@@ -186,6 +186,17 @@ def patch_yt_dlp_cookie_database_reader() -> None:
         try:
             import yt_dlp.cookies
             yt_dlp.cookies._open_database_copy = robust_open_database_copy
+            orig_decrypt = getattr(yt_dlp.cookies.WindowsChromeCookieDecryptor, "decrypt", None)
+            if orig_decrypt and not getattr(yt_dlp.cookies.WindowsChromeCookieDecryptor, "_jane_patched", False):
+                def safe_decrypt(self, encrypted_value):
+                    if encrypted_value and encrypted_value[:3] == b"v20":
+                        return None
+                    try:
+                        return orig_decrypt(self, encrypted_value)
+                    except Exception:
+                        return None
+                yt_dlp.cookies.WindowsChromeCookieDecryptor.decrypt = safe_decrypt
+                yt_dlp.cookies.WindowsChromeCookieDecryptor._jane_patched = True
             _PATCHED = True
         except (ImportError, AttributeError):
             pass

@@ -60,7 +60,10 @@ function isFacebookPostLink(value: string): boolean {
       path.startsWith("/share/p/") ||
       path.includes("/permalink/") ||
       path.includes("/posts/") ||
-      path.endsWith("/story.php")
+      path.endsWith("/story.php") ||
+      path.includes("/photo") ||
+      path.includes("/photos/") ||
+      path.includes("/media/set")
     );
   } catch {
     return false;
@@ -842,6 +845,11 @@ export function ConverterView({
       return;
     }
     if (isFacebookPostLink(trimmedSource)) {
+      if (access.active || settings.readBrowserCookies === true) {
+        onStatus("Reading Facebook post using your active browser session...");
+        await onStart(trimmedSource, indexes);
+        return;
+      }
       const captureId = crypto.randomUUID();
       facebookCaptureIdRef.current = captureId;
       setFacebookCaptureBusy(true);
@@ -860,8 +868,16 @@ export function ConverterView({
         sessionTransferredToConversion = started !== false;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (/cancelled|canceled/i.test(message)) onStatus(message);
-        else onError(message);
+        if (/cancelled|canceled/i.test(message)) {
+          onStatus(message);
+        } else {
+          onStatus("Facebook guest session unavailable or restricted. Adapting with browser session...");
+          try {
+            await onStart(trimmedSource, indexes);
+          } catch (fallbackError) {
+            onError(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
+          }
+        }
       } finally {
         if (!sessionTransferredToConversion && facebookCaptureIdRef.current === captureId) {
           try {
@@ -881,8 +897,13 @@ export function ConverterView({
         await onStart(trimmedSource, indexes, undefined, undefined, "video");
         return;
       }
-      if (photoPlatform === "instagram" && access.active) {
+      if (photoPlatform === "instagram" && (access.active || settings.readBrowserCookies === true)) {
         onStatus("Reading Instagram post using your active browser session...");
+        await onStart(trimmedSource, indexes);
+        return;
+      }
+      if (photoPlatform === "pinterest" && isPinterestNotificationRoute(trimmedSource) && (access.active || settings.readBrowserCookies === true)) {
+        onStatus("Reading Pinterest notification collection using your active browser session...");
         await onStart(trimmedSource, indexes);
         return;
       }
@@ -908,7 +929,12 @@ export function ConverterView({
           onStatus("Adapting: Passing the X/Twitter post to the media downloader...");
           await onStart(trimmedSource, indexes, undefined, undefined, "video");
         } else {
-          onError(message);
+          onStatus(`Guest session for ${platformLabel} unavailable or restricted. Adapting with browser session...`);
+          try {
+            await onStart(trimmedSource, indexes);
+          } catch (fallbackError) {
+            onError(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
+          }
         }
       } finally {
         socialCaptureIdRef.current = null;

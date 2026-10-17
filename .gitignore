@@ -9,6 +9,7 @@ __pycache__/
 .cache/
 ffmpeg.exe
 build/
+build_engine/
 dist/
 .vs/
 .vscode/

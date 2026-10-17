@@ -158,6 +158,7 @@ test("rendition refresh reads the requested photo again in the same guest page",
   image.src = "https://scontent.fbcdn.net/refreshed.jpg";
   Object.defineProperty(image, "complete", { value: true });
   Object.defineProperty(image, "naturalWidth", { value: 1200 });
+  Object.defineProperty(image, "naturalHeight", { value: 900 });
   image.getBoundingClientRect = () => ({ width: 640, height: 480 });
   session.window.document.body.append(image);
   await session.advance(300);

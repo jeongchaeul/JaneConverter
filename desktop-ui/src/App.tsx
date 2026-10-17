@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, CheckCircle2, Clock, FolderOpen, GripVertical, Play, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, FolderOpen, GripVertical, Play, RotateCcw, X } from "lucide-react";
 import { bridge, type AccessStatus, type ConversionHistoryItem, type ConverterEvent, type ConverterSettings, type FetchedMedia, type RuntimeInfo } from "./bridge";
 import { Sidebar, type ViewKey } from "./components/Sidebar";
 import { ConverterView } from "./components/ConverterView";
@@ -560,13 +560,17 @@ export default function App() {
   ): Promise<boolean> {
     try {
       const normalizedSource = source.trim();
-      const accessSource = access.source?.trim() || "";
-      const browserSession = accessSource && normalizedSource && accessSource === normalizedSource ? access.browser || undefined : undefined;
       let effectiveSettings = customSettings ?? settingsRef.current;
       if (customSettings) {
         settingsRef.current = customSettings;
         setSettings(customSettings);
       }
+      const accessSource = access.source?.trim() || "";
+      const browserSession = accessSource && normalizedSource && accessSource === normalizedSource
+        ? access.browser || undefined
+        : effectiveSettings.browserSession && effectiveSettings.browserSession !== "auto"
+          ? effectiveSettings.browserSession
+          : undefined;
       let forcedVideoFallback = false;
       if (detectedMediaKind === "video" && effectiveSettings.category === "Image") {
         effectiveSettings = {
@@ -816,39 +820,55 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <div className="mt-5 flex flex-wrap justify-end gap-2">
-              <button
-                type="button"
-                draggable
-                onDragStartCapture={(e) => dragExportedFile(e, success.exportPath)}
-                onClick={() => statusMessage("Drag this button or the exported card directly into another app (e.g. FL Studio).")}
-                className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs cursor-grab active:cursor-grabbing hover:border-pink-500/40"
-                title="Drag this file into another app (e.g. FL Studio, Explorer, Discord)"
-                aria-label="Drag this file into another app"
-              >
-                <GripVertical className="size-3.5 text-pink-400" /> Drag File
-              </button>
-              <button
-                type="button"
-                onClick={() => void bridge.openFile(success.exportPath).catch((error) => statusMessage(error instanceof Error ? error.message : String(error)))}
-                className="primary-button flex items-center gap-1.5 px-3 py-2 text-xs"
-              >
-                <Play className="size-3.5" /> Open File
-              </button>
-              <button
-                type="button"
-                onClick={() => void bridge.openPath(success.exportPath).catch((error) => statusMessage(error instanceof Error ? error.message : String(error)))}
-                className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs"
-              >
-                <FolderOpen className="size-3.5" /> Open Path
-              </button>
-              <button
-                type="button"
-                onClick={() => setSuccess(null)}
-                className="subtle-button px-3 py-2 text-xs"
-              >
-                Close
-              </button>
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSuccess(null);
+                    setActiveView("converter");
+                  }}
+                  className="subtle-button grid size-9 place-items-center hover:border-pink-500/40 text-zinc-300 hover:text-white"
+                  title="Convert another"
+                  aria-label="Convert another"
+                >
+                  <RotateCcw className="size-4 text-pink-400" />
+                </button>
+                <button
+                  type="button"
+                  draggable
+                  onDragStartCapture={(e) => dragExportedFile(e, success.exportPath)}
+                  onClick={() => statusMessage("Drag this button or the exported card directly into another app (e.g. FL Studio).")}
+                  className="subtle-button grid size-9 place-items-center cursor-grab active:cursor-grabbing hover:border-pink-500/40"
+                  title="Drag this file into another app (e.g. FL Studio, Explorer, Discord)"
+                  aria-label="Drag this file into another app"
+                >
+                  <GripVertical className="size-4 text-pink-400" />
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void bridge.openFile(success.exportPath).catch((error) => statusMessage(error instanceof Error ? error.message : String(error)))}
+                  className="primary-button flex items-center gap-1.5 px-3 py-2 text-xs"
+                >
+                  <Play className="size-3.5" /> Open File
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void bridge.openPath(success.exportPath).catch((error) => statusMessage(error instanceof Error ? error.message : String(error)))}
+                  className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs"
+                >
+                  <FolderOpen className="size-3.5" /> Open Path
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSuccess(null)}
+                  className="subtle-button px-3 py-2 text-xs"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </section>
         </div>

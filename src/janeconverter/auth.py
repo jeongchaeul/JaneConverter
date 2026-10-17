@@ -279,6 +279,60 @@ def detect_default_browser_session() -> Optional[str]:
     return None
 
 
+def detect_running_browsers() -> list[str]:
+    """Return all supported browsers currently running with active processes."""
+    running: list[str] = []
+    seen: set[str] = set()
+    try:
+        import psutil
+    except ImportError:
+        return running
+
+    try:
+        for p in psutil.process_iter(["name"]):
+            try:
+                n = str(p.info.get("name") or "").strip().lower()
+                if n.endswith(".exe"):
+                    n = n[:-4]
+                for b, names in _BROWSER_PROCESS_NAMES.items():
+                    if b not in seen and n in names:
+                        running.append(b)
+                        seen.add(b)
+            except (OSError, psutil.Error):
+                continue
+    except (OSError, psutil.Error):
+        pass
+    return running
+
+
+def get_ordered_browser_candidates(preferred: Optional[str] = None) -> list[str]:
+    """Return candidate browsers intelligently ordered by relevance:
+    1. Explicitly requested or preferred browser.
+    2. Browsers currently running on the host.
+    3. System default browser.
+    4. Installed browsers with existing user profiles.
+    5. Other known supported browsers.
+    """
+    candidates: list[str] = []
+    raw_pref = normalize_browser_session(preferred)
+    if raw_pref and raw_pref not in ("auto", "none"):
+        candidates.append(raw_pref)
+
+    for b in detect_running_browsers():
+        if b not in candidates:
+            candidates.append(b)
+
+    default_b = detect_default_browser_session()
+    if default_b and default_b not in candidates:
+        candidates.append(default_b)
+
+    for b in detect_installed_browser_sessions():
+        if b not in candidates:
+            candidates.append(b)
+
+    return candidates
+
+
 def detect_installed_browser_sessions() -> list[str]:
     """Return all supported browsers with installed profiles on the current host.
 
@@ -466,4 +520,47 @@ def _posix_default_browser_signals() -> list[str]:
     except (OSError, subprocess.SubprocessError):
         pass
     return signals
+
+
+def is_chromium_direct_cookie_policy_enabled() -> bool:
+    """Check whether Windows policy allows standard DPAPI decryption for Edge/Chrome."""
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+        for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            for subkey in (r"Software\Policies\Microsoft\Edge", r"Software\Policies\Google\Chrome"):
+                try:
+                    with winreg.OpenKey(root, subkey) as key:
+                        val, _ = winreg.QueryValueEx(key, "ApplicationBoundEncryptionEnabled")
+                        if val == 0:
+                            return True
+                except OSError:
+                    continue
+    except Exception:
+        pass
+    return False
+
+
+def set_chromium_direct_cookie_policy(enabled: bool) -> bool:
+    """Configure or remove the ApplicationBoundEncryptionEnabled policy in HKCU."""
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+        targets = (r"Software\Policies\Microsoft\Edge", r"Software\Policies\Google\Chrome")
+        for subkey in targets:
+            if enabled:
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, subkey) as key:
+                    winreg.SetValueEx(key, "ApplicationBoundEncryptionEnabled", 0, winreg.REG_DWORD, 0)
+            else:
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey, 0, winreg.KEY_SET_VALUE) as key:
+                        winreg.DeleteValue(key, "ApplicationBoundEncryptionEnabled")
+                except OSError:
+                    pass
+        return enabled
+    except Exception:
+        return False
+
 

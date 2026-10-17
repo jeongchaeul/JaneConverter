@@ -83,13 +83,17 @@ pub fn validate_post_url(value: &str) -> Result<Url, String> {
         || !(path.starts_with("/share/p/")
             || path.contains("/permalink/")
             || path.contains("/posts/")
-            || path.ends_with("/story.php"))
+            || path.ends_with("/story.php")
+            || path.contains("/photo")
+            || path.contains("/photos/")
+            || path.contains("/media/set"))
     {
         return Err("Paste a public Facebook post link to capture its photos.".into());
     }
     Ok(url)
 }
 
+#[allow(dead_code)]
 pub fn is_video_conversion_intent(category: &str, format: &str) -> bool {
     category.eq_ignore_ascii_case("video")
         && matches!(
@@ -125,6 +129,7 @@ pub fn is_facebook_navigation(value: &str) -> bool {
 pub fn validate_photo_url(value: &str) -> bool {
     Url::parse(value).ok().is_some_and(|url| {
         let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+        let path = url.path().to_ascii_lowercase();
         url.scheme() == "https"
             && url.username().is_empty()
             && url.password().is_none()
@@ -132,6 +137,11 @@ pub fn validate_photo_url(value: &str) -> bool {
                 || host.ends_with(".fbcdn.net")
                 || host == "fbsbx.com"
                 || host.ends_with(".fbsbx.com"))
+            && !path.contains("1997-6")
+            && !path.contains("/stickers/")
+            && !path.contains("/reactions/")
+            && !path.contains("emoji.php")
+            && !path.contains("rsrc.php")
     })
 }
 
@@ -364,22 +374,54 @@ pub fn initialization_script(nonce: &str) -> String {
     }}
     return {{count:Math.max(exact,lowerBound),source:exact ? "page-count" : lowerBound ? "overlay-minimum" : "",conflict:exactCounts.size > 1 || (exact > 0 && lowerBound > exact)}};
   }};
+  const cleanFbUrl = (uri) => {{
+    if (!uri) return "";
+    return uri.replace(/([?&])ctp=[^&]*(&)?/g, (m, p1, p2) => p1 === '&' && p2 ? '&' : (p1 === '?' && p2 ? '?' : '')).replace(/[?&]$/, "");
+  }};
   const isCdn = (value) => {{
-    try {{ const host = new URL(value, location.href).hostname.toLowerCase(); return host.endsWith(".fbcdn.net") || host === "fbcdn.net" || host.endsWith(".fbsbx.com") || host === "fbsbx.com"; }} catch (_) {{ return false; }}
+    try {{
+      const parsed = new URL(value, location.href);
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.toLowerCase();
+      if (
+        path.includes("/stickers/") ||
+        path.includes("/reactions/") ||
+        path.includes("emoji.php") ||
+        path.includes("rsrc.php") ||
+        path.includes("/sprites/") ||
+        path.includes("1997-6")
+      ) {{
+        return false;
+      }}
+      return host.endsWith(".fbcdn.net") || host === "fbcdn.net" || host.endsWith(".fbsbx.com") || host === "fbsbx.com";
+    }} catch (_) {{ return false; }}
   }};
   const chooseImage = (image) => {{
+    if (image.closest('[role="toolbar"], [aria-label*="reaction" i], [aria-label*="sticker" i], form, footer')) {{
+      return null;
+    }}
     const candidates = [];
     for (const value of [image.currentSrc, image.src, image.getAttribute("data-src")]) {{
-      if (value && isCdn(value)) candidates.push({{url: value, width: image.naturalWidth || 0}});
+      if (value && isCdn(value)) {{
+        const fullUrl = cleanFbUrl(value);
+        candidates.push({{url: fullUrl, width: image.naturalWidth || 0, raw: value}});
+      }}
     }}
     for (const entry of (image.getAttribute("srcset") || "").split(",")) {{
       const parts = entry.trim().split(/\s+/);
-      if (parts[0] && isCdn(parts[0])) candidates.push({{url: parts[0], width: parseInt(parts[1] || "0", 10) || 0}});
+      if (parts[0] && isCdn(parts[0])) {{
+        const fullUrl = cleanFbUrl(parts[0]);
+        candidates.push({{url: fullUrl, width: parseInt(parts[1] || "0", 10) || 0, raw: parts[0]}});
+      }}
     }}
     candidates.sort((a, b) => b.width - a.width);
     if (!candidates.length) return null;
-    const unique = [...new Set(candidates.map((candidate) => candidate.url))];
-    return {{...candidates[0], alternates:unique.filter((url) => url !== candidates[0].url).slice(0,3)}};
+    const allUrls = [];
+    for (const c of candidates) {{
+      if (!allUrls.includes(c.url)) allUrls.push(c.url);
+      if (c.raw && !allUrls.includes(c.raw)) allUrls.push(c.raw);
+    }}
+    return {{url: candidates[0].url, width: candidates[0].width, alternates: allUrls.filter((u) => u !== candidates[0].url).slice(0, 3)}};
   }};
   const hasVisiblePublicPhoto = () => {{
     if (new URL(location.href).pathname.toLowerCase().includes("/photo"))
@@ -525,20 +567,20 @@ pub fn initialization_script(nonce: &str) -> String {
   }};
   const findScriptViewerPhoto = (expectedId) => {{
     if (!/^[0-9]{{5,30}}$/.test(expectedId || "")) return null;
-    const nodePattern = new RegExp(`(?:"__isNode"|"__typename")\\s*:\\s*"Photo"\\s*,\\s*"id"\\s*:\\s*"${{expectedId}}"[\\s\\S]{{0,800}}?"image"\\s*:\\s*\\{{([^}}]+)\\}}`);
     for (const script of document.scripts) {{
       const text = script.textContent || "";
-      if (!text.includes(expectedId) || (!text.includes("currMedia") && !text.includes("__isNode"))) continue;
-      const match = nodePattern.exec(text);
-      if (match) {{
-        const imgBlock = match[1];
-        const uriMatch = /"uri"\s*:\s*"([^"]+)"/.exec(imgBlock);
-        const widthMatch = /"width"\s*:\s*(\d+)/.exec(imgBlock);
-        if (uriMatch) {{
-          const decodedUrl = uriMatch[1].replace(/\\u0025/g, "%").replace(/\\u0026/g, "&").replace(/\\\//g, "/");
-          if (isCdn(decodedUrl)) {{
-            return {{id: expectedId, url: decodedUrl, width: Number(widthMatch ? widthMatch[1] : "1080") || 1080, alternates: []}};
-          }}
+      if (!text.includes(expectedId)) continue;
+      const idIdx = text.indexOf(`"id":"${{expectedId}}"`);
+      if (idIdx === -1) continue;
+      const window = text.slice(Math.max(0, idIdx - 200), Math.min(text.length, idIdx + 1500));
+      const uriMatch = /"(?:viewer_image|image|photo_image)"\s*:\s*\{{[^}}]*?"uri"\s*:\s*"([^"]+)"/.exec(window);
+      const widthMatch = /"width"\s*:\s*(\d+)/.exec(window);
+      if (uriMatch) {{
+        let decodedUrl = uriMatch[1].replace(/\\u0025/g, "%").replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+        if (isCdn(decodedUrl)) {{
+          const fullUrl = cleanFbUrl(decodedUrl);
+          const alts = fullUrl !== decodedUrl ? [decodedUrl] : [];
+          return {{id: expectedId, url: fullUrl, width: Number(widthMatch ? widthMatch[1] : "1080") || 1080, alternates: alts}};
         }}
       }}
     }}
@@ -547,14 +589,18 @@ pub fn initialization_script(nonce: &str) -> String {
   const findCurrentViewerPhoto = () => {{
     const pageUrl = new URL(location.href);
     let photoId = pageUrl.searchParams.get("fbid") || pageUrl.searchParams.get("photo_id") || "";
-    const preferredImages = Array.from(document.querySelectorAll('[data-sigil*="photo-image"]'))
+    if (/^[0-9]{{5,30}}$/.test(photoId)) {{
+      const scriptPhoto = findScriptViewerPhoto(photoId);
+      if (scriptPhoto) return scriptPhoto;
+    }}
+    const preferredImages = Array.from(document.querySelectorAll('[data-visualcompletion="media-vc-image"], img[data-visualcompletion], [data-sigil*="photo-image"]'))
       .filter((image) => image.tagName === "IMG");
     const allImages = preferredImages.length ? preferredImages : Array.from(document.images);
     const candidates = allImages.map((image) => {{
       const selected = chooseImage(image);
       const rect = image.getBoundingClientRect();
-      return selected && image.complete && image.naturalWidth >= 80
-        && rect.width >= 80 && rect.height >= 80
+      return selected && image.complete && image.naturalWidth >= 200 && image.naturalHeight >= 200
+        && rect.width >= 100 && rect.height >= 100
         ? {{image, selected, area: rect.width * rect.height}}
         : null;
     }}).filter(Boolean).sort((left, right) => right.area - left.area);
@@ -1073,6 +1119,9 @@ mod tests {
     fn only_facebook_post_links_are_accepted() {
         assert!(validate_post_url("https://www.facebook.com/share/p/abc123/").is_ok());
         assert!(validate_post_url("https://www.facebook.com/groups/42/permalink/123/").is_ok());
+        assert!(validate_post_url("https://www.facebook.com/photo/?fbid=123").is_ok());
+        assert!(validate_post_url("https://www.facebook.com/user/photos/456").is_ok());
+        assert!(validate_post_url("https://www.facebook.com/media/set/?set=pcb.123").is_ok());
         assert!(validate_post_url("http://www.facebook.com/share/p/abc123/").is_err());
         assert!(validate_post_url("https://example.com/posts/123").is_err());
     }

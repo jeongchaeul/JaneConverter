@@ -1416,11 +1416,6 @@ fn start_conversion(
         }
         Some(ready.1)
     } else {
-        if facebook_capture::validate_post_url(&request.source).is_ok()
-            && !facebook_capture::is_video_conversion_intent(&request.category, &request.format)
-        {
-            return Err("Capture the public Facebook album before starting its download.".into());
-        }
         None
     };
     let social_manifest = if let Some(capture_id) = request.social_capture_id.clone() {
@@ -2523,6 +2518,104 @@ async fn install_update(
 }
 
 #[tauri::command]
+fn get_chromium_cookie_policy() -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+        use winreg::RegKey;
+        for root in [
+            RegKey::predef(HKEY_CURRENT_USER),
+            RegKey::predef(HKEY_LOCAL_MACHINE),
+        ] {
+            for subkey in [
+                r"Software\Policies\Microsoft\Edge",
+                r"Software\Policies\Google\Chrome",
+            ] {
+                if let Ok(key) = root.open_subkey(subkey) {
+                    if let Ok(val) = key.get_value::<u32, _>("ApplicationBoundEncryptionEnabled") {
+                        if val == 0 {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+fn set_chromium_cookie_policy(enabled: bool) -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+        use winreg::RegKey;
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let targets = [
+            r"Software\Policies\Microsoft\Edge",
+            r"Software\Policies\Google\Chrome",
+        ];
+
+        let mut direct_ok = true;
+        for target in targets {
+            if enabled {
+                if let Err(_) = hkcu
+                    .create_subkey(target)
+                    .and_then(|(k, _)| k.set_value("ApplicationBoundEncryptionEnabled", &0u32))
+                {
+                    direct_ok = false;
+                    break;
+                }
+            } else if let Ok(key) = hkcu.open_subkey_with_flags(target, KEY_SET_VALUE) {
+                let _ = key.delete_value("ApplicationBoundEncryptionEnabled");
+            }
+        }
+
+        if direct_ok && (!enabled || get_chromium_cookie_policy().unwrap_or(false)) {
+            return Ok(enabled);
+        }
+
+        // Direct write was blocked by Windows ACL. Elevate via PowerShell Start-Process -Verb RunAs.
+        let ps_script = if enabled {
+            r#"Start-Process cmd.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '/c reg add "HKCU\Software\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f & reg add "HKCU\Software\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f & reg add "HKLM\Software\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f & reg add "HKLM\Software\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f'"#
+        } else {
+            r#"Start-Process cmd.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '/c reg delete "HKCU\Software\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /f & reg delete "HKCU\Software\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /f & reg delete "HKLM\Software\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /f & reg delete "HKLM\Software\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /f'"#
+        };
+
+        let status = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                ps_script,
+            ])
+            .status()
+            .map_err(|e| format!("Could not launch administrator setup: {e}"))?;
+
+        if !status.success() {
+            return Err("Administrator approval was declined or cancelled.".into());
+        }
+
+        let current = get_chromium_cookie_policy().unwrap_or(false);
+        if current == enabled {
+            Ok(enabled)
+        } else {
+            Err("Windows policy was not updated. If a UAC prompt appeared, please ensure you select 'Yes'.".into())
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(enabled)
+    }
+}
+
+#[tauri::command]
 fn notify_attention(app: tauri::AppHandle) {
     notify_user_attention(&app);
 }
@@ -2584,6 +2677,8 @@ pub fn run() {
             install_update,
             export_log_file,
             set_taskbar_progress,
+            get_chromium_cookie_policy,
+            set_chromium_cookie_policy,
         ])
         .run(tauri::generate_context!())
         .expect("error while running JaneConverter Desktop");
@@ -2722,5 +2817,11 @@ mod tests {
             crate::process::build_conversion_args_with_capture(&request, None, None, false)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn chromium_cookie_policy_query_does_not_panic() {
+        let res = get_chromium_cookie_policy();
+        assert!(res.is_ok());
     }
 }

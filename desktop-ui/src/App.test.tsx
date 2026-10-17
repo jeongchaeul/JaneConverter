@@ -141,7 +141,7 @@ describe("Application shell", () => {
     const dragLibraryFileSpy = vi.spyOn(bridge, "dragLibraryFile").mockResolvedValue();
     const openFileBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.includes("Open File"));
     const openPathBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.includes("Open Path"));
-    const dragFileBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.includes("Drag File"));
+    const dragFileBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.getAttribute("aria-label")?.includes("Drag this file"));
     const closeBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.trim() === "Close");
 
     expect(dragFileBtn?.draggable).toBe(true);
@@ -158,11 +158,15 @@ describe("Application shell", () => {
     expect(openFileSpy).toHaveBeenCalledWith("D:\\JaneConverter\\converted\\Images\\Local Files\\sample.png");
     expect(openPathSpy).toHaveBeenCalledWith("D:\\JaneConverter\\converted\\Images\\Local Files\\sample.png");
 
+    const convertAnotherBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.getAttribute("aria-label")?.includes("Convert another"));
+    expect(convertAnotherBtn).toBeDefined();
+
     await act(async () => {
-      closeBtn?.click();
+      convertAnotherBtn?.click();
       await Promise.resolve();
     });
     expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.querySelector('input[aria-label="Source media URL or local path"]')).not.toBeNull();
 
     await act(async () => { root.unmount(); });
     container.remove();

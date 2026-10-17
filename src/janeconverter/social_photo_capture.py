@@ -531,16 +531,17 @@ def fetch_instagram_manifest(
     if media_type == 2 and not item.get("carousel_media"):
         return {"platform": "instagram", "media_kind": "video", "title": shortcode}
 
-    user = item.get("user", {}).get("username") or "instagram_post"
-    caption_text = item.get("caption", {}).get("text") or ""
+    user = (item.get("user") or {}).get("username") or "instagram_post"
+    caption_obj = item.get("caption") or {}
+    caption_text = caption_obj.get("text") or ""
     clean_caption = sanitize_filename(caption_text.split("\n")[0][:60], max_length=60)
     title = clean_caption if clean_caption and clean_caption != "media_file" else f"Instagram Post by @{user}"
 
     photos = []
-    carousel = item.get("carousel_media", [])
+    carousel = item.get("carousel_media") or []
     if carousel:
         for idx, sub in enumerate(carousel, start=1):
-            candidates = sub.get("image_versions2", {}).get("candidates", [])
+            candidates = (sub.get("image_versions2") or {}).get("candidates") or []
             if not candidates:
                 continue
             best = max(candidates, key=lambda c: c.get("width", 0))
@@ -551,7 +552,7 @@ def fetch_instagram_manifest(
                 "width": best.get("width", 1080),
             })
     else:
-        candidates = item.get("image_versions2", {}).get("candidates", [])
+        candidates = (item.get("image_versions2") or {}).get("candidates") or []
         if candidates:
             best = max(candidates, key=lambda c: c.get("width", 0))
             photo_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(item.get("pk") or media_pk))[:200]

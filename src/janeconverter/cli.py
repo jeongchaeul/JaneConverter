@@ -45,7 +45,11 @@ from .paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, initialize_app_data
 from .auth import normalize_browser_session
 from .browser_session_fallback import BrowserSessionError
 from .extraction_recovery import classify_extraction, ExtractionCategory
-from .facebook_capture import download_facebook_photo_manifest
+from .facebook_capture import (
+    download_facebook_photo_manifest,
+    is_facebook_post_url,
+    fetch_facebook_manifest,
+)
 from .social_photo_capture import (
     MEDIA_HOSTS as SOCIAL_PHOTO_MEDIA_HOSTS,
     download_social_photo_manifest,
@@ -298,6 +302,19 @@ def process_conversion(
         target_format in ("source", "original") and str(content_category or "").lower() in ("audio", "music")
     )
     is_image_target = target_format in SUPPORTED_IMAGE_FORMATS
+
+    if facebook_photo_manifest is None and is_facebook_post_url(source):
+        try:
+            report(0.02, "Reading Facebook post via browser session...")
+            fb_manifest = fetch_facebook_manifest(
+                source,
+                browser=auth_browser,
+                progress_callback=report,
+            )
+            if fb_manifest and fb_manifest.get("photos"):
+                facebook_photo_manifest = fb_manifest
+        except Exception as fb_err:
+            report(0.05, f"Facebook browser session bypassed ({type(fb_err).__name__}). Proceeding to standard stream extractor...")
 
     if facebook_photo_manifest is not None:
         photo_format = target_format if is_image_target else None
