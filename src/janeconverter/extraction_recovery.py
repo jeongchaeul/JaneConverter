@@ -48,6 +48,7 @@ def extract_with_recovery(ydl, query, download, abort_event=None, report=None, d
     client_ladder = [
         {"youtube": {"player_client": ["web_embedded", "android"]}},
         {"youtube": {"player_client": ["android", "ios"]}},
+        {"youtube": {"player_client": ["mweb", "tv"]}},
     ]
     try:
         for attempt in range(4):

@@ -331,6 +331,64 @@ def _clean_fb_photo_url(uri: str) -> str:
     return cleaned.rstrip('&').rstrip('?')
 
 
+_CACHED_FB_PAGINATION: dict[str, tuple[str, str]] = {}
+
+
+def _resolve_facebook_pagination_query(html: str, session: requests.Session) -> tuple[str, str]:
+    """Dynamically resolve the current Comet album pagination query name and doc_id.
+
+    Adapts automatically when Facebook rotates frontend Relay query hashes or changes query names.
+    Returns (query_name, doc_id).
+    """
+    cached = _CACHED_FB_PAGINATION.get("resolved")
+    if cached:
+        return cached
+
+    # 1. Direct match in HTML if rendered inline
+    candidate_queries = (
+        "CometAlbumPhotoCollagePaginationQuery",
+        "ProfileCometLegacyAlbumGridViewPaginationQuery",
+        "ProfileCometLegacyAlbumFeedViewPaginationQuery",
+    )
+    for q_name in candidate_queries:
+        m = re.search(
+            rf'"{re.escape(q_name)}_facebookRelayOperation"\s*,\s*\[\]\s*,\s*\(function\([^)]*\)\s*\{{[^}}]*"(\d{{15,}})"',
+            html,
+        )
+        if m:
+            _CACHED_FB_PAGINATION["resolved"] = (q_name, m.group(1))
+            return q_name, m.group(1)
+
+    # 2. Inspect referenced JS bundles for the Relay operation export
+    bundle_matches = re.findall(
+        r'"url"\s*:\s*"(https:[^"]+)"\s*,\s*"refs"\s*:\s*\[[^\]]*CometPhotoAlbumQueryRelayPreloader[^\]]*\]',
+        html,
+    ) + re.findall(
+        r'"refs"\s*:\s*\[[^\]]*CometPhotoAlbumQueryRelayPreloader[^\]]*\]\s*,\s*"url"\s*:\s*"(https:[^"]+)"',
+        html,
+    )
+    for raw_url in bundle_matches:
+        bundle_url = raw_url.replace(r"\/", "/")
+        if not (".js" in bundle_url):
+            continue
+        try:
+            resp = session.get(bundle_url, timeout=(5, 10))
+            if resp.status_code == 200:
+                for q_name in candidate_queries:
+                    m = re.search(
+                        rf'{re.escape(q_name)}_facebookRelayOperation[^{{]*?\{{a\.exports="(\d{{15,}})"\}}',
+                        resp.text,
+                    )
+                    if m:
+                        _CACHED_FB_PAGINATION["resolved"] = (q_name, m.group(1))
+                        return q_name, m.group(1)
+        except Exception:
+            continue
+
+    # 3. Fallback to resilient default
+    return "CometAlbumPhotoCollagePaginationQuery", "28559589567041913"
+
+
 def fetch_facebook_manifest(
     url: str,
     browser: Optional[str] = None,
@@ -640,6 +698,15 @@ def fetch_facebook_manifest(
                         user_id = user_m.group(1) if user_m else "0"
                         jazoest = f"2{sum(ord(c) for c in fb_dtsg)}" if fb_dtsg else "25474"
 
+                        query_name, doc_id = _resolve_facebook_pagination_query(album_html, session)
+
+                        hs_m = re.search(r'"haste_session"\s*:\s*"([^"]+)"', album_html) or re.search(r'__hs=([^&"\']+)', album_html)
+                        haste_session = hs_m.group(1) if hs_m else "19738.HYP:comet_pkg.2.1..0.0"
+                        rev_m = re.search(r'"server_revision"\s*:\s*(\d+)', album_html) or re.search(r'"__spin_r"\s*:\s*(\d+)', album_html)
+                        server_rev = str(rev_m.group(1)) if rev_m else "1019000000"
+                        hsi_m = re.search(r'"hsi"\s*:\s*"([^"]+)"', album_html) or re.search(r'"__hsi"\s*:\s*"([^"]+)"', album_html)
+                        hsi_val = hsi_m.group(1) if hsi_m else None
+
                         page = 1
                         while has_next and cursor and album_node_id and fb_dtsg and len(photos) < MAX_PHOTOS and page <= 50:
                             page += 1
@@ -649,15 +716,15 @@ def fetch_facebook_manifest(
                                 "__user": user_id,
                                 "__a": "1",
                                 "__req": str(page),
-                                "__hs": "19738.HYP:comet_pkg.2.1..0.0",
+                                "__hs": haste_session,
                                 "dpr": "1",
                                 "__ccg": "EXCELLENT",
-                                "__rev": "1019000000",
+                                "__rev": server_rev,
                                 "__comet_req": "15",
                                 "fb_dtsg": fb_dtsg,
                                 "jazoest": jazoest,
                                 "fb_api_caller_class": "RelayModern",
-                                "fb_api_req_friendly_name": "CometAlbumPhotoCollagePaginationQuery",
+                                "fb_api_req_friendly_name": query_name,
                                 "variables": json.dumps({
                                     "count": 50,
                                     "cursor": cursor,
@@ -666,8 +733,11 @@ def fetch_facebook_manifest(
                                     "scale": 1,
                                     "__relay_internal__pv__GHLShouldChangeSponsoredDataFieldNamerelayprovider": True,
                                 }),
-                                "doc_id": "28559589567041913",
+                                "doc_id": doc_id,
                             }
+                            if hsi_val:
+                                payload["__hsi"] = hsi_val
+
                             graphql_resp = session.post(
                                 "https://www.facebook.com/api/graphql/",
                                 data=payload,
@@ -687,6 +757,9 @@ def fetch_facebook_manifest(
                             media = node.get("media", {}) if isinstance(node, dict) else {}
                             edges = media.get("edges", []) if isinstance(media, dict) else []
                             if not edges:
+                                # Invalidate cache if query was rejected
+                                if isinstance(res_data, dict) and res_data.get("errors"):
+                                    _CACHED_FB_PAGINATION.clear()
                                 break
                             new_count = 0
                             for edge in edges:

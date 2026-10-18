@@ -362,35 +362,49 @@ def fetch_pinterest_newshub_manifest(
         if getattr(c, "name", None) == "csrftoken":
             csrf = c.value
 
-    data_payload = {
-        "options": {
-            "news_id": news_id
-        },
-        "context": {}
-    }
+    path_prefix = "notifications" if "/notifications/" in url else "news_hub"
+    candidate_resources = [
+        ("NewsHubDetailsResource", f"/{path_prefix}/{news_id}/"),
+        ("NotificationFeedResource", f"/{path_prefix}/{news_id}/"),
+        ("NewsHubDetailsResource", f"/news_hub/{news_id}/"),
+    ]
 
-    api_url = f"https://{domain}/resource/NewsHubDetailsResource/get/?source_url=/news_hub/{news_id}/&data=" + urllib.parse.quote(json.dumps(data_payload))
-
-    req = urllib.request.Request(
-        api_url,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
-            ),
-            "X-Pinterest-PWS-Handler": "www/news_hub/[id].js",
-            "X-Requested-With": "XMLHttpRequest",
-            "X-CSRFToken": csrf,
-            "Referer": url,
-            "Accept": "application/json, text/javascript, */*, q=0.01",
+    res_data = None
+    last_exc = None
+    for res_name, source_path in candidate_resources:
+        data_payload = {
+            "options": {
+                "news_id": news_id
+            },
+            "context": {}
         }
-    )
+        api_url = f"https://{domain}/resource/{res_name}/get/?source_url={urllib.parse.quote(source_path)}&data=" + urllib.parse.quote(json.dumps(data_payload))
+        req = urllib.request.Request(
+            api_url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+                ),
+                "X-Pinterest-PWS-Handler": f"www/{path_prefix}/[id].js",
+                "X-Requested-With": "XMLHttpRequest",
+                "X-CSRFToken": csrf,
+                "Referer": url,
+                "Accept": "application/json, text/javascript, */*, q=0.01",
+            }
+        )
+        try:
+            resp = opener.open(req)
+            parsed = json.loads(resp.read().decode("utf-8"))
+            if parsed.get("resource_response", {}).get("data"):
+                res_data = parsed
+                break
+        except Exception as exc:
+            last_exc = exc
+            continue
 
-    try:
-        resp = opener.open(req)
-        res_data = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:
-        raise RuntimeError(f"Pinterest notification request failed: {exc}") from exc
+    if not res_data:
+        raise RuntimeError(f"Pinterest collection request failed or returned empty: {last_exc or 'no data'}")
 
     items = res_data.get("resource_response", {}).get("data", [])
     if not items:
@@ -498,27 +512,46 @@ def fetch_instagram_manifest(
         report(0.06, f"Connected to Instagram session via {found_browser.title()}. Requesting post info...")
 
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar)) if jar else urllib.request.build_opener()
-    api_url = f"https://i.instagram.com/api/v1/media/{media_pk}/info/"
 
-    req = urllib.request.Request(
-        api_url,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
-            ),
-            "X-IG-App-ID": "936619743392459",
-            "X-Requested-With": "XMLHttpRequest",
-            "Referer": f"https://www.instagram.com/p/{shortcode}/",
-            "Accept": "*/*",
-        }
-    )
+    candidate_endpoints = [
+        f"https://i.instagram.com/api/v1/media/{media_pk}/info/",
+        f"https://www.instagram.com/api/v1/media/{media_pk}/info/",
+    ]
+    candidate_app_ids = [
+        "936619743392459",
+        "1217981644879628",
+        "567067343352427",
+    ]
 
-    try:
-        resp = opener.open(req)
-        res_data = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:
-        report(0.08, f"Instagram direct API request unavailable ({type(exc).__name__}). Falling back...")
+    res_data = None
+    for api_url in candidate_endpoints:
+        for app_id in candidate_app_ids:
+            req = urllib.request.Request(
+                api_url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+                    ),
+                    "X-IG-App-ID": app_id,
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Referer": f"https://www.instagram.com/p/{shortcode}/",
+                    "Accept": "*/*",
+                }
+            )
+            try:
+                resp = opener.open(req)
+                parsed = json.loads(resp.read().decode("utf-8"))
+                if parsed.get("items"):
+                    res_data = parsed
+                    break
+            except Exception:
+                continue
+        if res_data:
+            break
+
+    if not res_data:
+        report(0.08, "Instagram direct API request unavailable. Falling back to standard extractor...")
         return None
 
     items = res_data.get("items", [])

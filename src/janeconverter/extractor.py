@@ -813,6 +813,30 @@ def build_tiktok_candidates(url: str) -> list[str]:
     return candidates
 
 
+def build_twitter_candidates(url: str) -> list[str]:
+    """Build multi-strategy X/Twitter URL candidates to bypass guest walls and rate limits.
+
+    If x.com returns 401/403 or demands login, yt-dlp can seamlessly resolve through
+    canonical twitter.com or alternate domains.
+    """
+    candidates = [url]
+    m = re.search(r'/(?:status|statuses)/(\d+)', url)
+    if m:
+        parsed = urllib.parse.urlsplit(url)
+        clean_url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+        if clean_url not in candidates:
+            candidates.append(clean_url)
+        if "x.com" in parsed.netloc.lower():
+            tw_url = f"https://twitter.com{parsed.path}"
+            if tw_url not in candidates:
+                candidates.append(tw_url)
+        elif "twitter.com" in parsed.netloc.lower():
+            x_url = f"https://x.com{parsed.path}"
+            if x_url not in candidates:
+                candidates.append(x_url)
+    return candidates
+
+
 def _fetch_tiktok_direct(
     source: str,
     output_dir: str,
@@ -864,6 +888,31 @@ def _fetch_tiktok_direct(
                 parsed = resp.json()
                 if parsed.get("code") == 0 and parsed.get("data"):
                     data = parsed.get("data")
+        except (requests.RequestException, json.JSONDecodeError, ValueError):
+            pass
+
+    if not data:
+        # Adaptive fallback: secondary high-availability direct TikTok service (TikMate)
+        try:
+            resp = requests.post(
+                "https://api.tikmate.app/api/lookup",
+                data={"url": clean_source},
+                headers=headers,
+                timeout=12,
+            )
+            if resp.status_code == 200:
+                tm_data = resp.json()
+                tok = tm_data.get("token")
+                vid = tm_data.get("id")
+                if tok and vid:
+                    dl_url = f"https://tikmate.app/download/{tok}/{vid}.mp4?hd=1"
+                    data = {
+                        "id": str(vid),
+                        "title": tm_data.get("desc") or "TikTok Video",
+                        "author": {"unique_id": tm_data.get("author_unique_id") or "TikTok Creator"},
+                        "play": dl_url,
+                        "hdplay": dl_url,
+                    }
         except (requests.RequestException, json.JSONDecodeError, ValueError):
             pass
 
@@ -1176,6 +1225,8 @@ def fetch_media_stream(
         target_url = candidates[0] if candidates else apple_meta.get("search_query", "")
     elif source_type == "tiktok":
         candidates = build_tiktok_candidates(target_url)
+    elif source_type == "twitter":
+        candidates = build_twitter_candidates(target_url)
     elif target_url.startswith("ytsearch") or target_url.startswith("scsearch"):
         candidates = [target_url]
     else:
