@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -603,6 +604,108 @@ def fetch_facebook_manifest(
                             w = int(img.get("width") or 0)
                             h = int(img.get("height") or 0)
                             _add_photo(p_id, raw_uri, w, h)
+                    except Exception:
+                        pass
+
+                    # Paginate remaining album photos via Comet GraphQL
+                    try:
+                        end_of_arr = start_pos + len(arr_str)
+                        trailing_chunk = album_html[end_of_arr : end_of_arr + 1000]
+                        page_info_match = re.search(r'"page_info"\s*:\s*\{([^}]+)\}', trailing_chunk)
+                        cursor = None
+                        has_next = False
+                        if page_info_match:
+                            pi = json.loads("{" + page_info_match.group(1) + "}")
+                            cursor = pi.get("end_cursor")
+                            has_next = bool(pi.get("has_next_page"))
+
+                        id_m = re.search(r'"id"\s*:\s*"([^"]+)"', trailing_chunk)
+                        album_node_id = id_m.group(1) if id_m else None
+                        if not album_node_id and valid_mediaset:
+                            album_node_id = base64.b64encode(f"mediaset:{valid_mediaset}".encode()).decode()
+
+                        dtsg_m = (
+                            re.search(r'"DTSGInitialData"[^>]*?\{"token"\s*:\s*"([^"]+)"', album_html)
+                            or re.search(r'"DTSGInitialData"[^>]*?\{"token"\s*:\s*"([^"]+)"', html)
+                            or re.search(r'"token":"([a-zA-Z0-9_\-:]+)"', album_html)
+                            or re.search(r'"token":"([a-zA-Z0-9_\-:]+)"', html)
+                        )
+                        fb_dtsg = dtsg_m.group(1) if dtsg_m else None
+
+                        user_m = (
+                            re.search(r'__user=(\d+)', album_html)
+                            or re.search(r'"USER_ID":"(\d+)"', album_html)
+                            or re.search(r'"actorID":"(\d+)"', album_html)
+                        )
+                        user_id = user_m.group(1) if user_m else "0"
+                        jazoest = f"2{sum(ord(c) for c in fb_dtsg)}" if fb_dtsg else "25474"
+
+                        page = 1
+                        while has_next and cursor and album_node_id and fb_dtsg and len(photos) < MAX_PHOTOS and page <= 50:
+                            page += 1
+                            report(0.07, f"Loading Facebook album photos (found {len(photos)} so far)...")
+                            payload = {
+                                "av": user_id,
+                                "__user": user_id,
+                                "__a": "1",
+                                "__req": str(page),
+                                "__hs": "19738.HYP:comet_pkg.2.1..0.0",
+                                "dpr": "1",
+                                "__ccg": "EXCELLENT",
+                                "__rev": "1019000000",
+                                "__comet_req": "15",
+                                "fb_dtsg": fb_dtsg,
+                                "jazoest": jazoest,
+                                "fb_api_caller_class": "RelayModern",
+                                "fb_api_req_friendly_name": "CometAlbumPhotoCollagePaginationQuery",
+                                "variables": json.dumps({
+                                    "count": 50,
+                                    "cursor": cursor,
+                                    "id": album_node_id,
+                                    "renderLocation": "permalink",
+                                    "scale": 1,
+                                    "__relay_internal__pv__GHLShouldChangeSponsoredDataFieldNamerelayprovider": True,
+                                }),
+                                "doc_id": "28559589567041913",
+                            }
+                            graphql_resp = session.post(
+                                "https://www.facebook.com/api/graphql/",
+                                data=payload,
+                                timeout=(10, 25),
+                                headers={
+                                    "Origin": "https://www.facebook.com",
+                                    "Referer": target_album_url,
+                                    "Sec-Fetch-Dest": "empty",
+                                    "Sec-Fetch-Mode": "cors",
+                                    "Sec-Fetch-Site": "same-origin",
+                                },
+                            )
+                            if graphql_resp.status_code != 200:
+                                break
+                            res_data = graphql_resp.json()
+                            node = res_data.get("data", {}).get("node", {}) if isinstance(res_data, dict) else {}
+                            media = node.get("media", {}) if isinstance(node, dict) else {}
+                            edges = media.get("edges", []) if isinstance(media, dict) else []
+                            if not edges:
+                                break
+                            new_count = 0
+                            for edge in edges:
+                                edge_node = edge.get("node") or {}
+                                if edge_node.get("is_playable") or edge_node.get("__typename") == "Video":
+                                    has_video = True
+                                p_id = str(edge_node.get("id") or "").strip()
+                                img = edge_node.get("image") or {}
+                                raw_uri = img.get("uri") or ""
+                                w = int(img.get("width") or 0)
+                                h = int(img.get("height") or 0)
+                                if p_id and p_id not in photos:
+                                    new_count += 1
+                                _add_photo(p_id, raw_uri, w, h)
+                            if new_count == 0:
+                                break
+                            pi = media.get("page_info", {}) if isinstance(media, dict) else {}
+                            has_next = bool(pi.get("has_next_page"))
+                            cursor = pi.get("end_cursor")
                     except Exception:
                         pass
 

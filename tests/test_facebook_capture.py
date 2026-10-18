@@ -489,4 +489,97 @@ def test_fetch_facebook_manifest_mediaset_complete_album(monkeypatch):
     assert "ctp=s960x960" not in manifest["photos"][0]["url"]
 
 
+def test_fetch_facebook_manifest_album_graphql_pagination(monkeypatch):
+    class _MockCookie:
+        def __init__(self, name, value, domain=".facebook.com", path="/"):
+            self.name = name
+            self.value = value
+            self.domain = domain
+            self.path = path
+
+    class _MockYDL:
+        def __init__(self, *args, **kwargs):
+            self.cookiejar = [_MockCookie("c_user", "10001"), _MockCookie("xs", "secret")]
+
+    import yt_dlp
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _MockYDL)
+
+    post_html = (
+        '<html><head><title>Album Post - Facebook</title></head><body>'
+        '<script>'
+        '{"mediaset_token":"pcb.778899"}'
+        '</script>'
+        '</body></html>'
+    )
+
+    mediaset_html = (
+        '<html><head><title>Photos in Album - Facebook</title></head><body>'
+        '<script>'
+        '{"DTSGInitialData":{"token":"dtsg_secret_token_12345"}}'
+        '</script>'
+        '<script>'
+        '{"media":{"edges":['
+        '{"node":{"__typename":"Photo","id":"101","image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/photo101.jpg","width":1080,"height":1080}}},'
+        '{"node":{"__typename":"Photo","id":"102","image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/photo102.jpg","width":1080,"height":1080}}}'
+        '],"page_info":{"end_cursor":"cursor_batch_1","has_next_page":true}},"id":"bWVkaWFzZXQ6cGNiLjc3ODg5OQ=="}'
+        '</script></body></html>'
+    )
+
+    graphql_page_2 = {
+        "data": {
+            "node": {
+                "media": {
+                    "edges": [
+                        {"node": {"__typename": "Photo", "id": "103", "image": {"uri": "https://scontent.xx.fbcdn.net/photo103.jpg", "width": 1080, "height": 1080}}},
+                        {"node": {"__typename": "Photo", "id": "104", "image": {"uri": "https://scontent.xx.fbcdn.net/photo104.jpg", "width": 1080, "height": 1080}}},
+                    ],
+                    "page_info": {
+                        "end_cursor": "cursor_batch_2",
+                        "has_next_page": False,
+                    },
+                }
+            }
+        }
+    }
+
+    class _MockSession:
+        def __init__(self):
+            self.cookies = type("MockCookies", (), {"set": lambda *args, **kwargs: None})()
+            self.headers = {}
+            self.graphql_calls = []
+
+        def get(self, url, **kwargs):
+            class _Resp:
+                def __init__(self, text, resp_url):
+                    self.status_code = 200
+                    self.text = text
+                    self.url = resp_url
+            if "media/set" in url:
+                return _Resp(mediaset_html, url)
+            return _Resp(post_html, url)
+
+        def post(self, url, **kwargs):
+            self.graphql_calls.append((url, kwargs.get("data", {})))
+            class _GqlResp:
+                status_code = 200
+                def json(self):
+                    return graphql_page_2
+            return _GqlResp()
+
+    session_inst = _MockSession()
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session_inst)
+
+    manifest = facebook_capture.fetch_facebook_manifest("https://www.facebook.com/share/p/19RLsXCtZM/", browser="vivaldi")
+    assert manifest is not None
+    assert manifest["title"] == "Album Post"
+    assert len(manifest["photos"]) == 4
+    assert [p["id"] for p in manifest["photos"]] == ["101", "102", "103", "104"]
+    assert len(session_inst.graphql_calls) == 1
+    gql_url, gql_payload = session_inst.graphql_calls[0]
+    assert "api/graphql" in gql_url
+    assert gql_payload["doc_id"] == "28559589567041913"
+    assert "cursor_batch_1" in gql_payload["variables"]
+
+
+
 
