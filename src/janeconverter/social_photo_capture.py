@@ -297,25 +297,58 @@ def download_social_photo_manifest(
     }
 
 
-def is_pinterest_newshub_url(url: str) -> bool:
-    """Identify if a URL is a Pinterest personalized notification / news_hub link."""
+def resolve_pinterest_shortlink(url: str, timeout: float = 8.0) -> str:
+    """Expand pin.it shortlinks to their full Pinterest destination URL."""
     try:
-        parsed = urllib.parse.urlparse(str(url or "").strip())
+        raw = str(url or "").strip()
+        parsed = urllib.parse.urlparse(raw)
+        if (parsed.hostname or "").lower() == "pin.it":
+            req = urllib.request.Request(
+                raw,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    )
+                },
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.geturl()
+    except Exception:
+        pass
+    return url
+
+
+def is_pinterest_collection_url(url: str) -> bool:
+    """Identify if a URL is a Pinterest notification, news_hub, or multi-pin-share collection."""
+    try:
+        raw = str(url or "").strip()
+        parsed = urllib.parse.urlparse(raw)
         host = (parsed.hostname or "").lower()
+        if host == "pin.it":
+            resolved = resolve_pinterest_shortlink(raw)
+            if resolved != raw:
+                return is_pinterest_collection_url(resolved)
+            return False
         if not (host == "pinterest.com" or host.endswith(".pinterest.com")):
             return False
         path = parsed.path.lower()
-        return bool(re.search(r"^/(?:news_hub|notifications)/\d+", path))
+        return bool(re.search(r"^/(?:news_hub|notifications|multi-pin-share)/\d+", path))
     except Exception:
         return False
 
 
-def fetch_pinterest_newshub_manifest(
+def is_pinterest_newshub_url(url: str) -> bool:
+    """Backward-compatible alias for is_pinterest_collection_url."""
+    return is_pinterest_collection_url(url)
+
+
+def fetch_pinterest_collection_manifest(
     url: str,
     browser: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> dict[str, Any]:
-    """Extract photos from a signed-in Pinterest news_hub notification collection using desktop session cookies."""
+    """Extract photos from a signed-in Pinterest collection (news_hub, notifications, or multi-pin-share) using desktop session cookies."""
     patch_yt_dlp_cookie_database_reader()
     import yt_dlp
 
@@ -323,13 +356,15 @@ def fetch_pinterest_newshub_manifest(
         if progress_callback:
             progress_callback(pct, msg)
 
-    match = re.search(r"/(?:news_hub|notifications)/(\d+)", url)
-    if not match:
-        raise ValueError(f"Invalid Pinterest notification URL: {url}")
-    news_id = match.group(1)
-
-    parsed = urllib.parse.urlparse(url)
+    expanded_url = resolve_pinterest_shortlink(url)
+    parsed = urllib.parse.urlparse(expanded_url)
     domain = parsed.netloc or "www.pinterest.com"
+
+    mps_match = re.search(r"/multi-pin-share/(\d+)", expanded_url)
+    news_match = re.search(r"/(?:news_hub|notifications)/(\d+)", expanded_url)
+
+    if not mps_match and not news_match:
+        raise ValueError(f"Invalid Pinterest collection URL: {url}")
 
     report(0.04, "Searching desktop browsers for an active Pinterest session...")
     preferred = [browser] if browser and browser.lower() not in ("none", "auto", "public", "public only") else []
@@ -359,10 +394,98 @@ def fetch_pinterest_newshub_manifest(
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     csrf = ""
     for c in jar:
-        if getattr(c, "name", None) == "csrftoken":
+        if getattr(c, "name", None) == "csrftoken" and "pinterest" in getattr(c, "domain", ""):
             csrf = c.value
 
-    path_prefix = "notifications" if "/notifications/" in url else "news_hub"
+    headers_base = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "X-Requested-With": "XMLHttpRequest",
+        "X-CSRFToken": csrf,
+        "Referer": expanded_url,
+        "Accept": "application/json, text/javascript, */*, q=0.01",
+    }
+
+    if mps_match:
+        mps_id = mps_match.group(1)
+        # 1. Get multi-pin-share object to obtain pin_ids
+        payload_mps = {
+            "options": {
+                "url": f"/v3/multipinshare/{mps_id}/",
+                "params": {"mps_id": mps_id},
+            },
+            "context": {}
+        }
+        api_url_mps = f"https://{domain}/resource/ApiResource/get/?source_url={urllib.parse.quote(f'/multi-pin-share/{mps_id}/')}&data={urllib.parse.quote(json.dumps(payload_mps))}"
+        req_mps = urllib.request.Request(
+            api_url_mps,
+            headers={**headers_base, "X-Pinterest-PWS-Handler": "www/multi-pin-share/[id].js"}
+        )
+        try:
+            resp = opener.open(req_mps)
+            data_mps = json.loads(resp.read().decode("utf-8"))
+            pin_ids = data_mps.get("resource_response", {}).get("data", {}).get("pin_ids", [])
+        except Exception as exc:
+            raise RuntimeError(f"Pinterest multi-pin-share request failed: {exc}") from exc
+
+        if not pin_ids:
+            raise RuntimeError("Pinterest returned no items for this share collection.")
+
+        report(0.07, f"Discovered {len(pin_ids)} pins in share collection. Fetching details...")
+
+        # 2. Batch request pin details
+        payload_pins = {
+            "options": {
+                "url": "/v3/pins/",
+                "data": {"pin_ids": pin_ids},
+            },
+            "context": {}
+        }
+        api_url_pins = f"https://{domain}/resource/ApiResource/get/?data={urllib.parse.quote(json.dumps(payload_pins))}"
+        req_pins = urllib.request.Request(
+            api_url_pins,
+            headers={**headers_base, "X-Pinterest-PWS-Handler": "www/multi-pin-share/[id].js"}
+        )
+        try:
+            resp = opener.open(req_pins)
+            data_pins = json.loads(resp.read().decode("utf-8"))
+            pins_data = data_pins.get("resource_response", {}).get("data", [])
+        except Exception as exc:
+            raise RuntimeError(f"Pinterest batch pins request failed: {exc}") from exc
+
+        photos = []
+        seen_ids = set()
+        for p in pins_data:
+            img = p.get("image_large_url") or p.get("image_medium_url") or p.get("image_square_url")
+            if not img:
+                continue
+            orig_url = re.sub(r"/\d+x(?:\d+|_RS)?/", "/originals/", img)
+            name = orig_url.split("/")[-1]
+            photo_id = str(p.get("id") or re.sub(r"\.[a-zA-Z0-9]+$", "", name).replace("-", "_"))
+            if not photo_id or photo_id in seen_ids:
+                continue
+            seen_ids.add(photo_id)
+            pin_title = (p.get("title") or p.get("description") or f"Pin {photo_id}").strip()
+            photos.append({
+                "id": photo_id,
+                "url": orig_url,
+                "title": pin_title[:80],
+                "width": 1200
+            })
+
+        collection_title = f"Pinterest Share {mps_id}"
+        report(0.08, f"Found {len(photos)} photos in '{collection_title}'. Starting download...")
+        return {
+            "platform": "pinterest",
+            "title": collection_title,
+            "photos": photos
+        }
+
+    # news_hub / notifications branch
+    news_id = news_match.group(1)
+    path_prefix = "notifications" if "/notifications/" in expanded_url else "news_hub"
     candidate_resources = [
         ("NewsHubDetailsResource", f"/{path_prefix}/{news_id}/"),
         ("NotificationFeedResource", f"/{path_prefix}/{news_id}/"),
@@ -382,22 +505,15 @@ def fetch_pinterest_newshub_manifest(
         req = urllib.request.Request(
             api_url,
             headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
-                ),
+                **headers_base,
                 "X-Pinterest-PWS-Handler": f"www/{path_prefix}/[id].js",
-                "X-Requested-With": "XMLHttpRequest",
-                "X-CSRFToken": csrf,
-                "Referer": url,
-                "Accept": "application/json, text/javascript, */*, q=0.01",
             }
         )
         try:
             resp = opener.open(req)
-            parsed = json.loads(resp.read().decode("utf-8"))
-            if parsed.get("resource_response", {}).get("data"):
-                res_data = parsed
+            parsed_json = json.loads(resp.read().decode("utf-8"))
+            if parsed_json.get("resource_response", {}).get("data"):
+                res_data = parsed_json
                 break
         except Exception as exc:
             last_exc = exc
@@ -440,6 +556,15 @@ def fetch_pinterest_newshub_manifest(
         "title": detail_header,
         "photos": photos
     }
+
+
+def fetch_pinterest_newshub_manifest(
+    url: str,
+    browser: Optional[str] = None,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+) -> dict[str, Any]:
+    """Backward-compatible alias for fetch_pinterest_collection_manifest."""
+    return fetch_pinterest_collection_manifest(url, browser=browser, progress_callback=progress_callback)
 
 
 def _shortcode_to_pk(shortcode: str) -> int:

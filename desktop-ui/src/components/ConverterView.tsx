@@ -103,7 +103,7 @@ function isPinterestNotificationRoute(value: string): boolean {
     const path = url.pathname.toLowerCase();
     if (!(host === "pinterest.com" || host.endsWith(".pinterest.com") || host === "pin.it")) return false;
     const segs = path.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
-    return segs.length >= 2 && (segs[0] === "news_hub" || segs[0] === "notifications");
+    return segs.length >= 2 && (segs[0] === "news_hub" || segs[0] === "notifications" || segs[0] === "multi-pin-share");
   } catch {
     return false;
   }

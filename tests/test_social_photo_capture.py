@@ -375,14 +375,93 @@ def test_pinterest_get_photo_upgrades_to_highest_available_candidate():
 
 
 def test_is_pinterest_newshub_url():
-    from janeconverter.social_photo_capture import is_pinterest_newshub_url
+    from janeconverter.social_photo_capture import is_pinterest_newshub_url, is_pinterest_collection_url
 
     assert is_pinterest_newshub_url("https://ph.pinterest.com/news_hub/3943610033677608128/") is True
     assert is_pinterest_newshub_url("https://www.pinterest.com/news_hub/123456789") is True
     assert is_pinterest_newshub_url("https://pinterest.com/notifications/987654321") is True
+    assert is_pinterest_newshub_url("https://www.pinterest.com/multi-pin-share/3085903370100674897/") is True
     assert is_pinterest_newshub_url("https://ph.pinterest.com/pin/123456789/") is False
     assert is_pinterest_newshub_url("https://instagram.com/p/abc123xyz") is False
     assert is_pinterest_newshub_url("not a url") is False
+
+    assert is_pinterest_collection_url("https://www.pinterest.com/multi-pin-share/3085903370100674897/") is True
+    assert is_pinterest_collection_url("https://ph.pinterest.com/news_hub/3943610033677608128/") is True
+    assert is_pinterest_collection_url("https://pinterest.com/pin/123456") is False
+
+
+def test_fetch_pinterest_multi_pin_share_manifest(monkeypatch):
+    import io
+    import json
+    from http.cookiejar import Cookie
+    from janeconverter.social_photo_capture import fetch_pinterest_collection_manifest
+
+    fake_cookie = Cookie(
+        version=0, name="csrftoken", value="fake_csrf", port=None, port_specified=False,
+        domain=".pinterest.com", domain_specified=True, domain_initial_dot=True,
+        path="/", path_specified=True, secure=True, expires=None, discard=False,
+        comment=None, comment_url=None, rest={}, rfc2109=False,
+    )
+    fake_auth_cookie = Cookie(
+        version=0, name="_auth", value="1", port=None, port_specified=False,
+        domain=".pinterest.com", domain_specified=True, domain_initial_dot=True,
+        path="/", path_specified=True, secure=True, expires=None, discard=False,
+        comment=None, comment_url=None, rest={}, rfc2109=False,
+    )
+
+    import http.cookiejar
+    class FakeCookieJar(http.cookiejar.CookieJar):
+        filename = None
+
+    fake_jar = FakeCookieJar()
+    fake_jar.set_cookie(fake_cookie)
+    fake_jar.set_cookie(fake_auth_cookie)
+
+    import yt_dlp
+    monkeypatch.setattr(yt_dlp.cookies, "extract_cookies_from_browser", lambda b, *a, **kw: fake_jar if b == "vivaldi" else [])
+
+    class FakeOpener:
+        def open(self, req):
+            url = req.full_url
+            if "multipinshare" in url:
+                resp = {
+                    "resource_response": {
+                        "data": {
+                            "id": "3085903370100674897",
+                            "pin_ids": ["111222333", "444555666"],
+                        }
+                    }
+                }
+                return io.BytesIO(json.dumps(resp).encode("utf-8"))
+            elif "pins" in url:
+                resp = {
+                    "resource_response": {
+                        "data": [
+                            {
+                                "id": "111222333",
+                                "title": "First Pin",
+                                "image_large_url": "https://i.pinimg.com/1200x/aa/bb/cc/aabbcc01.jpg",
+                            },
+                            {
+                                "id": "444555666",
+                                "title": "Second Pin",
+                                "image_large_url": "https://i.pinimg.com/736x/dd/ee/ff/ddeeff02.jpg",
+                            },
+                        ]
+                    }
+                }
+                return io.BytesIO(json.dumps(resp).encode("utf-8"))
+            raise ValueError(f"Unexpected url: {url}")
+
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: FakeOpener())
+
+    manifest = fetch_pinterest_collection_manifest("https://www.pinterest.com/multi-pin-share/3085903370100674897/")
+    assert manifest["platform"] == "pinterest"
+    assert manifest["title"] == "Pinterest Share 3085903370100674897"
+    assert len(manifest["photos"]) == 2
+    assert manifest["photos"][0]["url"] == "https://i.pinimg.com/originals/aa/bb/cc/aabbcc01.jpg"
+    assert manifest["photos"][1]["url"] == "https://i.pinimg.com/originals/dd/ee/ff/ddeeff02.jpg"
+
 
 
 def test_fetch_pinterest_newshub_manifest(monkeypatch):

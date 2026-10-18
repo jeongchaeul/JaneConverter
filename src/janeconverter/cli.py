@@ -54,7 +54,8 @@ from .social_photo_capture import (
     MEDIA_HOSTS as SOCIAL_PHOTO_MEDIA_HOSTS,
     download_social_photo_manifest,
     is_pinterest_newshub_url,
-    fetch_pinterest_newshub_manifest,
+    is_pinterest_collection_url,
+    fetch_pinterest_collection_manifest,
     is_instagram_post_url,
     fetch_instagram_manifest,
 )
@@ -334,9 +335,9 @@ def process_conversion(
         print("=" * 60)
         return album["folder_path"]
 
-    if social_photo_manifest is None and is_pinterest_newshub_url(source):
-        report(0.02, "Reading Pinterest notification collection via browser session cookies...")
-        social_photo_manifest = fetch_pinterest_newshub_manifest(
+    if social_photo_manifest is None and (is_pinterest_collection_url(source) or is_pinterest_newshub_url(source)):
+        report(0.02, "Reading Pinterest collection via browser session cookies...")
+        social_photo_manifest = fetch_pinterest_collection_manifest(
             source,
             browser=auth_browser,
             progress_callback=report,
