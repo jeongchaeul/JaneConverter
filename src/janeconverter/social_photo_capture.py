@@ -343,12 +343,31 @@ def is_pinterest_newshub_url(url: str) -> bool:
     return is_pinterest_collection_url(url)
 
 
+def is_pinterest_pin_url(url: str) -> bool:
+    """Identify if a URL is an individual Pinterest pin."""
+    try:
+        raw = str(url or "").strip()
+        parsed = urllib.parse.urlparse(raw)
+        host = (parsed.hostname or "").lower()
+        if host == "pin.it":
+            resolved = resolve_pinterest_shortlink(raw)
+            if resolved != raw:
+                return is_pinterest_pin_url(resolved)
+            return False
+        if not (host == "pinterest.com" or host.endswith(".pinterest.com")):
+            return False
+        path = parsed.path.lower()
+        return bool(re.search(r"^/(?:[a-z]{2}/)?pin/\d+", path))
+    except Exception:
+        return False
+
+
 def fetch_pinterest_collection_manifest(
     url: str,
     browser: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> dict[str, Any]:
-    """Extract photos from a signed-in Pinterest collection (news_hub, notifications, or multi-pin-share) using desktop session cookies."""
+    """Extract photos from a signed-in Pinterest collection (news_hub, notifications, or multi-pin-share) or single pin."""
     patch_yt_dlp_cookie_database_reader()
     import yt_dlp
 
@@ -362,9 +381,10 @@ def fetch_pinterest_collection_manifest(
 
     mps_match = re.search(r"/multi-pin-share/(\d+)", expanded_url)
     news_match = re.search(r"/(?:news_hub|notifications)/(\d+)", expanded_url)
+    pin_match = re.search(r"/(?:[a-z]{2}/)?pin/(\d+)", expanded_url)
 
-    if not mps_match and not news_match:
-        raise ValueError(f"Invalid Pinterest collection URL: {url}")
+    if not mps_match and not news_match and not pin_match:
+        raise ValueError(f"Invalid Pinterest media URL: {url}")
 
     report(0.04, "Searching desktop browsers for an active Pinterest session...")
     preferred = [browser] if browser and browser.lower() not in ("none", "auto", "public", "public only") else []
@@ -384,29 +404,122 @@ def fetch_pinterest_collection_manifest(
         except Exception:
             continue
 
-    if not jar:
-        raise RuntimeError(
-            "Could not read an active Pinterest session from your desktop browsers. "
-            "Ensure you are logged into Pinterest in Vivaldi, Firefox, or Chrome."
-        )
-
-    report(0.06, f"Connected to Pinterest session via {found_browser.title()}. Requesting collection...")
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    opener = None
     csrf = ""
-    for c in jar:
-        if getattr(c, "name", None) == "csrftoken" and "pinterest" in getattr(c, "domain", ""):
-            csrf = c.value
-
     headers_base = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         ),
-        "X-Requested-With": "XMLHttpRequest",
-        "X-CSRFToken": csrf,
         "Referer": expanded_url,
         "Accept": "application/json, text/javascript, */*, q=0.01",
     }
+
+    if jar:
+        report(0.06, f"Connected to Pinterest session via {found_browser.title()}. Requesting media...")
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        for c in jar:
+            if getattr(c, "name", None) == "csrftoken" and "pinterest" in getattr(c, "domain", ""):
+                csrf = c.value
+        headers_base.update({
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRFToken": csrf,
+        })
+    elif not pin_match:
+        raise RuntimeError(
+            "Could not read an active Pinterest session from your desktop browsers. "
+            "Ensure you are logged into Pinterest in Vivaldi, Firefox, or Chrome."
+        )
+
+    if pin_match:
+        pin_id = pin_match.group(1)
+        if jar and opener:
+            try:
+                payload_pins = {
+                    "options": {
+                        "url": "/v3/pins/",
+                        "data": {"pin_ids": [pin_id]},
+                    },
+                    "context": {},
+                }
+                api_url_pins = f"https://{domain}/resource/ApiResource/get/?data={urllib.parse.quote(json.dumps(payload_pins))}"
+                req_pins = urllib.request.Request(
+                    api_url_pins,
+                    headers={**headers_base, "X-Pinterest-PWS-Handler": "www/multi-pin-share/[id].js"},
+                )
+                resp = opener.open(req_pins)
+                data_pins = json.loads(resp.read().decode("utf-8"))
+                pins_data = data_pins.get("resource_response", {}).get("data", [])
+                if pins_data:
+                    p = pins_data[0]
+                    if p.get("videos"):
+                        return {"platform": "pinterest", "media_kind": "video", "title": f"Pinterest Pin {pin_id}"}
+                    img = p.get("image_large_url") or p.get("image_medium_url") or p.get("image_square_url")
+                    if img:
+                        orig_url = re.sub(r"/\d+x(?:\d+|_RS)?/", "/originals/", img)
+                        title = (p.get("title") or p.get("description") or f"Pinterest Pin {pin_id}").strip()
+                        clean_title = sanitize_filename(title[:60], max_length=60) or f"Pinterest Pin {pin_id}"
+                        report(0.08, f"Found photo in '{clean_title}'. Starting download...")
+                        return {
+                            "platform": "pinterest",
+                            "title": clean_title,
+                            "photos": [{
+                                "id": pin_id,
+                                "url": orig_url,
+                                "title": title[:80],
+                                "width": 1200,
+                            }],
+                            "media_kind": "photo",
+                        }
+            except Exception:
+                pass
+
+        # Public HTML fallback for single pin
+        report(0.06, "Reading public Pinterest pin metadata...")
+        req = urllib.request.Request(
+            f"https://www.pinterest.com/pin/{pin_id}/",
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                html = resp.read().decode("utf-8", errors="ignore")
+            if re.search(r'property=["\']og:type["\'][^>]+content=["\']video', html) or re.search(r'content=["\']video[^"\']*["\'][^>]+property=["\']og:type["\']', html):
+                return {"platform": "pinterest", "media_kind": "video", "title": f"Pinterest Pin {pin_id}"}
+            m_img = re.search(r'id=["\']pin-image-preload["\'][^>]+href=["\']([^"\']+)["\']', html)
+            if not m_img:
+                m_img = re.search(r'content=["\'](https://i\.pinimg\.com/[^"\']+)["\'][^>]+(?:name|property)=["\']og:image["\']', html)
+            if not m_img:
+                m_img = re.search(r'(?:name|property)=["\']og:image["\'][^>]+content=["\'](https://i\.pinimg\.com/[^"\']+)["\']', html)
+            if m_img:
+                img_url = m_img.group(1)
+                orig_url = re.sub(r"/\d+x(?:\d+|_RS)?/", "/originals/", img_url)
+                m_title = re.search(r'content=["\']([^"\']+)["\'][^>]+(?:name|property)=["\']og:title["\']', html)
+                if not m_title:
+                    m_title = re.search(r'(?:name|property)=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', html)
+                raw_title = m_title.group(1) if m_title else f"Pinterest Pin {pin_id}"
+                clean_title = sanitize_filename(raw_title[:60], max_length=60) or f"Pinterest Pin {pin_id}"
+                report(0.08, f"Found photo in '{clean_title}'. Starting download...")
+                return {
+                    "platform": "pinterest",
+                    "title": clean_title,
+                    "photos": [{
+                        "id": pin_id,
+                        "url": orig_url,
+                        "title": raw_title[:80],
+                        "width": 1200,
+                    }],
+                    "media_kind": "photo",
+                }
+        except Exception as exc:
+            raise RuntimeError(f"Could not load Pinterest pin: {exc}") from exc
+
+        raise RuntimeError(f"No photos or videos found for Pinterest pin {pin_id}.")
 
     if mps_match:
         mps_id = mps_match.group(1)

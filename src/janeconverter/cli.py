@@ -55,6 +55,7 @@ from .social_photo_capture import (
     download_social_photo_manifest,
     is_pinterest_newshub_url,
     is_pinterest_collection_url,
+    is_pinterest_pin_url,
     fetch_pinterest_collection_manifest,
     is_instagram_post_url,
     fetch_instagram_manifest,
@@ -335,13 +336,20 @@ def process_conversion(
         print("=" * 60)
         return album["folder_path"]
 
-    if social_photo_manifest is None and (is_pinterest_collection_url(source) or is_pinterest_newshub_url(source)):
-        report(0.02, "Reading Pinterest collection via browser session cookies...")
-        social_photo_manifest = fetch_pinterest_collection_manifest(
-            source,
-            browser=auth_browser,
-            progress_callback=report,
-        )
+    if social_photo_manifest is None and (
+        is_pinterest_collection_url(source) or is_pinterest_newshub_url(source) or is_pinterest_pin_url(source)
+    ):
+        try:
+            report(0.02, "Reading Pinterest media via browser session...")
+            pin_manifest = fetch_pinterest_collection_manifest(
+                source,
+                browser=auth_browser,
+                progress_callback=report,
+            )
+            if pin_manifest and pin_manifest.get("media_kind") != "video":
+                social_photo_manifest = pin_manifest
+        except Exception as pin_err:
+            report(0.05, f"Pinterest direct API bypassed ({type(pin_err).__name__}). Proceeding to standard stream extractor...")
 
     if social_photo_manifest is None and is_instagram_post_url(source):
         try:

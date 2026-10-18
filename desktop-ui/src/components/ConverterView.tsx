@@ -103,7 +103,7 @@ function isPinterestNotificationRoute(value: string): boolean {
     const path = url.pathname.toLowerCase();
     if (!(host === "pinterest.com" || host.endsWith(".pinterest.com") || host === "pin.it")) return false;
     const segs = path.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
-    return segs.length >= 2 && (segs[0] === "news_hub" || segs[0] === "notifications" || segs[0] === "multi-pin-share");
+    return host === "pin.it" || (segs.length >= 1 && (segs[0] === "news_hub" || segs[0] === "notifications" || segs[0] === "multi-pin-share" || segs[0] === "pin" || (segs.length >= 2 && segs[1] === "pin")));
   } catch {
     return false;
   }
@@ -902,8 +902,8 @@ export function ConverterView({
         await onStart(trimmedSource, indexes);
         return;
       }
-      if (photoPlatform === "pinterest" && isPinterestNotificationRoute(trimmedSource) && (access.active || settings.readBrowserCookies === true)) {
-        onStatus("Reading Pinterest notification collection using your active browser session...");
+      if (photoPlatform === "pinterest" && (access.active || settings.readBrowserCookies === true)) {
+        onStatus("Reading Pinterest using your active browser session...");
         await onStart(trimmedSource, indexes);
         return;
       }

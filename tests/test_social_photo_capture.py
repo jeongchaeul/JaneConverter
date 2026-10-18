@@ -390,6 +390,17 @@ def test_is_pinterest_newshub_url():
     assert is_pinterest_collection_url("https://pinterest.com/pin/123456") is False
 
 
+def test_is_pinterest_pin_url():
+    from janeconverter.social_photo_capture import is_pinterest_pin_url
+
+    assert is_pinterest_pin_url("https://www.pinterest.com/pin/114067803058525657/") is True
+    assert is_pinterest_pin_url("https://ph.pinterest.com/pin/123456789/") is True
+    assert is_pinterest_pin_url("https://se.pinterest.com/pin/622552348532976470/") is True
+    assert is_pinterest_pin_url("https://www.pinterest.com/multi-pin-share/3085903370100674897/") is False
+    assert is_pinterest_pin_url("https://www.pinterest.com/news_hub/123456789") is False
+    assert is_pinterest_pin_url("not a url") is False
+
+
 def test_fetch_pinterest_multi_pin_share_manifest(monkeypatch):
     import io
     import json
