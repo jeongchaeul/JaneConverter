@@ -77,7 +77,11 @@ Whenever you add or modify a feature, fix a bug, or encounter a media extraction
    Trace the exact network requests, endpoints, and headers that the browser sends when logged in. Implement that exact flow directly inside JaneConverter's Python engine (`src/janeconverter/`) and native Tauri bridge (`desktop-ui/src-tauri/`).
 3. **Handle edge cases and route permutations**:
    Ensure URL shorteners, subdomains, language prefixes (e.g. `ph.pinterest.com`), and dynamic parameters are recognized and handled transparently.
-4. **Follow the Rebuild Contract (`packaging/REBUILD.md`)**:
-   Whenever backend engine or desktop UI changes are made, rebuild the corresponding frozen binaries and deploy them locally as specified in `packaging/REBUILD.md`.
-5. **Commit and push every operation**:
+4. **Always Live-Test the Failing Media & 7 Other Targets**:
+   Never consider a bug fixed solely because a test suite passes or a mock returns 200 OK. Mocks do not prove that upstream platform APIs, CDN endpoints, and bot guards are working.
+   - You MUST run the real engine against the exact URL that failed.
+   - You MUST find and test at least 7 other real-world links of the same media format/platform to verify robustness, route handling, and generalizability.
+5. **Follow the Rebuild Contract (`packaging/REBUILD.md`)**:
+   Whenever backend engine or desktop UI changes are made, rebuild the corresponding frozen binaries (`JaneConverterEngine.exe`, `janeconverter-desktop.exe`) and deploy them locally as specified in `packaging/REBUILD.md`.
+6. **Commit and push every operation**:
    Keep version control synchronized with all updates, maintaining clean history and documentation integrity.

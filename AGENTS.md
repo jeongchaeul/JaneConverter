@@ -60,6 +60,26 @@ See `packaging/REBUILD.md` for complete build and local deployment steps.
 - **Engine (`JaneConverterEngine.exe`):** Run PyInstaller via `uv run` collecting `yt_dlp_ejs` and submodules `janeconverter.flp`.
 
 
+## Mandatory Live Verification Protocol for Media Fixes
+
+Whenever a bug, issue, or failure on a media URL, extractor, or format is investigated or fixed, any agent or contributor working on JaneConverter **MUST** follow this strict verification protocol:
+
+1. **NEVER assume or rely solely on unit tests / mocks:** Passing unit tests is necessary but never sufficient. Mocks cannot detect live platform API changes, CDN throttling, header checks, cookie structure updates, or redirect behavior.
+2. **ALWAYS live test the exact source media link that failed:**
+   - Execute the CLI engine against the exact URL that triggered the failure:
+     ```bash
+     uv run janeconverter --source "<failing_url>" --format <format> --output "<test_dir>"
+     ```
+   - Verify that the output media files are physically created, non-empty, and valid.
+3. **Search and test at least 7 other real-world links of the same format/platform:**
+   - Find and execute live extractions across at least 7 diverse real-world links of the same platform/media format (e.g., shortlinks, single items, multi-post collections/carousels, video pins/reels, board routes, author handles).
+   - Verify that all 7 test cases succeed cleanly without crashes, auth walls, or missing assets.
+4. **Test the frozen release engine executable (`JaneConverterEngine.exe`):**
+   - After rebuilding per `packaging/REBUILD.md`, run the built `JaneConverterEngine.exe` on live links to verify that PyInstaller bundling, hidden imports, and frozen runtimes execute properly.
+5. **Clean up temporary test artifacts:**
+   - Delete temporary test output folders before committing and completing the task.
+
+
 ## Conventions
 
 - Keep build and packaging scripts under `packaging/`. Do not add build scripts to the repository root.
