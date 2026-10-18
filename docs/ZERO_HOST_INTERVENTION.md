@@ -77,10 +77,11 @@ Whenever you add or modify a feature, fix a bug, or encounter a media extraction
    Trace the exact network requests, endpoints, and headers that the browser sends when logged in. Implement that exact flow directly inside JaneConverter's Python engine (`src/janeconverter/`) and native Tauri bridge (`desktop-ui/src-tauri/`).
 3. **Handle edge cases and route permutations**:
    Ensure URL shorteners, subdomains, language prefixes (e.g. `ph.pinterest.com`), and dynamic parameters are recognized and handled transparently.
-4. **Always Live-Test the Failing Media & 7 Other Targets**:
-   Never consider a bug fixed solely because a test suite passes or a mock returns 200 OK. Mocks do not prove that upstream platform APIs, CDN endpoints, and bot guards are working.
+4. **Always Live-Test the Failing Media & 7 Diverse Targets (Universal Rule of 7)**:
+   Never consider a bug fixed solely because a test suite passes or a mock returns 200 OK. Mocks do not prove that live platform APIs, CDN endpoints, and bot guards are functioning.
+   - This rule applies universally to **every single platform and media format** (Pinterest, Facebook, TikTok, Spotify, YouTube, Instagram, Twitter/X, SoundCloud, Apple Music, Reddit, etc.).
    - You MUST run the real engine against the exact URL that failed.
-   - You MUST find and test at least 7 other real-world links of the same media format/platform to verify robustness, route handling, and generalizability.
+   - You MUST find and test at least **7 diverse real-world links** of the same platform/format (e.g. single items, albums/carousels, reels/shorts, audio vs video, shortlinks, user handles) to proactively catch and fix edge-case crashes before marking the task complete.
 5. **Follow the Rebuild Contract (`packaging/REBUILD.md`)**:
    Whenever backend engine or desktop UI changes are made, rebuild the corresponding frozen binaries (`JaneConverterEngine.exe`, `janeconverter-desktop.exe`) and deploy them locally as specified in `packaging/REBUILD.md`.
 6. **Commit and push every operation**:

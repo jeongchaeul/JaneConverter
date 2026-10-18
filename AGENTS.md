@@ -62,18 +62,27 @@ See `packaging/REBUILD.md` for complete build and local deployment steps.
 
 ## Mandatory Live Verification Protocol for Media Fixes
 
-Whenever a bug, issue, or failure on a media URL, extractor, or format is investigated or fixed, any agent or contributor working on JaneConverter **MUST** follow this strict verification protocol:
+This protocol applies **universally to EVERY single media conversion, platform, and format** handled by JaneConverter (including Pinterest, Facebook, TikTok, Spotify, YouTube, Instagram, Twitter/X, SoundCloud, Apple Music, Reddit, Tumblr, etc.). Whenever any extractor, URL parser, format handler, or conversion route is modified, investigated, or fixed, every agent and contributor **MUST** execute the following verification steps:
 
-1. **NEVER assume or rely solely on unit tests / mocks:** Passing unit tests is necessary but never sufficient. Mocks cannot detect live platform API changes, CDN throttling, header checks, cookie structure updates, or redirect behavior.
+1. **NEVER assume or rely solely on unit tests or mocks:**
+   Passing test suites and mocked network calls are necessary but never sufficient. Mocks cannot detect live CDN throttling, API schema drift, auth redirects, header verification, bot guards, or codec regressions.
 2. **ALWAYS live test the exact source media link that failed:**
-   - Execute the CLI engine against the exact URL that triggered the failure:
+   - Run the engine against the exact URL that triggered the failure:
      ```bash
      uv run janeconverter --source "<failing_url>" --format <format> --output "<test_dir>"
      ```
-   - Verify that the output media files are physically created, non-empty, and valid.
-3. **Search and test at least 7 other real-world links of the same format/platform:**
-   - Find and execute live extractions across at least 7 diverse real-world links of the same platform/media format (e.g., shortlinks, single items, multi-post collections/carousels, video pins/reels, board routes, author handles).
-   - Verify that all 7 test cases succeed cleanly without crashes, auth walls, or missing assets.
+   - Verify that all media files are physically created on disk, non-empty, and valid.
+3. **Execute 7 Diverse Real-World Live Verification Tests (The "Rule of 7"):**
+   - Automatically find and execute live extractions across at least **7 diverse real-world links** of the same platform/media category to catch edge cases, routing mismatches, and platform-specific crashes before completing:
+     - **Pinterest:** Multi-pin share collections, notification hubs, single image pins, video pins, board routes, `pin.it` shortlinks.
+     - **Facebook:** Photo posts, multi-image albums, Reels, public Watch videos, permalink shares, mobile URLs (`m.facebook.com`).
+     - **TikTok:** Standard video posts, photo slideshows (`/photo/`), shortlinks (`vt.tiktok.com`, `vm.tiktok.com`), music/sound pages.
+     - **Instagram:** Single photo posts, multi-slide carousels, Reels (`/reels/`), Stories, shortcodes (`/p/`), audio tracks.
+     - **YouTube:** Standard videos, Shorts (`/shorts/`), playlists, age-gated/music streams, live VODs, channel handles (`/@handle`).
+     - **Spotify:** Individual tracks, full albums, public playlists, podcasts, artist top tracks.
+     - **Twitter / X:** Single images, multi-image galleries (up to 4), video tweets, quote tweets, `t.co` shortlinks.
+     - **SoundCloud / Other:** Single tracks, sets/playlists, artist reposts, private share tokens.
+   - Verify that all 7 test cases complete cleanly without crashes, auth walls, or missing assets.
 4. **Test the frozen release engine executable (`JaneConverterEngine.exe`):**
    - After rebuilding per `packaging/REBUILD.md`, run the built `JaneConverterEngine.exe` on live links to verify that PyInstaller bundling, hidden imports, and frozen runtimes execute properly.
 5. **Clean up temporary test artifacts:**
