@@ -240,6 +240,18 @@ export function formatElapsedMs(ms?: number | null): string {
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
 }
 
+export function formatBytes(bytes?: number | null): string {
+  if (bytes === undefined || bytes === null || !Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let val = bytes;
+  let idx = 0;
+  while (val >= 1024 && idx < units.length - 1) {
+    val /= 1024;
+    idx++;
+  }
+  return `${idx === 0 ? Math.round(val) : val.toFixed(1)} ${units[idx]}`;
+}
+
 export function findPresetName(settings: {
   category: Category;
   format: string;

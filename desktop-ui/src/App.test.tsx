@@ -100,6 +100,7 @@ describe("Application shell", () => {
     const openFileSpy = vi.spyOn(bridge, "openFile").mockResolvedValue();
     const openPathSpy = vi.spyOn(bridge, "openPath").mockResolvedValue();
     const notifyAttentionSpy = vi.spyOn(bridge, "notifyAttention").mockResolvedValue();
+    vi.spyOn(bridge, "pathSize").mockResolvedValue(1572864);
 
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -136,6 +137,7 @@ describe("Application shell", () => {
     expect(dialog?.textContent).toContain("Lossless Image Fallback");
     expect(dialog?.textContent).toContain("Forced fallback to PNG");
     expect(dialog?.textContent).toContain("Time elapsed:");
+    expect(dialog?.textContent).toContain("1.5 MB");
     expect(dialog?.textContent).toContain("D:\\JaneConverter\\converted\\Images\\Local Files\\sample.png");
 
     const dragLibraryFileSpy = vi.spyOn(bridge, "dragLibraryFile").mockResolvedValue();

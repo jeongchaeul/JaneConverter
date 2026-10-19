@@ -215,6 +215,7 @@ export interface ConversionHistoryItem {
   formatLabel: string;
   qualityLabel: string;
   elapsedMs: number;
+  totalBytes?: number;
   status: "succeeded" | "failed" | "partial";
   fallbackNote?: string | null;
   errorMessage?: string | null;
@@ -272,6 +273,7 @@ export interface JaneBridge {
   setTaskbarProgress(progress?: number, status?: "normal" | "paused" | "error" | "none" | "indeterminate"): Promise<void>;
   getChromiumCookiePolicy(): Promise<boolean>;
   setChromiumCookiePolicy(enabled: boolean): Promise<boolean>;
+  pathSize(path: string): Promise<number>;
 }
 
 const demoSettings: ConverterSettings = {
@@ -410,6 +412,7 @@ const demoBridge: JaneBridge = {
   async setTaskbarProgress() {},
   async getChromiumCookiePolicy() { return false; },
   async setChromiumCookiePolicy(enabled: boolean) { return enabled; },
+  async pathSize() { return 0; },
 };
 
 const isTauriRuntime = () => "__TAURI_INTERNALS__" in window;
@@ -478,6 +481,7 @@ const tauriBridge: JaneBridge = {
     }),
   getChromiumCookiePolicy: () => invoke<boolean>("get_chromium_cookie_policy"),
   setChromiumCookiePolicy: (enabled: boolean) => invoke<boolean>("set_chromium_cookie_policy", { enabled }),
+  pathSize: (path: string) => invoke<number>("path_size", { path }),
 };
 
 export const bridge: JaneBridge = isTauriRuntime() ? tauriBridge : demoBridge;

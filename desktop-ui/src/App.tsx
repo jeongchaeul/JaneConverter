@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, CheckCircle2, Clock, FolderOpen, GripVertical, Play, RotateCcw, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, FolderOpen, GripVertical, HardDrive, Play, RotateCcw, X } from "lucide-react";
 import { bridge, type AccessStatus, type ConversionHistoryItem, type ConverterEvent, type ConverterSettings, type FetchedMedia, type RuntimeInfo } from "./bridge";
 import { Sidebar, type ViewKey } from "./components/Sidebar";
 import { ConverterView } from "./components/ConverterView";
@@ -9,7 +9,7 @@ import { ConsoleView } from "./components/ConsoleView";
 import { HardwarePipelineView } from "./components/HardwarePipelineView";
 import { SettingsView } from "./components/SettingsView";
 import { FetchedMediaView } from "./components/FetchedMediaView";
-import { findPresetName, formatElapsedMs } from "./options";
+import { findPresetName, formatBytes, formatElapsedMs } from "./options";
 
 const defaultSettings: ConverterSettings = {
   outputDir: "converted",
@@ -131,6 +131,7 @@ interface SuccessPromptState {
   exportPath: string;
   elapsedMs: number;
   fallbackNote: string | null;
+  fileSizeBytes?: number;
 }
 
 export default function App() {
@@ -418,19 +419,9 @@ export default function App() {
           const { formatLabel, qualityLabel } = describeOutputFormatAndQuality(effective, exportPath, fallbackNote);
           const fileName = baseNameFromPath(exportPath) || baseNameFromPath(ctx?.source || "") || "Converted media";
           setFailure(null);
-          if (!captureBusyRef.current) {
-            setSuccess({
-              fileName,
-              formatLabel,
-              qualityLabel,
-              exportPath,
-              elapsedMs,
-              fallbackNote,
-            });
-          }
-          recordTimingForPath(exportPath, elapsedMs);
-          recordHistoryEntry({
-            id: `${event.jobId}-${Date.now()}`,
+          const historyId = `${event.jobId}-${Date.now()}`;
+          const historyItem: ConversionHistoryItem = {
+            id: historyId,
             timestamp: new Date().toISOString(),
             source: ctx?.source || fileName,
             fileName,
@@ -442,7 +433,29 @@ export default function App() {
             status: isPartial ? "partial" : "succeeded",
             fallbackNote,
             errorMessage: isPartial ? event.message : undefined,
-          });
+          };
+          if (!captureBusyRef.current) {
+            setSuccess({
+              fileName,
+              formatLabel,
+              qualityLabel,
+              exportPath,
+              elapsedMs,
+              fallbackNote,
+            });
+          }
+          recordTimingForPath(exportPath, elapsedMs);
+          recordHistoryEntry(historyItem);
+          void bridge.pathSize(exportPath).then((totalBytes) => {
+            if (totalBytes > 0) {
+              setSuccess((current) =>
+                current && current.exportPath === exportPath
+                  ? { ...current, fileSizeBytes: totalBytes }
+                  : current,
+              );
+              recordHistoryEntry({ ...historyItem, totalBytes });
+            }
+          }).catch(() => {});
         }
         if (event.kind === "failed") {
           const effective = ctx?.effectiveSettings ?? settingsRef.current;
@@ -793,6 +806,12 @@ export default function App() {
                 <span className="rounded-md border border-white/[0.10] bg-white/[0.04] px-2 py-0.5 text-zinc-300">
                   {success.qualityLabel}
                 </span>
+                {success.fileSizeBytes !== undefined && success.fileSizeBytes > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 font-mono text-zinc-400">
+                    <HardDrive className="size-3 text-zinc-500" />
+                    {formatBytes(success.fileSizeBytes)}
+                  </span>
+                )}
                 <span className="inline-flex items-center gap-1 rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 font-mono text-zinc-400">
                   <Clock className="size-3 text-zinc-500" />
                   Time elapsed: {formatElapsedMs(success.elapsedMs)}

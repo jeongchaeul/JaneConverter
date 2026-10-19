@@ -1763,6 +1763,11 @@ fn conversion_history(
 }
 
 #[tauri::command]
+fn path_size(path: String) -> u64 {
+    library::path_total_bytes(&path)
+}
+
+#[tauri::command]
 fn scan_library(path: String) -> Result<Vec<LibraryEntry>, String> {
     library::scan(&path)
 }
@@ -2679,6 +2684,7 @@ pub fn run() {
             set_taskbar_progress,
             get_chromium_cookie_policy,
             set_chromium_cookie_policy,
+            path_size,
         ])
         .run(tauri::generate_context!())
         .expect("error while running JaneConverter Desktop");

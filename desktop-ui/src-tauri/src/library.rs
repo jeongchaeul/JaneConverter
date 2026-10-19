@@ -220,6 +220,41 @@ fn directory_summary(path: &Path) -> (usize, u64) {
     (count, bytes)
 }
 
+fn recursive_folder_bytes(path: &Path) -> u64 {
+    let mut total = 0;
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let child = entry.path();
+            if let Ok(file_type) = entry.file_type() {
+                if file_type.is_dir() {
+                    total += recursive_folder_bytes(&child);
+                } else if file_type.is_file() {
+                    total += entry.metadata().map(|m| m.len()).unwrap_or(0);
+                }
+            }
+        }
+    }
+    total
+}
+
+pub fn path_total_bytes(raw_path: &str) -> u64 {
+    let clean = PathBuf::from(clean_windows_path(raw_path));
+    if !clean.exists() {
+        return 0;
+    }
+    if clean.is_file() {
+        return fs::metadata(&clean).map(|m| m.len()).unwrap_or(0);
+    }
+    if clean.is_dir() {
+        let (_, media_bytes) = directory_summary(&clean);
+        if media_bytes > 0 {
+            return media_bytes;
+        }
+        return recursive_folder_bytes(&clean);
+    }
+    0
+}
+
 fn media_file_entry(path: &Path, bytes: u64, conversion_ms: Option<u64>) -> LibraryEntry {
     LibraryEntry {
         path: clean_windows_path(&path.display().to_string()),
@@ -749,5 +784,31 @@ mod tests {
         assert!(target.join("complete.mp3").is_file());
         assert!(source.join("locked.mp3").is_file());
         fs::remove_dir_all(root).expect("clean move test folders");
+    }
+
+    #[test]
+    fn path_total_bytes_computes_single_file_and_folder_aggregate_sizes() {
+        let root = std::env::temp_dir().join(format!("janec-size-{}", crate::paths::now_stamp()));
+        fs::create_dir_all(&root).expect("create size test root");
+
+        let single = root.join("track.mp3");
+        fs::write(&single, b"1234567890").expect("write single track");
+        assert_eq!(path_total_bytes(single.to_str().unwrap()), 10);
+
+        let album = root.join("Album");
+        fs::create_dir_all(&album).expect("create album dir");
+        fs::write(album.join("track1.flac"), b"abcdefghij").expect("write track 1");
+        fs::write(album.join("track2.flac"), b"12345").expect("write track 2");
+        let meta = album.join("metadata");
+        fs::create_dir_all(&meta).expect("create album metadata");
+        fs::write(meta.join("credits.txt"), b"credits content").expect("write credits");
+
+        // directory_summary should aggregate media files (10 + 5 = 15 bytes)
+        assert_eq!(path_total_bytes(album.to_str().unwrap()), 15);
+
+        // Non-existent path returns 0
+        assert_eq!(path_total_bytes("D:\\non_existent_folder_xyz_12345"), 0);
+
+        fs::remove_dir_all(root).expect("clean size test root");
     }
 }

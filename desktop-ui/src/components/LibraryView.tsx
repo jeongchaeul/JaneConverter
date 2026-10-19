@@ -15,6 +15,7 @@ import {
   FolderInput,
   FolderOpen,
   GripVertical,
+  HardDrive,
   History,
   ImageIcon,
   Play,
@@ -26,12 +27,10 @@ import {
 import { motion } from "framer-motion";
 import type { ConversionHistoryItem, ConverterSettings, LibraryEntry } from "../bridge";
 import { bridge } from "../bridge";
-import { detectCategoryFromPath, formatElapsedMs } from "../options";
+import { detectCategoryFromPath, formatBytes, formatElapsedMs } from "../options";
 
 function size(value: number) {
-  return value < 1024 * 1024
-    ? Math.round(value / 1024) + " KB"
-    : (value / (1024 * 1024)).toFixed(1) + " MB";
+  return formatBytes(value);
 }
 
 function cleanPath(value: string) {
@@ -130,6 +129,7 @@ export function LibraryView({
   const [recentPreviews, setRecentPreviews] = useState<Record<string, string>>({});
   const [section, setSection] = useState<LibrarySection>("explorer");
   const [historyPage, setHistoryPage] = useState(1);
+  const [historySizes, setHistorySizes] = useState<Record<string, number>>({});
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
   const [loading, setLoading] = useState(false);
   const [recentLoading, setRecentLoading] = useState(false);
@@ -399,6 +399,20 @@ export function LibraryView({
   const totalHistoryPages = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
   const safeHistoryPage = Math.min(Math.max(1, historyPage), totalHistoryPages);
   const pagedHistory = history.slice((safeHistoryPage - 1) * HISTORY_PAGE_SIZE, safeHistoryPage * HISTORY_PAGE_SIZE);
+
+  useEffect(() => {
+    if (section !== "history") return;
+    for (const item of pagedHistory) {
+      if (item.totalBytes !== undefined || !item.exportPath || item.status === "failed") continue;
+      if (historySizes[item.id] !== undefined) continue;
+      void bridge.pathSize(item.exportPath).then((bytes) => {
+        if (bytes > 0) {
+          setHistorySizes((prev) => ({ ...prev, [item.id]: bytes }));
+        }
+      }).catch(() => {});
+    }
+  }, [section, pagedHistory, historySizes]);
+
   const confirmation = pendingActionCopy();
   const atRoot = pathKey(currentPath) === pathKey(root);
   const visibleEntries = section === "recent"
@@ -537,6 +551,7 @@ export function LibraryView({
             const succeeded = item.status === "succeeded";
             const isPartial = item.status === "partial";
             const hasExported = succeeded || isPartial;
+            const itemBytes = item.totalBytes ?? historySizes[item.id];
             return (
               <motion.div
                 key={item.id}
@@ -601,6 +616,12 @@ export function LibraryView({
                     <span className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 text-zinc-300">
                       {item.qualityLabel}
                     </span>
+                    {itemBytes !== undefined && itemBytes > 0 && (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 font-mono text-zinc-400">
+                        <HardDrive className="size-3 text-zinc-500" />
+                        {formatBytes(itemBytes)}
+                      </span>
+                    )}
                     <span className="inline-flex items-center gap-1 rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 font-mono text-zinc-400">
                       <Clock className="size-3 text-zinc-500" />
                       {formatElapsedMs(item.elapsedMs)}

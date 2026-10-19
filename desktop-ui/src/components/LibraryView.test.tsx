@@ -16,6 +16,7 @@ const fakeBridge = vi.hoisted(() => ({
   recentConversions: vi.fn(),
   deleteLibraryEntry: vi.fn(),
   clearConversionTimings: vi.fn(),
+  pathSize: vi.fn(),
 }));
 
 vi.mock("../bridge", () => ({ bridge: fakeBridge }));
@@ -48,6 +49,8 @@ describe("Converted library", () => {
     fakeBridge.recentConversions.mockReset();
     fakeBridge.deleteLibraryEntry.mockReset();
     fakeBridge.clearConversionTimings.mockReset();
+    fakeBridge.pathSize.mockReset();
+    fakeBridge.pathSize.mockResolvedValue(1048576);
     fakeBridge.scanLibrary.mockResolvedValue([
       {
         path: "D:\\JaneConverter\\converted\\Music",
@@ -518,6 +521,48 @@ describe("Converted library", () => {
     expect(container.querySelector('[aria-label="Open song.mp3"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="Open clip.mp4"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="Open photo.jpg"]')).not.toBeNull();
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("renders the file/folder size badge for history entries", async () => {
+    const historyItem = {
+      id: "hist-album-1",
+      timestamp: "2026-10-19T10:00:00.000Z",
+      source: "https://example.com/album",
+      fileName: "Photo Album",
+      exportPath: "D:\\JaneConverter\\converted\\Photo Album",
+      presetName: "Lossless Image",
+      formatLabel: "PNG",
+      qualityLabel: "Lossless",
+      elapsedMs: 3200,
+      totalBytes: 52428800, // 50.0 MB
+      status: "succeeded" as const,
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <LibraryView
+          settings={settings}
+          onSettings={vi.fn()}
+          onStatus={vi.fn()}
+          history={[historyItem]}
+        />,
+      );
+    });
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "History")?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Photo Album");
+    expect(container.textContent).toContain("50.0 MB");
 
     await act(async () => { root.unmount(); });
     container.remove();
