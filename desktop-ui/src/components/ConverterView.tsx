@@ -303,7 +303,9 @@ export function ConverterView({
   // Queue and completion state
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueRunning, setQueueRunning] = useState(false);
-  const activeQueueIndexRef = useRef<number>(-1);
+  const activeQueueItemIdRef = useRef<string | null>(null);
+  const isStartingQueueRef = useRef(false);
+  const lastHandledEventRef = useRef<ConverterEvent | null>(null);
   const [configuringQueueItem, setConfiguringQueueItem] = useState<QueueItem | null>(null);
   const [loadingQueueConfig, setLoadingQueueConfig] = useState(false);
   const [completedItem, setCompletedItem] = useState<{ name: string; path?: string } | null>(null);
@@ -374,7 +376,9 @@ export function ConverterView({
 
   // Track finished completions and queue progress
   useEffect(() => {
-    if (!lastEvent) return;
+    if (!lastEvent || lastHandledEventRef.current === lastEvent) return;
+    lastHandledEventRef.current = lastEvent;
+
     if (lastEvent.kind === "finished" || (lastEvent.kind as string) === "partial") {
       let outName = "media file";
       if (lastEvent.message.startsWith("Conversion complete: ")) {
@@ -385,76 +389,115 @@ export function ConverterView({
       const outPath = lastEvent.output || (settings.outputDir ? `${settings.outputDir.replace(/[\\/]+$/, "")}/${outName}` : undefined);
       setCompletedItem({ name: outName, path: outPath });
 
-      if (queueRunning && activeQueueIndexRef.current >= 0) {
+      const activeId = activeQueueItemIdRef.current;
+      if (activeId || queue.some((it) => it.status === "converting")) {
         setQueue((curr) =>
-          curr.map((item, idx) => {
-            if (idx === activeQueueIndexRef.current) {
+          curr.map((item) => {
+            if (item.id === activeId || (item.status === "converting" && !activeId)) {
               return { ...item, status: "completed", progress: 1.0, outputPath: outPath };
             }
             return item;
           })
         );
+        activeQueueItemIdRef.current = null;
       }
     } else if (lastEvent.kind === "failed") {
-      if (queueRunning && activeQueueIndexRef.current >= 0) {
+      const activeId = activeQueueItemIdRef.current;
+      if (activeId || queue.some((it) => it.status === "converting")) {
         setQueue((curr) =>
-          curr.map((item, idx) => {
-            if (idx === activeQueueIndexRef.current) {
+          curr.map((item) => {
+            if (item.id === activeId || (item.status === "converting" && !activeId)) {
               return { ...item, status: "failed", errorMessage: lastEvent.message };
             }
             return item;
           })
         );
+        activeQueueItemIdRef.current = null;
       }
     } else if (lastEvent.kind === "cancelled") {
       if (queueRunning) {
         setQueueRunning(false);
-        const abortedIdx = activeQueueIndexRef.current;
-        activeQueueIndexRef.current = -1;
-        if (abortedIdx >= 0) {
-          setQueue((curr) =>
-            curr.map((item, idx) => (idx === abortedIdx && item.status === "converting" ? { ...item, status: "queued", progress: 0 } : item))
-          );
-        }
       }
+      isStartingQueueRef.current = false;
+      const abortedId = activeQueueItemIdRef.current;
+      activeQueueItemIdRef.current = null;
+      setQueue((curr) =>
+        curr.map((item) =>
+          item.id === abortedId || item.status === "converting"
+            ? { ...item, status: "queued", progress: 0 }
+            : item
+        )
+      );
     }
   }, [lastEvent, queueRunning, settings.outputDir]);
 
   // Live progress updates for currently converting queue item
   useEffect(() => {
-    if (queueRunning && activeQueueIndexRef.current >= 0 && progress > 0) {
+    const activeId = activeQueueItemIdRef.current;
+    if (progress > 0) {
       setQueue((curr) =>
-        curr.map((item, idx) =>
-          idx === activeQueueIndexRef.current && item.status === "converting"
+        curr.map((item) =>
+          (activeId ? item.id === activeId : item.status === "converting") && item.status === "converting"
             ? { ...item, progress }
             : item
         )
       );
     }
-  }, [progress, queueRunning]);
+  }, [progress]);
 
   // Sequential queue runner
   useEffect(() => {
     if (!queueRunning) return;
     if (running || effectivePaused) return;
+    if (isStartingQueueRef.current) return;
+
+    // Do not start next item if an item is already converting
+    const currentlyConverting = queue.some((item) => item.status === "converting");
+    if (currentlyConverting) return;
 
     const nextIdx = queue.findIndex((item) => item.status === "queued");
     if (nextIdx === -1) {
       setQueueRunning(false);
-      activeQueueIndexRef.current = -1;
+      activeQueueItemIdRef.current = null;
       onStatus("Batch conversion queue completed.");
       return;
     }
 
-    activeQueueIndexRef.current = nextIdx;
-    setQueue((curr) =>
-      curr.map((item, idx) => (idx === nextIdx ? { ...item, status: "converting", progress: 0.05 } : item))
-    );
     const targetItem = queue[nextIdx];
+    activeQueueItemIdRef.current = targetItem.id;
+    isStartingQueueRef.current = true;
+
+    setQueue((curr) =>
+      curr.map((item) => (item.id === targetItem.id ? { ...item, status: "converting", progress: 0.05 } : item))
+    );
     if (targetItem.settingsSnapshot) {
       onSettings(targetItem.settingsSnapshot);
     }
-    void onStart(targetItem.source, targetItem.playlistIndexes);
+
+    onStart(targetItem.source, targetItem.playlistIndexes)
+      .then((started) => {
+        if (!started) {
+          activeQueueItemIdRef.current = null;
+          setQueue((curr) =>
+            curr.map((it) =>
+              it.id === targetItem.id ? { ...it, status: "failed", errorMessage: "Failed to start conversion." } : it
+            )
+          );
+        }
+      })
+      .catch((err) => {
+        activeQueueItemIdRef.current = null;
+        setQueue((curr) =>
+          curr.map((it) =>
+            it.id === targetItem.id
+              ? { ...it, status: "failed", errorMessage: err instanceof Error ? err.message : String(err) }
+              : it
+          )
+        );
+      })
+      .finally(() => {
+        isStartingQueueRef.current = false;
+      });
   }, [queueRunning, running, effectivePaused, queue, onStart, onStatus, onSettings]);
 
   function addToQueue(customSource?: string, customIndexes?: string, customCatalog?: PlaylistCatalog) {
@@ -815,7 +858,12 @@ export function ConverterView({
   }
 
   async function convert(indexes?: string) {
-    if (queue.length > 0 && queue.some((item) => item.status === "queued")) {
+    if (queue.length > 0 && queue.some((item) => item.status === "queued" || item.status === "converting")) {
+      if (!running) {
+        setQueue((curr) =>
+          curr.map((it) => (it.status === "converting" ? { ...it, status: "queued", progress: 0 } : it))
+        );
+      }
       setQueueRunning(true);
       return;
     }
@@ -993,14 +1041,17 @@ export function ConverterView({
     setLocalPaused(false);
     if (queueRunning) {
       setQueueRunning(false);
-      const abortedIdx = activeQueueIndexRef.current;
-      activeQueueIndexRef.current = -1;
-      if (abortedIdx >= 0) {
-        setQueue((curr) =>
-          curr.map((item, idx) => (idx === abortedIdx && item.status === "converting" ? { ...item, status: "queued", progress: 0 } : item))
-        );
-      }
     }
+    isStartingQueueRef.current = false;
+    const abortedId = activeQueueItemIdRef.current;
+    activeQueueItemIdRef.current = null;
+    setQueue((curr) =>
+      curr.map((item) =>
+        item.id === abortedId || item.status === "converting"
+          ? { ...item, status: "queued", progress: 0 }
+          : item
+      )
+    );
     if (facebookCaptureBusy) {
       await cancelFacebookCapture();
     }
@@ -1237,8 +1288,15 @@ export function ConverterView({
               {!queueRunning ? (
                 <button
                   type="button"
-                  disabled={!queue.some((it) => it.status === "queued")}
-                  onClick={() => setQueueRunning(true)}
+                  disabled={!queue.some((it) => it.status === "queued" || it.status === "converting")}
+                  onClick={() => {
+                    if (!running) {
+                      setQueue((curr) =>
+                        curr.map((it) => (it.status === "converting" ? { ...it, status: "queued", progress: 0 } : it))
+                      );
+                    }
+                    setQueueRunning(true);
+                  }}
                   className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs text-pink-300 hover:text-pink-200 border-pink-500/25 bg-pink-500/[0.06] disabled:opacity-40"
                 >
                   <Play className="size-3 fill-current" /> Start queue
@@ -1266,8 +1324,9 @@ export function ConverterView({
                 onClick={() => {
                   if (queueRunning) {
                     setQueueRunning(false);
-                    activeQueueIndexRef.current = -1;
                   }
+                  isStartingQueueRef.current = false;
+                  activeQueueItemIdRef.current = null;
                   setQueue([]);
                 }}
                 className="subtle-button px-2.5 py-1.5 text-xs text-zinc-400 hover:text-rose-400"

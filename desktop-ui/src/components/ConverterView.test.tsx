@@ -73,7 +73,32 @@ function renderView(
     );
   });
 
-  return { container, root, onCreateAccess, onStatus, onSettings, onError };
+  const updateProps = (newProps: Partial<Parameters<typeof ConverterView>[0]>) => {
+    act(() => {
+      root.render(
+        <ConverterView
+          settings={{ ...settings, ...settingsOverride }}
+          runtime={null}
+          events={[]}
+          access={access}
+          selectedCapture={selectedCapture}
+          running={false}
+          progress={0}
+          status="Ready"
+          onSettings={onSettings}
+          onStart={onStart}
+          onCancel={vi.fn().mockResolvedValue(undefined)}
+          onCreateAccess={onCreateAccess}
+          onClearAccess={vi.fn().mockResolvedValue(undefined)}
+          onStatus={onStatus}
+          onError={onError}
+          {...newProps}
+        />,
+      );
+    });
+  };
+
+  return { container, root, updateProps, onCreateAccess, onStatus, onSettings, onError };
 }
 
 describe("Converter account access feedback", () => {
@@ -622,21 +647,26 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
-  it("starts the queued items sequentially when start queue is clicked", async () => {
-    const onStart = vi.fn().mockResolvedValue(true);
+  it("starts the queued items sequentially when start queue is clicked without cascading concurrent jobs", async () => {
+    const onStart = vi.fn().mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve(true), 50)));
     const view = renderView(undefined, undefined, onStart);
     const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
 
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      setter?.call(input, "https://youtube.com/watch?v=item1");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    const queueUrl = async (url: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(input, url);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const queueButton = Array.from(view.container.querySelectorAll("button")).find((btn) => btn.textContent?.trim() === "Queue");
+      await act(async () => {
+        queueButton?.click();
+      });
+    };
 
-    const queueButton = Array.from(view.container.querySelectorAll("button")).find((btn) => btn.textContent?.trim() === "Queue");
-    await act(async () => {
-      queueButton?.click();
-    });
+    await queueUrl("https://youtube.com/watch?v=item1");
+    await queueUrl("https://youtube.com/watch?v=item2");
+    await queueUrl("https://youtube.com/watch?v=item3");
 
     const startQueueButton = Array.from(view.container.querySelectorAll("button")).find((btn) => btn.textContent?.includes("Start queue"));
     expect(startQueueButton).toBeDefined();
@@ -645,7 +675,55 @@ describe("Converter account access feedback", () => {
       startQueueButton?.click();
     });
 
+    // Crucial check: only the FIRST item is started; item2 and item3 are strictly locked out
+    expect(onStart).toHaveBeenCalledTimes(1);
     expect(onStart).toHaveBeenCalledWith("https://youtube.com/watch?v=item1", undefined);
+    expect(onStart).not.toHaveBeenCalledWith("https://youtube.com/watch?v=item2", undefined);
+    expect(onStart).not.toHaveBeenCalledWith("https://youtube.com/watch?v=item3", undefined);
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("advances automatically to item #2 when item #1 completes", async () => {
+    const onStart = vi.fn().mockResolvedValue(true);
+    const view = renderView(undefined, undefined, onStart);
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+
+    const queueUrl = async (url: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(input, url);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const queueButton = Array.from(view.container.querySelectorAll("button")).find((btn) => btn.textContent?.trim() === "Queue");
+      await act(async () => {
+        queueButton?.click();
+      });
+    };
+
+    await queueUrl("https://youtube.com/watch?v=item1");
+    await queueUrl("https://youtube.com/watch?v=item2");
+
+    const startQueueButton = Array.from(view.container.querySelectorAll("button")).find((btn) => btn.textContent?.includes("Start queue"));
+    await act(async () => {
+      startQueueButton?.click();
+    });
+
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(onStart).toHaveBeenCalledWith("https://youtube.com/watch?v=item1", undefined);
+
+    // Simulate item #1 completing
+    await act(async () => {
+      view.updateProps({
+        events: [{ jobId: "item1", kind: "finished", message: "Conversion complete: item1.mp3" }],
+        running: false,
+      });
+    });
+
+    // Item #2 must have been started automatically!
+    expect(onStart).toHaveBeenCalledTimes(2);
+    expect(onStart).toHaveBeenCalledWith("https://youtube.com/watch?v=item2", undefined);
 
     await act(async () => { view.root.unmount(); });
     view.container.remove();
