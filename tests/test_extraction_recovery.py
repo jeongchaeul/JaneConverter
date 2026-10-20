@@ -180,3 +180,27 @@ def test_mahoraga_client_identity_rotation_on_layout_challenge():
     assert calls[1] == {}
     # Call 3 rotated to web_embedded / android client
     assert calls[2] == {"youtube": {"player_client": ["web_embedded", "android"]}}
+
+
+def test_catalog_prefers_official_audio_over_fan_lyrics():
+    wanted = {"title": ">one (greater than one)", "artist": "VALORANT, ericdoa", "duration": 130}
+    fan_lyrics = {
+        "id": "lyrics_vid",
+        "title": "VALORANT, ericdoa - greater than one (Lyrics)",
+        "channel": "7clouds Rap",
+        "uploader": "7clouds Rap",
+        "duration": 131,
+    }
+    official_audio = {
+        "id": "official_vid",
+        "title": "ericdoa, VALORANT - greater than one (Official Audio)",
+        "channel": "ericdoa",
+        "uploader": "ericdoa",
+        "duration": 131,
+    }
+    score_lyrics = match_score(wanted, fan_lyrics)
+    score_official = match_score(wanted, official_audio)
+    assert score_official > score_lyrics
+    chosen = choose_catalog_match(wanted, [fan_lyrics, official_audio])
+    assert chosen["id"] == "official_vid"
+

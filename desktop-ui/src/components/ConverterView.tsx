@@ -1642,7 +1642,7 @@ export function ConverterView({
                       <strong className="text-zinc-200">What it does:</strong> Lossy platforms (SoundCloud, YouTube, TikTok) apply steep lowpass brickwalls at 15–16 kHz. This mode extracts upper-mid musical harmonics (8–12 kHz) and applies mathematical harmonic excitation to regenerate phase-locked 2nd and 3rd harmonics extending up to 20–22 kHz.
                     </p>
                     <p className="mt-1 text-zinc-400">
-                      <strong className="text-zinc-200">What to expect:</strong> In FL Studio / FabFilter Pro-MB &amp; Pro-Q 3, the sharp frequency cliff at 16 kHz is replaced by a natural studio air taper, restoring cymbal sizzle, vocal openness, and transient presence. The original mix beneath 15 kHz remains 100% untouched.
+                      <strong className="text-zinc-200">What to expect:</strong> In an EQ, the sharp frequency cliff at 16 kHz is replaced by a natural studio air taper, restoring cymbal sizzle, vocal openness, and transient presence. The original mix beneath 15 kHz remains 100% untouched.
                     </p>
                     <p className="mt-1 text-[11px] text-zinc-500">
                       Tip: Recommended when converting streaming rips. When converting uncompressed studio masters or lossless FLAC/WAV files that already reach 20 kHz+, leave this toggle off.

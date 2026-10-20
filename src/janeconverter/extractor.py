@@ -397,6 +397,8 @@ def build_search_candidates(artist: str, title: str) -> list:
 
     candidates = []
     if c_art and c_tit:
+        candidates.append(f"ytsearch1:{c_art} {c_tit} official audio")
+        candidates.append(f"ytsearch1:{c_art} {c_tit} topic")
         candidates.append(f"ytsearch1:{c_art} {c_tit}")
     if prim_art and c_tit and prim_art != c_art:
         candidates.append(f"ytsearch1:{prim_art} {c_tit}")
@@ -1188,6 +1190,7 @@ def fetch_media_stream(
 
         if spotify_meta:
             report(0.12, f"Resolved Spotify track: {spotify_meta['artist']} - {spotify_meta['title']}")
+            report(0.14, "Spotify audio streams are encrypted via Widevine DRM; locating matching official studio audio...")
             candidates = spotify_meta.get("search_candidates") or build_search_candidates(spotify_meta["artist"], spotify_meta["title"])
             target_url = candidates[0] if candidates else spotify_meta.get("search_query", "")
     elif source_type == "apple_music":

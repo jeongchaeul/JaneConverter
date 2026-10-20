@@ -59,11 +59,21 @@ def match_score(requested, candidate, relaxed: bool = False):
             return None
         scale = 0.1 if not relaxed else 0.08
         duration_score = scale * (1 - difference / max_diff)
-    artist_bonus = 0.1 if (artist <= credit) else (0.08 if primary_artist and primary_artist <= credit else 0)
+    req_artist_parts = [tokens(a.strip()) for a in re.split(r'[,&]|\bfeat\b|\bft\b', str(requested.get("artist") or ""), flags=re.IGNORECASE) if a.strip()]
+    any_part_credited = any(p and p <= credit for p in req_artist_parts)
+    artist_bonus = 0.1 if (artist <= credit) else (0.08 if (primary_artist and primary_artist <= credit) or any_part_credited else 0)
+
+    # Official release / topic channel preference bonus
+    chan_str = str(candidate.get("channel") or candidate.get("uploader") or "").lower()
+    is_topic_channel = chan_str.endswith(" - topic") or chan_str.endswith("- topic")
+    cand_title_str = str(candidate.get("title") or "").lower()
+    is_official_title = "official audio" in cand_title_str or "official music video" in cand_title_str or "original audio" in cand_title_str or "official track" in cand_title_str
+    official_bonus = 0.08 if (is_topic_channel or is_official_title) else (0.04 if "official" in cand_title_str or "audio" in cand_title_str else 0)
+
     if not relaxed:
-        return 0.8 + duration_score + artist_bonus
+        return 0.8 + duration_score + artist_bonus + official_bonus
     extra_penalty = min(0.15, len(extra) * 0.02)
-    return 0.7 - extra_penalty + duration_score + artist_bonus
+    return 0.7 - extra_penalty + duration_score + artist_bonus + official_bonus
 
 
 def choose_catalog_match(requested, candidates, allow_relaxed: bool = True):
