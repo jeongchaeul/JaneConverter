@@ -11,7 +11,8 @@ from janeconverter.converter import (
     VIDEO_QUALITY_SETTINGS,
     get_unique_target_path,
     get_host_gpus,
-    get_best_hardware_encoder
+    get_best_hardware_encoder,
+    is_stream_copy_safe,
 )
 from janeconverter.updater import (
     get_current_engine_version,
@@ -310,3 +311,36 @@ def test_check_and_apply_all_updates():
     assert "engine_updated" in result
     assert "already_up_to_date" in result
     assert len(logs) > 0
+
+
+def test_build_ffmpeg_args_reconstruct_frequency_loss():
+    cmd = build_ffmpeg_args(
+        input_path="input.mp3",
+        output_path="output.wav",
+        target_format="wav",
+        reconstruct_frequency_loss=True,
+    )
+    assert "-af" in cmd
+    af_idx = cmd.index("-af")
+    assert "aexciter=freq=7500:ceil=20000:amount=2.5:drive=8.5:blend=0" in cmd[af_idx + 1]
+
+
+def test_build_ffmpeg_args_without_frequency_reconstruction():
+    cmd = build_ffmpeg_args(
+        input_path="input.mp3",
+        output_path="output.wav",
+        target_format="wav",
+        reconstruct_frequency_loss=False,
+    )
+    if "-af" in cmd:
+        af_idx = cmd.index("-af")
+        assert "aexciter" not in cmd[af_idx + 1]
+
+
+def test_is_stream_copy_safe_blocks_reconstruct_frequency_loss():
+    assert not is_stream_copy_safe(
+        "dummy.mp3",
+        "mp3",
+        reconstruct_frequency_loss=True,
+    )
+

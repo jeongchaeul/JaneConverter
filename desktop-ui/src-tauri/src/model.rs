@@ -46,6 +46,8 @@ pub struct ConversionRequest {
     #[serde(default)]
     pub allow_png_fallback: bool,
     #[serde(default)]
+    pub reconstruct_frequency_loss: bool,
+    #[serde(default)]
     pub read_browser_cookies: bool,
     pub retries: u8,
     pub playlist_indexes: Option<String>,

@@ -462,6 +462,9 @@ pub fn build_conversion_args_with_capture(
     if request.normalize {
         args.push("--normalize".into());
     }
+    if request.reconstruct_frequency_loss {
+        args.push("--reconstruct-frequency-loss".into());
+    }
     if request.allow_png_fallback && request.format == "source" && request.category == "Image" {
         args.push("--allow-lossless-png-recovery".into());
     }
@@ -1023,6 +1026,7 @@ mod tests {
             save_cover: true,
             save_metadata: true,
             allow_png_fallback: false,
+            reconstruct_frequency_loss: false,
             retries: 2,
             playlist_indexes: None,
             read_browser_cookies: false,
@@ -1063,6 +1067,7 @@ mod tests {
             save_cover: true,
             save_metadata: true,
             allow_png_fallback: false,
+            reconstruct_frequency_loss: false,
             retries: 2,
             playlist_indexes: None,
             read_browser_cookies: false,
@@ -1103,6 +1108,7 @@ mod tests {
             save_cover: true,
             save_metadata: true,
             allow_png_fallback: false,
+            reconstruct_frequency_loss: false,
             retries: 2,
             playlist_indexes: None,
             read_browser_cookies: false,
@@ -1140,6 +1146,7 @@ mod tests {
             save_cover: true,
             save_metadata: true,
             allow_png_fallback: false,
+            reconstruct_frequency_loss: false,
             retries: 2,
             playlist_indexes: None,
             read_browser_cookies: false,
@@ -1171,6 +1178,7 @@ mod tests {
             save_cover: false,
             save_metadata: false,
             allow_png_fallback: false,
+            reconstruct_frequency_loss: false,
             retries: 2,
             playlist_indexes: None,
             read_browser_cookies: false,
@@ -1209,6 +1217,7 @@ mod tests {
             save_cover: true,
             save_metadata: true,
             allow_png_fallback: false,
+            reconstruct_frequency_loss: false,
             retries: 2,
             playlist_indexes: None,
             read_browser_cookies: true,
@@ -1224,8 +1233,46 @@ mod tests {
             .iter()
             .position(|a| a == "--browser-session")
             .expect("browser session present");
+        assert_eq!(
+            session_pos,
+            args.iter().position(|a| a == "--browser-session").unwrap()
+        );
         assert_eq!(args[session_pos + 1], "auto");
         assert!(args.contains(&"--browser-cookies".into()));
         assert!(!args.contains(&"--no-browser-cookies".into()));
+    }
+
+    #[test]
+    fn reconstruct_frequency_loss_adds_cli_flag() {
+        let mut request = ConversionRequest {
+            source: "https://example.com/track.mp3".into(),
+            output_dir: "out".into(),
+            category: "Music".into(),
+            format: "wav".into(),
+            bitrate: "32-bit".into(),
+            sample_rate: 48000,
+            resolution: "original".into(),
+            normalize: false,
+            use_gpu: false,
+            save_cover: false,
+            save_metadata: false,
+            allow_png_fallback: false,
+            reconstruct_frequency_loss: true,
+            retries: 2,
+            playlist_indexes: None,
+            read_browser_cookies: false,
+            browser_session: None,
+            browser_capture_path: None,
+            facebook_capture_id: None,
+            social_capture_id: None,
+            start_time: None,
+            end_time: None,
+        };
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        assert!(args.contains(&"--reconstruct-frequency-loss".into()));
+
+        request.reconstruct_frequency_loss = false;
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        assert!(!args.contains(&"--reconstruct-frequency-loss".into()));
     }
 }

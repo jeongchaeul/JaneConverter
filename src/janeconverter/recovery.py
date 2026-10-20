@@ -42,6 +42,7 @@ class OutputIntent:
     cover_required: bool
     gpu_allowed: bool
     allow_png_fallback: bool = False
+    reconstruct_frequency_loss: bool = False
     metadata: tuple[tuple[str, str], ...] = ()
     start_time: str | None = None
     end_time: str | None = None

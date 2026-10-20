@@ -2809,6 +2809,7 @@ mod tests {
             save_cover: true,
             save_metadata: true,
             allow_png_fallback: false,
+            reconstruct_frequency_loss: false,
             retries: 2,
             playlist_indexes: None,
             read_browser_cookies: false,

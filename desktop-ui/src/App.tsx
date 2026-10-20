@@ -24,6 +24,7 @@ const defaultSettings: ConverterSettings = {
   saveCover: true,
   saveMetadata: true,
   allowPngFallback: false,
+  reconstructFrequencyLoss: false,
   retries: 2,
   startTime: "",
   endTime: "",

@@ -728,4 +728,52 @@ describe("Converter account access feedback", () => {
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });
+
+  it("allows toggling reconstruct frequency loss in advanced settings and displays explanation", async () => {
+    const onSettings = vi.fn();
+    const view = renderView(undefined, undefined, undefined, null, onSettings, {
+      category: "Music",
+      format: "mp3",
+      reconstructFrequencyLoss: false,
+    });
+    const advancedSwitch = view.container.querySelector<HTMLButtonElement>('button[role="switch"]');
+    await act(async () => { advancedSwitch?.click(); await Promise.resolve(); });
+
+    const checkboxes = Array.from(view.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'));
+    const reconCheckbox = checkboxes.find((c) => c.closest("label")?.textContent?.includes("Reconstruct Frequency Loss"));
+    expect(reconCheckbox).toBeDefined();
+    expect(reconCheckbox?.checked).toBe(false);
+
+    await act(async () => {
+      reconCheckbox?.click();
+      await Promise.resolve();
+    });
+    expect(onSettings).toHaveBeenCalledWith(expect.objectContaining({ reconstructFrequencyLoss: true }));
+
+    await act(async () => {
+      view.updateProps({
+        settings: {
+          outputDir: "converted",
+          fetchedDir: "fetched",
+          category: "Music",
+          format: "mp3",
+          bitrate: "320k",
+          sampleRate: 48000,
+          resolution: "original",
+          normalize: false,
+          useGpu: false,
+          saveCover: true,
+          saveMetadata: true,
+          reconstructFrequencyLoss: true,
+          retries: 2,
+        },
+      });
+    });
+    expect(view.container.textContent).toContain("Reconstruct Frequency Loss (Harmonic Air Regeneration)");
+    expect(view.container.textContent).toContain("What it does:");
+    expect(view.container.textContent).toContain("What to expect:");
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
 });

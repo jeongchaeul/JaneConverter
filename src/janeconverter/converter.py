@@ -728,6 +728,7 @@ def is_stream_copy_safe(
     resolution: str = "original",
     cover_path: Optional[str] = None,
     probed_info: Optional[Dict[str, Any]] = None,
+    reconstruct_frequency_loss: bool = False,
 ) -> bool:
     """
     Determines if stream copy (-c copy) is safe without quality loss or container corruption.
@@ -738,8 +739,9 @@ def is_stream_copy_safe(
     3. resolution must be 'original' (downscaling requires video filter and transcode).
     4. Codec must be natively supported by the target container format.
     5. Sample rate must match the source audio stream (no resampling requested).
+    6. reconstruct_frequency_loss must be False (requires harmonic exciter filter).
     """
-    if normalize_audio:
+    if normalize_audio or reconstruct_frequency_loss:
         return False
     if target_format.lower().strip(".") in SUPPORTED_AUDIO_FORMATS and cover_path and os.path.exists(cover_path):
         return False
@@ -1347,6 +1349,7 @@ def build_ffmpeg_args(
     measured_loudness: Optional[Dict[str, str]] = None,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
+    reconstruct_frequency_loss: bool = False,
 ) -> list:
     """Constructs command line argument list for FFmpeg transcode or instant stream remuxing."""
     target_format = target_format.lower().strip(".")
@@ -1431,6 +1434,9 @@ def build_ffmpeg_args(
         # Avoid a resampler pass when the output rate already matches the source stream.
         if sample_rate and not source_rate_matches and has_soxr_support():
             audio_filters.append("aresample=resampler=soxr:precision=28:cutoff=0.99:dither_method=triangular")
+
+        if reconstruct_frequency_loss:
+            audio_filters.append("aexciter=freq=7500:ceil=20000:amount=2.5:drive=8.5:blend=0")
 
         if normalize_audio:
             # Request linear processing and read FFmpeg's actual mode after encoding.
@@ -1669,6 +1675,7 @@ def _convert_media_impl(
     allow_lossless_png_recovery: bool = False,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
+    reconstruct_frequency_loss: bool = False,
     _method_override: Optional[str] = None,
     _recovery: Optional[RecoveryCoordinator] = None,
 ) -> str:
@@ -1697,6 +1704,7 @@ def _convert_media_impl(
             metadata=tuple((key, value) for key, value in (metadata or {}).items() if value),
             start_time=start_time,
             end_time=end_time,
+            reconstruct_frequency_loss=reconstruct_frequency_loss,
         ), evidence_path=ev_path)
 
     if target_format in ("source", "original", ""):
@@ -1874,6 +1882,7 @@ def _convert_media_impl(
         resolution=resolution,
         cover_path=cover_path,
         probed_info=audio_probe,
+        reconstruct_frequency_loss=reconstruct_frequency_loss,
     )
     method = _method_override or ("stream-copy" if can_copy else "gpu-transcode" if active_gpu and target_format in HARDWARE_VIDEO_FORMATS else "cpu-transcode")
     _recovery.start(method)
@@ -1924,6 +1933,7 @@ def _convert_media_impl(
             measured_loudness=measured_loudness,
             start_time=start_time,
             end_time=end_time,
+            reconstruct_frequency_loss=reconstruct_frequency_loss,
         )
     # Request machine-readable progress on stdout (inserted before the output path)
     cmd = cmd[:-1] + ["-progress", "pipe:1", "-nostats"] + [cmd[-1]]
@@ -2114,6 +2124,7 @@ def _convert_media_impl(
                         allow_stream_copy=False,
                         allow_lossless_png_recovery=allow_lossless_png_recovery,
                         start_time=start_time, end_time=end_time,
+                        reconstruct_frequency_loss=reconstruct_frequency_loss,
                         _method_override="cover-normalized", _recovery=_recovery,
                     )
             return convert_media(
@@ -2137,6 +2148,7 @@ def _convert_media_impl(
                 allow_lossless_png_recovery=allow_lossless_png_recovery,
                 start_time=start_time,
                 end_time=end_time,
+                reconstruct_frequency_loss=reconstruct_frequency_loss,
                 _recovery=_recovery,
             )
         try:
@@ -2188,6 +2200,7 @@ def convert_media(
     allow_lossless_png_recovery: bool = False,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
+    reconstruct_frequency_loss: bool = False,
     _method_override: Optional[str] = None,
     _recovery: Optional[RecoveryCoordinator] = None,
 ) -> str:
@@ -2215,6 +2228,7 @@ def convert_media(
             metadata=tuple((key, value) for key, value in (metadata or {}).items() if value),
             start_time=start_time,
             end_time=end_time,
+            reconstruct_frequency_loss=reconstruct_frequency_loss,
         ), evidence_path=ev_path)
 
     def staged_progress(value: float, message: str) -> None:
@@ -2229,6 +2243,7 @@ def convert_media(
             gpu_codec=gpu_codec, metadata=metadata, cover_path=cover_path,
             abort_event=abort_event, progress_callback=staged_progress, fps=fps,
             start_time=start_time, end_time=end_time,
+            reconstruct_frequency_loss=reconstruct_frequency_loss,
         )
         effective_target = target_format.lower().strip(".")
         try:

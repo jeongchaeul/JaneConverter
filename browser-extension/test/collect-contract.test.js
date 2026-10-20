@@ -74,24 +74,30 @@ test("collect mode skips a repeated image after its CDN URL changes", async () =
   };
   vm.runInNewContext(read("media-utils.js"), context);
   vm.runInNewContext(read("collect.js"), context);
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
+  const waitFor = async (predicate, timeout = 3000) => {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      if (predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  };
   control({ type: "jane-collect-control", enabled: true }, null, () => {});
-  await settle();
+  await waitFor(() => uploads.length === 1);
   assert.equal(uploads.length, 1);
 
   image.src = "https://cdn.example/second.jpg?token=new";
   tick();
-  await settle();
+  await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(uploads.length, 1);
 
   image.pattern = 2;
   image.src = "https://cdn.example/third.jpg?token=other";
   tick();
-  await settle();
+  await waitFor(() => uploads.length === 2);
   assert.equal(uploads.length, 2);
   // Changed bytes can share a perceptual hash and a reused CDN URL.
   image.pattern = 3;
   tick();
-  await settle();
+  await waitFor(() => uploads.length === 3);
   assert.equal(uploads.length, 3);
 });

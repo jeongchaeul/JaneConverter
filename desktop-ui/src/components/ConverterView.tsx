@@ -1589,7 +1589,14 @@ export function ConverterView({
                     hint={!isAudio ? "Available for audio output." : isSourceFormat ? "Source output keeps its original audio." : undefined}
                   />
                 </div>
-                <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                  <Toggle
+                    checked={settings.reconstructFrequencyLoss ?? false}
+                    onChange={(reconstructFrequencyLoss) => update({ reconstructFrequencyLoss })}
+                    label="Reconstruct Frequency Loss"
+                    hint={isAudio ? "Regenerates high-frequency air (16–22 kHz) cut off by platforms" : "Available for audio output."}
+                    disabled={!isAudio || isSourceFormat}
+                  />
                   <Toggle
                     checked={settings.normalize}
                     onChange={(normalize) => update({ normalize })}
@@ -1626,6 +1633,22 @@ export function ConverterView({
                     disabled={hardwareAccelerationDisabled}
                   />
                 </div>
+                {isAudio && settings.reconstructFrequencyLoss && !isSourceFormat && (
+                  <div className="mt-3 rounded-lg border border-purple-500/20 bg-purple-500/[0.04] p-3 text-xs leading-relaxed text-zinc-300">
+                    <div className="font-medium text-purple-300 mb-1 flex items-center gap-1.5">
+                      <span>Reconstruct Frequency Loss (Harmonic Air Regeneration)</span>
+                    </div>
+                    <p className="text-zinc-400">
+                      <strong className="text-zinc-200">What it does:</strong> Lossy platforms (SoundCloud, YouTube, TikTok) apply steep lowpass brickwalls at 15–16 kHz. This mode extracts upper-mid musical harmonics (8–12 kHz) and applies mathematical harmonic excitation to regenerate phase-locked 2nd and 3rd harmonics extending up to 20–22 kHz.
+                    </p>
+                    <p className="mt-1 text-zinc-400">
+                      <strong className="text-zinc-200">What to expect:</strong> In FL Studio / FabFilter Pro-MB &amp; Pro-Q 3, the sharp frequency cliff at 16 kHz is replaced by a natural studio air taper, restoring cymbal sizzle, vocal openness, and transient presence. The original mix beneath 15 kHz remains 100% untouched.
+                    </p>
+                    <p className="mt-1 text-[11px] text-zinc-500">
+                      Tip: Recommended when converting streaming rips. When converting uncompressed studio masters or lossless FLAC/WAV files that already reach 20 kHz+, leave this toggle off.
+                    </p>
+                  </div>
+                )}
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <label className="block min-w-0">
                     <span className="mb-2 block text-[11px] font-medium text-zinc-500">Trim start time (optional)</span>

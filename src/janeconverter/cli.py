@@ -256,6 +256,7 @@ def process_conversion(
     allow_lossless_png_recovery: bool = False,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
+    reconstruct_frequency_loss: bool = False,
 ) -> str:
     """
     Orchestrates downloading/extracting stream, embedding cover art, exporting credits,
@@ -495,6 +496,7 @@ def process_conversion(
             allow_lossless_png_recovery=allow_lossless_png_recovery,
             start_time=start_time,
             end_time=end_time,
+            reconstruct_frequency_loss=reconstruct_frequency_loss,
         )
 
         report(1.0, f"Ready! File exported to: {os.path.basename(result_path)}")
@@ -560,7 +562,8 @@ def process_playlist_conversion(
     progress_callback: Optional[Callable[[float, str], None]] = None,
     content_category: Optional[str] = None,
     auth_browser: Optional[str] = None,
-    max_retries: int = 2
+    max_retries: int = 2,
+    reconstruct_frequency_loss: bool = False,
 ) -> Dict[str, Any]:
     """
     Batch-downloads and transcodes selected playlist items into a dedicated playlist folder.
@@ -756,7 +759,8 @@ def process_playlist_conversion(
                     metadata=metadata,
                     cover_path=track_cover if save_cover_art else None,
                     abort_event=abort_event,
-                    progress_callback=item_progress_hook
+                    progress_callback=item_progress_hook,
+                    reconstruct_frequency_loss=reconstruct_frequency_loss,
                 ),
                 f"Track #{idx} conversion",
                 0  # convert_media already selects and bounds distinct recovery methods
@@ -867,6 +871,7 @@ def process_playlist_conversion(
                     metadata=metadata,
                     cover_path=track_cover if save_cover_art else None,
                     abort_event=abort_event,
+                    reconstruct_frequency_loss=reconstruct_frequency_loss,
                 )
                 converted_files.append(result_path)
                 failed_files = [f for f in failed_files if f.get("index") != idx]
@@ -1045,6 +1050,7 @@ def main():
     parser.add_argument("--bitrate", "-b", default="320k", help="Audio bitrate, lossless bit depth, OGG quality, or video quality (best, high, balanced, small)")
     parser.add_argument("--sample-rate", "-r", type=int, default=48000, help="Audio sample rate in Hz (44100, 48000, 96000)")
     parser.add_argument("--normalize", "-n", action="store_true", help="Apply EBU R128 loudness normalization")
+    parser.add_argument("--reconstruct-frequency-loss", action="store_true", help="Mathematically regenerate lost high-frequency air (16–22 kHz) cut off by platform compression")
     parser.add_argument("--resolution", default="original", help="Video resolution (original, 4k, 1440p, 1080p, 720p, 480p)")
     parser.add_argument("--start-time", help="Start time offset for media clipping/trimming (e.g. 01:30, 90, 00:01:30)")
     parser.add_argument("--end-time", help="End time offset for media clipping/trimming (e.g. 03:45, 225, 00:03:45)")
@@ -1245,7 +1251,8 @@ def main():
             keep_temp=args.keep_temp,
             content_category=args.category,
             auth_browser=args.browser_session,
-            max_retries=args.retries
+            max_retries=args.retries,
+            reconstruct_frequency_loss=args.reconstruct_frequency_loss,
         )
         failed = summary.get("failed_count", 0)
         successful = summary.get("successful_count", 0)
@@ -1303,6 +1310,7 @@ def main():
             allow_lossless_png_recovery=args.allow_lossless_png_recovery,
             start_time=args.start_time,
             end_time=args.end_time,
+            reconstruct_frequency_loss=args.reconstruct_frequency_loss,
         )
 
 if __name__ == "__main__":

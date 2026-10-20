@@ -48,6 +48,7 @@ export interface ConverterSettings {
   saveCover: boolean;
   saveMetadata: boolean;
   allowPngFallback?: boolean;
+  reconstructFrequencyLoss?: boolean;
   openInBrowser?: boolean;
   readBrowserCookies?: boolean;
   browserSession?: string;
