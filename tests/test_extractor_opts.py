@@ -46,3 +46,34 @@ def test_extractor_options_keep_provider_client_selection_available(tmp_path):
     assert "extractor_args" not in captured_opts
     assert captured_opts.get("format_sort") == ["res", "fps", "proto:https", "br"]
     assert captured_opts.get("format") == "bv*+ba/b"
+
+
+def test_audio_format_selector_prioritizes_full_spectrum_opus_and_original(tmp_path):
+    captured_opts = {}
+
+    class MockYoutubeDL:
+        def __init__(self, opts):
+            nonlocal captured_opts
+            captured_opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, query, download=True):
+            return None
+
+    with patch("janeconverter.extractor.yt_dlp.YoutubeDL", MockYoutubeDL):
+        try:
+            fetch_media_stream("https://example.com/audio-test", str(tmp_path), audio_only=True)
+        except Exception:
+            pass
+
+    fmt = captured_opts.get("format", "")
+    assert "bestaudio[acodec=opus]" in fmt
+    assert "download/original" in fmt
+    # Verify Opus is prioritized before lower-bitrate AAC
+    assert fmt.index("bestaudio[acodec=opus]") < fmt.index("bestaudio/best")
+    assert captured_opts.get("format_sort") == ["proto:https", "acodec:opus", "abr", "asr"]

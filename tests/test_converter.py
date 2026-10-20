@@ -36,6 +36,8 @@ def test_build_ffmpeg_args_mp3():
     assert "-vn" in cmd
     assert "libmp3lame" in cmd
     assert "320k" in cmd
+    assert "-cutoff" in cmd
+    assert "20000" in cmd
     assert "48000" in cmd
     assert any("loudnorm" in arg for arg in cmd)
     assert "-metadata" in cmd

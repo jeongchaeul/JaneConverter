@@ -1256,7 +1256,7 @@ def fetch_media_stream(
             report(0.75, "Stream download complete. Preparing conversion...", force=True)
 
     format_selector = (
-        "ba[ext=m4a]/ba[ext=opus]/bestaudio/best"
+        "download/original/bestaudio[acodec=opus]/bestaudio[ext=opus]/bestaudio[ext=webm]/bestaudio[abr>140]/bestaudio/best"
         if audio_only
         else build_video_format_selector(resolution)
     )
@@ -1277,11 +1277,14 @@ def fetch_media_stream(
         "retries": 1,
         "fragment_retries": 1,
         "extractor_retries": 1,
-        # Prefer a direct HTTPS stream over an HLS fallback, then prefer the
-        # highest source bitrate at the requested resolution. This prevents
-        # YouTube's low-bitrate AV1 rendition from winning over its clearer
-        # direct VP9 rendition at the same resolution.
-        "format_sort": ["res", "fps", "proto:https", "br"],
+        # For audio-only downloads, prioritize high-bandwidth Opus streams (up to 20kHz+ frequency
+        # response) over lossy-lowpassed AAC (which brickwalls at 16kHz on YouTube/SoundCloud).
+        # For video downloads, prioritize resolution and high-bitrate video streams.
+        "format_sort": (
+            ["proto:https", "acodec:opus", "abr", "asr"]
+            if audio_only
+            else ["res", "fps", "proto:https", "br"]
+        ),
         "js_runtimes": get_js_runtimes_config(),
         "progress_hooks": [progress_hook]
     }

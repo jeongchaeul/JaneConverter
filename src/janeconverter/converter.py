@@ -208,7 +208,7 @@ def measure_audio_loudness(
 
     filters = []
     if sample_rate and has_soxr_support():
-        filters.append("aresample=resampler=soxr:precision=28:cutoff=0.97:dither_method=triangular")
+        filters.append("aresample=resampler=soxr:precision=28:cutoff=0.99:dither_method=triangular")
     filters.append("loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json")
 
     cmd = [
@@ -1428,9 +1428,9 @@ def build_ffmpeg_args(
             and sample_rate
             and int(input_sample_rate) == int(sample_rate)
         )
-        # Avoid a high-quality resampler pass when the output rate already matches.
-        if sample_rate and (normalize_audio or not source_rate_matches) and has_soxr_support():
-            audio_filters.append("aresample=resampler=soxr:precision=28:cutoff=0.97:dither_method=triangular")
+        # Avoid a resampler pass when the output rate already matches the source stream.
+        if sample_rate and not source_rate_matches and has_soxr_support():
+            audio_filters.append("aresample=resampler=soxr:precision=28:cutoff=0.99:dither_method=triangular")
 
         if normalize_audio:
             # Request linear processing and read FFmpeg's actual mode after encoding.
@@ -1444,7 +1444,7 @@ def build_ffmpeg_args(
 
         # Codecs and cover art mapping
         if target_format == "mp3":
-            cmd.extend(["-c:a", "libmp3lame", "-b:a", bitrate])
+            cmd.extend(["-c:a", "libmp3lame", "-b:a", bitrate, "-cutoff", "20000"])
             if can_embed_art:
                 cmd.extend([
                     "-c:v", "copy",
@@ -1461,7 +1461,7 @@ def build_ffmpeg_args(
             if can_embed_art:
                 cmd.extend(["-c:v", "copy", "-disposition:v", "attached_pic"])
         elif target_format in ("aac", "m4a"):
-            cmd.extend(["-c:a", "aac", "-b:a", bitrate])
+            cmd.extend(["-c:a", "aac", "-b:a", bitrate, "-cutoff", "20000"])
             if can_embed_art:
                 cmd.extend(["-c:v", "copy", "-disposition:v", "attached_pic"])
         elif target_format == "ogg":
