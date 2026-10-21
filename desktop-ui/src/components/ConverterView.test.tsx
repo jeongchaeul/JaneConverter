@@ -776,4 +776,41 @@ describe("Converter account access feedback", () => {
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });
+
+  it("handles dropped converted-library file with a single status response and deduplicates rapid drops", async () => {
+    (bridge.isConvertedLibraryPath as unknown as { mockResolvedValue: (v: boolean) => void }).mockResolvedValue(true);
+    const view = renderView();
+
+    const dropSection = view.container.querySelector("section");
+    expect(dropSection).not.toBeNull();
+
+    const dropEvent = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEvent, "dataTransfer", {
+      value: {
+        files: [{ path: "I:/Files 1/JaneConverter Export Library 1/converted/song.mp3", name: "song.mp3" }],
+        getData: vi.fn().mockReturnValue(""),
+      },
+    });
+
+    // Fire first drop
+    await act(async () => {
+      dropSection?.dispatchEvent(dropEvent);
+      await Promise.resolve();
+    });
+
+    // Fire duplicate rapid drop (e.g. DOM event + Tauri event collision)
+    await act(async () => {
+      dropSection?.dispatchEvent(dropEvent);
+      await Promise.resolve();
+    });
+
+    expect(view.onStatus).toHaveBeenCalledTimes(1);
+    expect(view.onStatus).toHaveBeenCalledWith(
+      "Converted-library files can be dragged out to other apps, but can't be dropped back into JaneConverter."
+    );
+
+    (bridge.isConvertedLibraryPath as unknown as { mockResolvedValue: (v: boolean) => void }).mockResolvedValue(false);
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
 });

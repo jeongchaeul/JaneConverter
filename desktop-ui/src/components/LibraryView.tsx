@@ -143,6 +143,7 @@ export function LibraryView({
   const suppressClickUntil = useRef(0);
 
   const [copiedSourceId, setCopiedSourceId] = useState<string | null>(null);
+  const [lastClickedId, setLastClickedId] = useState<string | null>(null);
 
   function copySourcePath(id: string, source: string) {
     void navigator.clipboard.writeText(source);
@@ -370,6 +371,7 @@ export function LibraryView({
   }
 
   function handleClearTempHistory() {
+    setLastClickedId(null);
     onClearHistory?.();
     setHistoryPage(1);
     void refresh(currentPath);
@@ -552,12 +554,17 @@ export function LibraryView({
             const isPartial = item.status === "partial";
             const hasExported = succeeded || isPartial;
             const itemBytes = item.totalBytes ?? historySizes[item.id];
+            const isSelected = lastClickedId === item.id;
             return (
               <motion.div
                 key={item.id}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                className="panel space-y-2.5 p-4"
+                data-selected={isSelected}
+                onClick={() => setLastClickedId(item.id)}
+                className={`converted-item-card space-y-2.5 p-4 cursor-pointer ${
+                  isSelected ? "is-last-clicked" : ""
+                }`}
               >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -582,6 +589,28 @@ export function LibraryView({
                         {succeeded ? "Succeeded" : isPartial ? "Partial" : "Failed"}
                       </span>
                       <span className="truncate text-sm font-medium text-white">{item.fileName}</span>
+                      {isSelected && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide animate-in fade-in duration-200"
+                          style={{
+                            backgroundColor: "var(--accent-subtle, rgba(197, 43, 104, 0.15))",
+                            borderColor: "var(--accent-glow, rgba(197, 43, 104, 0.4))",
+                            borderWidth: 1,
+                            borderStyle: "solid",
+                            color: "var(--accent-color, #c52b68)",
+                            boxShadow: "0 0 8px var(--accent-glow, rgba(197, 43, 104, 0.25))",
+                          }}
+                        >
+                          <span
+                            className="size-1.5 rounded-full"
+                            style={{
+                              backgroundColor: "var(--accent-color, #c52b68)",
+                              boxShadow: "0 0 6px var(--accent-color, #c52b68)",
+                            }}
+                          />
+                          Last selected
+                        </span>
+                      )}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[11px] text-zinc-500">
                       <span className="break-all">Source: {item.source}</span>
@@ -610,7 +639,14 @@ export function LibraryView({
                     <span className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 text-zinc-300">
                       Preset: {item.presetName}
                     </span>
-                    <span className="rounded-md border border-pink-500/30 bg-pink-500/10 px-2 py-0.5 font-mono text-pink-200">
+                    <span
+                      className="rounded-md border px-2 py-0.5 font-mono text-xs"
+                      style={{
+                        borderColor: "var(--accent-glow, rgba(197, 43, 104, 0.35))",
+                        backgroundColor: "var(--accent-subtle, rgba(197, 43, 104, 0.12))",
+                        color: "var(--accent-color, #c52b68)",
+                      }}
+                    >
                       {item.formatLabel}
                     </span>
                     <span className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 text-zinc-300">
@@ -628,7 +664,11 @@ export function LibraryView({
                     </span>
                     <button
                       type="button"
-                      onClick={() => onRemoveHistoryItem?.(item.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (lastClickedId === item.id) setLastClickedId(null);
+                        onRemoveHistoryItem?.(item.id);
+                      }}
                       className="grid size-7 place-items-center rounded-lg text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-300"
                       aria-label={`Delete history entry for ${item.fileName}`}
                       title={`Delete ${item.fileName} from history`}
@@ -654,8 +694,12 @@ export function LibraryView({
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => copySourcePath(item.id, item.source)}
-                      className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs hover:border-pink-500/40"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setLastClickedId(item.id);
+                        copySourcePath(item.id, item.source);
+                      }}
+                      className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
                       aria-label={`Copy source path for ${item.fileName}`}
                       title={`Copy source path for ${item.fileName}`}
                     >
@@ -679,6 +723,7 @@ export function LibraryView({
                           onDragStartCapture={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
+                            setLastClickedId(item.id);
                             libraryDragActive.current = true;
                             void bridge.dragLibraryFile(item.exportPath)
                               .catch((error) => {
@@ -689,23 +734,35 @@ export function LibraryView({
                                 suppressClickUntil.current = Date.now() + 400;
                               });
                           }}
-                          onClick={() => onStatus("Drag this button into another app (e.g. FL Studio, Explorer, or Discord).")}
-                          className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-grab active:cursor-grabbing hover:border-pink-500/40"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLastClickedId(item.id);
+                            onStatus("Drag this button into another app (e.g. FL Studio, Explorer, or Discord).");
+                          }}
+                          className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-grab active:cursor-grabbing"
                           title="Drag this file into another app"
                           aria-label={`Drag ${item.fileName} into another app`}
                         >
-                          <GripVertical className="size-3.5 text-pink-400" /> Drag File
+                          <GripVertical className="size-3.5" style={{ color: "var(--accent-color)" }} /> Drag File
                         </button>
                         <button
                           type="button"
-                          onClick={() => void openFile(item.exportPath)}
-                          className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs hover:border-pink-500/40"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLastClickedId(item.id);
+                            void openFile(item.exportPath);
+                          }}
+                          className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
                         >
-                          <Play className="size-3 text-pink-400" /> Open File
+                          <Play className="size-3" style={{ color: "var(--accent-color)" }} /> Open File
                         </button>
                         <button
                           type="button"
-                          onClick={() => void openPath(item.exportPath)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLastClickedId(item.id);
+                            void openPath(item.exportPath);
+                          }}
                           className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
                         >
                           <FolderOpen className="size-3.5" /> Open Path
@@ -729,7 +786,7 @@ export function LibraryView({
                   type="button"
                   disabled={safeHistoryPage <= 1}
                   onClick={() => setHistoryPage((prev) => Math.max(1, prev - 1))}
-                  className="subtle-button flex items-center gap-1 px-2.5 py-1 text-xs disabled:pointer-events-none disabled:opacity-40 hover:border-pink-500/40"
+                  className="subtle-button flex items-center gap-1 px-2.5 py-1 text-xs disabled:pointer-events-none disabled:opacity-40"
                   aria-label="Previous history page"
                 >
                   <ChevronLeft className="size-3.5" /> Previous
@@ -741,7 +798,7 @@ export function LibraryView({
                   type="button"
                   disabled={safeHistoryPage >= totalHistoryPages}
                   onClick={() => setHistoryPage((prev) => Math.min(totalHistoryPages, prev + 1))}
-                  className="subtle-button flex items-center gap-1 px-2.5 py-1 text-xs disabled:pointer-events-none disabled:opacity-40 hover:border-pink-500/40"
+                  className="subtle-button flex items-center gap-1 px-2.5 py-1 text-xs disabled:pointer-events-none disabled:opacity-40"
                   aria-label="Next history page"
                 >
                   Next <ChevronRight className="size-3.5" />
@@ -760,6 +817,7 @@ export function LibraryView({
             const details = entry.isDirectory
               ? entry.mediaCount + " media item" + (entry.mediaCount === 1 ? "" : "s") + " - " + size(entry.totalBytes)
               : entry.extension + " - " + size(entry.totalBytes);
+            const isSelected = lastClickedId === entry.path;
             return (
               <motion.div
                 key={entry.path}
@@ -770,17 +828,25 @@ export function LibraryView({
                 animate={{ opacity: 1 }}
                 whileHover={{ scale: 1.002 }}
                 whileTap={{ scale: 0.998 }}
+                data-selected={isSelected}
                 onClick={() => {
+                  setLastClickedId(entry.path);
                   if (entry.isDirectory) {
                     navigate(entry.path);
                   }
                 }}
                 onDoubleClick={(event) => {
+                  setLastClickedId(entry.path);
                   if (entry.isDirectory || (event.target instanceof Element && event.target.closest("button"))) return;
                   void openFile(entry.path);
                 }}
-                onContextMenu={(e) => handleContextMenu(e, entry)}
-                className={`panel group relative flex flex-wrap items-center gap-3 px-4 py-3 select-none transition-all duration-150 hover:border-pink-500/30 hover:bg-white/[0.04] active:bg-white/[0.06] ${entry.isDirectory ? "cursor-pointer" : "cursor-default"}`}
+                onContextMenu={(e) => {
+                  setLastClickedId(entry.path);
+                  handleContextMenu(e, entry);
+                }}
+                className={`converted-item-card group relative flex flex-wrap items-center gap-3 px-4 py-3 select-none cursor-pointer ${
+                  isSelected ? "is-last-clicked" : ""
+                }`}
               >
                 <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-white/[0.07] bg-black/15 text-zinc-500">
                   {preview ? (
@@ -792,13 +858,37 @@ export function LibraryView({
                       onError={() => removePreview(entry.path)}
                     />
                   ) : entry.isDirectory ? (
-                    <Folder className={entry.isPlaylist ? "text-[#d75b88]" : ""} size={17} />
+                    <Folder style={entry.isPlaylist ? { color: "var(--accent-color)" } : undefined} size={17} />
                   ) : (
                     mediaIcon(entry)
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm text-zinc-300 group-hover:text-white transition-colors">{entry.name}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm text-zinc-300 group-hover:text-white transition-colors">{entry.name}</span>
+                    {isSelected && (
+                      <span
+                        className="hidden sm:inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide shrink-0 animate-in fade-in duration-200"
+                        style={{
+                          backgroundColor: "var(--accent-subtle, rgba(197, 43, 104, 0.15))",
+                          borderColor: "var(--accent-glow, rgba(197, 43, 104, 0.4))",
+                          borderWidth: 1,
+                          borderStyle: "solid",
+                          color: "var(--accent-color, #c52b68)",
+                          boxShadow: "0 0 8px var(--accent-glow, rgba(197, 43, 104, 0.25))",
+                        }}
+                      >
+                        <span
+                          className="size-1.5 rounded-full"
+                          style={{
+                            backgroundColor: "var(--accent-color, #c52b68)",
+                            boxShadow: "0 0 6px var(--accent-color, #c52b68)",
+                          }}
+                        />
+                        Last selected
+                      </span>
+                    )}
+                  </div>
                   <div className="mt-1 text-[11px] text-zinc-600">
                     {details}
                     {entry.isPlaylist ? " - playlist" : ""}
@@ -812,11 +902,12 @@ export function LibraryView({
                     aria-label={"Open " + entry.name}
                     onClick={(e) => {
                       e.stopPropagation();
+                      setLastClickedId(entry.path);
                       navigate(entry.path);
                     }}
-                    className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors hover:border-pink-500/40"
+                    className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors"
                   >
-                    <FolderOpen className="size-3.5 text-pink-400" /> Open
+                    <FolderOpen className="size-3.5" style={{ color: "var(--accent-color)" }} /> Open
                   </button>
                 ) : (
                   <div className="flex flex-wrap items-center gap-2">
@@ -825,17 +916,19 @@ export function LibraryView({
                       aria-label={"Open " + entry.name}
                       onClick={(e) => {
                         e.stopPropagation();
+                        setLastClickedId(entry.path);
                         void openFile(entry.path);
                       }}
-                      className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors hover:border-pink-500/40"
+                      className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors"
                     >
-                      <Play className="size-3 text-pink-400" /> Open
+                      <Play className="size-3" style={{ color: "var(--accent-color)" }} /> Open
                     </button>
                     <button
                       type="button"
                       aria-label={"Show " + entry.name + " in folder"}
                       onClick={(e) => {
                         e.stopPropagation();
+                        setLastClickedId(entry.path);
                         void openPath(entry.path);
                       }}
                       className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
@@ -848,6 +941,7 @@ export function LibraryView({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (lastClickedId === entry.path) setLastClickedId(null);
                     remove(entry);
                   }}
                   className="grid size-8 place-items-center rounded-lg text-zinc-600 transition-colors hover:bg-red-500/10 hover:text-red-300"
@@ -886,7 +980,7 @@ export function LibraryView({
             </div>
             <div className="mt-1.5 flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[11px]">
               <span className="inline-flex items-center gap-1 text-zinc-400">
-                <Clock size={11} className="text-pink-400" /> Conversion time
+                <Clock size={11} style={{ color: "var(--accent-color)" }} /> Conversion time
               </span>
               <span className="font-mono text-zinc-200">
                 {formatElapsedMs(entryElapsedMs(contextMenu.entry))}
@@ -903,9 +997,9 @@ export function LibraryView({
                     navigate(contextMenu.entry.path);
                     setContextMenu(null);
                   }}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 transition-colors hover:bg-pink-500/15 hover:text-pink-200"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 transition-colors hover:bg-[var(--accent-subtle)] hover:text-white"
                 >
-                  <FolderOpen size={13} className="text-pink-400" /> Open folder
+                  <FolderOpen size={13} style={{ color: "var(--accent-color)" }} /> Open folder
                 </button>
                 <button
                   type="button"
@@ -926,9 +1020,9 @@ export function LibraryView({
                     void openFile(contextMenu.entry.path);
                     setContextMenu(null);
                   }}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 transition-colors hover:bg-pink-500/15 hover:text-pink-200"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 transition-colors hover:bg-[var(--accent-subtle)] hover:text-white"
                 >
-                  <Play size={13} className="text-pink-400" /> Open / Play file
+                  <Play size={13} style={{ color: "var(--accent-color)" }} /> Open / Play file
                 </button>
                 <button
                   type="button"
@@ -993,7 +1087,7 @@ export function LibraryView({
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-start gap-3">
-              <div className={"grid size-10 shrink-0 place-items-center rounded-xl border " + (pendingAction.kind === "delete" ? "border-red-400/20 bg-red-400/10 text-red-300" : "border-[#d75b88]/20 bg-[#d75b88]/10 text-[#e68aae]")}>
+              <div className={"grid size-10 shrink-0 place-items-center rounded-xl border " + (pendingAction.kind === "delete" ? "border-red-400/20 bg-red-400/10 text-red-300" : "border-[var(--accent-glow)] bg-[var(--accent-subtle)] text-[var(--accent-color)]")}>
                 {pendingAction.kind === "delete" ? <Trash2 size={17} /> : <AlertTriangle size={17} />}
               </div>
               <div className="min-w-0">
@@ -1005,7 +1099,7 @@ export function LibraryView({
               <button ref={cancelConfirmRef} type="button" onClick={() => setPendingAction(null)} className="subtle-button px-3 py-2 text-xs">
                 Cancel
               </button>
-              <button type="button" onClick={() => void confirmPendingAction()} className={"rounded-lg border px-3 py-2 text-xs transition-colors " + (pendingAction.kind === "delete" ? "border-red-400/25 bg-red-400/10 text-red-200 hover:bg-red-400/20" : "border-[#d75b88]/25 bg-[#d75b88]/10 text-[#f0b0c8] hover:bg-[#d75b88]/20")}>
+              <button type="button" onClick={() => void confirmPendingAction()} className={"rounded-lg border px-3 py-2 text-xs transition-colors " + (pendingAction.kind === "delete" ? "border-red-400/25 bg-red-400/10 text-red-200 hover:bg-red-400/20" : "border-[var(--accent-glow)] bg-[var(--accent-subtle)] text-white hover:brightness-110")}>
                 {confirmation.confirm}
               </button>
             </div>

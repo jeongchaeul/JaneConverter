@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { AlertCircle, CheckCircle2, Clock, FolderOpen, GripVertical, HardDrive, Play, RotateCcw, X } from "lucide-react";
 import { bridge, type AccessStatus, type ConversionHistoryItem, type ConverterEvent, type ConverterSettings, type FetchedMedia, type RuntimeInfo } from "./bridge";
@@ -495,7 +495,13 @@ export default function App() {
           setPaused(false);
         }
       }
-    }).then((unlisten) => { cleanup = unlisten; });
+    }).then((unlisten) => {
+      if (!mounted) {
+        unlisten();
+      } else {
+        cleanup = unlisten;
+      }
+    });
     return () => { mounted = false; cleanup?.(); };
   }, []);
 
@@ -539,15 +545,15 @@ export default function App() {
     return () => { mounted = false; window.clearTimeout(timer); };
   }, []);
 
-  function statusMessage(message: string) {
+  const statusMessage = useCallback((message: string) => {
     setStatus(message);
     setEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
-  }
+  }, []);
 
-  function errorMessage(message: string) {
+  const errorMessage = useCallback((message: string) => {
     statusMessage(message);
     setFailure({ title: "Something went wrong", message, suggestLossless: false });
-  }
+  }, [statusMessage]);
 
   function dragExportedFile(event: React.DragEvent, exportPath: string) {
     if (!exportPath) return;

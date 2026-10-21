@@ -110,6 +110,54 @@ select option:disabled {
 .danger-button { background: rgba(153, 27, 27, .75); color: #fecaca; border: 1px solid rgba(248,113,113,.22); border-radius: 10px; }
 .mono-label { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: #686875; }
 .console-line { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 1.55; color: #a8a8b3; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Converted item interactive highlight, trail, and hover glow */
+.converted-item-card {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  background: rgba(255, 255, 255, 0.028);
+  border-radius: 18px;
+  transition: border-color 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              background 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+/* Hover state - subtle glow, elevated shadow and border highlight */
+.converted-item-card:hover {
+  border-color: var(--accent-glow, rgba(197, 43, 104, 0.45));
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: 0 0 20px -3px var(--accent-glow, rgba(197, 43, 104, 0.3)),
+              0 4px 16px -2px rgba(0, 0, 0, 0.4);
+}
+
+/* Last clicked / selected state - distinct persistent glow, accent border, ambient gradient wash */
+.converted-item-card.is-last-clicked,
+.converted-item-card[data-selected="true"] {
+  border-color: var(--accent-color, #c52b68) !important;
+  background: linear-gradient(90deg, var(--accent-subtle, rgba(197, 43, 104, 0.16)) 0%, rgba(255, 255, 255, 0.035) 100%) !important;
+  box-shadow: 0 0 24px -2px var(--accent-glow, rgba(197, 43, 104, 0.4)),
+              0 2px 14px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Luminous neon trail on the left edge of the last clicked item */
+.converted-item-card.is-last-clicked::before,
+.converted-item-card[data-selected="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--accent-color, #c52b68);
+  box-shadow: 0 0 10px var(--accent-glow, rgba(197, 43, 104, 0.7)),
+              0 0 20px var(--accent-color, #c52b68);
+  border-top-left-radius: 18px;
+  border-bottom-left-radius: 18px;
+  pointer-events: none;
+  z-index: 10;
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
@@ -244,4 +292,24 @@ select option:disabled {
 [data-theme="light"] .context-menu button:hover {
   background: #fdf2f7 !important;
   color: var(--accent-color, #c52b68) !important;
+}
+
+[data-theme="light"] .converted-item-card {
+  background: #ffffff !important;
+  border-color: var(--accent-subtle, rgba(197, 43, 104, 0.15)) !important;
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .converted-item-card:hover {
+  border-color: var(--accent-color, #c52b68) !important;
+  background: #fdf6f9 !important;
+  box-shadow: 0 4px 24px -2px var(--accent-glow, rgba(197, 43, 104, 0.28)) !important;
+}
+
+[data-theme="light"] .converted-item-card.is-last-clicked,
+[data-theme="light"] .converted-item-card[data-selected="true"] {
+  border-color: var(--accent-color, #c52b68) !important;
+  background: linear-gradient(90deg, var(--accent-subtle, rgba(197, 43, 104, 0.18)) 0%, #ffffff 100%) !important;
+  box-shadow: 0 4px 24px -1px var(--accent-glow, rgba(197, 43, 104, 0.35)),
+              0 2px 8px rgba(0, 0, 0, 0.06) !important;
 }

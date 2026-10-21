@@ -647,8 +647,17 @@ export function ConverterView({
     onStatus(`Source set to: ${clean.replace(/^.*[\\/]/, "") || clean}`);
   }
 
+  const lastProcessedDropRef = useRef<{ signature: string; timestamp: number }>({ signature: "", timestamp: 0 });
+
   async function handleDroppedPaths(paths: string[]) {
     if (!paths || paths.length === 0) return;
+    const signature = paths.slice().sort().join("|||");
+    const now = Date.now();
+    if (signature === lastProcessedDropRef.current.signature && now - lastProcessedDropRef.current.timestamp < 600) {
+      return;
+    }
+    lastProcessedDropRef.current = { signature, timestamp: now };
+
     let inspectedPaths: Array<{ path: string; isLibraryPath: boolean }>;
     try {
       inspectedPaths = await Promise.all(paths.map(async (path) => {
@@ -734,13 +743,25 @@ export function ConverterView({
     }
   }
 
+  const converterTabRef = useRef(converterTab);
+  converterTabRef.current = converterTab;
+
+  const onStatusRef = useRef(onStatus);
+  onStatusRef.current = onStatus;
+
+  const handleDroppedPathsRef = useRef(handleDroppedPaths);
+  handleDroppedPathsRef.current = handleDroppedPaths;
+
   // Native Tauri drag-and-drop listener
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let isMounted = true;
+    let unlistenFn: (() => void) | undefined;
     if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
       void import("@tauri-apps/api/webview")
         .then(({ getCurrentWebview }) => {
+          if (!isMounted) return;
           return getCurrentWebview().onDragDropEvent((event) => {
+            if (!isMounted) return;
             if (event.payload.type === "over" || event.payload.type === "enter") {
               setIsDraggingOver(true);
             } else if (event.payload.type === "leave") {
@@ -748,29 +769,34 @@ export function ConverterView({
             } else if (event.payload.type === "drop") {
               setIsDraggingOver(false);
               if (event.payload.paths && event.payload.paths.length > 0) {
-                if (converterTab === "flp") {
+                if (converterTabRef.current === "flp") {
                   const flp = event.payload.paths.find((p) => p.toLowerCase().endsWith(".flp"));
                   if (flp) {
                     setDroppedFlpPath(flp);
                   } else {
-                    onStatus("Please drop a valid .flp project file.");
+                    onStatusRef.current("Please drop a valid .flp project file.");
                   }
                 } else {
-                  handleDroppedPaths(event.payload.paths);
+                  void handleDroppedPathsRef.current(event.payload.paths);
                 }
               }
             }
           });
         })
-        .then((fn) => {
-          unlisten = fn;
+        .then((unlisten) => {
+          if (!isMounted) {
+            unlisten?.();
+          } else {
+            unlistenFn = unlisten;
+          }
         })
         .catch(() => {});
     }
     return () => {
-      unlisten?.();
+      isMounted = false;
+      unlistenFn?.();
     };
-  }, [activeCategory, converterTab, onStatus]);
+  }, []);
 
   async function browseOutput() {
     const path = await bridge.chooseFolder();

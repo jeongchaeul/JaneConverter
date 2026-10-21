@@ -567,4 +567,102 @@ describe("Converted library", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("highlights the last clicked converted item with glow, trail and selected indicator", async () => {
+    const historyItem1 = {
+      id: "hist-1",
+      timestamp: "2026-10-19T10:00:00.000Z",
+      source: "https://example.com/beat1",
+      fileName: "Beat 1.mp3",
+      exportPath: "D:\\JaneConverter\\converted\\Beat 1.mp3",
+      presetName: "Fast MP3",
+      formatLabel: "MP3",
+      qualityLabel: "320k",
+      elapsedMs: 1200,
+      totalBytes: 5000000,
+      status: "succeeded" as const,
+    };
+    const historyItem2 = {
+      id: "hist-2",
+      timestamp: "2026-10-19T10:01:00.000Z",
+      source: "https://example.com/beat2",
+      fileName: "Beat 2.mp3",
+      exportPath: "D:\\JaneConverter\\converted\\Beat 2.mp3",
+      presetName: "Fast MP3",
+      formatLabel: "MP3",
+      qualityLabel: "320k",
+      elapsedMs: 1400,
+      totalBytes: 6000000,
+      status: "succeeded" as const,
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <LibraryView
+          settings={settings}
+          onSettings={vi.fn()}
+          onStatus={vi.fn()}
+          history={[historyItem1, historyItem2]}
+        />,
+      );
+    });
+
+    // Switch to History tab
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "History")?.click();
+      await Promise.resolve();
+    });
+
+    const cards = container.querySelectorAll(".converted-item-card");
+    expect(cards.length).toBe(2);
+    expect(cards[0].getAttribute("data-selected")).toBe("false");
+    expect(cards[1].getAttribute("data-selected")).toBe("false");
+
+    // Click first item
+    await act(async () => {
+      (cards[0] as HTMLElement).click();
+      await Promise.resolve();
+    });
+
+    expect(cards[0].getAttribute("data-selected")).toBe("true");
+    expect(cards[0].classList.contains("is-last-clicked")).toBe(true);
+    expect(cards[0].textContent).toContain("Last selected");
+    expect(cards[1].getAttribute("data-selected")).toBe("false");
+    expect(cards[1].classList.contains("is-last-clicked")).toBe(false);
+
+    // Click second item
+    await act(async () => {
+      (cards[1] as HTMLElement).click();
+      await Promise.resolve();
+    });
+
+    expect(cards[0].getAttribute("data-selected")).toBe("false");
+    expect(cards[0].classList.contains("is-last-clicked")).toBe(false);
+    expect(cards[1].getAttribute("data-selected")).toBe("true");
+    expect(cards[1].classList.contains("is-last-clicked")).toBe(true);
+    expect(cards[1].textContent).toContain("Last selected");
+
+    // Switch back to Library tab to verify entry click
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Library")?.click();
+      await Promise.resolve();
+    });
+
+    const entryCard = container.querySelector(".converted-item-card");
+    if (entryCard) {
+      await act(async () => {
+        (entryCard as HTMLElement).click();
+        await Promise.resolve();
+      });
+      expect(entryCard.getAttribute("data-selected")).toBe("true");
+      expect(entryCard.classList.contains("is-last-clicked")).toBe(true);
+    }
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });
