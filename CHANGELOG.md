@@ -3,6 +3,20 @@
 All notable changes to JaneConverter are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3.2] - 2026-10-22 - Universal In-App Updater, Real-Time Push Changes & Dynamic Glow UX
+
+### Added
+- Added universal application-level update status tracking in `App.tsx`, executing a single non-blocking check on launch and persisting results across all page navigation without re-running checks.
+- Added a sticky, illuminated **Top Header Update Prompt** (`UpdatePromptHeader`) visible across all workspace views when an update is available, displaying build/version tags, commit counts, a direct "Update now" button, a "View brief changes" button, and a dismiss action.
+- Added a dedicated **Brief Changes Window** modal (`UpdateChangesModal`) displaying incoming push commit logs, commit hashes, release notes, and real-time extractor engine version upgrade information.
+- Added incoming push commit history extraction (`git log HEAD..upstream`) and release note parsing in `updater.py` and the Tauri bridge.
+- Added customizable, dynamic CSS custom property glow trails and border illumination to converted media cards in `LibraryView` reflecting the user's customized appearance colors (`--accent-color`, `--accent-glow`, `--accent-subtle`).
+
+### Fixed
+- Fixed an infinite browse file picker loop on the main converter page by adding in-flight guards (`isBrowsingRef`) and handling empty path selections on dialog cancellation.
+- Removed the redundant "Last selected" text pill from converted library and history items while preserving illuminated glow shadows and neon indicator edges.
+- Fixed code formatting in the native Tauri bridge to pass strict `cargo fmt --check` gates in continuous integration.
+
 ## [2.3.1] - 2026-10-18 - User Manual, Resilient YouTube Extraction & Direct Chromium Cookies
 
 ### Added
