@@ -1,6 +1,6 @@
-# Rebuilding JaneConverter Executables
+# Rebuilding JaneConverter Executables & Release Protocol
 
-This guide documents the exact, reliable procedure for rebuilding both the Python conversion engine (`JaneConverterEngine.exe`) and the Tauri desktop application (`janeconverter-desktop.exe`).
+This guide documents the exact, reliable procedure for rebuilding both the Python conversion engine (`JaneConverterEngine.exe`) and the Tauri desktop application (`janeconverter-desktop.exe`), deploying them locally, and executing a complete multi-platform release.
 
 > [!CRITICAL]
 > **NEVER invoke bare `cargo build --release` to produce the desktop executable!**
@@ -70,6 +70,8 @@ This runs `beforeBuildCommand` (`npm run build`) to produce the optimized bundle
    ```powershell
    Copy-Item -Path "desktop-ui\src-tauri\target\release\janeconverter-desktop.exe" `
              -Destination "D:\Programs\JaneConverter\janeconverter-desktop.exe" -Force
+   Copy-Item -Path "desktop-ui\src-tauri\target\release\janeconverter-desktop.exe" `
+             -Destination "D:\Programs\JaneConverter\JaneConverter.exe" -Force
    ```
 
 3. **Deploy the engine:**
@@ -85,10 +87,79 @@ This runs `beforeBuildCommand` (`npm run build`) to produce the optimized bundle
 
 ---
 
-## Step 4: Full Release Installer / Packaging (Optional)
+## Version Bump & Release Protocol
 
-To create the full signed/unsigned NSIS installer and portable release zip, execute the dedicated packaging script:
+Whenever instructed to bump to a new version or prepare a multi-platform release, follow this mandatory step-by-step protocol:
+
+### 1. Synchronize Version Metadata
+Never edit version strings by hand across individual files. Always use the canonical synchronizer:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging/build_consumer.ps1
+uv run --locked python packaging/set_version.py <version>
+uv run --locked python packaging/set_version.py --check
 ```
+
+This synchronizes all 6 metadata files simultaneously:
+- `src/janeconverter/version.py`
+- `desktop-ui/package.json`
+- `desktop-ui/package-lock.json`
+- `desktop-ui/src-tauri/Cargo.toml`
+- `desktop-ui/src-tauri/Cargo.lock`
+- `desktop-ui/src-tauri/tauri.conf.json`
+
+### 2. Document Release Notes
+Update `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/):
+- Add a new section `## [<version>] - YYYY-MM-DD - <Release Title>`
+- Detail changes under `### Added`, `### Changed`, and `### Fixed`.
+
+### 3. Rebuild Binaries Locally
+Execute Steps 1, 2, and 3 above:
+- Rebuild engine via PyInstaller and verify `JaneConverterEngine.exe --version`.
+- Rebuild desktop app via `npm run tauri:build -- --no-bundle`.
+- Deploy both to `D:\Programs\JaneConverter\`.
+
+### 4. Execute Pre-Release Verification Gates
+Run all test suites and quality gates to prevent breaking CI builds:
+
+```powershell
+# Check Rust formatting
+cargo fmt --manifest-path desktop-ui/src-tauri/Cargo.toml --check
+
+# Check Desktop UI tests and production web build
+cd desktop-ui
+npm test -- --run
+npm run build
+cd ..
+
+# Verify packaging contracts
+uv run --locked pytest tests/test_consumer_packaging.py
+
+# Lint Python engine
+uv run --locked pyflakes src/janeconverter packaging/engine_entry.py
+
+# Run hermetic test suite
+uv run --locked pytest tests/ -v
+```
+
+### 5. Commit, Tag, and Push
+Stage the synchronized manifest files, changelog, and any related changes:
+
+```powershell
+git add CHANGELOG.md desktop-ui/package-lock.json desktop-ui/package.json desktop-ui/src-tauri/Cargo.lock desktop-ui/src-tauri/Cargo.toml desktop-ui/src-tauri/tauri.conf.json src/janeconverter/version.py packaging/REBUILD.md
+git commit -m "chore(release): bump version to <version>"
+git tag v<version>
+git push origin main
+git push origin v<version>
+```
+
+### 6. Continuous Real-Time Release Pipeline Monitoring
+Pushing tag `v<version>` automatically triggers the `.github/workflows/release.yml` GitHub Actions pipeline:
+1. **`validate` matrix**: Runs cross-platform tests and builds on Ubuntu, Windows, and macOS (Python 3.10 and 3.12).
+2. **Packaging matrix**:
+   - `windows-x64`: Produces NSIS setup installer (`JaneConverter-*-windows-x64-setup.exe`), portable zip, and browser bridge extension.
+   - `linux-x86_64`: Produces standalone AppImage (`JaneConverter-*-linux-x86_64.AppImage`), portable tarball, and signatures.
+   - `macos-arm64`: Produces Apple Silicon DMG (`JaneConverter-*-macos-arm64.dmg`).
+   - `macos-x86_64`: Produces Intel DMG (`JaneConverter-*-macos-x86_64.dmg`).
+3. **`publish`**: Aggregates all uploaded release assets across all platforms, generates release notes, and publishes the official release on GitHub.
+
+**Rule**: Never stop operations after pushing. Continuously monitor the CI workflow run via agents or real-time queries until all platform packages are built, published, and verified on GitHub Releases.
