@@ -589,28 +589,6 @@ export function LibraryView({
                         {succeeded ? "Succeeded" : isPartial ? "Partial" : "Failed"}
                       </span>
                       <span className="truncate text-sm font-medium text-white">{item.fileName}</span>
-                      {isSelected && (
-                        <span
-                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide animate-in fade-in duration-200"
-                          style={{
-                            backgroundColor: "var(--accent-subtle, rgba(197, 43, 104, 0.15))",
-                            borderColor: "var(--accent-glow, rgba(197, 43, 104, 0.4))",
-                            borderWidth: 1,
-                            borderStyle: "solid",
-                            color: "var(--accent-color, #c52b68)",
-                            boxShadow: "0 0 8px var(--accent-glow, rgba(197, 43, 104, 0.25))",
-                          }}
-                        >
-                          <span
-                            className="size-1.5 rounded-full"
-                            style={{
-                              backgroundColor: "var(--accent-color, #c52b68)",
-                              boxShadow: "0 0 6px var(--accent-color, #c52b68)",
-                            }}
-                          />
-                          Last selected
-                        </span>
-                      )}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[11px] text-zinc-500">
                       <span className="break-all">Source: {item.source}</span>
@@ -864,31 +842,7 @@ export function LibraryView({
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm text-zinc-300 group-hover:text-white transition-colors">{entry.name}</span>
-                    {isSelected && (
-                      <span
-                        className="hidden sm:inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide shrink-0 animate-in fade-in duration-200"
-                        style={{
-                          backgroundColor: "var(--accent-subtle, rgba(197, 43, 104, 0.15))",
-                          borderColor: "var(--accent-glow, rgba(197, 43, 104, 0.4))",
-                          borderWidth: 1,
-                          borderStyle: "solid",
-                          color: "var(--accent-color, #c52b68)",
-                          boxShadow: "0 0 8px var(--accent-glow, rgba(197, 43, 104, 0.25))",
-                        }}
-                      >
-                        <span
-                          className="size-1.5 rounded-full"
-                          style={{
-                            backgroundColor: "var(--accent-color, #c52b68)",
-                            boxShadow: "0 0 6px var(--accent-color, #c52b68)",
-                          }}
-                        />
-                        Last selected
-                      </span>
-                    )}
-                  </div>
+                  <div className="truncate text-sm text-zinc-300 group-hover:text-white transition-colors">{entry.name}</div>
                   <div className="mt-1 text-[11px] text-zinc-600">
                     {details}
                     {entry.isPlaylist ? " - playlist" : ""}

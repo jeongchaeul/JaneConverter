@@ -630,7 +630,6 @@ describe("Converted library", () => {
 
     expect(cards[0].getAttribute("data-selected")).toBe("true");
     expect(cards[0].classList.contains("is-last-clicked")).toBe(true);
-    expect(cards[0].textContent).toContain("Last selected");
     expect(cards[1].getAttribute("data-selected")).toBe("false");
     expect(cards[1].classList.contains("is-last-clicked")).toBe(false);
 
@@ -644,7 +643,6 @@ describe("Converted library", () => {
     expect(cards[0].classList.contains("is-last-clicked")).toBe(false);
     expect(cards[1].getAttribute("data-selected")).toBe("true");
     expect(cards[1].classList.contains("is-last-clicked")).toBe(true);
-    expect(cards[1].textContent).toContain("Last selected");
 
     // Switch back to Library tab to verify entry click
     await act(async () => {

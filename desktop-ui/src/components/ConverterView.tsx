@@ -581,11 +581,19 @@ export function ConverterView({
     }
   }
 
+  const isBrowsingRef = useRef(false);
+
   async function browseFile() {
+    if (isBrowsingRef.current) return;
+    isBrowsingRef.current = true;
     try {
       if (bridge.chooseFiles) {
         const paths = await bridge.chooseFiles();
-        if (paths && paths.length > 1) {
+        if (!paths || paths.length === 0) {
+          // User closed or cancelled the file dialog
+          return;
+        }
+        if (paths.length > 1) {
           const newItems: QueueItem[] = paths.map((p, idx) => ({
             id: `${Date.now()}-${idx}`,
             source: p,
@@ -598,23 +606,36 @@ export function ConverterView({
           onStatus(`Added ${paths.length} items to conversion queue.`);
           return;
         }
-        if (paths && paths.length === 1) {
+        if (paths.length === 1) {
           handleSourceInput(paths[0]);
           onStatus("Local media file selected.");
           return;
         }
+      } else {
+        const path = await bridge.chooseFile();
+        if (path) {
+          handleSourceInput(path);
+          onStatus("Local media file selected.");
+        }
       }
     } catch {
-      // Fallback to single chooseFile
-    }
-    const path = await bridge.chooseFile();
-    if (path) {
-      handleSourceInput(path);
-      onStatus("Local media file selected.");
+      try {
+        const path = await bridge.chooseFile();
+        if (path) {
+          handleSourceInput(path);
+          onStatus("Local media file selected.");
+        }
+      } catch (err) {
+        onError(err instanceof Error ? err.message : "Failed to open file dialog.");
+      }
+    } finally {
+      isBrowsingRef.current = false;
     }
   }
 
   async function browseBatch() {
+    if (isBrowsingRef.current) return;
+    isBrowsingRef.current = true;
     try {
       const paths = bridge.chooseFiles ? await bridge.chooseFiles() : [];
       if (!paths || paths.length === 0) return;
@@ -630,6 +651,8 @@ export function ConverterView({
       onStatus(`Added ${paths.length} items to conversion queue.`);
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
+    } finally {
+      isBrowsingRef.current = false;
     }
   }
 
@@ -799,8 +822,14 @@ export function ConverterView({
   }, []);
 
   async function browseOutput() {
-    const path = await bridge.chooseFolder();
-    if (path) update({ outputDir: path });
+    if (isBrowsingRef.current) return;
+    isBrowsingRef.current = true;
+    try {
+      const path = await bridge.chooseFolder();
+      if (path) update({ outputDir: path });
+    } finally {
+      isBrowsingRef.current = false;
+    }
   }
 
   async function loadPlaylist() {

@@ -8,6 +8,7 @@ import type { AccessStatus, ConverterSettings, FetchedMedia } from "../bridge";
 
 const bridge = vi.hoisted(() => ({
   chooseFile: vi.fn(),
+  chooseFiles: vi.fn(),
   chooseFolder: vi.fn(),
   openPath: vi.fn(),
   openUrl: vi.fn(),
@@ -810,6 +811,27 @@ describe("Converter account access feedback", () => {
     );
 
     (bridge.isConvertedLibraryPath as unknown as { mockResolvedValue: (v: boolean) => void }).mockResolvedValue(false);
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("does not re-open file dialog when user closes or cancels file browse", async () => {
+    (bridge.chooseFiles as unknown as { mockResolvedValue: (v: string[]) => void }).mockResolvedValue([]);
+    const view = renderView();
+
+    const browseBtn = Array.from(view.container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Browse")
+    );
+    expect(browseBtn).toBeDefined();
+
+    await act(async () => {
+      browseBtn?.click();
+      await Promise.resolve();
+    });
+
+    expect(bridge.chooseFiles).toHaveBeenCalledTimes(1);
+    expect(bridge.chooseFile).not.toHaveBeenCalled();
+
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });
