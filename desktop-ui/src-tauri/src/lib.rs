@@ -2429,7 +2429,12 @@ async fn check_updates(
                         let notes = update.body.clone().unwrap_or_default();
                         let commits: Vec<String> = notes
                             .lines()
-                            .map(|s| s.trim().trim_start_matches(|c| c == '-' || c == '*' || c == '•').trim().to_string())
+                            .map(|s| {
+                                s.trim()
+                                    .trim_start_matches(|c| c == '-' || c == '*' || c == '•')
+                                    .trim()
+                                    .to_string()
+                            })
                             .filter(|s| !s.is_empty() && !s.starts_with('#'))
                             .take(10)
                             .collect();
