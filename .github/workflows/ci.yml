@@ -3,13 +3,23 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
   workflow_call:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   tests:
@@ -59,7 +69,19 @@ jobs:
 
       - name: Install FFmpeg (macOS)
         if: runner.os == 'macOS'
-        run: brew install ffmpeg
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          mkdir -p "$HOME/.local/bin"
+          if [ "$arch" = "arm64" ]; then
+            curl -fsSL --retry 3 https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-arm64 -o "$HOME/.local/bin/ffmpeg"
+            curl -fsSL --retry 3 https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-darwin-arm64 -o "$HOME/.local/bin/ffprobe"
+          else
+            curl -fsSL --retry 3 https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-x64 -o "$HOME/.local/bin/ffmpeg"
+            curl -fsSL --retry 3 https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-darwin-x64 -o "$HOME/.local/bin/ffprobe"
+          fi
+          chmod +x "$HOME/.local/bin/ffmpeg" "$HOME/.local/bin/ffprobe"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Verify FFmpeg
         run: |

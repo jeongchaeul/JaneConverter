@@ -3,6 +3,9 @@ name: Continuous updater packages
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
@@ -10,7 +13,7 @@ permissions:
 
 concurrency:
   group: janeconverter-continuous-updates-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   validate:
