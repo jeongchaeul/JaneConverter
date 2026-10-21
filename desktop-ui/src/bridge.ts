@@ -73,6 +73,9 @@ export interface UpdateCheckResult {
     latest_version?: string;
     installer_available?: boolean;
     release_url?: string;
+    commits_behind?: number;
+    commits?: string[];
+    notes?: string;
   };
 }
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { AlertCircle, CheckCircle2, Clock, FolderOpen, GripVertical, HardDrive, Play, RotateCcw, X } from "lucide-react";
-import { bridge, type AccessStatus, type ConversionHistoryItem, type ConverterEvent, type ConverterSettings, type FetchedMedia, type RuntimeInfo } from "./bridge";
+import { bridge, type AccessStatus, type ConversionHistoryItem, type ConverterEvent, type ConverterSettings, type FetchedMedia, type RuntimeInfo, type UpdateCheckResult } from "./bridge";
 import { Sidebar, type ViewKey } from "./components/Sidebar";
 import { ConverterView } from "./components/ConverterView";
 import { LibraryView } from "./components/LibraryView";
@@ -9,6 +9,8 @@ import { ConsoleView } from "./components/ConsoleView";
 import { HardwarePipelineView } from "./components/HardwarePipelineView";
 import { SettingsView } from "./components/SettingsView";
 import { FetchedMediaView } from "./components/FetchedMediaView";
+import { UpdatePromptHeader } from "./components/UpdatePromptHeader";
+import { UpdateChangesModal } from "./components/UpdateChangesModal";
 import { findPresetName, formatBytes, formatElapsedMs } from "./options";
 
 const defaultSettings: ConverterSettings = {
@@ -207,6 +209,12 @@ export default function App() {
       return "#02000a";
     }
   });
+
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
 
   useEffect(() => {
     if (!failure) return;
@@ -531,15 +539,24 @@ export default function App() {
 
   useEffect(() => {
     let mounted = true;
+    setIsCheckingUpdates(true);
     const timer = window.setTimeout(() => {
       void bridge.checkUpdates().then((result) => {
+        if (!mounted) return;
+        setUpdateResult(result);
+        const hasUp = Boolean(result.repo?.has_update || result.engine?.has_update);
+        if (hasUp) {
+          setUpdateDismissed(false);
+        }
         const message = result.message;
-        if (!mounted || !/update available|check unavailable/i.test(message)) return;
+        if (!/update available|check unavailable/i.test(message)) return;
         setStatus(message);
         setEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
       }).catch(() => {
         // Startup checks stay quiet when the machine is offline. The Settings
         // view remains available for an explicit retry and full status text.
+      }).finally(() => {
+        if (mounted) setIsCheckingUpdates(false);
       });
     }, 1200);
     return () => { mounted = false; window.clearTimeout(timer); };
@@ -554,6 +571,46 @@ export default function App() {
     statusMessage(message);
     setFailure({ title: "Something went wrong", message, suggestLossless: false });
   }, [statusMessage]);
+
+  const handleCheckUpdates = useCallback(async (): Promise<UpdateCheckResult> => {
+    setIsCheckingUpdates(true);
+    try {
+      const result = await bridge.checkUpdates();
+      setUpdateResult(result);
+      setUpdateDismissed(false);
+      statusMessage(result.message);
+      return result;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      statusMessage(msg);
+      throw error;
+    } finally {
+      setIsCheckingUpdates(false);
+    }
+  }, [statusMessage]);
+
+  async function handleInstallUpdate() {
+    const repo = updateResult?.repo;
+    if (!repo?.has_update || !repo.installer_available) {
+      statusMessage("This update cannot be installed automatically here. Open the published release to update manually.");
+      return;
+    }
+    setInstallingUpdate(true);
+    const revision = repo.latest_commit?.slice(0, 7);
+    const startMsg = revision
+      ? `Downloading and verifying JaneConverter build ${revision}...`
+      : `Downloading and verifying JaneConverter v${repo.latest_version ?? "latest"}...`;
+    statusMessage(startMsg);
+    try {
+      await bridge.installUpdate();
+      statusMessage("The update is ready. JaneConverter will close and reopen to finish installing it.");
+    } catch (error) {
+      const failure = error instanceof Error ? error.message : String(error);
+      errorMessage(`The update could not be installed: ${failure}`);
+    } finally {
+      setInstallingUpdate(false);
+    }
+  }
 
   function dragExportedFile(event: React.DragEvent, exportPath: string) {
     if (!exportPath) return;
@@ -708,6 +765,10 @@ export default function App() {
             onBgColorChange={handleBgChange}
             onResetColors={handleResetColors}
             onStatus={statusMessage}
+            updateResult={updateResult}
+            onCheckUpdates={handleCheckUpdates}
+            isCheckingUpdates={isCheckingUpdates}
+            onOpenChangesModal={() => setShowUpdateModal(true)}
           />
         )
         : null;
@@ -730,6 +791,14 @@ export default function App() {
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,.018),transparent_35%)]" />
       <Sidebar activeView={activeView} onChange={setActiveView} />
       <div className="relative flex min-w-0 flex-1 flex-col h-full overflow-hidden">
+        <UpdatePromptHeader
+          updateResult={updateResult}
+          dismissed={updateDismissed}
+          onOpenChanges={() => setShowUpdateModal(true)}
+          onDismiss={() => setUpdateDismissed(true)}
+          installing={installingUpdate}
+          onInstall={() => void handleInstallUpdate()}
+        />
         <main className={`min-h-0 flex-1 px-8 py-6 ${activeView === "console" ? "flex flex-col overflow-hidden" : "overflow-y-auto"}`}>
           <div className={activeView === "converter" ? "block" : "hidden"}>
             <ConverterView
@@ -937,6 +1006,14 @@ export default function App() {
           </section>
         </div>
       )}
+      <UpdateChangesModal
+        open={showUpdateModal}
+        onClose={() => setShowUpdateModal(false)}
+        updateResult={updateResult}
+        installing={installingUpdate}
+        onInstall={() => void handleInstallUpdate()}
+        theme={theme}
+      />
     </div>
   );
 }

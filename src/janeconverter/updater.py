@@ -115,9 +115,16 @@ def _release_update_result(
     release_url: str,
     installer_url: str,
     installer_checksum_url: str,
+    body: str = "",
 ) -> Dict[str, Any]:
     installer_url = _trusted_release_url(installer_url)
     installer_checksum_url = _trusted_release_url(installer_checksum_url)
+    cleaned_body = str(body or "").strip()
+    commits = [
+        line.strip("- *• \t")
+        for line in cleaned_body.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
     return {
         "has_update": _is_newer_version(latest_version, current_version),
         "online": True,
@@ -127,6 +134,8 @@ def _release_update_result(
         "installer_available": bool(installer_url and installer_checksum_url),
         "installer_url": installer_url,
         "installer_checksum_url": installer_checksum_url,
+        "commits": commits[:10],
+        "notes": cleaned_body,
         "error": None,
     }
 
@@ -306,12 +315,14 @@ def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
             installer_checksum_url = asset_url
 
     release_url = _trusted_release_url(release.get("html_url"))
+    release_body = str(release.get("body", "") or "").strip()
     return _release_update_result(
         current_version,
         latest_version,
         release_url,
         installer_url,
         installer_checksum_url,
+        body=release_body,
     )
 
 
@@ -342,6 +353,8 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
             "installer_available": release["installer_available"],
             "installer_url": release.get("installer_url", ""),
             "installer_checksum_url": release.get("installer_checksum_url", ""),
+            "commits": release.get("commits", []),
+            "notes": release.get("notes", ""),
             "error": release["error"],
         }
 
@@ -356,6 +369,8 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
                 "current_commit": current_commit,
                 "latest_commit": current_commit,
                 "commits_behind": 0,
+                "commits": [],
+                "notes": "",
                 "error": fetch_res.stderr.strip() or f"Failed to fetch from remote {upstream}"
             }
 
@@ -369,12 +384,16 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
                 count_res = _run_git_cmd(["git", "rev-list", "--count", f"HEAD..{upstream}"], timeout=3.0)
                 behind = int(count_res.stdout.strip()) if count_res.returncode == 0 and count_res.stdout.strip().isdigit() else 1
                 short_origin = origin_hash[:7]
+                log_res = _run_git_cmd(["git", "log", "--pretty=format:%h %s", "-n", "10", f"HEAD..{upstream}"], timeout=3.0)
+                commits = [line.strip() for line in log_res.stdout.splitlines() if line.strip()] if log_res.returncode == 0 else []
                 return {
                     "has_update": True,
                     "is_git": True,
                     "current_commit": current_commit,
                     "latest_commit": short_origin,
                     "commits_behind": behind,
+                    "commits": commits,
+                    "notes": "\n".join(commits),
                     "error": None
                 }
             return {
@@ -383,6 +402,8 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
                 "current_commit": current_commit,
                 "latest_commit": current_commit,
                 "commits_behind": 0,
+                "commits": [],
+                "notes": "",
                 "error": None
             }
     except Exception as e:
@@ -392,6 +413,8 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
             "current_commit": current_commit,
             "latest_commit": current_commit,
             "commits_behind": 0,
+            "commits": [],
+            "notes": "",
             "error": str(e)
         }
 
@@ -401,6 +424,8 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
         "current_commit": current_commit,
         "latest_commit": current_commit,
         "commits_behind": 0,
+        "commits": [],
+        "notes": "",
         "error": "Unable to determine repository status"
     }
 

@@ -1,0 +1,200 @@
+import { useEffect, useRef } from "react";
+import { Check, ExternalLink, GitCommit, RefreshCw, Sparkles, X, Zap } from "lucide-react";
+import type { UpdateCheckResult } from "../bridge";
+import { bridge } from "../bridge";
+
+interface UpdateChangesModalProps {
+  open: boolean;
+  onClose: () => void;
+  updateResult: UpdateCheckResult | null;
+  installing?: boolean;
+  onInstall?: () => void;
+  theme?: string;
+}
+
+function parseCommitLine(line: string): { hash?: string; message: string } {
+  const trimmed = line.trim();
+  // Match lines like "4328840 fix(desktop-ui): message" or "4328840 - message"
+  const match = trimmed.match(/^([0-9a-f]{7,40})\s+[-:]?\s*(.+)$/i);
+  if (match) {
+    return { hash: match[1], message: match[2] };
+  }
+  return { message: trimmed };
+}
+
+export function UpdateChangesModal({
+  open,
+  onClose,
+  updateResult,
+  installing = false,
+  onInstall,
+  theme = "dark",
+}: UpdateChangesModalProps) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    closeButtonRef.current?.focus();
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, onClose]);
+
+  if (!open || !updateResult) return null;
+
+  const repo = updateResult.repo;
+  const engine = updateResult.engine;
+  const commits = repo?.commits ?? [];
+  const latestRev = repo?.latest_commit?.slice(0, 7) || repo?.latest_version;
+  const currentRev = repo?.current_commit?.slice(0, 7) || repo?.current_version;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/75 p-5 backdrop-blur-md animate-in fade-in duration-200"
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="panel relative w-full max-w-lg p-6 shadow-2xl shadow-black/70 animate-in zoom-in-95 duration-200 border"
+        style={{
+          backgroundColor: theme === "light" ? "#ffffff" : "#0c0a15",
+          borderColor: "var(--accent-glow, rgba(197, 43, 104, 0.3))",
+          boxShadow: "0 0 35px var(--accent-subtle, rgba(197, 43, 104, 0.15))",
+        }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="update-modal-title"
+      >
+        <button
+          ref={closeButtonRef}
+          type="button"
+          onClick={onClose}
+          className="absolute right-4 top-4 grid size-8 place-items-center rounded-lg text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200 transition-colors"
+          aria-label="Close update changes window"
+        >
+          <X className="size-4" />
+        </button>
+
+        <div className="flex items-center gap-2">
+          <Sparkles className="size-4" style={{ color: "var(--accent-color, #c52b68)" }} />
+          <span className="mono-label">Push updates & changes</span>
+        </div>
+
+        <h2 id="update-modal-title" className="mt-2 text-xl font-semibold text-white">
+          JaneConverter Update
+        </h2>
+
+        {/* Version progression pill */}
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-300">
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.10] bg-white/[0.04] px-2.5 py-1 font-mono text-zinc-300">
+            <span className="text-zinc-500">Current:</span> {currentRev || "installed"}
+          </span>
+          <span className="text-zinc-500">→</span>
+          <span
+            className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-mono font-medium"
+            style={{
+              borderColor: "var(--accent-glow, rgba(197, 43, 104, 0.4))",
+              backgroundColor: "var(--accent-subtle, rgba(197, 43, 104, 0.15))",
+              color: "var(--accent-color, #c52b68)",
+            }}
+          >
+            <span className="text-zinc-400">Latest:</span> {latestRev || "new build"}
+          </span>
+          {repo?.commits_behind && repo.commits_behind > 0 ? (
+            <span className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-1 text-[11px] text-zinc-400">
+              {repo.commits_behind} {repo.commits_behind === 1 ? "commit" : "commits"} behind
+            </span>
+          ) : null}
+        </div>
+
+        {/* Changes list / Commit history */}
+        <div className="mt-4">
+          <div className="text-xs font-medium uppercase tracking-wider text-zinc-400 mb-2">
+            Summary of Changes
+          </div>
+          <div className="max-h-56 overflow-y-auto rounded-xl border border-white/[0.08] bg-white/[0.02] p-3 space-y-2">
+            {commits.length > 0 ? (
+              commits.map((line, idx) => {
+                const { hash, message } = parseCommitLine(line);
+                return (
+                  <div key={idx} className="flex items-start gap-2.5 text-xs leading-relaxed text-zinc-300">
+                    <GitCommit
+                      className="size-3.5 shrink-0 mt-0.5"
+                      style={{ color: "var(--accent-color, #c52b68)" }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      {hash && (
+                        <span className="mr-2 font-mono text-[11px] font-semibold text-zinc-400 bg-white/[0.06] px-1.5 py-0.5 rounded">
+                          {hash}
+                        </span>
+                      )}
+                      <span>{message}</span>
+                    </div>
+                  </div>
+                );
+              })
+            ) : repo?.notes ? (
+              <div className="whitespace-pre-wrap text-xs text-zinc-300 font-sans leading-relaxed">
+                {repo.notes}
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                This update includes the latest improvements, media extractor bug fixes, and stability enhancements.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Engine update notice if yt-dlp was also updated */}
+        {engine?.has_update && (
+          <div className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-200">
+            <Zap className="size-3.5 shrink-0 text-emerald-400" />
+            <span>
+              Extractor engine upgrade ready: <strong>v{engine.current_version}</strong> → <strong>v{engine.latest_version}</strong>
+            </span>
+          </div>
+        )}
+
+        {/* Modal actions */}
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/[0.06]">
+          <div className="flex items-center gap-2">
+            {repo?.installer_available && onInstall ? (
+              <button
+                type="button"
+                disabled={installing}
+                onClick={onInstall}
+                className="primary-button flex items-center gap-2 px-3.5 py-2 text-xs disabled:cursor-wait disabled:opacity-60"
+              >
+                <RefreshCw className={`size-3.5 ${installing ? "animate-spin" : ""}`} />
+                <span>{installing ? "Installing update..." : "Update now"}</span>
+              </button>
+            ) : null}
+
+            {repo?.release_url && (
+              <button
+                type="button"
+                onClick={() => void bridge.openUrl(repo.release_url || "")}
+                className="subtle-button flex items-center gap-2 px-3.5 py-2 text-xs"
+              >
+                <ExternalLink className="size-3.5" />
+                <span>Open release notes</span>
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="subtle-button px-4 py-2 text-xs"
+          >
+            Close
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}

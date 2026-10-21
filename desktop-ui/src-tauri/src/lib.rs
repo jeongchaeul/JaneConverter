@@ -2426,6 +2426,13 @@ async fn check_updates(
                         );
                     } else {
                         let latest_version = update.version.clone();
+                        let notes = update.body.clone().unwrap_or_default();
+                        let commits: Vec<String> = notes
+                            .lines()
+                            .map(|s| s.trim().trim_start_matches(|c| c == '-' || c == '*' || c == '•').trim().to_string())
+                            .filter(|s| !s.is_empty() && !s.starts_with('#'))
+                            .take(10)
+                            .collect();
                         *pending_update
                             .0
                             .lock()
@@ -2444,6 +2451,8 @@ async fn check_updates(
                                 "latest_version": latest_version,
                                 "installer_available": true,
                                 "release_url": "https://github.com/jeongchaeul/JaneConverter/releases/tag/continuous",
+                                "commits": commits,
+                                "notes": notes,
                                 "error": null
                             }),
                         );

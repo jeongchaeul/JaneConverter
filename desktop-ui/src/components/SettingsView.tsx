@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import type { ConverterSettings, RuntimeInfo, UpdateCheckResult } from "../bridge";
 import { bridge } from "../bridge";
+import { UpdateChangesModal } from "./UpdateChangesModal";
 
 const ACCENT_PRESETS = [
   { name: "Hot Pink (Default)", hex: "#c52b68" },
@@ -64,6 +65,10 @@ export function SettingsView({
   onResetColors,
   onStatus,
   initialTab = "browser",
+  updateResult: propUpdateResult,
+  onCheckUpdates,
+  isCheckingUpdates = false,
+  onOpenChangesModal,
 }: {
   runtime: RuntimeInfo | null;
   settings?: ConverterSettings;
@@ -75,20 +80,32 @@ export function SettingsView({
   onResetColors?: () => void;
   onStatus: (message: string) => void;
   initialTab?: SettingsTab;
+  updateResult?: UpdateCheckResult | null;
+  onCheckUpdates?: () => Promise<UpdateCheckResult>;
+  isCheckingUpdates?: boolean;
+  onOpenChangesModal?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
-  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [localUpdateResult, setLocalUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const effectiveUpdateResult = propUpdateResult !== undefined ? propUpdateResult : localUpdateResult;
   const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [showLocalChangesModal, setShowLocalChangesModal] = useState(false);
   const [relaunching, setRelaunching] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(effectiveUpdateResult?.message ?? "");
   const [dataRootPath, setDataRootPath] = useState(runtime?.dataRoot ?? "");
   const [changingDataRoot, setChangingDataRoot] = useState(false);
   const [chromiumPolicy, setChromiumPolicy] = useState(false);
   const [togglingPolicy, setTogglingPolicy] = useState(false);
   const [policyError, setPolicyError] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
+
+  useEffect(() => {
+    if (effectiveUpdateResult?.message && !message) {
+      setMessage(effectiveUpdateResult.message);
+    }
+  }, [effectiveUpdateResult]);
 
   useEffect(() => {
     setDataRootPath(runtime?.dataRoot ?? "");
@@ -189,11 +206,25 @@ export function SettingsView({
   }
 
   async function updates() {
+    if (onCheckUpdates) {
+      setMessage("Checking for updates...");
+      try {
+        const result = await onCheckUpdates();
+        setUpdateDismissed(false);
+        setMessage(result.message);
+        onStatus(result.message);
+      } catch (error) {
+        const nextMessage = error instanceof Error ? error.message : String(error);
+        setMessage(nextMessage);
+        onStatus(nextMessage);
+      }
+      return;
+    }
     setChecking(true);
     setMessage("Checking for updates...");
     try {
       const result = await bridge.checkUpdates();
-      setUpdateResult(result);
+      setLocalUpdateResult(result);
       setUpdateDismissed(false);
       setMessage(result.message);
       onStatus(result.message);
@@ -207,7 +238,7 @@ export function SettingsView({
   }
 
   async function installUpdate() {
-    const repo = updateResult?.repo;
+    const repo = effectiveUpdateResult?.repo;
     if (!repo?.has_update || !repo.installer_available) {
       const nextMessage =
         "This update cannot be installed automatically here. Open the published release to update manually.";
@@ -949,15 +980,15 @@ export function SettingsView({
               </div>
               <button
                 type="button"
-                disabled={checking || installing}
+                disabled={checking || isCheckingUpdates || installing}
                 onClick={() => void updates()}
                 className="subtle-button flex items-center gap-2 px-4 py-2 text-xs disabled:cursor-wait disabled:opacity-60"
               >
-                <RefreshCw className={`size-3.5 ${checking ? "animate-spin" : ""}`} />
-                {checking ? "Checking..." : "Check now"}
+                <RefreshCw className={`size-3.5 ${(checking || isCheckingUpdates) ? "animate-spin" : ""}`} />
+                {(checking || isCheckingUpdates) ? "Checking..." : "Check now"}
               </button>
             </div>
-            {updateResult?.repo?.has_update && !updateDismissed && (
+            {effectiveUpdateResult?.repo?.has_update && !updateDismissed && (
               <div
                 className="rounded-xl border border-[var(--accent-color,#c52b68)]/30 bg-[var(--accent-color,#c52b68)]/[0.06] p-4"
                 role="region"
@@ -967,22 +998,33 @@ export function SettingsView({
                   <div className="min-w-0">
                     <div className="text-sm font-medium text-zinc-100">
                       JaneConverter{" "}
-                      {updateResult.repo.latest_commit
-                        ? `build ${updateResult.repo.latest_commit.slice(0, 7)}`
-                        : `v${updateResult.repo.latest_version}`}{" "}
+                      {effectiveUpdateResult.repo.latest_commit
+                        ? `build ${effectiveUpdateResult.repo.latest_commit.slice(0, 7)}`
+                        : `v${effectiveUpdateResult.repo.latest_version}`}{" "}
                       is available
                     </div>
                     <p className="mt-1 max-w-xl text-xs leading-relaxed text-zinc-400">
                       Download and verify the update, then JaneConverter will restart to finish installing it. Your files and settings stay in place.
                     </p>
-                    {!updateResult.repo.installer_available && (
+                    {!effectiveUpdateResult.repo.installer_available && (
                       <p className="mt-2 text-xs text-amber-300">
                         An automatic installer is not available for this package. Open the published release to update manually.
                       </p>
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {updateResult.repo.installer_available ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onOpenChangesModal) onOpenChangesModal();
+                        else setShowLocalChangesModal(true);
+                      }}
+                      className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs"
+                    >
+                      <Sparkles className="size-3.5" style={{ color: "var(--accent-color, #c52b68)" }} />
+                      <span>View changes</span>
+                    </button>
+                    {effectiveUpdateResult.repo.installer_available ? (
                       <button
                         type="button"
                         disabled={installing}
@@ -993,10 +1035,10 @@ export function SettingsView({
                         {installing ? "Installing..." : "Update now"}
                       </button>
                     ) : null}
-                    {updateResult.repo.release_url ? (
+                    {effectiveUpdateResult.repo.release_url ? (
                       <button
                         type="button"
-                        onClick={() => void bridge.openUrl(updateResult.repo?.release_url ?? "")}
+                        onClick={() => void bridge.openUrl(effectiveUpdateResult.repo?.release_url ?? "")}
                         className="subtle-button flex items-center gap-2 px-3 py-2 text-xs"
                       >
                         <ExternalLink className="size-3.5" /> Open release
@@ -1308,6 +1350,15 @@ export function SettingsView({
         {runtime?.packaged ? "Application data uses your OS user-data directory." : "Project-local storage is the default."}{" "}
         User-selected folders are always respected.
       </div>
+
+      <UpdateChangesModal
+        open={showLocalChangesModal}
+        onClose={() => setShowLocalChangesModal(false)}
+        updateResult={effectiveUpdateResult}
+        installing={installing}
+        onInstall={() => void installUpdate()}
+        theme={bgColor === "#ffffff" || bgColor === "#fdf7fa" || bgColor === "#f4f4f5" ? "light" : "dark"}
+      />
     </div>
   );
 }
