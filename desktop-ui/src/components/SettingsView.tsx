@@ -1082,7 +1082,9 @@ export function SettingsView({
                           <span className="font-mono text-xs text-emerald-400 font-normal">
                             ({effectiveUpdateResult?.repo?.latest_commit
                               ? `build ${effectiveUpdateResult.repo.latest_commit.slice(0, 7)}`
-                              : `v${effectiveUpdateResult?.repo?.latest_version || runtime?.version || "2.3.2"}`})
+                              : effectiveUpdateResult?.repo?.latest_version
+                                ? `v${effectiveUpdateResult.repo.latest_version}`
+                                : "latest build"})
                           </span>
                         </div>
                         <p className="mt-0.5 text-xs text-zinc-400">

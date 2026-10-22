@@ -162,4 +162,4 @@ Pushing tag `v<version>` automatically triggers the `.github/workflows/release.y
    - `macos-x86_64`: Produces Intel DMG (`JaneConverter-*-macos-x86_64.dmg`).
 3. **`publish`**: Aggregates all uploaded release assets across all platforms, generates release notes, and publishes the official release on GitHub.
 
-**Rule**: Never stop operations after pushing. Continuously monitor the CI workflow run via agents or real-time queries until all platform packages are built, published, and verified on GitHub Releases.
+**Mandatory Continuous Operation Protocol**: Never stop operations after pushing code or release tags. The operator/agent must continuously monitor GitHub Actions CI and packaging workflows in real time. If any job or matrix step fails, immediately inspect logs, apply root-cause fixes, push updates, and continue monitoring until all checks are 100% green and all published packages and updater manifests are verified live.

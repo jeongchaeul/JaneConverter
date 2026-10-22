@@ -89,6 +89,18 @@ This protocol applies **universally to EVERY single media conversion, platform, 
    - Delete temporary test output folders before committing and completing the task.
 
 
+## Mandatory Continuous Operation and Real-Time Pipeline Monitoring Protocol
+
+Whenever any code, documentation, or release change is pushed to `main` or tagged for release, every agent and contributor **MUST NEVER STOP OR DISENGAGE** until:
+1. **Local pre-push verification is fully executed:**
+   - Python tests: `uv run --locked pytest tests/ -v`
+   - Python lint: `uv run --locked pyflakes src/janeconverter packaging/engine_entry.py packaging/create_updater_manifest.py`
+   - Frontend tests & build: `cd desktop-ui && npm test -- --run && npm run build`
+   - Rust format & tests: `cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo test --manifest-path src-tauri/Cargo.toml`
+2. **Real-time pipeline monitoring is maintained without stopping:**
+   - Actively query GitHub Actions workflow runs (`CI` and `Continuous updater packages` or `Release`) until every single job completes.
+   - If ANY step or job fails or cancels, immediately inspect the failure logs, diagnose the root cause, apply the fix, push, and continue monitoring until the entire matrix is 100% green and all published assets are verified live.
+
 ## Conventions
 
 - Keep build and packaging scripts under `packaging/`. Do not add build scripts to the repository root.
