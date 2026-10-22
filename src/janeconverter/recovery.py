@@ -46,6 +46,7 @@ class OutputIntent:
     metadata: tuple[tuple[str, str], ...] = ()
     start_time: str | None = None
     end_time: str | None = None
+    expected_category: str | None = None
 
     @property
     def mode(self) -> IntentMode:
@@ -104,6 +105,10 @@ STRATEGIES = {
                                     (("image-pillow", FailureCategory.DECODER),)),
     "image-png": Strategy("image-png", "image", "png", "pillow-contract",
                           (("source-preserve", FailureCategory.VALIDATION),)),
+    "audio-transcode": Strategy("audio-transcode", "audio", "flac", "ffprobe-contract",
+                                (("source-preserve", FailureCategory.VALIDATION),
+                                 ("source-preserve", FailureCategory.CONTAINER),
+                                 ("source-preserve", FailureCategory.DECODER))),
     "stream-copy": Strategy("stream-copy", "audio-video", "none", "ffprobe-contract"),
     "gpu-transcode": Strategy("gpu-transcode", "video", "none", "ffprobe-contract",
                               (("stream-copy", FailureCategory.CONTAINER),)),
@@ -187,7 +192,14 @@ class RecoveryCoordinator:
                 continue
             if candidate == "gpu-transcode" and not self.intent.gpu_allowed:
                 continue
-            if candidate == "image-png" and not self.intent.allow_png_fallback:
+            if candidate == "image-png" and (
+                (self.intent.expected_category and self.intent.expected_category.lower() in ("audio", "music", "video"))
+                or not self.intent.allow_png_fallback
+            ):
+                continue
+            if candidate == "audio-transcode" and (
+                self.intent.expected_category and self.intent.expected_category.lower() not in ("audio", "music")
+            ):
                 continue
             if candidate == "cover-normalized" and (
                 not self.intent.cover_required

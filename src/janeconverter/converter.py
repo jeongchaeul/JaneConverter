@@ -456,7 +456,8 @@ def format_video_dimensions(probe: Optional[Dict[str, Any]]) -> str:
 def validate_output_file(
     output_path: str,
     target_format: str,
-    min_size_bytes: int = 1
+    min_size_bytes: int = 1,
+    require_video: Optional[bool] = None,
 ) -> None:
     """
     Validates that a converted file exists, is non-empty, and passes ffprobe structure checks.
@@ -493,17 +494,36 @@ def validate_output_file(
         )
 
     streams = probe.get("streams", [])
-    if target_format in SUPPORTED_AUDIO_FORMATS:
-        has_audio = any(s.get("codec_type") == "audio" for s in streams)
+    has_audio = any(s.get("codec_type") == "audio" for s in streams)
+    has_video = any(s.get("codec_type") == "video" for s in streams)
+
+    if require_video is True:
+        if not has_video:
+            raise RuntimeError(
+                f"ValidationFailed: output file '{output_path}' does not contain a video stream."
+            )
+    elif require_video is False:
+        if not has_audio:
+            raise RuntimeError(
+                f"ValidationFailed: output file '{output_path}' does not contain an audio stream."
+            )
+    elif target_format in SUPPORTED_AUDIO_FORMATS:
         if not has_audio:
             raise RuntimeError(
                 f"ValidationFailed: output file '{output_path}' does not contain an audio stream."
             )
     elif target_format in SUPPORTED_VIDEO_FORMATS:
-        has_video = any(s.get("codec_type") == "video" for s in streams)
+        # Flexible multi-track container formats like WebM and MKV can legitimately contain audio-only streams
+        if target_format in {"webm", "mkv", "weba", "mka"} and has_audio and not has_video:
+            return
         if not has_video:
             raise RuntimeError(
                 f"ValidationFailed: output file '{output_path}' does not contain a video stream."
+            )
+    elif target_format in {"source", "original", ""}:
+        if not has_audio and not has_video:
+            raise RuntimeError(
+                f"ValidationFailed: output file '{output_path}' does not contain any audio or video streams."
             )
 
 
@@ -1678,6 +1698,7 @@ def _convert_media_impl(
     reconstruct_frequency_loss: bool = False,
     _method_override: Optional[str] = None,
     _recovery: Optional[RecoveryCoordinator] = None,
+    expected_category: Optional[str] = None,
 ) -> str:
     """
     Transcodes or stream-remuxes input_path into the specified target format and writes to output_dir.
@@ -1705,6 +1726,7 @@ def _convert_media_impl(
             start_time=start_time,
             end_time=end_time,
             reconstruct_frequency_loss=reconstruct_frequency_loss,
+            expected_category=expected_category,
         ), evidence_path=ev_path)
 
     if target_format in ("source", "original", ""):
@@ -1729,27 +1751,79 @@ def _convert_media_impl(
                 actual_ext = image_extensions[decoded_format]
         except (OSError, ValueError):
             pass
-        raw_stem, _ = os.path.splitext(output_filename)
-        dest_filename = f"{raw_stem}.{actual_ext}" if not output_filename.lower().endswith(f".{actual_ext}") else output_filename
+
+        # Probe input to understand stream topology and preserve audio streams natively
+        probe = probe_media_streams(input_path) or {}
+        streams = probe.get("streams", [])
+        has_video = any(s.get("codec_type") == "video" for s in streams)
+        has_audio = any(s.get("codec_type") == "audio" for s in streams)
+        audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
+        is_audio_context = bool(
+            (expected_category and str(expected_category).lower() in ("audio", "music"))
+            or (has_audio and not has_video and actual_ext not in SUPPORTED_IMAGE_FORMATS)
+        )
+
+        preferred_ext = actual_ext
+        if is_audio_context and has_audio and audio_stream:
+            codec_name = (audio_stream.get("codec_name") or "").lower()
+            codec_to_ext = {
+                "opus": "opus",
+                "vorbis": "ogg",
+                "flac": "flac",
+                "aac": "m4a",
+                "alac": "m4a",
+                "mp3": "mp3",
+                "pcm_s16le": "wav",
+                "pcm_s24le": "wav",
+                "pcm_f32le": "wav",
+            }
+            if actual_ext in {"webm", "mkv", "matroska", "weba", "mka", "mp4", "m4v", "ts"}:
+                preferred_ext = codec_to_ext.get(codec_name, actual_ext)
+
+        raw_stem, raw_ext = os.path.splitext(output_filename)
+        if raw_ext.lower() in KNOWN_MEDIA_EXTENSIONS or raw_ext.lower() in {f".{actual_ext}", f".{preferred_ext}"}:
+            stem = raw_stem
+        else:
+            stem = output_filename
+        dest_filename = f"{stem}.{preferred_ext}" if not output_filename.lower().endswith(f".{preferred_ext}") else output_filename
         destination_path = get_unique_target_path(output_dir, dest_filename)
 
-        if start_time or end_time:
-            report_raw(0.70, f"Lossless trimming: slicing raw {actual_ext.upper()} stream without re-encoding...")
+        remux_succeeded = False
+        if preferred_ext != actual_ext or start_time or end_time:
+            report_raw(0.70, f"Preserving source quality: exporting raw {preferred_ext.upper()} stream without re-encoding...")
             cmd = [get_ffmpeg_binary(), "-y", "-hide_banner", "-loglevel", "error"]
             if start_time:
                 cmd.extend(["-ss", start_time])
             if end_time:
                 cmd.extend(["-to", end_time])
-            cmd.extend(["-i", input_path, "-c", "copy", "-threads", "0", destination_path])
+            cmd.extend(["-i", input_path])
+            if is_audio_context:
+                cmd.extend(["-vn", "-c:a", "copy"])
+            else:
+                cmd.extend(["-c", "copy"])
+            cmd.extend(["-threads", "0", destination_path])
             res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            if res.returncode != 0:
+            if res.returncode == 0 and os.path.isfile(destination_path) and os.path.getsize(destination_path) > 0:
+                actual_ext = preferred_ext
+                remux_succeeded = True
+            elif start_time or end_time:
                 raise RuntimeError(f"FFmpegProcessError: lossless stream trim failed: {res.stderr.decode('utf-8', errors='replace')}")
-        else:
+
+        if not remux_succeeded and actual_ext != preferred_ext:
+            # Fallback to pristine copy with original extension
+            dest_filename = f"{stem}.{actual_ext}" if not output_filename.lower().endswith(f".{actual_ext}") else output_filename
+            destination_path = get_unique_target_path(output_dir, dest_filename)
+
+        if not remux_succeeded:
             report_raw(0.70, f"Preserving source quality: keeping raw {actual_ext.upper()} stream without re-encoding...")
             if os.path.abspath(input_path) != os.path.abspath(destination_path):
                 shutil.copy2(input_path, destination_path)
 
-        validate_output_file(destination_path, actual_ext)
+        validate_output_file(
+            destination_path,
+            actual_ext,
+            require_video=False if is_audio_context else (True if has_video else None),
+        )
         report_raw(1.0, f"Conversion complete: {os.path.basename(destination_path)}")
         return destination_path
 
@@ -2203,6 +2277,7 @@ def convert_media(
     reconstruct_frequency_loss: bool = False,
     _method_override: Optional[str] = None,
     _recovery: Optional[RecoveryCoordinator] = None,
+    expected_category: Optional[str] = None,
 ) -> str:
     """Stage and validate every attempt before publishing one completed output."""
     os.makedirs(output_dir, exist_ok=True)
@@ -2229,6 +2304,7 @@ def convert_media(
             start_time=start_time,
             end_time=end_time,
             reconstruct_frequency_loss=reconstruct_frequency_loss,
+            expected_category=expected_category,
         ), evidence_path=ev_path)
 
     def staged_progress(value: float, message: str) -> None:
@@ -2244,6 +2320,7 @@ def convert_media(
             abort_event=abort_event, progress_callback=staged_progress, fps=fps,
             start_time=start_time, end_time=end_time,
             reconstruct_frequency_loss=reconstruct_frequency_loss,
+            expected_category=expected_category,
         )
         effective_target = target_format.lower().strip(".")
         try:
@@ -2253,29 +2330,56 @@ def convert_media(
                 _method_override=_method_override, _recovery=_recovery,
             )
         except RuntimeError as error:
-            if not (allow_lossless_png_recovery and effective_target in {"source", "original", ""}
-                    and str(error).startswith("ValidationFailed:")):
-                raise
-            from PIL import Image
-            try:
-                with Image.open(input_path) as image:
-                    if getattr(image, "n_frames", 1) != 1:
-                        raise ValueError("animated input")
-                    image.verify()
-            except (OSError, ValueError):
-                raise error
-            failure = FailureEvidence("source-validation", FailureCategory.VALIDATION, True, "image:source-validation")
-            if _recovery.next_method(failure) != "image-png":
-                raise error
-            _recovery.start("image-png")
-            effective_target = "png"
-            png_recovery = RecoveryCoordinator(replace(
-                _recovery.intent, target_format="png", allow_png_fallback=False,
-            ), evidence_path=_recovery.evidence_path)
-            staged_path = _convert_media_impl(
-                **common, target_format="png", allow_stream_copy=False,
-                allow_lossless_png_recovery=False, _recovery=png_recovery,
-            )
+            staged_path = None
+            if (
+                allow_lossless_png_recovery
+                and effective_target in {"source", "original", ""}
+                and str(error).startswith("ValidationFailed:")
+            ):
+                from PIL import Image
+                try:
+                    with Image.open(input_path) as image:
+                        if getattr(image, "n_frames", 1) != 1:
+                            raise ValueError("animated input")
+                        image.verify()
+                    failure = FailureEvidence("source-validation", FailureCategory.VALIDATION, True, "image:source-validation")
+                    if _recovery.next_method(failure) == "image-png":
+                        _recovery.start("image-png")
+                        effective_target = "png"
+                        png_recovery = RecoveryCoordinator(replace(
+                            _recovery.intent, target_format="png", allow_png_fallback=False,
+                        ), evidence_path=_recovery.evidence_path)
+                        staged_path = _convert_media_impl(
+                            **common, target_format="png", allow_stream_copy=False,
+                            allow_lossless_png_recovery=False, _recovery=png_recovery,
+                        )
+                except (OSError, ValueError):
+                    pass
+
+            if staged_path is None:
+                probe = probe_media_streams(input_path) or {}
+                streams = probe.get("streams", [])
+                has_audio = any(s.get("codec_type") == "audio" for s in streams)
+                has_video = any(s.get("codec_type") == "video" for s in streams)
+                is_audio_context = bool(
+                    (expected_category and str(expected_category).lower() in ("audio", "music"))
+                    or (has_audio and not has_video)
+                )
+                if effective_target in {"source", "original", ""} and is_audio_context and has_audio:
+                    audio_target = "flac"
+                    staged_progress(0.72, f"Preserve Quality fallback: raw stream preservation failed ({error}). Transcoding to lossless {audio_target.upper()}...")
+                    failure = FailureEvidence("source-validation", FailureCategory.VALIDATION, True, "audio:source-validation")
+                    _recovery.start("audio-transcode")
+                    audio_recovery = RecoveryCoordinator(replace(
+                        _recovery.intent, target_format=audio_target, allow_png_fallback=False,
+                    ), evidence_path=_recovery.evidence_path)
+                    staged_path = _convert_media_impl(
+                        **common, target_format=audio_target, allow_stream_copy=False,
+                        allow_lossless_png_recovery=False, _recovery=audio_recovery,
+                    )
+                    effective_target = audio_target
+                else:
+                    raise error
         if abort_event and abort_event.is_set():
             raise KeyboardInterrupt("Conversion aborted by user.")
         validate_output_intent(input_path, staged_path, replace(_recovery.intent, target_format=effective_target))

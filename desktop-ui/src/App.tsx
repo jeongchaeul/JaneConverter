@@ -659,7 +659,7 @@ export default function App() {
         forcedVideoFallback = true;
         setSettings(effectiveSettings);
       }
-      activeJobSuggestLosslessRef.current = effectiveSettings.format === "source" && (effectiveSettings.category === "Image" || Boolean(facebookCaptureId || socialCaptureId));
+      activeJobSuggestLosslessRef.current = effectiveSettings.format === "source" && effectiveSettings.category === "Image" && !forcedVideoFallback;
       activeJobContextRef.current = {
         startedAtMs: Date.now(),
         source: normalizedSource || selectedCapture?.name || "Media source",
@@ -997,6 +997,8 @@ export default function App() {
                 ? "Verify the post link is publicly viewable, or use Account Access with the Browser Capture extension if the post requires sign-in."
                 : failure.suggestLossless
                 ? <>Try <strong className="text-white">Image → Lossless Image</strong> in Converter, then run the conversion again.</>
+                : failure.message.toLowerCase().includes("audio") || (settings.category === "Audio" || settings.category === "Music")
+                ? <>Try selecting an explicit audio format (such as <strong className="text-white">Studio Master WAV</strong>, <strong className="text-white">Universal Music MP3</strong>, or <strong className="text-white">FLAC</strong>) in Converter, then run the conversion again.</>
                 : "Review the message above and try again. If the conversion format is the problem, choose another compatible preset."}
             </div>
             <div className="mt-5 flex justify-end gap-2">

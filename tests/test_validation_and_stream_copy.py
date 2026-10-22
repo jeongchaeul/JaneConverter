@@ -174,3 +174,58 @@ def test_convert_media_preserve_quality_source_format(tmp_path):
     info = probe_media_streams(result)
     assert info is not None
     assert any(s.get("codec_type") == "video" for s in info.get("streams", []))
+
+
+def test_validate_output_file_audio_only_webm(tmp_path):
+    ffmpeg = get_ffmpeg_binary()
+    source_webm = tmp_path / "audio_only.webm"
+
+    # Generate a short 0.2s valid audio-only WebM file (Opus) with ffmpeg
+    subprocess.run(
+        [ffmpeg, "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2",
+         "-c:a", "libopus", str(source_webm)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=True
+    )
+
+    # Validating with target_format="webm" must succeed for audio-only WebM
+    validate_output_file(str(source_webm), "webm")
+    # Validating with require_video=False must also succeed
+    validate_output_file(str(source_webm), "webm", require_video=False)
+
+    # Validating with require_video=True must fail because there is no video
+    with pytest.raises(RuntimeError, match="does not contain a video stream"):
+        validate_output_file(str(source_webm), "webm", require_video=True)
+
+
+def test_convert_media_preserve_quality_audio_webm_remux(tmp_path):
+    ffmpeg = get_ffmpeg_binary()
+    source_webm = tmp_path / "stream_audio.webm"
+
+    # Generate a valid audio-only WebM file (Opus)
+    subprocess.run(
+        [ffmpeg, "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.3",
+         "-c:a", "libopus", str(source_webm)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=True
+    )
+
+    output_dir = str(tmp_path / "out_audio")
+    result = convert_media(
+        input_path=str(source_webm),
+        output_dir=output_dir,
+        output_filename="Track",
+        target_format="source",
+        expected_category="Audio",
+    )
+
+    assert os.path.isfile(result)
+    assert result.endswith(".opus")
+    assert os.path.getsize(result) > 0
+    info = probe_media_streams(result)
+    assert info is not None
+    streams = info.get("streams", [])
+    assert any(s.get("codec_type") == "audio" and s.get("codec_name") == "opus" for s in streams)
+    assert not any(s.get("codec_type") == "video" for s in streams)

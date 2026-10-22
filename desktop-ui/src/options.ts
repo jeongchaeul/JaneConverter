@@ -100,7 +100,7 @@ export const intentPresets: IntentPreset[] = [
     name: "Preserve Quality",
     description: "Keep source quality: takes the raw file or highest-quality stream without re-encoding",
     group: "Other",
-    category: "Video",
+    category: "Audio",
     format: "source",
     bitrate: "best",
     sampleRate: 48000,

@@ -497,6 +497,7 @@ def process_conversion(
             start_time=start_time,
             end_time=end_time,
             reconstruct_frequency_loss=reconstruct_frequency_loss,
+            expected_category=content_category,
         )
 
         report(1.0, f"Ready! File exported to: {os.path.basename(result_path)}")
@@ -761,6 +762,7 @@ def process_playlist_conversion(
                     abort_event=abort_event,
                     progress_callback=item_progress_hook,
                     reconstruct_frequency_loss=reconstruct_frequency_loss,
+                    expected_category=content_category,
                 ),
                 f"Track #{idx} conversion",
                 0  # convert_media already selects and bounds distinct recovery methods
@@ -872,6 +874,7 @@ def process_playlist_conversion(
                     cover_path=track_cover if save_cover_art else None,
                     abort_event=abort_event,
                     reconstruct_frequency_loss=reconstruct_frequency_loss,
+                    expected_category=content_category,
                 )
                 converted_files.append(result_path)
                 failed_files = [f for f in failed_files if f.get("index") != idx]

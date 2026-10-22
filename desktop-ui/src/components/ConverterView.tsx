@@ -1150,7 +1150,7 @@ export function ConverterView({
     if (preset.preserveQuality) {
       onSettings({
         ...settings,
-        category: (["Audio", "Video", "Image"].includes(activeCategory) ? activeCategory : preset.category) as Category,
+        category: (["Audio", "Music", "Video", "Image", "Miscellaneous"].includes(activeCategory) ? activeCategory : settings.category) as Category,
         format: preset.format,
         resolution: "original",
         normalize: false,
