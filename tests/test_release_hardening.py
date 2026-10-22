@@ -113,6 +113,7 @@ def test_published_release_check_finds_newer_github_version_and_installer(monkey
             return {
                 "tag_name": "v1.3.0",
                 "html_url": "https://github.com/janecerys/JaneConverter/releases/tag/v1.3.0",
+                "body": "- Initial v1.3.0 release notes",
                 "assets": [
                     {
                         "name": "JaneConverter-1.3.0-windows-x64-setup.exe",
