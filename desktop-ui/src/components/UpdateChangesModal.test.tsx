@@ -75,4 +75,50 @@ describe("UpdateChangesModal", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("displays up-to-date changelog without Update now button when on current build", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const mockResultUpToDate: UpdateCheckResult = {
+      message: "Up to date",
+      repo: {
+        has_update: false,
+        current_commit: "c51251b",
+        latest_commit: "c51251b",
+        commits: [
+          "c51251b ci: optimize workflows with static macOS ffmpeg",
+          "bf55fd4 docs: document version bump in REBUILD.md",
+        ],
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        <UpdateChangesModal
+          open={true}
+          onClose={vi.fn()}
+          updateResult={mockResultUpToDate}
+        />
+      );
+    });
+
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain("JaneConverter Changelog");
+    expect(dialog?.textContent).toContain("Up to date");
+    expect(dialog?.textContent).toContain("build c51251b");
+    expect(dialog?.textContent).toContain("Recent Build Changes");
+    expect(dialog?.textContent).toContain("c51251b");
+    expect(dialog?.textContent).toContain("optimize workflows with static macOS ffmpeg");
+
+    const updateBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) =>
+      b.textContent?.includes("Update now")
+    );
+    expect(updateBtn).toBeUndefined();
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });

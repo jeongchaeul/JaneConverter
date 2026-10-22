@@ -1,6 +1,25 @@
 import { RefreshCw, Sparkles, X } from "lucide-react";
 import type { UpdateCheckResult } from "../bridge";
 
+export function isAppUpdateAvailable(repo?: UpdateCheckResult["repo"]): boolean {
+  if (!repo || !repo.has_update) return false;
+  const current = repo.current_commit?.trim().toLowerCase();
+  const latest = repo.latest_commit?.trim().toLowerCase();
+  if (current && latest && current !== "unknown" && latest !== "unknown") {
+    if (current === latest || current.startsWith(latest) || latest.startsWith(current)) {
+      return false;
+    }
+  }
+  const curVer = repo.current_version?.trim().toLowerCase();
+  const latVer = repo.latest_version?.trim().toLowerCase();
+  if (curVer && latVer && !current && !latest) {
+    if (curVer === latVer) {
+      return false;
+    }
+  }
+  return true;
+}
+
 interface UpdatePromptHeaderProps {
   updateResult: UpdateCheckResult | null;
   dismissed: boolean;
@@ -22,9 +41,9 @@ export function UpdatePromptHeader({
 
   const repo = updateResult.repo;
   const engine = updateResult.engine;
-  const hasUpdate = Boolean(repo?.has_update || engine?.has_update);
+  const hasAppUpdate = isAppUpdateAvailable(repo);
 
-  if (!hasUpdate) return null;
+  if (!hasAppUpdate) return null;
 
   const versionTag = repo?.latest_commit
     ? `build ${repo.latest_commit.slice(0, 7)}`

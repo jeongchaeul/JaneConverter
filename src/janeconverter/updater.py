@@ -316,7 +316,7 @@ def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
 
     release_url = _trusted_release_url(release.get("html_url"))
     release_body = str(release.get("body", "") or "").strip()
-    return _release_update_result(
+    result = _release_update_result(
         current_version,
         latest_version,
         release_url,
@@ -324,6 +324,32 @@ def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
         installer_checksum_url,
         body=release_body,
     )
+    if not result.get("commits"):
+        try:
+            commits_resp = requests.get(
+                f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/commits?per_page=10",
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": f"JaneConverter/{current_version}",
+                },
+                timeout=max(1.0, min(float(timeout_seconds), 3.0)),
+            )
+            if commits_resp.status_code == 200:
+                raw_commits = commits_resp.json()
+                if isinstance(raw_commits, list):
+                    commits = []
+                    for item in raw_commits:
+                        if isinstance(item, dict):
+                            sha = str(item.get("sha", ""))[:7]
+                            msg = str(item.get("commit", {}).get("message", "")).splitlines()[0].strip()
+                            if sha and msg:
+                                commits.append(f"{sha} {msg}")
+                    if commits:
+                        result["commits"] = commits[:10]
+                        result["notes"] = "\n".join(commits[:10])
+        except Exception:
+            pass
+    return result
 
 
 def download_application_update(info: Dict[str, Any], timeout_seconds: float = 60.0) -> Dict[str, Any]:
@@ -396,14 +422,16 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
                     "notes": "\n".join(commits),
                     "error": None
                 }
+            log_res = _run_git_cmd(["git", "log", "--pretty=format:%h %s", "-n", "10", "HEAD"], timeout=3.0)
+            commits = [line.strip() for line in log_res.stdout.splitlines() if line.strip()] if log_res.returncode == 0 else []
             return {
                 "has_update": False,
                 "is_git": True,
                 "current_commit": current_commit,
                 "latest_commit": current_commit,
                 "commits_behind": 0,
-                "commits": [],
-                "notes": "",
+                "commits": commits,
+                "notes": "\n".join(commits),
                 "error": None
             }
     except Exception as e:

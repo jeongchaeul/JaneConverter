@@ -2406,8 +2406,22 @@ async fn check_updates(
                             }),
                         );
                     } else if !latest_commit.is_empty()
-                        && latest_commit.eq_ignore_ascii_case(BUILD_COMMIT)
+                        && (latest_commit.eq_ignore_ascii_case(BUILD_COMMIT)
+                            || latest_commit.starts_with(BUILD_COMMIT)
+                            || BUILD_COMMIT.starts_with(&latest_commit))
                     {
+                        let notes = update.body.clone().unwrap_or_default();
+                        let commits: Vec<String> = notes
+                            .lines()
+                            .map(|s| {
+                                s.trim()
+                                    .trim_start_matches(|c| c == '-' || c == '*' || c == '•')
+                                    .trim()
+                                    .to_string()
+                            })
+                            .filter(|s| !s.is_empty() && !s.starts_with('#'))
+                            .take(10)
+                            .collect();
                         object.insert(
                             "repo".into(),
                             serde_json::json!({
@@ -2421,6 +2435,8 @@ async fn check_updates(
                                 "latest_version": update.version,
                                 "installer_available": false,
                                 "release_url": "https://github.com/jeongchaeul/JaneConverter/releases/tag/continuous",
+                                "commits": commits,
+                                "notes": notes,
                                 "error": null
                             }),
                         );

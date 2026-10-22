@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
-import { Check, ExternalLink, GitCommit, RefreshCw, Sparkles, X, Zap } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, ExternalLink, GitCommit, Loader2, RefreshCw, Sparkles, X, Zap } from "lucide-react";
 import type { UpdateCheckResult } from "../bridge";
 import { bridge } from "../bridge";
+import { isAppUpdateAvailable } from "./UpdatePromptHeader";
 
 interface UpdateChangesModalProps {
   open: boolean;
@@ -31,6 +32,14 @@ export function UpdateChangesModal({
   theme = "dark",
 }: UpdateChangesModalProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const [remoteCommits, setRemoteCommits] = useState<string[]>([]);
+  const [loadingRemote, setLoadingRemote] = useState(false);
+
+  const repo = updateResult?.repo;
+  const engine = updateResult?.engine;
+  const isAppUpdate = isAppUpdateAvailable(repo);
+
+  const rawCommits = repo?.commits ?? [];
 
   useEffect(() => {
     if (!open) return;
@@ -42,11 +51,40 @@ export function UpdateChangesModal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [open, onClose]);
 
-  if (!open || !updateResult) return null;
+  useEffect(() => {
+    if (!open) return;
+    if (rawCommits.length > 0) return;
 
-  const repo = updateResult.repo;
-  const engine = updateResult.engine;
-  const commits = repo?.commits ?? [];
+    let active = true;
+    setLoadingRemote(true);
+    fetch("https://api.github.com/repos/jeongchaeul/JaneConverter/commits?per_page=10")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: unknown) => {
+        if (!active || !Array.isArray(data)) return;
+        const lines = data
+          .map((item: { sha?: string; commit?: { message?: string } }) => {
+            const hash = item.sha?.slice(0, 7) || "";
+            const msg = item.commit?.message?.split("\n")[0]?.trim() || "";
+            return hash && msg ? `${hash} ${msg}` : msg;
+          })
+          .filter(Boolean);
+        if (lines.length > 0) {
+          setRemoteCommits(lines);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setLoadingRemote(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [open, rawCommits.length]);
+
+  if (!open) return null;
+
+  const commits = rawCommits.length > 0 ? rawCommits : remoteCommits;
   const latestRev = repo?.latest_commit?.slice(0, 7) || repo?.latest_version;
   const currentRev = repo?.current_commit?.slice(0, 7) || repo?.current_version;
 
@@ -81,43 +119,61 @@ export function UpdateChangesModal({
 
         <div className="flex items-center gap-2">
           <Sparkles className="size-4" style={{ color: "var(--accent-color, #c52b68)" }} />
-          <span className="mono-label">Push updates & changes</span>
+          <span className="mono-label">
+            {isAppUpdate ? "Push updates & changes" : "Changelog & build history"}
+          </span>
         </div>
 
         <h2 id="update-modal-title" className="mt-2 text-xl font-semibold text-white">
-          JaneConverter Update
+          {isAppUpdate ? "JaneConverter Update" : "JaneConverter Changelog"}
         </h2>
 
-        {/* Version progression pill */}
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-300">
-          <span className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.10] bg-white/[0.04] px-2.5 py-1 font-mono text-zinc-300">
-            <span className="text-zinc-500">Current:</span> {currentRev || "installed"}
-          </span>
-          <span className="text-zinc-500">→</span>
-          <span
-            className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-mono font-medium"
-            style={{
-              borderColor: "var(--accent-glow, rgba(197, 43, 104, 0.4))",
-              backgroundColor: "var(--accent-subtle, rgba(197, 43, 104, 0.15))",
-              color: "var(--accent-color, #c52b68)",
-            }}
-          >
-            <span className="text-zinc-400">Latest:</span> {latestRev || "new build"}
-          </span>
-          {repo?.commits_behind && repo.commits_behind > 0 ? (
-            <span className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-1 text-[11px] text-zinc-400">
-              {repo.commits_behind} {repo.commits_behind === 1 ? "commit" : "commits"} behind
+        {/* Version progression pill or Up-to-date badge */}
+        {isAppUpdate ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-300">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.10] bg-white/[0.04] px-2.5 py-1 font-mono text-zinc-300">
+              <span className="text-zinc-500">Current:</span> {currentRev || "installed"}
             </span>
-          ) : null}
-        </div>
+            <span className="text-zinc-500">→</span>
+            <span
+              className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-mono font-medium"
+              style={{
+                borderColor: "var(--accent-glow, rgba(197, 43, 104, 0.4))",
+                backgroundColor: "var(--accent-subtle, rgba(197, 43, 104, 0.15))",
+                color: "var(--accent-color, #c52b68)",
+              }}
+            >
+              <span className="text-zinc-400">Latest:</span> {latestRev || "new build"}
+            </span>
+            {repo?.commits_behind && repo.commits_behind > 0 ? (
+              <span className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-1 text-[11px] text-zinc-400">
+                {repo.commits_behind} {repo.commits_behind === 1 ? "commit" : "commits"} behind
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 font-mono text-emerald-300 font-medium">
+              <Check className="size-3.5 text-emerald-400" />
+              <span>Up to date</span>
+              <span className="text-emerald-400/60">•</span>
+              <span>{currentRev ? `build ${currentRev}` : (repo?.current_version ? `v${repo.current_version}` : "latest build")}</span>
+            </span>
+          </div>
+        )}
 
         {/* Changes list / Commit history */}
         <div className="mt-4">
           <div className="text-xs font-medium uppercase tracking-wider text-zinc-400 mb-2">
-            Summary of Changes
+            {isAppUpdate ? "Summary of Changes" : "Recent Build Changes"}
           </div>
           <div className="max-h-56 overflow-y-auto rounded-xl border border-white/[0.08] bg-white/[0.02] p-3 space-y-2">
-            {commits.length > 0 ? (
+            {loadingRemote && commits.length === 0 ? (
+              <div className="flex items-center gap-2 text-xs text-zinc-400 py-3 justify-center">
+                <Loader2 className="size-3.5 animate-spin text-zinc-400" />
+                <span>Fetching recent changelog...</span>
+              </div>
+            ) : commits.length > 0 ? (
               commits.map((line, idx) => {
                 const { hash, message } = parseCommitLine(line);
                 return (
@@ -162,7 +218,7 @@ export function UpdateChangesModal({
         {/* Modal actions */}
         <div className="mt-6 flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/[0.06]">
           <div className="flex items-center gap-2">
-            {repo?.installer_available && onInstall ? (
+            {isAppUpdate && repo?.installer_available && onInstall ? (
               <button
                 type="button"
                 disabled={installing}

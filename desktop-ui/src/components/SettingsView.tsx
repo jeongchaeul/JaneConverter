@@ -29,6 +29,7 @@ import {
 import type { ConverterSettings, RuntimeInfo, UpdateCheckResult } from "../bridge";
 import { bridge } from "../bridge";
 import { UpdateChangesModal } from "./UpdateChangesModal";
+import { isAppUpdateAvailable } from "./UpdatePromptHeader";
 
 const ACCENT_PRESETS = [
   { name: "Hot Pink (Default)", hex: "#c52b68" },
@@ -988,77 +989,135 @@ export function SettingsView({
                 {(checking || isCheckingUpdates) ? "Checking..." : "Check now"}
               </button>
             </div>
-            {effectiveUpdateResult?.repo?.has_update && !updateDismissed && (
-              <div
-                className="rounded-xl border border-[var(--accent-color,#c52b68)]/30 bg-[var(--accent-color,#c52b68)]/[0.06] p-4"
-                role="region"
-                aria-label="JaneConverter application update"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-zinc-100">
-                      JaneConverter{" "}
-                      {effectiveUpdateResult.repo.latest_commit
-                        ? `build ${effectiveUpdateResult.repo.latest_commit.slice(0, 7)}`
-                        : `v${effectiveUpdateResult.repo.latest_version}`}{" "}
-                      is available
+            {(() => {
+              const hasAppUpdate = isAppUpdateAvailable(effectiveUpdateResult?.repo);
+              if (hasAppUpdate && !updateDismissed) {
+                return (
+                  <div
+                    className="rounded-xl border border-[var(--accent-color,#c52b68)]/30 bg-[var(--accent-color,#c52b68)]/[0.06] p-4"
+                    role="region"
+                    aria-label="JaneConverter application update"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-zinc-100">
+                          JaneConverter{" "}
+                          {effectiveUpdateResult?.repo?.latest_commit
+                            ? `build ${effectiveUpdateResult.repo.latest_commit.slice(0, 7)}`
+                            : `v${effectiveUpdateResult?.repo?.latest_version}`}{" "}
+                          is available
+                        </div>
+                        <p className="mt-1 max-w-xl text-xs leading-relaxed text-zinc-400">
+                          Download and verify the update, then JaneConverter will restart to finish installing it. Your files and settings stay in place.
+                        </p>
+                        {!effectiveUpdateResult?.repo?.installer_available && (
+                          <p className="mt-2 text-xs text-amber-300">
+                            An automatic installer is not available for this package. Open the published release to update manually.
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onOpenChangesModal) onOpenChangesModal();
+                            else setShowLocalChangesModal(true);
+                          }}
+                          className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs"
+                        >
+                          <Sparkles className="size-3.5" style={{ color: "var(--accent-color, #c52b68)" }} />
+                          <span>View changes</span>
+                        </button>
+                        {effectiveUpdateResult?.repo?.installer_available ? (
+                          <button
+                            type="button"
+                            disabled={installing}
+                            onClick={() => void installUpdate()}
+                            className="primary-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-wait disabled:opacity-60"
+                          >
+                            <RefreshCw className={`size-3.5 ${installing ? "animate-spin" : ""}`} />
+                            {installing ? "Installing..." : "Update now"}
+                          </button>
+                        ) : null}
+                        {effectiveUpdateResult?.repo?.release_url ? (
+                          <button
+                            type="button"
+                            onClick={() => void bridge.openUrl(effectiveUpdateResult?.repo?.release_url ?? "")}
+                            className="subtle-button flex items-center gap-2 px-3 py-2 text-xs"
+                          >
+                            <ExternalLink className="size-3.5" /> Open release
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={installing}
+                          onClick={() => {
+                            setUpdateDismissed(true);
+                            setMessage("Update dismissed. You can check again anytime.");
+                          }}
+                          className="subtle-button px-3 py-2 text-xs disabled:opacity-60"
+                        >
+                          Not now
+                        </button>
+                      </div>
                     </div>
-                    <p className="mt-1 max-w-xl text-xs leading-relaxed text-zinc-400">
-                      Download and verify the update, then JaneConverter will restart to finish installing it. Your files and settings stay in place.
-                    </p>
-                    {!effectiveUpdateResult.repo.installer_available && (
-                      <p className="mt-2 text-xs text-amber-300">
-                        An automatic installer is not available for this package. Open the published release to update manually.
-                      </p>
-                    )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (onOpenChangesModal) onOpenChangesModal();
-                        else setShowLocalChangesModal(true);
-                      }}
-                      className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs"
-                    >
-                      <Sparkles className="size-3.5" style={{ color: "var(--accent-color, #c52b68)" }} />
-                      <span>View changes</span>
-                    </button>
-                    {effectiveUpdateResult.repo.installer_available ? (
+                );
+              }
+
+              return (
+                <div
+                  className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.04] p-4"
+                  role="region"
+                  aria-label="JaneConverter update status"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-emerald-500/15 text-emerald-400">
+                        <CheckCircle2 className="size-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-zinc-100 flex items-center gap-2">
+                          <span>JaneConverter is up to date</span>
+                          <span className="font-mono text-xs text-emerald-400 font-normal">
+                            ({effectiveUpdateResult?.repo?.latest_commit
+                              ? `build ${effectiveUpdateResult.repo.latest_commit.slice(0, 7)}`
+                              : `v${effectiveUpdateResult?.repo?.latest_version || runtime?.version || "2.3.2"}`})
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-xs text-zinc-400">
+                          {effectiveUpdateResult
+                            ? "Your installed build matches the latest GitHub release."
+                            : "No new updates found. Your application is running the current version."}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        disabled={installing}
-                        onClick={() => void installUpdate()}
-                        className="primary-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-wait disabled:opacity-60"
+                        onClick={() => {
+                          if (onOpenChangesModal) onOpenChangesModal();
+                          else setShowLocalChangesModal(true);
+                        }}
+                        className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs"
                       >
-                        <RefreshCw className={`size-3.5 ${installing ? "animate-spin" : ""}`} />
-                        {installing ? "Installing..." : "Update now"}
+                        <Sparkles className="size-3.5" style={{ color: "var(--accent-color, #c52b68)" }} />
+                        <span>View changelog</span>
                       </button>
-                    ) : null}
-                    {effectiveUpdateResult.repo.release_url ? (
-                      <button
-                        type="button"
-                        onClick={() => void bridge.openUrl(effectiveUpdateResult.repo?.release_url ?? "")}
-                        className="subtle-button flex items-center gap-2 px-3 py-2 text-xs"
-                      >
-                        <ExternalLink className="size-3.5" /> Open release
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      disabled={installing}
-                      onClick={() => {
-                        setUpdateDismissed(true);
-                        setMessage("Update dismissed. You can check again anytime.");
-                      }}
-                      className="subtle-button px-3 py-2 text-xs disabled:opacity-60"
-                    >
-                      Not now
-                    </button>
+                      {effectiveUpdateResult?.repo?.release_url ? (
+                        <button
+                          type="button"
+                          onClick={() => void bridge.openUrl(effectiveUpdateResult.repo?.release_url ?? "")}
+                          className="subtle-button flex items-center gap-2 px-3 py-2 text-xs"
+                        >
+                          <ExternalLink className="size-3.5" /> Release notes
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </section>
 
           {/* Legal & Privacy Safeguards */}

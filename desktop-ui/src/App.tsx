@@ -9,7 +9,7 @@ import { ConsoleView } from "./components/ConsoleView";
 import { HardwarePipelineView } from "./components/HardwarePipelineView";
 import { SettingsView } from "./components/SettingsView";
 import { FetchedMediaView } from "./components/FetchedMediaView";
-import { UpdatePromptHeader } from "./components/UpdatePromptHeader";
+import { UpdatePromptHeader, isAppUpdateAvailable } from "./components/UpdatePromptHeader";
 import { UpdateChangesModal } from "./components/UpdateChangesModal";
 import { findPresetName, formatBytes, formatElapsedMs } from "./options";
 
@@ -544,7 +544,7 @@ export default function App() {
       void bridge.checkUpdates().then((result) => {
         if (!mounted) return;
         setUpdateResult(result);
-        const hasUp = Boolean(result.repo?.has_update || result.engine?.has_update);
+        const hasUp = isAppUpdateAvailable(result.repo);
         if (hasUp) {
           setUpdateDismissed(false);
         }

@@ -5,12 +5,32 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 VERSION_PATTERN = re.compile(r"^(\d+\.\d+\.\d+)\+build\.(\d+)\.g([0-9a-f]{40})$")
+
+
+def get_commit_log_notes(commit: str, max_count: int = 10) -> str:
+    """Extract recent git commit summaries to include in the updater manifest notes."""
+    try:
+        res = subprocess.run(
+            ["git", "log", f"-n{max_count}", "--pretty=format:%h %s", commit],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5.0,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            lines = [line.strip() for line in res.stdout.strip().splitlines() if line.strip()]
+            if lines:
+                return "\n".join(f"- {line}" for line in lines)
+    except Exception:
+        pass
+    return f"JaneConverter repository build {commit[:7]}."
 
 
 def read_signature(path: Path) -> str:
@@ -38,7 +58,12 @@ def platform_asset(
 
 
 def create_manifest(
-    *, version: str, commit: str, repository: str, artifacts: Path
+    *,
+    version: str,
+    commit: str,
+    repository: str,
+    artifacts: Path,
+    notes: str = "",
 ) -> dict[str, object]:
     if not COMMIT_PATTERN.fullmatch(commit):
         raise ValueError("The source commit must be a full 40-character lowercase SHA.")
@@ -58,9 +83,10 @@ def create_manifest(
         target: platform_asset(artifacts, repository, filename)
         for target, filename in platform_files.items()
     }
+    release_notes = notes.strip() if notes.strip() else get_commit_log_notes(commit)
     return {
         "version": version,
-        "notes": f"JaneConverter repository build {commit[:7]}.",
+        "notes": release_notes,
         "pub_date": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "build_commit": commit,
         "bridge_protocol": 2,
@@ -77,6 +103,7 @@ def main() -> int:
     parser.add_argument("--repository", required=True)
     parser.add_argument("--artifacts-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--notes", default="", help="Custom changelog / notes string")
     args = parser.parse_args()
 
     manifest = create_manifest(
@@ -84,6 +111,7 @@ def main() -> int:
         commit=args.commit,
         repository=args.repository,
         artifacts=args.artifacts_dir,
+        notes=args.notes,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

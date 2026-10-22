@@ -62,6 +62,63 @@ describe("UpdatePromptHeader", () => {
     container.remove();
   });
 
+  it("does not render when host build matches latest push or only engine has update", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const mockResultIdentical: UpdateCheckResult = {
+      message: "Up to date",
+      repo: {
+        has_update: false,
+        current_commit: "c51251b",
+        latest_commit: "c51251b",
+      },
+      engine: {
+        has_update: true,
+        current_version: "2026.08.19",
+        latest_version: "2026.10.21",
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        <UpdatePromptHeader
+          updateResult={mockResultIdentical}
+          dismissed={false}
+          onOpenChanges={vi.fn()}
+          onDismiss={vi.fn()}
+        />
+      );
+    });
+    expect(container.textContent).toBe("");
+
+    // Even if repo has_update is erroneously true with identical commit hashes:
+    const mockResultIdenticalHasUpdate: UpdateCheckResult = {
+      message: "Up to date",
+      repo: {
+        has_update: true,
+        current_commit: "c51251b",
+        latest_commit: "c51251b",
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        <UpdatePromptHeader
+          updateResult={mockResultIdenticalHasUpdate}
+          dismissed={false}
+          onOpenChanges={vi.fn()}
+          onDismiss={vi.fn()}
+        />
+      );
+    });
+    expect(container.textContent).toBe("");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
   it("does not render when dismissed or when no update exists", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
