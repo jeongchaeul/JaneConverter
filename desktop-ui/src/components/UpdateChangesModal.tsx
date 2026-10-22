@@ -40,6 +40,9 @@ export function UpdateChangesModal({
   const isAppUpdate = isAppUpdateAvailable(repo);
 
   const rawCommits = repo?.commits ?? [];
+  const meaningfulRaw = rawCommits.filter(
+    (c) => !/full changelog/i.test(c) && !c.trim().startsWith("http")
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -53,7 +56,7 @@ export function UpdateChangesModal({
 
   useEffect(() => {
     if (!open) return;
-    if (rawCommits.length > 0) return;
+    if (meaningfulRaw.length > 0) return;
 
     let active = true;
     setLoadingRemote(true);
@@ -80,11 +83,11 @@ export function UpdateChangesModal({
     return () => {
       active = false;
     };
-  }, [open, rawCommits.length]);
+  }, [open, meaningfulRaw.length]);
 
   if (!open) return null;
 
-  const commits = rawCommits.length > 0 ? rawCommits : remoteCommits;
+  const commits = meaningfulRaw.length > 0 ? meaningfulRaw : remoteCommits;
   const latestRev = repo?.latest_commit?.slice(0, 7) || repo?.latest_version;
   const currentRev = repo?.current_commit?.slice(0, 7) || repo?.current_version;
 
@@ -193,14 +196,28 @@ export function UpdateChangesModal({
                   </div>
                 );
               })
-            ) : repo?.notes ? (
+            ) : repo?.notes && !/^\s*(?:\*\*)?full changelog/i.test(repo.notes) ? (
               <div className="whitespace-pre-wrap text-xs text-zinc-300 font-sans leading-relaxed">
                 {repo.notes}
               </div>
             ) : (
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                This update includes the latest improvements, media extractor bug fixes, and stability enhancements.
-              </p>
+              <div className="space-y-2 py-1 text-xs text-zinc-400 leading-relaxed">
+                <p>
+                  This release contains the latest media conversion fixes, extractor engine updates, and stability improvements.
+                </p>
+                {repo?.release_url ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (repo.release_url) void bridge.openUrl(repo.release_url);
+                    }}
+                    className="inline-flex items-center gap-1.5 text-xs text-zinc-300 hover:text-white underline underline-offset-2"
+                  >
+                    <span>View full release notes on GitHub</span>
+                    <ExternalLink className="size-3" />
+                  </button>
+                ) : null}
+              </div>
             )}
           </div>
         </div>

@@ -3,6 +3,19 @@
 All notable changes to JaneConverter are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3.3] - 2026-10-23 - Spotify Stream Preservation, Lossless Audio Remuxing & Release Hardening
+
+### Added
+- Added lossless stream remuxing (`-c:a copy`) for Spotify and YouTube audio streams in Opus/WebM containers, cleanly producing native `.opus` and `.m4a` files in milliseconds without re-encoding or quality degradation.
+- Added an automatic `audio-transcode` fallback strategy to high-fidelity FLAC if raw source audio streams fail container validation.
+
+### Fixed
+- Fixed a validation error (`ValidationFailed: output file does not contain a video stream`) when converting audio with the **Preserve Quality** preset on sources delivering Opus audio in WebM containers.
+- Fixed title stem truncation bug where tracks with dots (such as *"Mr. Brightside"*) had their names stripped to *"Mr.opus"*.
+- Fixed the desktop UI failure modal incorrectly suggesting "Image -> Lossless Image" on audio conversion errors.
+- Fixed the in-app **View changelog** window to display formatted commit history and release notes instead of raw URLs.
+- Hardened CI and release packaging pipelines with non-interactive package installations, timeout guards, and a pre-installed FFmpeg bypass for Linux runners.
+
 ## [2.3.2] - 2026-10-22 - Universal In-App Updater, Real-Time Push Changes & Dynamic Glow UX
 
 ### Added
