@@ -25,6 +25,7 @@ jobs:
   tests:
     name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     env:
       UV_PYTHON: ${{ matrix.python-version }}
     strategy:
@@ -65,7 +66,9 @@ jobs:
 
       - name: Install FFmpeg (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 ffmpeg
 
       - name: Install FFmpeg (macOS)
         if: runner.os == 'macOS'
@@ -107,6 +110,7 @@ jobs:
   desktop:
     name: Desktop UI (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -127,7 +131,12 @@ jobs:
           components: rustfmt
       - name: Install Tauri Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y build-essential curl wget file libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            build-essential curl wget file libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
       - name: Install frontend dependencies
         working-directory: desktop-ui
         run: npm ci
