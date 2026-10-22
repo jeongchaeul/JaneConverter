@@ -68,7 +68,11 @@ jobs:
         if: runner.os == 'Linux'
         env:
           DEBIAN_FRONTEND: noninteractive
-        run: sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 ffmpeg
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=15
+            sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=15 ffmpeg
+          fi
 
       - name: Install FFmpeg (macOS)
         if: runner.os == 'macOS'
