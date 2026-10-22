@@ -127,6 +127,7 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          sudo sed -i 's/azure\.archive\.ubuntu\.com/archive\.ubuntu\.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/* || true
           sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
           sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
             build-essential curl file libayatana-appindicator3-dev libfuse2 libssl-dev \

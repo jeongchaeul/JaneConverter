@@ -25,7 +25,7 @@ jobs:
   tests:
     name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       UV_PYTHON: ${{ matrix.python-version }}
     strategy:
@@ -66,12 +66,14 @@ jobs:
 
       - name: Install FFmpeg (Linux)
         if: runner.os == 'Linux'
-        env:
-          DEBIAN_FRONTEND: noninteractive
         run: |
+          set -euo pipefail
           if ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=15
-            sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=15 ffmpeg
+            mkdir -p "$HOME/.local/bin"
+            curl -fsSL --retry 3 https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-linux-x64 -o "$HOME/.local/bin/ffmpeg"
+            curl -fsSL --retry 3 https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-linux-x64 -o "$HOME/.local/bin/ffprobe"
+            chmod +x "$HOME/.local/bin/ffmpeg" "$HOME/.local/bin/ffprobe"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           fi
 
       - name: Install FFmpeg (macOS)
@@ -114,7 +116,7 @@ jobs:
   desktop:
     name: Desktop UI (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -138,6 +140,7 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          sudo sed -i 's/azure\.archive\.ubuntu\.com/archive\.ubuntu\.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/* || true
           sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
           sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
             build-essential curl wget file libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
