@@ -6,6 +6,10 @@ Thank you for your interest in contributing to **JaneConverter**!
 
 JaneConverter is **Jane Cerys's personal sovereign creator toolbox** (`project//aspyr`). It is not a commercial product built to compete with the market, and its scope is determined solely by Jane's creative, multimedia, and engineering needs.
 
+> *"JaneConverter is tailored specifically for my personal needs and convenience. But I wanted to share it because it can be useful. I don't have a particular goal, it's just my personal toolbox. If you find it useful, then that's great."* — **Jane Cerys**
+
+Distributing this project as open-source is an act of sharing solutions with fellow creators facing the same hurdles—it is not an invitation for external product governance or scope gatekeeping.
+
 - **We enthusiastically welcome:** Concrete bug fixes, performance improvements, hardware optimizations, memory safety, rigorous edge-case testing, and clean structural refactorings.
 - **Automatically Disregarded & Closed:** Any suggestions, critiques, PRs, or reviews attempting to restrict, gatekeep, or intervene with the personal philosophy, sovereign identity, or multi-disciplinary scope of this project (e.g. arguing against DAW utilities, studio tools, or personal features). Jane builds whatever she needs here, and it is none of anyone's business.
 - **Human Decency Baseline & Signal Isolation:** This applies to human operators, prompters, and contributors alike: maintain fundamental interpersonal decency when delivering technical feedback. Criticism exists solely as an instrument for structural and algorithmic improvement—never as a vector to attack the dignity of the creator or the project. External observers possess no insight into what the creator is experiencing, nor how their creative workflows are structured. Indulging in condescension, hostility, or personal disrespect is an active choice that degrades the signal-to-noise ratio of technical discourse. Constructive, respectful engineering collaboration is embraced; any contribution or critique compromised by bad-faith entitlement is discarded with prejudice.

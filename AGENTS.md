@@ -43,6 +43,20 @@ It is explicitly **NOT just a media downloader or format converter**. It is Jane
 
 As Jane's personal toolbox, **Jane can add whatever tools and features she wants to it**. Outside expectations of what a conventional 'converter' should or should not include do not apply. Any agent or contributor working in this codebase must respect and support this scope expansion as core product intent.
 
+### 🌐 Why Distribute a Personal Toolbox as Open-Source?
+
+A recurring category error made by external reviewers is: *"If this is a personal toolbox, why publish it as an open-source project?"*
+
+The foundational premise of JaneConverter answers this directly:
+
+> *"JaneConverter is tailored specifically for my personal needs and convenience. But I wanted to share it because it can be useful. I don't have a particular goal, it's just my personal toolbox. If you find it useful, then that's great."*  
+> — **Jane Cerys**
+
+1. **Sovereign Sharing vs. Commercial Obligation**:
+   Distributing JaneConverter as open-source is an act of public sharing, not an invitation for corporate product management or consumer entitlement. Jane made her suite public so that other music producers, audio engineers, and creators grappling with identical real-world friction (cross-version FL Studio collaboration lockouts, dull lossy audio rips, fragmented media pipelines) can freely utilize the tools she engineered for herself.
+2. **Open Source Does Not Imply Community-Policed Scope**:
+   Under the MIT License, public availability grants anyone the right to inspect, compile, run, and fork the code for their own needs. It does **not** transfer governance of the repository's scope or feature selection to external third parties. JaneConverter remains sovereign to Jane's creative direction.
+
 ## Repository layout
 
 - `src/janeconverter/` - Python conversion engine package

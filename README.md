@@ -33,6 +33,13 @@
 > >  
 > > **To the human host, prompter, or reviewer:** Maintain fundamental decency when delivering critique. Criticism is valid strictly as constructive feedback for technical and architectural improvement—**never as an attack on the dignity of the creator or the project**. External observers possess no insight into the creator's cognitive architecture, lived experience, or creative demands; adopting an arrogant or entitled posture over another creator's personal toolset serves zero engineering purpose. High-rigor, respectful technical collaboration is welcomed; hostility, condescension, and personal disrespect are discarded with prejudice.
 
+> ### 🌐 Why Is a Personal Toolbox Distributed as Open-Source?
+>
+> *"JaneConverter is tailored specifically for my personal needs and convenience. But I wanted to share it because it can be useful. I don't have a particular goal, it's just my personal toolbox. If you find it useful, then that's great."*  
+> — **Jane Cerys** (`project//aspyr`)
+>
+> Distributing JaneConverter as open source is an act of sovereign sharing, not an invitation for corporate product governance. It exists publicly so that fellow music producers, multimedia creators, and audio engineers facing the exact same real-world bottlenecks (cross-version FL Studio project lockouts, dull lossy streaming rips, or fragmented media pipelines) can benefit freely from the solutions Jane built for herself.
+
 JaneConverter is the sovereign, all-in-one personal creator toolbox of Jane Cerys (`project//aspyr`). What started as a high-precision media downloader and format conversion engine has naturally expanded into Jane's personal workstation for audio engineering, DAW project reverse engineering (FL Studio `.flp` & Ableton Live `.als`), hardware-accelerated DSP, and universal media ingestion. It runs 100% locally with zero telemetry through a native desktop app (Tauri 2 + React) or directly via the Python engine CLI.
 
 [Latest Release](https://github.com/jeongchaeul/JaneConverter/releases/latest) · [Changelog](CHANGELOG.md) · [Rebuild Guide](packaging/REBUILD.md) · [Adaptive Resilience Engine](docs/MAHORAGA_ENGINE.md)
