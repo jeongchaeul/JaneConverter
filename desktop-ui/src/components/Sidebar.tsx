@@ -55,7 +55,7 @@ export function Sidebar({ activeView, onChange }: { activeView: ViewKey; onChang
         </div>
         {!collapsed && <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold tracking-tight text-white">JaneConverter</div>
-          <div className="mono-label mt-1">LOCAL / STUDIO</div>
+          <div className="mono-label mt-1">JANE&apos;S CREATOR TOOLBOX</div>
         </div>}
       </div>
 

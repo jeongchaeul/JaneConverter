@@ -19,7 +19,7 @@ A simple, straightforward guide to getting the most out of JaneConverter.
 
 ## What is JaneConverter?
 
-JaneConverter is an all-in-one desktop toolbox designed for:
+JaneConverter is the sovereign, all-in-one personal creator toolbox of Jane Cerys (project//aspyr). It is explicitly **not just a media converter**—it is a bespoke creator workbench built to solve real-world audio engineering, DAW compatibility, multimedia processing, and media archival problems. Jane adds any tool or feature she needs directly to this suite.
 - **Downloading Media:** Grab video, audio, or high-res photos from YouTube, Instagram, Facebook, TikTok, SoundCloud, Pinterest, and Reddit.
 - **Transcoding & Converting:** Convert between 15+ audio, video, and image formats with customizable bitrates, resolutions, and loudness normalization.
 - **Music Catalog Matching:** Paste Spotify or Apple Music links to automatically locate clean public audio recordings and embed full metadata and album artwork.

@@ -1221,6 +1221,16 @@ export function SettingsView({
             })()}
           </section>
 
+          {/* Personal Sovereign Creator Toolbox */}
+          <section className="panel space-y-3 border-l-2 border-l-[var(--accent-color,#c52b68)] p-5">
+            <div className="flex items-center gap-2 text-sm font-medium text-zinc-100">
+              <Sparkles className="size-4 text-[var(--accent-color,#d75b88)]" /> Sovereign Creator Toolbox
+            </div>
+            <p className="text-xs leading-relaxed text-zinc-300">
+              <strong className="text-white">JaneConverter is Jane Cerys&apos;s personal creator toolbox.</strong> It is explicitly not just a converter tool. It is Jane&apos;s bespoke Swiss Army knife spanning universal media ingestion, DAW project bit-level engineering (FL Studio &amp; Ableton Live), custom harmonic DSP, and local archival utilities. Jane builds whatever she needs into this suite. If it enhances your creative workflow, welcome aboard.
+            </p>
+          </section>
+
           {/* Legal & Privacy Safeguards */}
           <section className="panel space-y-3 p-5">
             <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">

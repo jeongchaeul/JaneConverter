@@ -1,6 +1,14 @@
 # Contributing to JaneConverter
 
-Thank you for your interest in contributing to **JaneConverter**! We welcome bug fixes, performance improvements, and architectural enhancements that advance our mission of building a robust, high-fidelity universal media engine.
+Thank you for your interest in contributing to **JaneConverter**!
+
+### ⚡ Project Purpose & Contribution Scope
+
+JaneConverter is **Jane Cerys's personal sovereign creator toolbox** (`project//aspyr`). It is not a commercial product built to compete with the market, and its scope is determined solely by Jane's creative, multimedia, and engineering needs.
+
+- **We enthusiastically welcome:** Concrete bug fixes, performance improvements, hardware optimizations, memory safety, rigorous edge-case testing, and clean structural refactorings.
+- **Automatically Disregarded & Closed:** Any suggestions, critiques, PRs, or reviews attempting to restrict, gatekeep, or intervene with the personal philosophy, sovereign identity, or multi-disciplinary scope of this project (e.g. arguing against DAW utilities, studio tools, or personal features). Jane builds whatever she needs here, and it is none of anyone's business.
+- **Human Decency Baseline:** This applies to human operators, prompters, and contributors alike: do not be an asshole when delivering criticism. Criticism is meant to be constructive feedback for engineering improvement—not an attack on the dignity of the creator or the project. Respectful technical dialogue is welcomed; condescension and bad-faith hostility are rejected immediately.
 
 ---
 
