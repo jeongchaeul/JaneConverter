@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, type DragEvent } from "react";
 import {
   AlertCircle,
   AlertTriangle,
+  Construction,
+  FileSliders,
   ArrowRight,
   Check,
   CheckCircle2,
@@ -98,6 +100,15 @@ function formatBytes(bytes: number): string {
 }
 
 export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterViewProps) {
+  // DAW Selection state
+  const [selectedDaw, setSelectedDaw] = useState<"fl" | "ableton">("fl");
+
+  // Ableton Live (.als) experimental preview states
+  const [alsFilePath, setAlsFilePath] = useState<string>("");
+  const [alsFileSize, setAlsFileSize] = useState<number>(0);
+  const [isAlsDragOver, setIsAlsDragOver] = useState<boolean>(false);
+  const alsFileInputRef = useRef<HTMLInputElement>(null);
+
   const [filePath, setFilePath] = useState<string>("");
   const [projectInfo, setProjectInfo] = useState<FlpProjectInfo | null>(null);
   const [installedFl, setInstalledFl] = useState<InstalledFlStudio[]>([]);
@@ -141,7 +152,15 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
 
   useEffect(() => {
     if (initialFilePath && initialFilePath.trim()) {
-      void handleLoadProject(initialFilePath);
+      const lower = initialFilePath.trim().toLowerCase();
+      if (lower.endsWith(".als")) {
+        setSelectedDaw("ableton");
+        setAlsFilePath(initialFilePath.trim());
+        onStatus(`Loaded Ableton Live project (.als) — Experimental Preview`);
+      } else {
+        setSelectedDaw("fl");
+        void handleLoadProject(initialFilePath);
+      }
     }
   }, [initialFilePath]);
 
@@ -224,6 +243,47 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
     }
   }
 
+  async function handleBrowseAlsFile() {
+    try {
+      const selected = await bridge.chooseAlsFile();
+      if (selected) {
+        setAlsFilePath(selected);
+        setSelectedDaw("ableton");
+        onStatus(`Loaded Ableton Live project: ${selected} (Experimental Preview)`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      onStatus(`Browse error: ${msg}`);
+    }
+  }
+
+  function handleAlsDragOver(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setIsAlsDragOver(true);
+  }
+
+  function handleAlsDragLeave(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setIsAlsDragOver(false);
+  }
+
+  function handleAlsDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setIsAlsDragOver(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      const path = (file as unknown as { path?: string }).path || file.name;
+      if (path.toLowerCase().endsWith(".als")) {
+        setAlsFilePath(path);
+        setAlsFileSize(file.size);
+        setSelectedDaw("ableton");
+        onStatus(`Loaded Ableton Live project: ${file.name} (Experimental Preview)`);
+      } else {
+        onStatus("Please drop a valid .als project file.");
+      }
+    }
+  }
+
   function applyPreset(preset: VersionPreset) {
     setTargetVersion(preset.version);
     setTargetBuild(String(preset.build));
@@ -296,7 +356,247 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
 
   return (
     <div className="space-y-4 pb-6">
-      {/* Experimental Notice Banner */}
+      {/* Studio DAW Selection Tabs */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={() => setSelectedDaw("fl")}
+          className={`flex items-start gap-3.5 rounded-xl border p-3.5 text-left transition-all ${
+            selectedDaw === "fl"
+              ? "border-pink-500/40 bg-pink-500/[0.08] shadow-[0_0_20px_rgba(236,72,153,0.12)] ring-1 ring-pink-500/30"
+              : "border-white/[0.08] bg-white/[0.02] hover:border-white/[0.15] hover:bg-white/[0.04]"
+          }`}
+        >
+          <div
+            className={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border ${
+              selectedDaw === "fl"
+                ? "border-pink-500/30 bg-pink-500/20 text-pink-300"
+                : "border-white/[0.08] bg-white/[0.04] text-zinc-400"
+            }`}
+          >
+            <FileMusic size={18} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-white">FL Studio (.flp)</span>
+              <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium text-emerald-400 border border-emerald-500/20">
+                FLP Downgrader
+              </span>
+            </div>
+            <p className="mt-1 text-[11px] leading-tight text-zinc-400">
+              Binary header patcher & record aligner for cross-build FL Studio compatibility.
+            </p>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setSelectedDaw("ableton")}
+          className={`flex items-start gap-3.5 rounded-xl border p-3.5 text-left transition-all ${
+            selectedDaw === "ableton"
+              ? "border-amber-500/40 bg-amber-500/[0.08] shadow-[0_0_20px_rgba(245,158,11,0.12)] ring-1 ring-amber-500/30"
+              : "border-white/[0.08] bg-white/[0.02] hover:border-white/[0.15] hover:bg-white/[0.04]"
+          }`}
+        >
+          <div
+            className={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border ${
+              selectedDaw === "ableton"
+                ? "border-amber-500/30 bg-amber-500/20 text-amber-300"
+                : "border-white/[0.08] bg-white/[0.04] text-zinc-400"
+            }`}
+          >
+            <FileSliders size={18} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-white">Ableton Live (.als)</span>
+              <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-300 border border-amber-500/20">
+                Under Construction
+              </span>
+            </div>
+            <p className="mt-1 text-[11px] leading-tight text-zinc-400">
+              ALS Project Migrator & gzip XML stream schema retargeting (Experimental).
+            </p>
+          </div>
+        </button>
+      </div>
+
+      {selectedDaw === "ableton" ? (
+        /* Ableton Live (.als) Experimental / Under Construction View */
+        <div className="space-y-4">
+          {/* Construction Banner */}
+          <div className="flex items-start gap-3 rounded-xl border border-amber-500/25 bg-amber-500/[0.05] p-3.5 text-xs text-amber-200/90">
+            <Construction size={16} className="mt-0.5 shrink-0 text-amber-400" />
+            <div className="space-y-0.5">
+              <div className="font-semibold text-amber-300">Under Construction · Experimental Architecture</div>
+              <p className="text-[11px] leading-relaxed text-zinc-400">
+                Ableton Live project (.als) migration and schema retargeting is currently in active research &amp; development for Jane's Creator Studio. This tool will unpack the gzipped XML container, translate schema version numbers, and sanitize device mappings for seamless cross-version opening (e.g. Live 12 → Live 11/10).
+              </p>
+            </div>
+          </div>
+
+          {/* Ableton Dropzone */}
+          <div
+            onDragOver={handleAlsDragOver}
+            onDragLeave={handleAlsDragLeave}
+            onDrop={handleAlsDrop}
+            className={`panel relative overflow-hidden transition-all duration-200 ${
+              isAlsDragOver
+                ? "border-amber-500/50 bg-amber-500/[0.05] shadow-[0_0_24px_rgba(245,158,11,0.15)] ring-1 ring-amber-500/40"
+                : "hover:border-white/[0.14]"
+            } p-6 text-center`}
+          >
+            <input
+              ref={alsFileInputRef}
+              type="file"
+              accept=".als"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files && e.target.files[0]) {
+                  const file = e.target.files[0];
+                  const path = (file as unknown as { path?: string }).path || file.name;
+                  setAlsFilePath(path);
+                  setAlsFileSize(file.size);
+                  onStatus(`Loaded Ableton Live project: ${file.name} (Experimental Preview)`);
+                }
+              }}
+            />
+
+            <div className="mx-auto flex size-12 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-zinc-300">
+              <FileSliders size={22} className="text-amber-400/80" />
+            </div>
+
+            <h3 className="mt-3 text-sm font-medium text-white">
+              {alsFilePath ? "Loaded Ableton Live Project" : "Drag & drop an Ableton Live project (.als)"}
+            </h3>
+            <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-zinc-500">
+              {alsFilePath
+                ? alsFilePath
+                : "Drop any .als file here or browse from your computer to inspect experimental gzip container headers."}
+            </p>
+
+            <div className="mt-4 flex items-center justify-center gap-2.5">
+              <button
+                type="button"
+                onClick={handleBrowseAlsFile}
+                className="subtle-button flex items-center gap-2 px-3.5 py-1.5 text-xs font-medium"
+              >
+                <FolderOpen size={13} className="text-zinc-400" />
+                Browse .als file
+              </button>
+              {alsFilePath && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAlsFilePath("");
+                    setAlsFileSize(0);
+                    onStatus("Cleared Ableton Live project.");
+                  }}
+                  className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs text-zinc-400"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Ableton Project Preview Details */}
+          {alsFilePath && (
+            <div className="panel p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] pb-3">
+                <div>
+                  <div className="mono-label">Project Inspection (Preview)</div>
+                  <h4 className="mt-1 text-base font-semibold tracking-tight text-white break-all">
+                    {alsFilePath.split(/[\\/]/).pop()}
+                  </h4>
+                  <p className="mt-0.5 text-xs text-zinc-400 break-all">{alsFilePath}</p>
+                </div>
+                <span className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-300">
+                  Container: Gzip XML
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3">
+                  <div className="text-[11px] text-zinc-500">Container Format</div>
+                  <div className="mt-1 text-sm font-semibold text-white">Gzip Compressed XML</div>
+                </div>
+                <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3">
+                  <div className="text-[11px] text-zinc-500">File Size</div>
+                  <div className="mt-1 text-sm font-semibold text-white">
+                    {alsFileSize > 0 ? formatBytes(alsFileSize) : "Detected"}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3 col-span-2 sm:col-span-1">
+                  <div className="text-[11px] text-zinc-500">Engine State</div>
+                  <div className="mt-1 text-sm font-semibold text-amber-300">In Development</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Planned Roadmap & Architecture */}
+          <div className="panel p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
+              <div>
+                <div className="mono-label">Planned Roadmap & Architecture</div>
+                <h4 className="mt-1 text-sm font-semibold text-white">
+                  Ableton Live (.als) Cross-Build Compatibility Pipeline
+                </h4>
+              </div>
+              <span className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-300">
+                Under Construction
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3.5 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-200">
+                  <span className="flex size-5 items-center justify-center rounded-full bg-white/10 text-[10px] font-bold">1</span>
+                  Gzip Stream Pipeline
+                </div>
+                <p className="text-[11px] leading-relaxed text-zinc-400">
+                  Lossless decompression of binary .als gzip streams into canonical XML DOM, preserving sample pools and audio clip markers.
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3.5 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-200">
+                  <span className="flex size-5 items-center justify-center rounded-full bg-white/10 text-[10px] font-bold">2</span>
+                  Schema Adaptation
+                </div>
+                <p className="text-[11px] leading-relaxed text-zinc-400">
+                  Retargets MajorVersion, MinorVersion, and SchemaChangeCount to bypass version blockades on earlier Live installs.
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3.5 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-200">
+                  <span className="flex size-5 items-center justify-center rounded-full bg-white/10 text-[10px] font-bold">3</span>
+                  Device & Freeze Sanitizer
+                </div>
+                <p className="text-[11px] leading-relaxed text-zinc-400">
+                  Gracefully degrades newer devices (e.g. Roar, Meld, Drift) and protects frozen track state when opening on Live 11 or Live 10.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.06] pt-3 text-[11px] text-zinc-500">
+              <span>Engine implementation planned for next minor release.</span>
+              <button
+                type="button"
+                disabled
+                className="subtle-button px-3 py-1.5 text-xs opacity-50 cursor-not-allowed"
+              >
+                Downgrade to Live 11 (Coming Soon)
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* FL Studio (.flp) Active Workflow */
+        <>
+          {/* Experimental Notice Banner */}
       <div className="flex items-start gap-3 rounded-xl border border-amber-500/25 bg-amber-500/[0.05] p-3.5 text-xs text-amber-200/90">
         <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-400" />
         <div className="space-y-0.5">
@@ -674,6 +974,8 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
           </motion.div>
         )}
       </AnimatePresence>
+        </>
+      )}
     </div>
   );
 }

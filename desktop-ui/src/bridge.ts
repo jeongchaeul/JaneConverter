@@ -271,6 +271,7 @@ export interface JaneBridge {
   checkUpdates(): Promise<UpdateCheckResult>;
   installUpdate(): Promise<void>;
   chooseFlpFile(): Promise<string | null>;
+  chooseAlsFile(): Promise<string | null>;
   flpDetectInstalled(): Promise<InstalledFlStudio[]>;
   flpInspect(path: string): Promise<FlpProjectInfo>;
   flpDowngrade(source: string, targetVersion: string, targetBuild?: number, outputPath?: string, overwrite?: boolean): Promise<FlpDowngradeResult>;
@@ -356,6 +357,7 @@ const demoBridge: JaneBridge = {
   async checkUpdates() { return { message: "Preview mode: update checks are available in the desktop build." }; },
   async installUpdate() {},
   async chooseFlpFile() { return null; },
+  async chooseAlsFile() { return null; },
   async flpDetectInstalled() {
     return [
       {
@@ -434,6 +436,7 @@ const tauriBridge: JaneBridge = {
   chooseFiles: () => invoke<string[]>("choose_files"),
   chooseFolder: () => invoke<string | null>("choose_folder"),
   chooseFlpFile: () => invoke<string | null>("choose_flp_file"),
+  chooseAlsFile: () => invoke<string | null>("choose_als_file"),
   flpDetectInstalled: () => invoke<InstalledFlStudio[]>("flp_detect_installed"),
   flpInspect: (path: string) => invoke<FlpProjectInfo>("flp_inspect", { path }),
   flpDowngrade: (source: string, targetVersion: string, targetBuild?: number, outputPath?: string, overwrite?: boolean) =>

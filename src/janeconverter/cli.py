@@ -797,7 +797,7 @@ def process_playlist_conversion(
             if not conversion_started:
                 deferred_queue.append((entry, raw_title, artist, clean_title, ordered_filename, idx))
             if active_gpu and any(w in str(e).lower() for w in ("nvenc", "amf", "qsv", "cuda", "hardware device", "no capable devices")):
-                print("[!] Hardware encoder failure detected. Mahoraga Engine: Adapting session to CPU encoding for remaining tracks.", flush=True)
+                print("[!] Hardware encoder failure detected. Adaptive Engine: Adapting session to CPU encoding for remaining tracks.", flush=True)
                 active_gpu = False
             is_net_err = any(word in str(e).lower() for word in ("connection reset", "connection refused", "name or service not known", "nodename nor servname", "network is unreachable", "timed out"))
             if is_net_err:
@@ -816,22 +816,22 @@ def process_playlist_conversion(
             if not keep_temp and track_work_dir and os.path.exists(track_work_dir):
                 shutil.rmtree(track_work_dir, ignore_errors=True)
 
-    # Mahoraga Engine: Deferred Adaptation Pass for un-downloaded tracks
+    # Adaptive Resilience: Deferred Recovery Pass for un-downloaded tracks
     if deferred_queue and not (abort_event and abort_event.is_set()):
-        print(f"\n[*] Mahoraga Engine: Adapting and retrying {len(deferred_queue)} deferred track(s) with alternate route discovery...", flush=True)
+        print(f"\n[*] Adaptive Recovery: Adapting and retrying {len(deferred_queue)} deferred track(s) with alternate route discovery...", flush=True)
         for def_item in deferred_queue:
             if abort_event and abort_event.is_set():
                 raise KeyboardInterrupt("Playlist conversion aborted by user.")
             entry, raw_title, artist, clean_title, ordered_filename, idx = def_item
             item_url = entry.get("url", "")
-            report_overall(1.0, f"[Mahoraga] Retrying #{idx}: {clean_title} via alternate audio paths...")
+            report_overall(1.0, f"[Adaptive Recovery] Retrying #{idx}: {clean_title} via alternate audio paths...")
             alt_title = re.sub(r'\s*[\(\[].*?[\)\]]', '', raw_title).strip()
             alt_artist = re.split(r'[,&]|\bfeat\b|\bft\b', str(artist or ""), flags=re.IGNORECASE)[0].strip()
 
             track_work_dir = None
             try:
                 track_job_id = uuid.uuid4().hex[:8]
-                track_work_dir = os.path.join(DEFAULT_TEMP_DIR, f"track_mahoraga_{track_job_id}")
+                track_work_dir = os.path.join(DEFAULT_TEMP_DIR, f"track_adaptive_{track_job_id}")
                 os.makedirs(track_work_dir, exist_ok=True)
                 stream_info = fetch_media_stream(
                     source=item_url,
@@ -889,9 +889,9 @@ def process_playlist_conversion(
                 )
                 converted_files.append(result_path)
                 failed_files = [f for f in failed_files if f.get("index") != idx]
-                print(f"[+] Mahoraga Adapted & Converted: {os.path.basename(result_path)}", flush=True)
+                print(f"[+] Adapted & Converted: {os.path.basename(result_path)}", flush=True)
             except Exception as retry_err:
-                print(f"[!] Mahoraga Pass: Track #{idx} '{raw_title}' could not be resolved: {retry_err}", flush=True)
+                print(f"[!] Adaptive Pass: Track #{idx} '{raw_title}' could not be resolved: {retry_err}", flush=True)
             finally:
                 if not keep_temp and track_work_dir and os.path.exists(track_work_dir):
                     shutil.rmtree(track_work_dir, ignore_errors=True)
@@ -1064,7 +1064,13 @@ def main():
     parser.add_argument("--bitrate", "-b", default="320k", help="Audio bitrate, lossless bit depth, OGG quality, or video quality (best, high, balanced, small)")
     parser.add_argument("--sample-rate", "-r", type=int, default=48000, help="Audio sample rate in Hz (44100, 48000, 96000)")
     parser.add_argument("--normalize", "-n", action="store_true", help="Apply EBU R128 loudness normalization")
-    parser.add_argument("--reconstruct-frequency-loss", action="store_true", help="Mathematically regenerate lost high-frequency air (16–22 kHz) cut off by platform compression")
+    parser.add_argument(
+        "--harmonic-exciter",
+        "--reconstruct-frequency-loss",
+        dest="reconstruct_frequency_loss",
+        action="store_true",
+        help="Apply FFmpeg harmonic exciter (aexciter) to synthesize subtle high-frequency air (7.5–20 kHz) on lossy audio",
+    )
     parser.add_argument("--resolution", default="original", help="Video resolution (original, 4k, 1440p, 1080p, 720p, 480p)")
     parser.add_argument("--start-time", help="Start time offset for media clipping/trimming (e.g. 01:30, 90, 00:01:30)")
     parser.add_argument("--end-time", help="End time offset for media clipping/trimming (e.g. 03:45, 225, 00:03:45)")

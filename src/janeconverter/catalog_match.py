@@ -82,7 +82,7 @@ def choose_catalog_match(requested, candidates, allow_relaxed: bool = True):
                     key=lambda pair: pair[0] if pair[0] is not None else -1, reverse=True)
     ranked = [(score, item) for score, item in ranked if score is not None]
 
-    # Tier 2: Mahoraga Adaptive Matching (relaxed duration & permissible noise tokens)
+    # Tier 2: Adaptive Catalog Matching (relaxed duration & permissible noise tokens)
     if not ranked and allow_relaxed:
         ranked_relaxed = sorted(((match_score(requested, item, relaxed=True), item) for item in candidates if item),
                                 key=lambda pair: pair[0] if pair[0] is not None else -1, reverse=True)

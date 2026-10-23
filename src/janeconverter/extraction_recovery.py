@@ -80,11 +80,11 @@ def extract_with_recovery(ydl, query, download, abort_event=None, report=None, d
                         ydl.params.pop("extractor_args", None)
                         continue
                     elif attempt - 1 < len(client_ladder):
-                        # Mahoraga Client Identity Rotation (Anti-bot / Challenge bypass)
+                        # Adaptive Client Identity Rotation (Anti-bot / Challenge bypass)
                         rotation = client_ladder[attempt - 1]
                         client_name = list(rotation.values())[0]["player_client"][0].upper()
                         if report:
-                            report(0.15, f"Mahoraga Adaptation: Rotating streaming client identity to {client_name}...", force=True)
+                            report(0.15, f"Adaptive Recovery: Rotating streaming client identity to {client_name}...", force=True)
                         ydl.params["extractor_args"] = rotation
                         continue
                     else:

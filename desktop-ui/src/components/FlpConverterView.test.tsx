@@ -7,6 +7,7 @@ import { FlpConverterView } from "./FlpConverterView";
 
 const bridge = vi.hoisted(() => ({
   chooseFlpFile: vi.fn(),
+  chooseAlsFile: vi.fn(),
   flpDetectInstalled: vi.fn(),
   flpInspect: vi.fn(),
   flpDowngrade: vi.fn(),
@@ -190,5 +191,69 @@ describe("FlpConverterView", () => {
     expect(container.textContent).toContain("FL Studio 21.2.3");
     expect(container.textContent).toContain("Build 4004");
     expect(container.textContent).toContain("FL Studio 24.2.2");
+  });
+
+  it("renders DAW selector options and switches between FL Studio and Ableton Live", async () => {
+    const onStatus = vi.fn();
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<FlpConverterView onStatus={onStatus} />);
+    });
+
+    // Check both DAW tools are offered
+    expect(container.textContent).toContain("FL Studio (.flp)");
+    expect(container.textContent).toContain("Ableton Live (.als)");
+    expect(container.textContent).toContain("FLP Downgrader");
+    expect(container.textContent).toContain("Under Construction");
+
+    // Click Ableton Live DAW option
+    const abletonBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Ableton Live (.als)"),
+    );
+    expect(abletonBtn).toBeDefined();
+
+    await act(async () => {
+      abletonBtn?.click();
+    });
+
+    // Check Ableton view contents
+    expect(container.textContent).toContain("Under Construction · Experimental Architecture");
+    expect(container.textContent).toContain("Drag & drop an Ableton Live project (.als)");
+    expect(container.textContent).toContain("Browse .als file");
+    expect(container.textContent).toContain("Gzip Stream Pipeline");
+    expect(container.textContent).toContain("Schema Adaptation");
+    expect(container.textContent).toContain("Device & Freeze Sanitizer");
+    expect(container.textContent).toContain("Downgrade to Live 11 (Coming Soon)");
+
+    // Browse an .als file
+    bridge.chooseAlsFile.mockResolvedValue("D:\\Projects\\TestSong.als");
+    const browseAlsBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Browse .als file"),
+    );
+    expect(browseAlsBtn).toBeDefined();
+
+    await act(async () => {
+      browseAlsBtn?.click();
+    });
+
+    expect(bridge.chooseAlsFile).toHaveBeenCalled();
+    expect(container.textContent).toContain("TestSong.als");
+    expect(container.textContent).toContain("Gzip Compressed XML");
+    expect(onStatus).toHaveBeenCalledWith(
+      expect.stringContaining("Loaded Ableton Live project"),
+    );
+
+    // Switch back to FL Studio
+    const flBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("FL Studio (.flp)"),
+    );
+    expect(flBtn).toBeDefined();
+
+    await act(async () => {
+      flBtn?.click();
+    });
+
+    expect(container.textContent).toContain("Drag & drop an FL Studio project (.flp)");
+    expect(container.textContent).toContain("Browse .flp file");
   });
 });

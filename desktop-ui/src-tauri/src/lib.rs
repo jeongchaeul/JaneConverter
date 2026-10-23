@@ -359,6 +359,15 @@ fn choose_flp_file() -> Option<String> {
 }
 
 #[tauri::command]
+fn choose_als_file() -> Option<String> {
+    FileDialog::new()
+        .set_title("Choose Ableton Live Project (.als)")
+        .add_filter("Ableton Live Project (*.als)", &["als"])
+        .pick_file()
+        .map(|path| path.display().to_string())
+}
+
+#[tauri::command]
 async fn flp_inspect(path: String) -> Result<FlpProjectInfo, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let engine = find_python();
@@ -2677,6 +2686,7 @@ pub fn run() {
             choose_files,
             choose_folder,
             choose_flp_file,
+            choose_als_file,
             flp_inspect,
             flp_downgrade,
             flp_detect_installed,

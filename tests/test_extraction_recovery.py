@@ -140,7 +140,7 @@ def test_catalog_downloads_only_the_confident_preview_candidate(tmp_path, monkey
         assert result["matched_source_title"] == candidate["title"]
 
 
-def test_mahoraga_adaptive_catalog_match_relaxes_duration_and_video_noise():
+def test_adaptive_catalog_match_relaxes_duration_and_video_noise():
     wanted = {"title": "Drama", "artist": "aespa", "duration": 215}
     # Candidate with 10s video intro difference (strict check rejects because 10s > max(5, 215*0.05=10.75) wait, let's make it 12s difference where strict threshold is 10.75s)
     # 215s + 12s = 227s
@@ -153,13 +153,13 @@ def test_mahoraga_adaptive_catalog_match_relaxes_duration_and_video_noise():
     }
     # Strict match fails due to duration difference (12s > 10.75s)
     assert match_score(wanted, strict_rejected_candidate, relaxed=False) is None
-    # Mahoraga adaptive match succeeds under relaxed tier
+    # Adaptive match succeeds under relaxed tier
     relaxed_score = match_score(wanted, strict_rejected_candidate, relaxed=True)
     assert relaxed_score is not None and relaxed_score >= 0.65
     chosen = choose_catalog_match(wanted, [strict_rejected_candidate])
     assert chosen["id"] == "vid1"
 
-def test_mahoraga_client_identity_rotation_on_layout_challenge():
+def test_adaptive_client_identity_rotation_on_layout_challenge():
     ydl = Mock(params={"extractor_args": {"youtube": {"player_client": ["web"]}}})
     calls = []
 

@@ -224,13 +224,13 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
-  it("displays revised source notes for Apple Music Mahoraga fallback, Spotify, and browser session", async () => {
+  it("displays revised source notes for Apple Music adaptive fallback, Spotify, and browser session", async () => {
     const view = renderView();
     const notesBtn = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.includes("Source notes and fallback engine"));
     expect(notesBtn).toBeDefined();
 
     await act(async () => { notesBtn?.click(); });
-    expect(view.container.textContent).toContain("Apple Music (Mahoraga Fallback)");
+    expect(view.container.textContent).toContain("Apple Music (Adaptive Fallback)");
     expect(view.container.textContent).toContain("Spotify & Private Media");
     expect(view.container.textContent).toContain("Media Capturer Extension");
 
@@ -730,7 +730,7 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
-  it("allows toggling reconstruct frequency loss in advanced settings and displays explanation", async () => {
+  it("allows toggling harmonic exciter in advanced settings and displays explanation", async () => {
     const onSettings = vi.fn();
     const view = renderView(undefined, undefined, undefined, null, onSettings, {
       category: "Music",
@@ -741,7 +741,7 @@ describe("Converter account access feedback", () => {
     await act(async () => { advancedSwitch?.click(); await Promise.resolve(); });
 
     const checkboxes = Array.from(view.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'));
-    const reconCheckbox = checkboxes.find((c) => c.closest("label")?.textContent?.includes("Reconstruct Frequency Loss"));
+    const reconCheckbox = checkboxes.find((c) => c.closest("label")?.textContent?.includes("Harmonic Exciter"));
     expect(reconCheckbox).toBeDefined();
     expect(reconCheckbox?.checked).toBe(false);
 
@@ -770,7 +770,7 @@ describe("Converter account access feedback", () => {
         },
       });
     });
-    expect(view.container.textContent).toContain("Reconstruct Frequency Loss (Harmonic Air Regeneration)");
+    expect(view.container.textContent).toContain("Harmonic Exciter (High-Frequency Sparkle / Studio Air)");
     expect(view.container.textContent).toContain("What it does:");
     expect(view.container.textContent).toContain("What to expect:");
 

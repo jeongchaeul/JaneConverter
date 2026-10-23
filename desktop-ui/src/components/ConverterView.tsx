@@ -823,11 +823,14 @@ export function ConverterView({
               setIsDraggingOver(false);
               if (event.payload.paths && event.payload.paths.length > 0) {
                 if (converterTabRef.current === "flp") {
-                  const flp = event.payload.paths.find((p) => p.toLowerCase().endsWith(".flp"));
-                  if (flp) {
-                    setDroppedFlpPath(flp);
+                  const daw = event.payload.paths.find((p) => {
+                    const lower = p.toLowerCase();
+                    return lower.endsWith(".flp") || lower.endsWith(".als");
+                  });
+                  if (daw) {
+                    setDroppedFlpPath(daw);
                   } else {
-                    onStatusRef.current("Please drop a valid .flp project file.");
+                    onStatusRef.current("Please drop a valid .flp or .als project file.");
                   }
                 } else {
                   void handleDroppedPathsRef.current(event.payload.paths);
@@ -1232,7 +1235,7 @@ export function ConverterView({
           onClick={() => setConverterTab("media")}
           className={"rounded-lg px-3 py-1.5 text-xs font-medium transition-colors " + (converterTab === "media" ? "bg-white/[0.09] text-white" : "text-zinc-500 hover:text-zinc-300")}
         >
-          Media Converter
+          Media & Streams
         </button>
         <button
           type="button"
@@ -1240,9 +1243,9 @@ export function ConverterView({
           onClick={() => setConverterTab("flp")}
           className={"inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors " + (converterTab === "flp" ? "bg-white/[0.09] text-white" : "text-zinc-500 hover:text-zinc-300")}
         >
-          <span>FL Studio (.flp)</span>
-          <span className="rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider border border-amber-500/30 bg-amber-500/10 text-amber-300">
-            Experimental
+          <span>Studio DAW Tools</span>
+          <span className="rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider border border-pink-500/30 bg-pink-500/10 text-pink-300">
+            Producer Suite
           </span>
         </button>
       </div>
@@ -1379,7 +1382,7 @@ export function ConverterView({
           <div className="mt-3 grid gap-3 rounded-xl border border-white/[0.06] bg-black/15 p-4 text-[11px] leading-relaxed text-zinc-500 md:grid-cols-3">
             <div>
               <div className="mb-1 flex items-center gap-1.5 font-medium text-zinc-300">
-                <Music2 className="size-3.5 text-pink-400" /> Apple Music (Mahoraga Fallback)
+                <Music2 className="size-3.5 text-pink-400" /> Apple Music (Adaptive Fallback)
               </div>
               Direct audio extraction requires an active Apple Music subscription in your browser session. If you are not signed in, the initial direct stream fetch is expected to fail—JaneConverter automatically falls back to parse playlist metadata and match lossless audio across other public platforms.
             </div>
@@ -1724,8 +1727,8 @@ export function ConverterView({
                   <Toggle
                     checked={settings.reconstructFrequencyLoss ?? false}
                     onChange={(reconstructFrequencyLoss) => update({ reconstructFrequencyLoss })}
-                    label="Reconstruct Frequency Loss"
-                    hint={isAudio ? "Regenerates high-frequency air (16–22 kHz) cut off by platforms" : "Available for audio output."}
+                    label="Harmonic Exciter (High-End Sparkle)"
+                    hint={isAudio ? "Applies an audio exciter filter to synthesize subtle high-frequency air (7.5–20 kHz)" : "Available for audio output."}
                     disabled={!isAudio || isSourceFormat}
                   />
                   <Toggle
@@ -1767,16 +1770,16 @@ export function ConverterView({
                 {isAudio && settings.reconstructFrequencyLoss && !isSourceFormat && (
                   <div className="mt-3 rounded-lg border border-purple-500/20 bg-purple-500/[0.04] p-3 text-xs leading-relaxed text-zinc-300">
                     <div className="font-medium text-purple-300 mb-1 flex items-center gap-1.5">
-                      <span>Reconstruct Frequency Loss (Harmonic Air Regeneration)</span>
+                      <span>Harmonic Exciter (High-Frequency Sparkle / Studio Air)</span>
                     </div>
                     <p className="text-zinc-400">
-                      <strong className="text-zinc-200">What it does:</strong> Lossy platforms (SoundCloud, YouTube, TikTok) apply steep lowpass brickwalls at 15–16 kHz. This mode extracts upper-mid musical harmonics (8–12 kHz) and applies mathematical harmonic excitation to regenerate phase-locked 2nd and 3rd harmonics extending up to 20–22 kHz.
+                      <strong className="text-zinc-200">What it does:</strong> Lossy platforms (SoundCloud, YouTube, TikTok) often apply steep lowpass filtering around 15–16 kHz. This mode engages FFmpeg's analog-modeled exciter (aexciter) to synthesize subtle upper-harmonic presence starting from 7.5 kHz up to 20 kHz.
                     </p>
                     <p className="mt-1 text-zinc-400">
-                      <strong className="text-zinc-200">What to expect:</strong> In an EQ, the sharp frequency cliff at 16 kHz is replaced by a natural studio air taper, restoring cymbal sizzle, vocal openness, and transient presence. The original mix beneath 15 kHz remains 100% untouched.
+                      <strong className="text-zinc-200">What to expect:</strong> Restores perceptual brightness, cymbal shimmer, and transient bite to heavily compressed tracks. Note: this enhances psychoacoustic air through harmonic synthesis; it does not uncompressedly recover destroyed spectral data.
                     </p>
                     <p className="mt-1 text-[11px] text-zinc-500">
-                      Tip: Recommended when converting streaming rips. When converting uncompressed studio masters or lossless FLAC/WAV files that already reach 20 kHz+, leave this toggle off.
+                      Tip: Great for livening up dull streaming rips. For uncompressed WAV or lossless FLAC masters, keep this toggle off.
                     </p>
                   </div>
                 )}

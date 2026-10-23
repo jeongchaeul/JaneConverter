@@ -1287,7 +1287,7 @@ def _apply_video_quality_to_encoder_args(
 
 def adapt_ffmpeg_command(cmd: list[str], stderr: bytes | str | None) -> Optional[list[str]]:
     """
-    Mahoraga JIT Command Transformation:
+    Adaptive JIT Command Transformation:
     Inspects process stderr for mutable argument errors and synthesizes an adapted command.
     Returns None if no adaptation applies.
     """
@@ -2131,7 +2131,7 @@ def _convert_media_impl(
                             os.remove(destination_path)
                         except OSError:
                             pass
-                    report(0.72, "Mahoraga JIT Adaptation: Rewriting command parameters to resolve runtime flag incompatibility...")
+                    report(0.72, "Adaptive JIT Recovery: Rewriting command parameters to resolve runtime flag incompatibility...")
                     active_cmd = adapted
                     command_adapted = True
                     continue

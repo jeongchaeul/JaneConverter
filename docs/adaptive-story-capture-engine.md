@@ -317,7 +317,7 @@ Perfect support for every website is not the initial target. The first target is
 
 ## Final design principle
 
-The Mahoraga engine should not be one giant intelligent scraper. It should be:
+The adaptive engine should not be one giant intelligent scraper. It should be:
 
 > A self-correcting capture orchestrator that uses multiple independent strategies, validates every result, remembers what worked, and changes tactics when the page changes.
 

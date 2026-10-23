@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Universal Media Downloader & Audio / Video / Image Transcode Studio</strong>
+  <strong>Universal Media Downloader & Creator Studio Suite (Media Transcode & DAW Project Utilities)</strong>
 </p>
 
 <p align="center">
@@ -21,9 +21,9 @@
 > *"JaneConverter is tailored specifically for my personal needs and convenience. But I wanted to share it because it can be useful. I don't have a particular goal, it's just my personal toolbox. If you find it useful, then that's great."*  
 > — **Jane Cerys**
 
-JaneConverter is a personal media downloader and format conversion toolbox designed by Jane Cerys (`project//aspyr`). Originally built to handle sample libraries, video editing transcodes, social media archival, and cross-version FL Studio project downgrades, it runs locally through a modern desktop app (Tauri 2 + React) or directly via Python CLI.
+JaneConverter is a personal media downloader, conversion toolbox, and producer studio suite designed by Jane Cerys (`project//aspyr`). Originally built to handle sample libraries, video editing transcodes, social media archival, and cross-version FL Studio project downgrades, it runs locally through a modern desktop app (Tauri 2 + React) or directly via Python CLI.
 
-[Latest Release](https://github.com/jeongchaeul/JaneConverter/releases/latest) · [Changelog](CHANGELOG.md) · [Rebuild Guide](packaging/REBUILD.md) · [Mahoraga Engine](docs/MAHORAGA_ENGINE.md)
+[Latest Release](https://github.com/jeongchaeul/JaneConverter/releases/latest) · [Changelog](CHANGELOG.md) · [Rebuild Guide](packaging/REBUILD.md) · [Adaptive Resilience Engine](docs/MAHORAGA_ENGINE.md)
 
 <p align="center">
   <img src="docs/photos/Screenshot_260.png" alt="JaneConverter Desktop UI" width="94%" />
@@ -44,21 +44,19 @@ JaneConverter is a personal media downloader and format conversion toolbox desig
 
 ---
 
-## Adaptive Resilience: The Mahoraga Engine
+## Adaptive Resilience Architecture
 
-> *"With this treasure, I summon..."*
+Behind JaneConverter is an adaptive recovery architecture (internally codenamed the Mahoraga Engine). When downloading or converting media across the web, roadblocks are frequent: aggressive anti-bot JavaScript challenges, login walls, rate limits, audio container mismatches, or GPU driver crashes.
 
-Behind JaneConverter is an adaptive recovery architecture inspired by **Mahoraga** from *Jujutsu Kaisen*. When downloading or converting media across the web, roadblocks are frequent: aggressive anti-bot JavaScript challenges, login walls, rate limits, audio container mismatches, or GPU driver crashes.
-
-Instead of crashing or failing, JaneConverter treats runtime errors as signals to rotate its adaptation wheel—analyzing roadblocks and pivoting to alternative fallback routes until pristine media is delivered.
+Instead of crashing or failing, JaneConverter treats runtime errors as signals to pivot strategies—analyzing roadblocks and cycling through alternative fallback routes until pristine media is delivered.
 
 <p align="center">
   <a href="docs/MAHORAGA_ENGINE.md">
-    <img src="docs/photos/mahoraga-pipeline.svg" width="100%" alt="Mahoraga Adaptive Pipeline Architecture" />
+    <img src="docs/photos/mahoraga-pipeline.svg" width="100%" alt="Adaptive Resilience Pipeline Architecture" />
   </a>
 </p>
 
-*For the complete technical breakdown of adaptation tiers and recovery algorithms, see the [Mahoraga Engine Reference](docs/MAHORAGA_ENGINE.md).*
+*For the complete technical breakdown of adaptation tiers and recovery algorithms, see the [Adaptive Resilience Engine Reference](docs/MAHORAGA_ENGINE.md).*
 
 ---
 

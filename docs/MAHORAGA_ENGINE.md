@@ -1,9 +1,9 @@
-# The Mahoraga Engine
+# The Adaptive Resilience Engine
 
-> *"With this treasure, I summon... Eight-Handled Sword Divergent Sila Divine General Mahoraga."*  
-> — *Jujutsu Kaisen*
+*Multi-Tiered Automated Recovery, Dynamic Extraction Fallbacks, and Stream Healing*  
+*(Architecture Codename: Mahoraga)*
 
-The **Mahoraga Engine** is JaneConverter's adaptive resilience and automated recovery architecture. Named after the legendary shikigami whose sacred wheel rotates to adapt to any attack or phenomenon, the engine embodies a single, uncompromising principle:
+JaneConverter's **Adaptive Resilience Engine** embodies a single, uncompromising principle:
 
 **When media extraction, network transport, authentication barriers, DOM obfuscation, or hardware transcoding face resistance or failure, JaneConverter does not abort; it analyzes the roadblock, rotates strategy, and adapts until pristine media is delivered.**
 
@@ -13,9 +13,9 @@ This document serves as the comprehensive technical guide and reference for both
 
 ## Table of Contents
 
-1. [Why Mahoraga: The Problem Space](#1-why-mahoraga-the-problem-space)
+1. [Architecture Motivation: The Problem Space](#1-architecture-motivation-the-problem-space)
 2. [Core Architecture & Flowchart](#2-core-architecture--flowchart)
-3. [The 6 Pillars of Mahoraga Adaptation](#3-the-6-pillars-of-mahoraga-adaptation)
+3. [The 6 Pillars of Adaptive Resilience](#3-the-6-pillars-of-adaptive-resilience)
    - [Pillar 1: Stream Extraction & Network Adaptation](#pillar-1-stream-extraction--network-adaptation)
    - [Pillar 2: Authenticated Session Adaptation & DPAPI Recovery](#pillar-2-authenticated-session-adaptation--dpapi-recovery)
    - [Pillar 3: Cross-Platform Streaming Catalog Resolution](#pillar-3-cross-platform-streaming-catalog-resolution)
@@ -27,7 +27,7 @@ This document serves as the comprehensive technical guide and reference for both
 
 ---
 
-## 1. Why Mahoraga: The Problem Space
+## 1. Architecture Motivation: The Problem Space
 
 Modern web media ingestion and local format conversion exist in an inherently volatile environment:
 
@@ -38,21 +38,21 @@ Modern web media ingestion and local format conversion exist in an inherently vo
 - **Hardware & Transcoder Instability**: Dedicated GPU encoders (NVENC, AMF, QSV) encounter VRAM exhaustion (CUDA OOM), driver limits, or unsupported profile combinations.
 - **Host OS File Contention**: Windows Antivirus scanners and Windows Search indexers briefly hold exclusive file locks (`WinError 32/33 PermissionError: Access is denied`) right as a media file finishes writing.
 
-Standard downloaders fail when encountering any single one of these barriers. The Mahoraga Engine guarantees that JaneConverter treats errors as signals to rotate its adaptation wheel rather than fatal termination points.
+Standard downloaders fail when encountering any single one of these barriers. The Adaptive Resilience Engine guarantees that JaneConverter treats errors as signals to pivot strategies rather than fatal termination points.
 
 ---
 
 ## 2. Core Architecture & Flowchart
 
-The following diagram tracks the lifecycle of an ingestion request through each Mahoraga adaptation tier:
+The following diagram tracks the lifecycle of an ingestion request through each adaptation tier:
 
 <p align="center">
-  <img src="photos/mahoraga-pipeline.svg" width="100%" alt="The Mahoraga Engine Pipeline Architecture" />
+  <img src="photos/mahoraga-pipeline.svg" width="100%" alt="Adaptive Resilience Pipeline Architecture" />
 </p>
 
 ---
 
-## 3. The 6 Pillars of Mahoraga Adaptation
+## 3. The 6 Pillars of Adaptive Resilience
 
 ### Pillar 1: Stream Extraction & Network Adaptation
 *Modules: `src/janeconverter/extraction_recovery.py`, `src/janeconverter/extractor.py`*
@@ -79,7 +79,7 @@ The following diagram tracks the lifecycle of an ingestion request through each 
    - Decrypted cookies are stored in a volatile `RequestsCookieJar` in RAM and immediately zeroed out after the request completes. No plaintext cookies are ever written to disk.
 3. **Chromium App-Bound Encryption Navigation**:
    - Chromium 127+ introduced Windows App-Bound Encryption, which restricts DPAPI cookie decryption for non-system callers.
-   - The Mahoraga Engine adapts by negotiating with available browsers that use standard DPAPI (such as Vivaldi, Firefox, Brave, and Edge), automatically discovering which browser holds a valid active session.
+   - The Adaptive Engine negotiates with available browsers that use standard DPAPI (such as Vivaldi, Firefox, Brave, and Edge), automatically discovering which browser holds a valid active session.
 4. **Loopback Browser Bridge Fallback**:
    - If local database extraction is completely locked, the engine falls back to the authenticated loopback **Browser Bridge Extension** (`127.0.0.1`), allowing users to capture directly from their active browser tab.
 
@@ -164,7 +164,7 @@ Conversion cascades through three performance tiers:
 
 ## 4. Case Study: Pinterest Notification Collections (`news_hub`)
 
-A prime example of the Mahoraga Engine in action is the resolution of Pinterest notification collections:
+A prime example of the Adaptive Resilience Engine in action is the resolution of Pinterest notification collections:
 
 ### The Challenge
 When a user pastes a Pinterest notification link:
@@ -175,7 +175,7 @@ https://ph.pinterest.com/news_hub/3943610033677608128/
 2. **Thumbnail Degradation**: Standard extractors only pulled low-resolution 150×150 or 236× thumbnails displayed on notification cards.
 3. **Windows Chromium Encryption**: Chrome 127+ blocked external cookie reading via Windows App-Bound Encryption.
 
-### The Mahoraga Adaptation
+### The Adaptive Recovery Route
 1. **Route Recognition**: The frontend identifies the URL as a notification route (`/news_hub/` or `/notifications/`) and routes it directly to the engine's browser session adapter.
 2. **Browser Negotiation**: The engine checks active browsers on the system (Vivaldi, Firefox, Chrome, Edge) and discovers Vivaldi's active, DPAPI-readable Pinterest session containing `_auth=1`, `_pinterest_sess`, and `csrftoken`.
 3. **API Level Interception**: Rather than fighting dynamic DOM rendering, the engine calls Pinterest's internal `NewsHubDetailsResource` API endpoint:
@@ -192,7 +192,7 @@ https://ph.pinterest.com/news_hub/3943610033677608128/
 
 ## 5. Agent & Developer Guidelines: Adding New Adaptations
 
-When extending JaneConverter, follow these core tenets to uphold the Mahoraga Engine's architecture:
+When extending JaneConverter, follow these core tenets to uphold the Adaptive Resilience architecture:
 
 ### 1. Never Fail Fast on Expected External Volatility
 External websites and hardware encoders *will* fail. Do not raise bare fatal exceptions when a fallback path is mathematically or structurally possible.

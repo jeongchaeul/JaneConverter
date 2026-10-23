@@ -617,27 +617,34 @@ pub fn initialization_script(nonce: &str) -> String {
     }}
     return findScriptViewerPhoto(photoId);
   }};
+  // Dispatches a synthetic pointer activation lifecycle.
+  // Meta's React event delegation ignores bare element.click() in webviews
+  // unless preceded by pointerdown/pointerup events.
   const triggerClick = (element) => {{
     if (!element) return false;
     try {{ element.focus(); }} catch (_) {{}}
     try {{
-      element.dispatchEvent(new PointerEvent("pointerdown", {{bubbles: true, cancelable: true, view: window}}));
-      element.dispatchEvent(new MouseEvent("mousedown", {{bubbles: true, cancelable: true, view: window}}));
-      element.dispatchEvent(new PointerEvent("pointerup", {{bubbles: true, cancelable: true, view: window}}));
-      element.dispatchEvent(new MouseEvent("mouseup", {{bubbles: true, cancelable: true, view: window}}));
+      const opts = {{bubbles: true, cancelable: true, view: window}};
+      if (typeof PointerEvent !== "undefined") {{
+        element.dispatchEvent(new PointerEvent("pointerdown", opts));
+        element.dispatchEvent(new PointerEvent("pointerup", opts));
+      }} else {{
+        element.dispatchEvent(new MouseEvent("mousedown", opts));
+        element.dispatchEvent(new MouseEvent("mouseup", opts));
+      }}
       element.click();
       return true;
     }} catch (_) {{
       try {{ element.click(); return true; }} catch (_) {{ return false; }}
     }}
   }};
+  // Dispatches keyboard carousel advancement (ArrowRight) to active document target.
   const triggerNextKey = () => {{
     try {{
       const init = {{key: "ArrowRight", code: "ArrowRight", keyCode: 39, which: 39, bubbles: true, cancelable: true}};
-      window.dispatchEvent(new KeyboardEvent("keydown", init));
-      document.dispatchEvent(new KeyboardEvent("keydown", init));
-      window.dispatchEvent(new KeyboardEvent("keyup", init));
-      document.dispatchEvent(new KeyboardEvent("keyup", init));
+      const target = document.activeElement || document.body || document;
+      target.dispatchEvent(new KeyboardEvent("keydown", init));
+      target.dispatchEvent(new KeyboardEvent("keyup", init));
     }} catch (_) {{}}
   }};
   const findNextElement = () => {{
@@ -705,10 +712,10 @@ pub fn initialization_script(nonce: &str) -> String {
     const labelledNext = findNextElement();
     if (labelledNext?.href) return normalizeFacebookUrl(labelledNext.href);
     if (labelledNext) {{
-      triggerNextKey();
       triggerClick(labelledNext);
       return "clicked";
     }}
+    triggerNextKey();
     const fallbackNext = findFallbackNextPhotoUrl(currentId);
     if (fallbackNext) return fallbackNext;
     if (/^[0-9]{{5,30}}$/.test(currentId)) {{
@@ -910,9 +917,12 @@ pub fn initialization_script(nonce: &str) -> String {
         if (navigatingFromId === currentPhoto.id) {{
           navigatingFromTicks += 1;
           if (navigatingFromTicks >= 2 && navigatingFromTicks < 6) {{
-            triggerNextKey();
             const nextEl = findNextElement();
-            if (nextEl) triggerClick(nextEl);
+            if (nextEl) {{
+              triggerClick(nextEl);
+            }} else {{
+              triggerNextKey();
+            }}
           }}
           if (navigatingFromTicks >= 6) {{
             navigatingFromId = "";
