@@ -30,6 +30,7 @@ const defaultSettings: ConverterSettings = {
   retries: 2,
   startTime: "",
   endTime: "",
+  allowStoryExtraction: false,
 };
 
 const HISTORY_STORAGE_KEY = "janeconverter.conversionHistory";
@@ -722,6 +723,13 @@ export default function App() {
       const nextAccess = await bridge.createAccessLink(source);
       accessDiagnosticIds.current.clear();
       setAccess(nextAccess);
+      if (nextAccess.link) {
+        try {
+          await bridge.openUrl(nextAccess.link);
+        } catch (openErr) {
+          console.warn("Could not automatically open access link in browser:", openErr);
+        }
+      }
       statusMessage("Account session initialized. Direct extraction is ready.");
       return nextAccess;
     } catch (error) {
@@ -803,6 +811,7 @@ export default function App() {
           <div className={activeView === "converter" ? "block" : "hidden"}>
             <ConverterView
               settings={settings}
+              accentColor={accentColor}
               runtime={runtime}
               events={events}
               access={access}

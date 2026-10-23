@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, AlertTriangle, ArrowRight, Check, CheckCircle2, Copy, FileAudio, FileImage, FileVideo, FolderOpen, HelpCircle, Inbox, Info, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, ArrowRight, Check, CheckCircle2, Copy, ExternalLink, FileAudio, FileImage, FileVideo, FolderOpen, HelpCircle, Inbox, Info, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import type { AccessStatus, ConverterSettings, FetchedMedia } from "../bridge";
 import { bridge } from "../bridge";
 
@@ -178,10 +178,18 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
     setAccessBusy(true);
     setAccessNotice(null);
     try {
+      let nextAccess: AccessStatus | undefined;
       if (onCreateAccess) {
-        await onCreateAccess();
+        nextAccess = await onCreateAccess();
       } else {
-        await bridge.createAccessLink("");
+        nextAccess = await bridge.createAccessLink("");
+      }
+      if (nextAccess?.link) {
+        try {
+          await bridge.openUrl(nextAccess.link);
+        } catch {
+          // May already be opened by onCreateAccess
+        }
       }
       setAccessNoticeTone("success");
       setAccessNotice("Access page opened in your browser. Complete pairing in the extension.");
@@ -279,14 +287,27 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
           </div>
           <div className="flex items-center gap-2">
             {access.active ? (
-              <button
-                type="button"
-                disabled={accessBusy}
-                onClick={() => void handleClearAccess()}
-                className="subtle-button px-3 py-2 text-xs text-zinc-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {accessBusy ? "Disconnecting..." : "Clear access"}
-              </button>
+              <>
+                {access.link ? (
+                  <button
+                    type="button"
+                    disabled={accessBusy}
+                    onClick={() => void bridge.openUrl(access.link)}
+                    className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs text-zinc-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <ExternalLink className="size-3.5" />
+                    Open access page
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={accessBusy}
+                  onClick={() => void handleClearAccess()}
+                  className="subtle-button px-3 py-2 text-xs text-zinc-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {accessBusy ? "Disconnecting..." : "Clear access"}
+                </button>
+              </>
             ) : (
               <button
                 type="button"

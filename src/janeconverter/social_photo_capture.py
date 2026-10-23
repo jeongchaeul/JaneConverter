@@ -695,14 +695,17 @@ def _shortcode_to_pk(shortcode: str) -> int:
 
 
 def is_instagram_post_url(url: str) -> bool:
-    """Identify if a URL is an Instagram post, photo, or reel link."""
+    """Identify if a URL is an Instagram post, photo, reel, or story link."""
     try:
         parsed = urllib.parse.urlparse(str(url or "").strip())
         host = (parsed.hostname or "").lower()
         if not (host == "instagram.com" or host.endswith(".instagram.com") or host == "instagr.am"):
             return False
         path = parsed.path.lower()
-        return bool(re.search(r"^/(?:[^/]+/)?(?:p|reel|reels)/([A-Za-z0-9_-]+)", path))
+        return bool(
+            re.search(r"^/(?:[^/]+/)?(?:p|reel|reels)/([A-Za-z0-9_-]+)", path)
+            or re.search(r"^/stories/[^/?#]+/(\d+)", path)
+        )
     except Exception:
         return False
 
@@ -712,7 +715,7 @@ def fetch_instagram_manifest(
     browser: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> Optional[dict[str, Any]]:
-    """Extract photos from an Instagram post using browser session cookies and internal media API."""
+    """Extract photos from an Instagram post or story using browser session cookies and internal media API."""
     patch_yt_dlp_cookie_database_reader()
     import yt_dlp
 
@@ -720,11 +723,20 @@ def fetch_instagram_manifest(
         if progress_callback:
             progress_callback(pct, msg)
 
-    match = re.search(r"/(?:p|reel|reels)/([A-Za-z0-9_-]+)", url)
-    if not match:
+    match_post = re.search(r"/(?:p|reel|reels)/([A-Za-z0-9_-]+)", url)
+    match_story = re.search(r"/stories/[^/?#]+/(\d+)", url)
+    if not match_post and not match_story:
         raise ValueError(f"Invalid Instagram URL: {url}")
-    shortcode = match.group(1)
-    media_pk = _shortcode_to_pk(shortcode)
+    if match_story:
+        shortcode = match_story.group(1)
+        try:
+            media_pk = int(shortcode)
+        except ValueError:
+            return None
+    else:
+        assert match_post is not None
+        shortcode = match_post.group(1)
+        media_pk = _shortcode_to_pk(shortcode)
     if media_pk <= 0:
         return None
 

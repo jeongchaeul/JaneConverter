@@ -55,6 +55,7 @@ export interface ConverterSettings {
   retries: number;
   startTime?: string;
   endTime?: string;
+  allowStoryExtraction?: boolean;
 }
 
 export interface UpdateCheckResult {
@@ -298,6 +299,7 @@ const demoSettings: ConverterSettings = {
   retries: 2,
   startTime: "",
   endTime: "",
+  allowStoryExtraction: false,
 };
 
 const demoBridge: JaneBridge = {

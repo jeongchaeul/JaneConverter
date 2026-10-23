@@ -9,6 +9,8 @@ from .auth import (
     yt_dlp_cookie_option,
 )
 from .cookie_unlocker import patch_yt_dlp_cookie_database_reader
+from .instagram_patch import patch_instagram_story_extractor
+from .facebook_patch import patch_facebook_story_extractor
 from .extraction_recovery import extract_with_recovery
 
 
@@ -102,6 +104,8 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                                   abort_event=None, report=None, deadline=None,
                                   allow_cookies=True):
     patch_yt_dlp_cookie_database_reader()
+    patch_instagram_story_extractor()
+    patch_facebook_story_extractor()
     try:
         return extract_with_recovery(ydl, query, download, abort_event, report, deadline)
     except Exception as public_error:

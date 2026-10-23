@@ -28,7 +28,7 @@ for _stream in (sys.stdin, sys.stdout, sys.stderr):
 from .extractor import (
     is_url, sanitize_filename, clean_windows_path, fetch_media_stream,
     is_playlist_url, fetch_playlist_entries, download_and_convert_thumbnail, format_duration,
-    identify_source_type,
+    identify_source_type, is_ephemeral_story_url,
 )
 from .converter import (
     convert_media,
@@ -257,6 +257,7 @@ def process_conversion(
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     reconstruct_frequency_loss: bool = False,
+    allow_ephemeral_stories: bool = False,
 ) -> str:
     """
     Orchestrates downloading/extracting stream, embedding cover art, exporting credits,
@@ -264,6 +265,13 @@ def process_conversion(
     """
     if abort_event and abort_event.is_set():
         raise KeyboardInterrupt("Conversion aborted by user.")
+
+    if is_ephemeral_story_url(source) and not allow_ephemeral_stories:
+        raise RuntimeError(
+            "Ephemeral story extraction is disabled by default. "
+            "To convert Instagram or Facebook stories, you must acknowledge the Legal Disclaimer & Acceptable Use Policy "
+            "in DISCLAIMER.md by enabling 'Ephemeral Stories Extraction' in Settings, or passing --allow-ephemeral-stories in the CLI."
+        )
 
     if check_updates:
         engine_info = check_for_engine_updates()
@@ -412,6 +420,7 @@ def process_conversion(
             progress_callback=report,
             auth_browser=auth_browser,
             browser_media_path=browser_media_path,
+            allow_ephemeral_stories=allow_ephemeral_stories,
         )
 
         input_media = stream_info["media_path"]
@@ -565,6 +574,7 @@ def process_playlist_conversion(
     auth_browser: Optional[str] = None,
     max_retries: int = 2,
     reconstruct_frequency_loss: bool = False,
+    allow_ephemeral_stories: bool = False,
 ) -> Dict[str, Any]:
     """
     Batch-downloads and transcodes selected playlist items into a dedicated playlist folder.
@@ -696,7 +706,8 @@ def process_playlist_conversion(
                     fallback_artist=artist,
                     abort_event=abort_event,
                     progress_callback=item_progress_hook,
-                    auth_browser=auth_browser
+                    auth_browser=auth_browser,
+                    allow_ephemeral_stories=allow_ephemeral_stories,
                 )
             except Exception:
                 if not keep_temp and track_work_dir and os.path.exists(track_work_dir):
@@ -1089,6 +1100,11 @@ def main():
         action="store_true",
         help="Enable reading browser session cookies from local browser profiles when sign-in is required.",
     )
+    parser.add_argument(
+        "--allow-ephemeral-stories",
+        action="store_true",
+        help="Acknowledge the Terms of Use & Legal Disclaimer in DISCLAIMER.md and allow extracting temporary stories (Instagram and Facebook)",
+    )
     parser.add_argument("--browser-media-path", help=argparse.SUPPRESS)
     parser.add_argument("--facebook-photo-manifest-stdin", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--facebook-capture-id", help=argparse.SUPPRESS)
@@ -1215,7 +1231,11 @@ def main():
 
     if args.list_playlist:
         args.browser_session = normalize_browser_session(args.browser_session)
-        pdata = fetch_playlist_entries(args.source, auth_browser=args.browser_session)
+        pdata = fetch_playlist_entries(
+            args.source,
+            auth_browser=args.browser_session,
+            allow_ephemeral_stories=args.allow_ephemeral_stories,
+        )
         def clean_field(value):
             return str(value or "").replace("\t", " ").replace("\r", " ").replace("\n", " ").strip()
         print(f"PLAYLIST\t{clean_field(pdata.get('playlist_title'))}")
@@ -1232,7 +1252,11 @@ def main():
     if args.playlist or is_playlist_url(args.source):
         print("[*] Detected playlist source. Fetching items...")
         args.browser_session = normalize_browser_session(args.browser_session)
-        pdata = fetch_playlist_entries(args.source, auth_browser=args.browser_session)
+        pdata = fetch_playlist_entries(
+            args.source,
+            auth_browser=args.browser_session,
+            allow_ephemeral_stories=args.allow_ephemeral_stories,
+        )
         selected_entries = pdata["entries"]
         if args.playlist_indexes:
             selected_indexes = parse_playlist_indexes(args.playlist_indexes, len(selected_entries), parser)
@@ -1256,6 +1280,7 @@ def main():
             auth_browser=args.browser_session,
             max_retries=args.retries,
             reconstruct_frequency_loss=args.reconstruct_frequency_loss,
+            allow_ephemeral_stories=args.allow_ephemeral_stories,
         )
         failed = summary.get("failed_count", 0)
         successful = summary.get("successful_count", 0)
@@ -1314,6 +1339,7 @@ def main():
             start_time=args.start_time,
             end_time=args.end_time,
             reconstruct_frequency_loss=args.reconstruct_frequency_loss,
+            allow_ephemeral_stories=args.allow_ephemeral_stories,
         )
 
 if __name__ == "__main__":

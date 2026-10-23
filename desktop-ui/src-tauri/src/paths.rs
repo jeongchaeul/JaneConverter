@@ -464,6 +464,7 @@ pub fn settings_get_internal() -> ConverterSettings {
         allow_png_fallback: parse_bool(&values, "allow_png_fallback", false),
         open_in_browser: parse_bool(&values, "open_in_browser", false),
         read_browser_cookies: parse_bool(&values, "read_browser_cookies", true),
+        allow_story_extraction: parse_bool(&values, "allow_story_extraction", false),
         retries: values
             .get("retries")
             .and_then(|value| value.parse().ok())
@@ -540,6 +541,14 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
         (
             "read_browser_cookies",
             if settings.read_browser_cookies {
+                "true"
+            } else {
+                "false"
+            },
+        ),
+        (
+            "allow_story_extraction",
+            if settings.allow_story_extraction {
                 "true"
             } else {
                 "false"

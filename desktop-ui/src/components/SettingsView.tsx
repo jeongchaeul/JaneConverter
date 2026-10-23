@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import type { ConverterSettings, RuntimeInfo, UpdateCheckResult } from "../bridge";
 import { bridge } from "../bridge";
+import { StoryTermsModal } from "./StoryTermsModal";
 import { UpdateChangesModal } from "./UpdateChangesModal";
 import { isAppUpdateAvailable } from "./UpdatePromptHeader";
 
@@ -98,6 +99,7 @@ export function SettingsView({
   const [dataRootPath, setDataRootPath] = useState(runtime?.dataRoot ?? "");
   const [changingDataRoot, setChangingDataRoot] = useState(false);
   const [chromiumPolicy, setChromiumPolicy] = useState(false);
+  const [showStoryModal, setShowStoryModal] = useState(false);
   const [togglingPolicy, setTogglingPolicy] = useState(false);
   const [policyError, setPolicyError] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
@@ -680,6 +682,103 @@ export function SettingsView({
                   </div>
                   <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">
                     JaneConverter reads cookies directly in-memory through shadow-copy readers and clears them immediately after extraction. No credentials or cookie files are saved to disk.
+                  </p>
+                </div>
+              </div>
+            </details>
+          </section>
+
+          {/* Ephemeral Stories Extraction (Opt-in Legal Compliance) */}
+          <section className="panel space-y-4 p-5" aria-labelledby="ephemeral-stories-heading">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+                  <ShieldAlert size={16} style={{ color: "var(--accent-color, #c52b68)" }} />
+                  <span id="ephemeral-stories-heading">Ephemeral Stories Extraction</span>
+                  <span
+                    className={
+                      "rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase " +
+                      (settings?.allowStoryExtraction
+                        ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                        : "border-white/[0.10] bg-white/[0.03] text-zinc-400")
+                    }
+                  >
+                    {settings?.allowStoryExtraction ? "Active (Opt-In Acknowledged)" : "Disabled (Protected)"}
+                  </span>
+                </div>
+                <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
+                  Permits extraction of temporary 24-hour stories from <strong className="text-zinc-200">Instagram</strong> and <strong className="text-zinc-200">Facebook</strong>. Because stories have an ephemeral lifecycle and strict privacy boundaries (Close Friends, Friends Only), enabling this feature requires explicit acknowledgement of legal compliance terms under applicable data privacy laws.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {settings?.allowStoryExtraction && (
+                  <button
+                    type="button"
+                    onClick={() => setShowStoryModal(true)}
+                    className="subtle-button px-3 py-2 text-xs text-zinc-300 hover:text-white"
+                  >
+                    View Terms
+                  </button>
+                )}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={Boolean(settings?.allowStoryExtraction)}
+                  aria-label="Ephemeral Stories Extraction"
+                  disabled={!settings || !onSettings}
+                  onClick={() => {
+                    if (!settings || !onSettings) return;
+                    if (settings.allowStoryExtraction) {
+                      onSettings({ ...settings, allowStoryExtraction: false });
+                      const msg = "Ephemeral stories extraction disabled. Protected air-gap restored.";
+                      setMessage(msg);
+                      onStatus(msg);
+                    } else {
+                      setShowStoryModal(true);
+                    }
+                  }}
+                  className={
+                    "flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 " +
+                    (settings?.allowStoryExtraction
+                      ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                      : "subtle-button text-zinc-200")
+                  }
+                >
+                  {settings?.allowStoryExtraction ? (
+                    <>
+                      <ShieldCheck className="size-3.5 text-emerald-300" />
+                      Stories Extraction Active
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="size-3.5 text-zinc-400" />
+                      Enable Story Extraction
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <details className="group border-t border-white/[0.06] pt-3">
+              <summary className="flex cursor-pointer items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-colors list-none select-none">
+                <ChevronDown className="size-3.5 transition-transform group-open:rotate-180 text-zinc-500" />
+                <span>View legal compliance, privacy boundaries & Acceptable Use Policy</span>
+              </summary>
+              <div className="mt-3 grid gap-2.5 md:grid-cols-2">
+                <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-amber-300">
+                    <ShieldAlert className="size-3.5 shrink-0" /> Statutory Compliance Notice
+                  </div>
+                  <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">
+                    Ephemeral stories carry a statutory expectation of expiration. Archiving or distributing audience-restricted stories without authorization may violate privacy laws including the Philippine Data Privacy Act of 2012 (RA 10173), Anti-Photo and Video Voyeurism Act (RA 9995), GDPR, and 18 U.S.C. § 2701.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-sky-300">
+                    <CheckCircle2 className="size-3.5 shrink-0" /> Permitted Archival Use
+                  </div>
+                  <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">
+                    This feature is strictly intended for archiving stories created by your own accounts or stories where the creator has provided explicit written consent. Users assume 100% individual legal liability for all media archived.
                   </p>
                 </div>
               </div>
@@ -1412,6 +1511,19 @@ export function SettingsView({
         User-selected folders are always respected.
       </div>
 
+      <StoryTermsModal
+        isOpen={showStoryModal}
+        accentColor={accentColor}
+        onClose={() => setShowStoryModal(false)}
+        onConfirm={() => {
+          if (settings && onSettings) {
+            onSettings({ ...settings, allowStoryExtraction: true });
+            const msg = "Ephemeral stories extraction enabled. Terms of Usage acknowledged.";
+            setMessage(msg);
+            onStatus(msg);
+          }
+        }}
+      />
       <UpdateChangesModal
         open={showLocalChangesModal}
         onClose={() => setShowLocalChangesModal(false)}

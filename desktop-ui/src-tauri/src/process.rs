@@ -522,6 +522,9 @@ pub fn build_conversion_args_with_capture(
             args.extend(["--end-time".into(), end.trim().into()]);
         }
     }
+    if request.allow_story_extraction {
+        args.push("--allow-ephemeral-stories".into());
+    }
     Ok(args)
 }
 
@@ -1036,6 +1039,7 @@ mod tests {
             social_capture_id: None,
             start_time: None,
             end_time: None,
+            allow_story_extraction: false,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false)
             .expect("display labels should be accepted");
@@ -1077,6 +1081,7 @@ mod tests {
             social_capture_id: None,
             start_time: None,
             end_time: None,
+            allow_story_extraction: false,
         };
         let args = build_conversion_args_with_capture(&request, None, None, true).unwrap();
 
@@ -1118,6 +1123,7 @@ mod tests {
             social_capture_id: None,
             start_time: None,
             end_time: None,
+            allow_story_extraction: false,
         };
 
         let args =
@@ -1156,6 +1162,7 @@ mod tests {
             social_capture_id: None,
             start_time: None,
             end_time: None,
+            allow_story_extraction: false,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false)
             .expect("public conversion should be valid");
@@ -1188,6 +1195,7 @@ mod tests {
             social_capture_id: None,
             start_time: Some("00:01:15".into()),
             end_time: Some("00:03:45".into()),
+            allow_story_extraction: false,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         let s_pos = args
@@ -1227,6 +1235,7 @@ mod tests {
             social_capture_id: None,
             start_time: None,
             end_time: None,
+            allow_story_extraction: false,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         let session_pos = args
@@ -1267,6 +1276,7 @@ mod tests {
             social_capture_id: None,
             start_time: None,
             end_time: None,
+            allow_story_extraction: false,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         assert!(args.contains(&"--reconstruct-frequency-loss".into()));
@@ -1274,5 +1284,40 @@ mod tests {
         request.reconstruct_frequency_loss = false;
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         assert!(!args.contains(&"--reconstruct-frequency-loss".into()));
+    }
+
+    #[test]
+    fn allow_story_extraction_adds_cli_flag() {
+        let mut request = ConversionRequest {
+            source: "https://www.instagram.com/stories/test/123/".into(),
+            output_dir: "out".into(),
+            category: "Video".into(),
+            format: "mp4".into(),
+            bitrate: "original".into(),
+            sample_rate: 48000,
+            resolution: "original".into(),
+            normalize: false,
+            use_gpu: false,
+            save_cover: false,
+            save_metadata: false,
+            allow_png_fallback: false,
+            reconstruct_frequency_loss: false,
+            retries: 2,
+            playlist_indexes: None,
+            read_browser_cookies: false,
+            browser_session: None,
+            browser_capture_path: None,
+            facebook_capture_id: None,
+            social_capture_id: None,
+            start_time: None,
+            end_time: None,
+            allow_story_extraction: true,
+        };
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        assert!(args.contains(&"--allow-ephemeral-stories".into()));
+
+        request.allow_story_extraction = false;
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        assert!(!args.contains(&"--allow-ephemeral-stories".into()));
     }
 }

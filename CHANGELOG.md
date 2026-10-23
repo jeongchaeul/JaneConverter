@@ -3,17 +3,22 @@
 All notable changes to JaneConverter are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [2.3.3] - 2026-10-23 - Spotify Stream Preservation, Lossless Audio Remuxing & Release Hardening
+## [2.3.3] - 2026-10-23 - Spotify Stream Preservation, Story Compliance & Release Hardening
 
 ### Added
 - Added lossless stream remuxing (`-c:a copy`) for Spotify and YouTube audio streams in Opus/WebM containers, cleanly producing native `.opus` and `.m4a` files in milliseconds without re-encoding or quality degradation.
 - Added an automatic `audio-transcode` fallback strategy to high-fidelity FLAC if raw source audio streams fail container validation.
+- Added **Ephemeral Stories Extraction** support for Instagram Stories (`/stories/[username]/[id]`) and Facebook Stories (`/stories/[id]/`) with direct browser session authentication and format synthesis.
+- Added a statutory legal protection framework and **Terms of Usage agreement** (Section 6 of `DISCLAIMER.md`) guarding ephemeral stories under Philippine Data Privacy Act of 2012 (RA 10173), Anti-Photo and Video Voyeurism Act (RA 9995), GDPR, and 18 U.S.C. § 2701. Story extraction is disabled by default and requires explicit user opt-in and acknowledgement.
+- Added an interactive **StoryTermsModal** agreement dialog and Settings toggle under Browser & Sessions, alongside warning banners and pre-conversion interceptors in `ConverterView`.
+- Added the `--allow-ephemeral-stories` CLI flag to the Python engine.
 
 ### Fixed
 - Fixed a validation error (`ValidationFailed: output file does not contain a video stream`) when converting audio with the **Preserve Quality** preset on sources delivering Opus audio in WebM containers.
 - Fixed title stem truncation bug where tracks with dots (such as *"Mr. Brightside"*) had their names stripped to *"Mr.opus"*.
 - Fixed the desktop UI failure modal incorrectly suggesting "Image -> Lossless Image" on audio conversion errors.
 - Fixed the in-app **View changelog** window to display formatted commit history and release notes instead of raw URLs.
+- Fixed Media Capturer browser access link pre-opening on default browser.
 - Hardened CI and release packaging pipelines with non-interactive package installations, timeout guards, and a pre-installed FFmpeg bypass for Linux runners.
 
 ## [2.3.2] - 2026-10-22 - Universal In-App Updater, Real-Time Push Changes & Dynamic Glow UX

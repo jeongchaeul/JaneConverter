@@ -26,6 +26,7 @@ import {
   Play,
   RefreshCw,
   RotateCcw,
+  ShieldAlert,
   ShieldCheck,
   Square,
   Trash2,
@@ -50,6 +51,26 @@ import {
 } from "../options";
 import { PlaylistDialog } from "./PlaylistDialog";
 import { FlpConverterView } from "./FlpConverterView";
+import { StoryTermsModal } from "./StoryTermsModal";
+
+export function isEphemeralStoryUrl(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.toLowerCase();
+    const isInsta = host === "instagram.com" || host.endsWith(".instagram.com");
+    if (isInsta && /^\/stories\/[^/?#]+/.test(path)) {
+      return true;
+    }
+    const isFb = host === "facebook.com" || host.endsWith(".facebook.com");
+    if (isFb && /^\/stories\/\d+/.test(path)) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
 
 function isFacebookPostLink(value: string): boolean {
   try {
@@ -252,9 +273,11 @@ export function ConverterView({
   onCaptureBusyChange,
   onCreateAccess,
   onClearAccess,
+  accentColor = "#c52b68",
   onStatus,
   onError,
 }: {
+  accentColor?: string;
   settings: ConverterSettings;
   runtime: RuntimeInfo | null;
   events: ConverterEvent[];
@@ -283,6 +306,7 @@ export function ConverterView({
 }) {
   const [source, setSource] = useState("");
   const [converterTab, setConverterTab] = useState<"media" | "flp">("media");
+  const [showStoryTermsModal, setShowStoryTermsModal] = useState(false);
   const [droppedFlpPath, setDroppedFlpPath] = useState<string>("");
   const [playlist, setPlaylist] = useState<PlaylistCatalog | null>(null);
   const [loadingPlaylist, setLoadingPlaylist] = useState(false);
@@ -507,6 +531,12 @@ export function ConverterView({
       onStatus("Enter a source URL or choose a file before adding to queue.");
       return;
     }
+    if (isEphemeralStoryUrl(clean) && !settings.allowStoryExtraction) {
+      setShowStoryTermsModal(true);
+      onStatus("Ephemeral story extraction requires accepting the Terms of Usage and legal compliance agreement.");
+      return;
+    }
+
     const detected = detectCategoryFromPath(clean);
     const itemCategory = (customCatalog ? "Audio" : detected) || activeCategory;
     const itemName = customCatalog?.title || clean.replace(/^.*[\\/]/, "") || clean;
@@ -927,6 +957,11 @@ export function ConverterView({
       return;
     }
     const trimmedSource = source.trim();
+    if (isEphemeralStoryUrl(trimmedSource) && !settings.allowStoryExtraction) {
+      setShowStoryTermsModal(true);
+      onStatus("Ephemeral story extraction requires accepting the Terms of Usage and legal compliance agreement.");
+      return;
+    }
     if (isPinterestNotificationRoute(trimmedSource)) {
       onStatus("Reading Pinterest collection using your browser session...");
       await onStart(trimmedSource, indexes);
@@ -1292,6 +1327,47 @@ export function ConverterView({
           )}
         </div>
 
+        {isEphemeralStoryUrl(source) && !settings.allowStoryExtraction && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-200">
+            <div className="flex items-start gap-2.5 min-w-0 flex-1">
+              <ShieldAlert className="size-4 shrink-0 text-amber-400 mt-0.5" />
+              <div>
+                <div className="font-semibold text-amber-100">
+                  Ephemeral Story Link Detected (Instagram / Facebook Stories)
+                </div>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-amber-300/80">
+                  Stories expire in 24 hours and carry strict privacy boundaries (Friends Only / Close Friends). Ephemeral extraction is disabled by default under statutory compliance rules. You must review and accept the Terms of Usage to enable conversion.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowStoryTermsModal(true)}
+              className="shrink-0 rounded-xl px-3.5 py-1.5 text-xs font-semibold text-white shadow-md transition-all hover:brightness-110 active:scale-95"
+              style={{
+                backgroundColor: accentColor,
+                boxShadow: `0 2px 8px ${accentColor}40`,
+              }}
+            >
+              Review Terms & Enable
+            </button>
+          </div>
+        )}
+        {isEphemeralStoryUrl(source) && settings.allowStoryExtraction && (
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3.5 py-2 text-xs text-emerald-300">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="size-4 shrink-0 text-emerald-400" />
+              <span>Ephemeral story extraction is active. Terms of Usage acknowledged.</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowStoryTermsModal(true)}
+              className="text-[11px] underline text-emerald-400/80 hover:text-emerald-200 transition-colors"
+            >
+              Review Policy
+            </button>
+          </div>
+        )}
         <button
           type="button"
           onClick={() => setNotesOpen((value) => !value)}
@@ -1973,6 +2049,15 @@ export function ConverterView({
           </div>
         </div>
       )}
+      <StoryTermsModal
+        isOpen={showStoryTermsModal}
+        accentColor={accentColor}
+        onClose={() => setShowStoryTermsModal(false)}
+        onConfirm={() => {
+          onSettings({ ...settings, allowStoryExtraction: true });
+          onStatus("Ephemeral stories extraction enabled. You can now convert this story.");
+        }}
+      />
     </div>
   );
 }

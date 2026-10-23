@@ -554,7 +554,11 @@ fn open_url(state: State<'_, AppState>, url: String) -> Result<(), String> {
         .access
         .lock()
         .ok()
-        .and_then(|access| access.as_ref().map(|server| server.link == value))
+        .and_then(|access| {
+            access
+                .as_ref()
+                .map(|server| server.link.trim_end_matches('/') == value.trim_end_matches('/'))
+        })
         .unwrap_or(false);
 
     let lower = value.to_ascii_lowercase();
@@ -2849,6 +2853,7 @@ mod tests {
             social_capture_id: None,
             start_time: None,
             end_time: None,
+            allow_story_extraction: false,
         };
         assert!(
             crate::process::build_conversion_args_with_capture(&request, None, None, false)

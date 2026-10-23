@@ -27,6 +27,8 @@ pub struct ConverterSettings {
     pub start_time: Option<String>,
     #[serde(default)]
     pub end_time: Option<String>,
+    #[serde(default)]
+    pub allow_story_extraction: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -59,6 +61,8 @@ pub struct ConversionRequest {
     pub start_time: Option<String>,
     #[serde(default)]
     pub end_time: Option<String>,
+    #[serde(default)]
+    pub allow_story_extraction: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

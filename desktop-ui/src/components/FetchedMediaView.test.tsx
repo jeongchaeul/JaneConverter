@@ -10,6 +10,7 @@ const bridge = vi.hoisted(() => ({
   fetchedMediaThumbnail: vi.fn(),
   openFile: vi.fn(),
   openPath: vi.fn(),
+  openUrl: vi.fn(),
   chooseFolder: vi.fn(),
   moveFetchedFolder: vi.fn(),
   discardFetchedMedia: vi.fn(),
@@ -186,6 +187,41 @@ it("provides a quiet, clickable manual refresh control", async () => {
 
     expect(container.querySelector('[role="status"]')?.textContent).toContain("Access page opened");
     expect(onCreateAccess).toHaveBeenCalled();
+    expect(bridge.openUrl).toHaveBeenCalledWith("http://127.0.0.1:4321/access/test");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("renders Open access page button when access is active and opens the link", async () => {
+    bridge.openUrl.mockReset();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <FetchedMediaView
+          access={{ active: true, link: "http://127.0.0.1:4321/access/test", browser: "Vivaldi", bridgeConnected: false }}
+          settings={{ outputDir: "converted", fetchedDir: "fetched", category: "Music", format: "mp3", bitrate: "320k", sampleRate: 48000, resolution: "original", normalize: false, useGpu: false, saveCover: true, saveMetadata: true, retries: 2 }}
+          onSettings={vi.fn()}
+          onSelect={vi.fn()}
+          onDiscard={vi.fn()}
+          onStatus={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const openBtn = Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.includes("Open access page"));
+    expect(openBtn).toBeDefined();
+
+    await act(async () => {
+      openBtn?.click();
+      await Promise.resolve();
+    });
+
+    expect(bridge.openUrl).toHaveBeenCalledWith("http://127.0.0.1:4321/access/test");
 
     await act(async () => { root.unmount(); });
     container.remove();

@@ -60,7 +60,22 @@ To ensure complete user privacy and operational security:
 
 ---
 
-## 6. Limitation of Liability & Indemnification
+## 6. Ephemeral Media, Stories & Audience-Restricted Content (Instagram & Facebook Stories)
+
+JaneConverter provides capabilities to transcode and process temporary media formats, including ephemeral story links from platforms such as Instagram (`/stories/`) and Facebook (`/stories/`):
+
+1. **Ephemeral Intent & Creator Expectations:** Stories are designed by third-party platforms to expire within 24 hours and carry explicit user expectations of temporary availability. Audience-restricted stories (such as Instagram "Close Friends" or Facebook "Friends Only" lists) represent private or semi-private personal communications.
+2. **Statutory Privacy & Wiretapping Compliance:** In many jurisdictions, recording, downloading, archiving, or disseminating private communications or temporary personal media without the express knowledge and consent of the content creator is strictly prohibited by law. This includes, but is not limited to:
+   - The Philippine Data Privacy Act of 2012 (Republic Act No. 10173) and Anti-Photo and Video Voyeurism Act (RA 9995);
+   - The European Union General Data Protection Regulation (GDPR);
+   - The United States Stored Communications Act (18 U.S.C. Chapter 121) and state-level electronic privacy statutes;
+   - Applicable international privacy, personality, and human rights protections.
+3. **Mandatory Opt-In & Ethical Use:** To prevent accidental or non-consensual capture of temporary media, JaneConverter disables story extraction by default. Enabling this feature requires explicit affirmative user acknowledgement. You agree that you will **only** process stories that you have authored, that are public broadcasts, or for which you have obtained express prior written authorization from the creator.
+4. **Absolute Creator Privacy:** You may **never** use JaneConverter to stalk, harass, surveil, dox, blackmail, or republish the ephemeral content of any individual.
+
+---
+
+## 7. Limitation of Liability & Indemnification
 
 **TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW:**
 
@@ -71,6 +86,6 @@ To ensure complete user privacy and operational security:
 
 ---
 
-## 7. Governing Principles & Severability
+## 8. Governing Principles & Severability
 
 If any provision of this document is found by a court of competent jurisdiction to be invalid, illegal, or unenforceable, that provision shall be enforced to the maximum extent permissible so as to effect the intent of this policy, and the remaining provisions shall continue in full force and effect.

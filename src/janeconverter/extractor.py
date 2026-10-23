@@ -27,7 +27,12 @@ from .auth import (
     normalize_browser_error_message,
 )
 from .converter import get_js_runtimes_config
+from .instagram_patch import patch_instagram_story_extractor
+from .facebook_patch import patch_facebook_story_extractor
 from .version import __version__
+
+patch_instagram_story_extractor()
+patch_facebook_story_extractor()
 
 
 class _AuthenticatedYtdlpLogger:
@@ -197,6 +202,22 @@ def is_playlist_url(url_or_path: str) -> bool:
         return True
     if "/playlist/" in path_lower or "/sets/" in path_lower:
         return True
+    return False
+
+def is_ephemeral_story_url(url_or_path: str) -> bool:
+    """Checks if a URL points to an ephemeral story (Instagram Stories or Facebook Stories)."""
+    if not is_url(url_or_path):
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(str(url_or_path or "").strip())
+        host = (parsed.hostname or "").lower()
+        path = parsed.path.lower()
+        if host == "instagram.com" or host.endswith(".instagram.com"):
+            return bool(re.search(r"^/stories/[^/?#]+", path))
+        if host == "facebook.com" or host.endswith(".facebook.com"):
+            return bool(re.search(r"^/stories/\d+", path))
+    except Exception:
+        pass
     return False
 
 def format_duration(seconds: int) -> str:
@@ -1033,11 +1054,18 @@ def fetch_media_stream(
     progress_callback: Optional[Callable[[float, str], None]] = None,
     auth_browser: Optional[str] = None,
     browser_media_path: Optional[str] = None,
+    allow_ephemeral_stories: bool = False,
 ) -> Dict[str, Any]:
     """
     Fetches the media stream from a URL (or validates local file) into output_dir.
     Returns metadata dict with local path, title, artist, and media type.
     """
+    if is_ephemeral_story_url(source) and not allow_ephemeral_stories:
+        raise ValueError(
+            "Ephemeral story extraction is disabled by default. "
+            "To convert Instagram or Facebook stories, you must acknowledge the Legal Disclaimer & Acceptable Use Policy "
+            "in DISCLAIMER.md by enabling 'Ephemeral Stories Extraction' in Settings, or passing --allow-ephemeral-stories in the CLI."
+        )
     os.makedirs(output_dir, exist_ok=True)
     preexisting_stream_files = {}
     try:
@@ -1538,18 +1566,26 @@ def fetch_media_stream(
 def fetch_playlist_entries(
     url: str,
     progress_callback: Optional[Callable[[float, str], None]] = None,
-    auth_browser: Optional[str] = None
+    auth_browser: Optional[str] = None,
+    allow_ephemeral_stories: bool = False,
 ) -> Dict[str, Any]:
     """
     Extracts metadata for all tracks or videos in a playlist without downloading media stream files.
     Supports Spotify playlists/albums, YouTube playlists, SoundCloud sets, and generic sources.
     """
+    clean_url = url.strip()
+    if is_ephemeral_story_url(clean_url) and not allow_ephemeral_stories:
+        raise ValueError(
+            "Ephemeral story extraction is disabled by default. "
+            "To convert Instagram or Facebook stories, you must acknowledge the Legal Disclaimer & Acceptable Use Policy "
+            "in DISCLAIMER.md by enabling 'Ephemeral Stories Extraction' in Settings, or passing --allow-ephemeral-stories in the CLI."
+        )
+
     def report(pct: float, msg: str):
         if progress_callback:
             progress_callback(pct, msg)
 
     source_type = identify_source_type(url)
-    clean_url = url.strip()
     raw_browser = str(auth_browser or "").strip().lower()
     allow_browser_cookies = raw_browser not in ("none", "disabled", "off", "false", "public", "public only")
     if not allow_browser_cookies:
