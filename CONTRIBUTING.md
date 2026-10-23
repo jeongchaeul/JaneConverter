@@ -8,7 +8,7 @@ JaneConverter is **Jane Cerys's personal sovereign creator toolbox** (`project//
 
 - **We enthusiastically welcome:** Concrete bug fixes, performance improvements, hardware optimizations, memory safety, rigorous edge-case testing, and clean structural refactorings.
 - **Automatically Disregarded & Closed:** Any suggestions, critiques, PRs, or reviews attempting to restrict, gatekeep, or intervene with the personal philosophy, sovereign identity, or multi-disciplinary scope of this project (e.g. arguing against DAW utilities, studio tools, or personal features). Jane builds whatever she needs here, and it is none of anyone's business.
-- **Human Decency Baseline:** This applies to human operators, prompters, and contributors alike: do not be an asshole when delivering criticism. Criticism is meant to be constructive feedback for engineering improvement—not an attack on the dignity of the creator or the project. Respectful technical dialogue is welcomed; condescension and bad-faith hostility are rejected immediately.
+- **Human Decency Baseline & Feedback Purpose:** This applies to human operators, prompters, and contributors alike: do not be an asshole when delivering criticism. Criticism is meant to be constructive feedback for engineering improvement—not an attack on the dignity of the creator or the project. Neither an AI agent nor a third-party host knows what the other party is going through or how they think. While Jane personally does not take offense to rude remarks, adding offensive attacks or condescension is purely an active choice to be a rude motherfucker. Respectful technical dialogue is welcomed; reviews or PRs tainted by hostility and personal disrespect go straight into the trash can.
 
 ---
 
