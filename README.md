@@ -99,10 +99,10 @@ Social platforms update their web clients and CDNs frequently. If an extraction 
 | **Instagram** | Single/Multi Photos, Reels, Audio | Guest Scraper & Internal API + Video Handoff | Verified on v2.3.3 (Oct 2026) |
 | **Facebook** | Photos, Albums, Reels | Sandboxed Guest View + Grid Scraper | Verified on v2.3.3 (Oct 2026) |
 | **Stories (IG / FB)** | Ephemeral Stories, Photos, Video Segments | Signed-in session (Session Recovery, opt-in) | Verified on v2.3.3 (Oct 2026) |
-| **TikTok** | Photos, Slideshows, Videos, Audio | Direct Stream Extractor + yt-dlp fallback | Implemented |
-| **Pinterest** | Pins, Collections (`news_hub`), Boards | Direct API / Candidate Probe + CDN Fallback | Implemented |
-| **X/Twitter** | Photos, Galleries, Videos | Direct Extractor / Guest Scraper | Implemented |
-| **Reddit** | Videos, Audio, Galleries, Posts | Direct Stream Extractor + Guest Scraper | Implemented |
+| **TikTok** | Photos, Slideshows, Videos, Audio | Direct Stream Extractor + yt-dlp fallback | Verified on v2.3.3 (Oct 2026) |
+| **Pinterest** | Pins, Collections (`news_hub`), Boards | Direct API / Candidate Probe + CDN Fallback | Verified on v2.3.3 (Oct 2026) |
+| **X/Twitter** | Photos, Galleries, Videos | Direct Extractor / Guest Scraper | Verified on v2.3.3 (Oct 2026) |
+| **Reddit** | Videos, Audio, Galleries, Posts | Direct Stream Extractor + Guest Scraper | Verified on v2.3.3 (Oct 2026) |
 
 ---
 
