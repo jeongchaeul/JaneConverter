@@ -80,6 +80,7 @@ Whenever you add or modify a feature, fix a bug, or encounter a media extraction
 4. **Always Live-Test the Failing Media & 7 Diverse Targets (Universal Rule of 7)**:
    Never consider a bug fixed solely because a test suite passes or a mock returns 200 OK. Mocks do not prove that live platform APIs, CDN endpoints, and bot guards are functioning.
    - This rule applies universally to **every single platform and media format** (Pinterest, Facebook, TikTok, Spotify, YouTube, Instagram, Twitter/X, SoundCloud, Apple Music, Reddit, etc.).
+   - **Why the Rule of 7 Exists:** It is not merely testing 7 different media files; it is testing **7 distinct situations and failure contexts** in which an error may be triggered. The system is not fragile—its foundation has already undergone full structural refactoring. Testing 7 real-world situations easily identifies specific failure modes to efficiently pinpoint areas for improvement and defeat the error in question.
    - You MUST run the real engine against the exact URL that failed.
    - You MUST find and test at least **7 diverse real-world links** of the same platform/format (e.g. single items, albums/carousels, reels/shorts, audio vs video, shortlinks, user handles) to proactively catch and fix edge-case crashes before marking the task complete.
 5. **Follow the Rebuild Contract (`packaging/REBUILD.md`)**:

@@ -124,6 +124,9 @@ This protocol applies **universally to EVERY single media conversion, platform, 
      ```
    - Verify that all media files are physically created on disk, non-empty, and valid.
 3. **Execute 7 Diverse Real-World Live Verification Tests (The "Rule of 7"):**
+   - **Why the Rule of 7 Exists (Architectural Purpose & Diagnostic Rigor):**
+     The Rule of 7 is not merely a checklist of testing 7 arbitrary media files. It is an intentional stress-test designed to probe **7 fundamentally different situations, routing states, and operational contexts** in which an error or edge-case failure may be triggered.
+     This rule does *not* exist because the system is fragile—a comprehensive structural refactor of the entire foundation has already hardened core process boundaries, memory safety, and stream copying pipelines. Rather, the Rule of 7 exists because testing 7 diverse real-world situations easily identifies specific conditions under which a conversion would otherwise fail (such as dynamic pagination, multi-image carousel hydration, CDN token expiration, shortlink unrolling, container remuxing quirks, auth redirects, and guest vs. authenticated routing). By interrogating the engine across 7 distinct situations, agents and contributors can efficiently pinpoint areas of improvement to systematically and permanently defeat the error in question.
    - Automatically find and execute live extractions across at least **7 diverse real-world links** of the same platform/media category to catch edge cases, routing mismatches, and platform-specific crashes before completing:
      - **Pinterest:** Multi-pin share collections, notification hubs, single image pins, video pins, board routes, `pin.it` shortlinks.
      - **Facebook:** Photo posts, multi-image albums, Reels, public Watch videos, permalink shares, mobile URLs (`m.facebook.com`).
