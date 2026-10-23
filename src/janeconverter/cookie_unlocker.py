@@ -2,64 +2,294 @@
 
 On Windows, Chromium-based browsers (Chrome, Edge, Brave, Vivaldi, Opera) lock
 their cookie database (Network\\Cookies) exclusively while running. This module
-uses the Windows Restart Manager API to safely release the background utility
-file lock and allow yt-dlp to read session cookies seamlessly across all browsers.
+uses non-destructive Win32 handle duplication to safely stream a snapshot of the
+active cookie database without terminating or disrupting running browser processes,
+background network services, or active WebSockets.
 """
 
 import os
 import shutil
 import sqlite3
 import threading
-import time
-from typing import Optional
+from typing import List, Optional
+
+# Win32 / NT API definitions for non-destructive handle duplication
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    ntdll = ctypes.windll.ntdll
+    rstrtmgr = ctypes.windll.rstrtmgr
+
+    kernel32.DuplicateHandle.argtypes = [
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.HANDLE),
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    ]
+    kernel32.DuplicateHandle.restype = wintypes.BOOL
+
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    kernel32.GetFinalPathNameByHandleW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    ]
+    kernel32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+
+    kernel32.GetFileType.argtypes = [wintypes.HANDLE]
+    kernel32.GetFileType.restype = wintypes.DWORD
+
+    kernel32.ReadFile.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+    ]
+    kernel32.ReadFile.restype = wintypes.BOOL
+
+    kernel32.SetFilePointer.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LONG,
+        ctypes.POINTER(wintypes.LONG),
+        wintypes.DWORD,
+    ]
+    kernel32.SetFilePointer.restype = wintypes.DWORD
+
+    class RM_UNIQUE_PROCESS(ctypes.Structure):
+        _fields_ = [
+            ("dwProcessId", wintypes.DWORD),
+            ("ProcessStartTime", wintypes.FILETIME),
+        ]
+
+    class RM_PROCESS_INFO(ctypes.Structure):
+        _fields_ = [
+            ("Process", RM_UNIQUE_PROCESS),
+            ("strAppName", wintypes.WCHAR * 256),
+            ("strServiceShortName", wintypes.WCHAR * 64),
+            ("ApplicationType", wintypes.DWORD),
+            ("AppStatus", wintypes.DWORD),
+            ("TSSessionId", wintypes.DWORD),
+            ("bRestartable", wintypes.BOOL),
+        ]
+
+    SystemExtendedHandleInformation = 64
+
+    class SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX(ctypes.Structure):
+        _fields_ = [
+            ("Object", ctypes.c_void_p),
+            ("UniqueProcessId", ctypes.c_size_t),
+            ("HandleValue", ctypes.c_size_t),
+            ("GrantedAccess", wintypes.ULONG),
+            ("CreatorBackTraceIndex", wintypes.USHORT),
+            ("ObjectTypeIndex", wintypes.USHORT),
+            ("HandleAttributes", wintypes.ULONG),
+            ("Reserved", wintypes.ULONG),
+        ]
 
 
-def unlock_windows_file_lock(file_path: str) -> bool:
-    """If a file is locked on Windows by a background utility, request release via Restart Manager."""
+def clean_nt_path(path: str) -> str:
+    """Strip Win32 device prefixes from paths returned by GetFinalPathNameByHandleW."""
+    if path.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + path[8:]
+    if path.startswith("\\\\?\\"):
+        return path[4:]
+    return path
+
+
+def get_locking_pids(file_path: str) -> List[int]:
+    """Query locking PIDs via Restart Manager in strictly read-only mode without shutting down anything."""
     if os.name != "nt" or not file_path or not os.path.exists(file_path):
-        return False
+        return []
 
     try:
         import ctypes
         from ctypes import wintypes
 
         rstrtmgr = ctypes.windll.rstrtmgr
-
         cch_rm_session_key = 32
-        rm_force_shutdown = 1
         session_handle = wintypes.DWORD(0)
         session_key = (wintypes.WCHAR * (cch_rm_session_key + 1))()
 
         res = rstrtmgr.RmStartSession(ctypes.byref(session_handle), 0, session_key)
         if res != 0:
-            return False
+            return []
 
         try:
             abs_path = os.path.abspath(file_path)
             files = (wintypes.LPCWSTR * 1)(abs_path)
             res = rstrtmgr.RmRegisterResources(session_handle, 1, files, 0, None, 0, None)
             if res != 0:
-                return False
+                return []
 
             n_needed = wintypes.UINT(0)
             n_proc = wintypes.UINT(0)
             reboot_reasons = wintypes.DWORD(0)
 
-            # Probe for locking processes
-            res = rstrtmgr.RmGetList(
+            # Probe for locking processes (strictly informational, no shutdown)
+            rstrtmgr.RmGetList(
                 session_handle,
                 ctypes.byref(n_needed),
                 ctypes.byref(n_proc),
                 None,
                 ctypes.byref(reboot_reasons),
             )
-            if n_needed.value > 0:
-                # Release the lock by shutting down the background NetworkService lock holder
-                res = rstrtmgr.RmShutdown(session_handle, rm_force_shutdown, None)
-                return res == 0
-            return True
+            if n_needed.value == 0:
+                return []
+
+            procs = (RM_PROCESS_INFO * n_needed.value)()
+            n_proc.value = n_needed.value
+            rstrtmgr.RmGetList(
+                session_handle,
+                ctypes.byref(n_needed),
+                ctypes.byref(n_proc),
+                procs,
+                ctypes.byref(reboot_reasons),
+            )
+            return [p.Process.dwProcessId for p in procs]
         finally:
             rstrtmgr.RmEndSession(session_handle)
+    except Exception:
+        return []
+
+
+def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
+    """Safely snapshot a locked file by duplicating its open handle from the locking process.
+
+    This operates completely non-destructively: it bypasses exclusive sharing locks
+    without terminating or interrupting the browser process holding the file lock.
+    """
+    if os.name != "nt":
+        return False
+
+    try:
+        pids = get_locking_pids(file_path)
+        if not pids:
+            return False
+
+        buf_size = 1024 * 1024 * 16
+        buf = ctypes.create_string_buffer(buf_size)
+        while True:
+            size = wintypes.ULONG(buf_size)
+            return_len = wintypes.ULONG(0)
+            status = ctypes.c_uint32(
+                ntdll.NtQuerySystemInformation(
+                    SystemExtendedHandleInformation,
+                    buf,
+                    size,
+                    ctypes.byref(return_len),
+                )
+            ).value
+            if status == 0:
+                break
+            if status != 0xC0000004:  # STATUS_INFO_LENGTH_MISMATCH
+                return False
+            buf_size *= 2
+            buf = ctypes.create_string_buffer(buf_size)
+
+        count = ctypes.c_size_t.from_buffer_copy(buf.raw[:8]).value
+        entry_size = ctypes.sizeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX)
+        curr_proc = kernel32.GetCurrentProcess()
+        norm_target = os.path.normcase(os.path.abspath(file_path))
+
+        os.makedirs(os.path.dirname(os.path.abspath(dst_path)), exist_ok=True)
+        tmp_dst = dst_path + ".tmp"
+
+        PROCESS_DUP_HANDLE = 0x0040
+        DUPLICATE_SAME_ACCESS = 0x0002
+        FILE_TYPE_DISK = 1
+        FILE_BEGIN = 0
+        FILE_CURRENT = 1
+
+        for pid in pids:
+            h_proc = kernel32.OpenProcess(PROCESS_DUP_HANDLE, False, pid)
+            if not h_proc:
+                continue
+            try:
+                for i in range(count):
+                    entry = SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX.from_buffer(buf, 16 + i * entry_size)
+                    if entry.UniqueProcessId == pid:
+                        target_handle = wintypes.HANDLE()
+                        ok = kernel32.DuplicateHandle(
+                            h_proc,
+                            wintypes.HANDLE(entry.HandleValue),
+                            curr_proc,
+                            ctypes.byref(target_handle),
+                            0,
+                            False,
+                            DUPLICATE_SAME_ACCESS,
+                        )
+                        if ok and target_handle.value:
+                            if kernel32.GetFileType(target_handle) == FILE_TYPE_DISK:
+                                path_buf = ctypes.create_unicode_buffer(1024)
+                                plen = kernel32.GetFinalPathNameByHandleW(target_handle, path_buf, 1024, 0)
+                                if plen > 0:
+                                    clean = clean_nt_path(path_buf.value)
+                                    if os.path.normcase(clean) == norm_target:
+                                        # Save original file position to leave handle untouched
+                                        orig_pos = kernel32.SetFilePointer(target_handle, 0, None, FILE_CURRENT)
+                                        kernel32.SetFilePointer(target_handle, 0, None, FILE_BEGIN)
+
+                                        chunk_size = 64 * 1024
+                                        read_buf = ctypes.create_string_buffer(chunk_size)
+                                        bytes_read = wintypes.DWORD(0)
+                                        with open(tmp_dst, "wb") as out_f:
+                                            while True:
+                                                r_ok = kernel32.ReadFile(
+                                                    target_handle,
+                                                    read_buf,
+                                                    chunk_size,
+                                                    ctypes.byref(bytes_read),
+                                                    None,
+                                                )
+                                                if not r_ok or bytes_read.value == 0:
+                                                    break
+                                                out_f.write(read_buf.raw[: bytes_read.value])
+
+                                        if orig_pos != 0xFFFFFFFF:
+                                            kernel32.SetFilePointer(target_handle, orig_pos, None, FILE_BEGIN)
+
+                                        kernel32.CloseHandle(target_handle)
+                                        os.replace(tmp_dst, dst_path)
+                                        return True
+                            kernel32.CloseHandle(target_handle)
+            finally:
+                kernel32.CloseHandle(h_proc)
+
+        if os.path.exists(tmp_dst):
+            try:
+                os.remove(tmp_dst)
+            except OSError:
+                pass
+        return False
+    except Exception:
+        return False
+
+
+def unlock_windows_file_lock(file_path: str) -> bool:
+    """Non-destructive lock query on Windows.
+
+    Queries whether a file is locked by any active process using Restart Manager
+    in strictly read-only mode, without terminating or disrupting any processes.
+    """
+    if os.name != "nt" or not file_path or not os.path.exists(file_path):
+        return False
+    try:
+        pids = get_locking_pids(file_path)
+        return len(pids) > 0
     except Exception:
         return False
 
@@ -71,6 +301,7 @@ def _win32_shared_copy(src: str, dst: str) -> bool:
     try:
         import ctypes
         from ctypes import wintypes
+
         kernel32 = ctypes.windll.kernel32
 
         GENERIC_READ = 0x80000000
@@ -97,12 +328,15 @@ def _win32_shared_copy(src: str, dst: str) -> bool:
             chunk_size = 64 * 1024
             buf = ctypes.create_string_buffer(chunk_size)
             bytes_read = wintypes.DWORD(0)
-            with open(dst, "wb") as out_f:
+            os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
+            tmp_dst = dst + ".tmp"
+            with open(tmp_dst, "wb") as out_f:
                 while True:
                     success = kernel32.ReadFile(handle, buf, chunk_size, ctypes.byref(bytes_read), None)
                     if not success or bytes_read.value == 0:
                         break
-                    out_f.write(buf.raw[:bytes_read.value])
+                    out_f.write(buf.raw[: bytes_read.value])
+            os.replace(tmp_dst, dst)
             return True
         finally:
             kernel32.CloseHandle(handle)
@@ -135,7 +369,7 @@ class AutoClosingCursor:
 
 
 def robust_open_database_copy(database_path: str, tmpdir: str) -> sqlite3.Cursor:
-    """Open a copy of an SQLite database, safely handling Windows file locks."""
+    """Open a copy of an SQLite database, safely handling Windows file locks non-destructively."""
     database_copy_path = os.path.join(tmpdir, "temporary.sqlite")
     copied = False
     last_err: Optional[Exception] = None
@@ -145,14 +379,11 @@ def robust_open_database_copy(database_path: str, tmpdir: str) -> sqlite3.Cursor
         copied = True
     except (PermissionError, OSError) as err:
         last_err = err
-        if unlock_windows_file_lock(database_path):
-            for _ in range(6):
-                try:
-                    shutil.copy(database_path, database_copy_path)
-                    copied = True
-                    break
-                except (PermissionError, OSError):
-                    time.sleep(0.05)
+        if os.name == "nt":
+            # Attempt non-destructive Win32 handle duplication snapshot
+            copied = snapshot_file_via_handle_duplication(database_path, database_copy_path)
+            if not copied:
+                copied = _win32_shared_copy(database_path, database_copy_path)
 
     if not copied:
         if last_err is not None:
@@ -167,7 +398,9 @@ def robust_open_database_copy(database_path: str, tmpdir: str) -> sqlite3.Cursor
             try:
                 shutil.copy(sidecar_src, sidecar_dst)
             except (PermissionError, OSError):
-                pass
+                if os.name == "nt":
+                    if not snapshot_file_via_handle_duplication(sidecar_src, sidecar_dst):
+                        _win32_shared_copy(sidecar_src, sidecar_dst)
 
     conn = sqlite3.connect(database_copy_path)
     return AutoClosingCursor(conn)  # type: ignore[return-value]
@@ -185,9 +418,11 @@ def patch_yt_dlp_cookie_database_reader() -> None:
             return
         try:
             import yt_dlp.cookies
+
             yt_dlp.cookies._open_database_copy = robust_open_database_copy
             orig_decrypt = getattr(yt_dlp.cookies.WindowsChromeCookieDecryptor, "decrypt", None)
             if orig_decrypt and not getattr(yt_dlp.cookies.WindowsChromeCookieDecryptor, "_jane_patched", False):
+
                 def safe_decrypt(self, encrypted_value):
                     if encrypted_value and encrypted_value[:3] == b"v20":
                         return None
@@ -195,6 +430,7 @@ def patch_yt_dlp_cookie_database_reader() -> None:
                         return orig_decrypt(self, encrypted_value)
                     except Exception:
                         return None
+
                 yt_dlp.cookies.WindowsChromeCookieDecryptor.decrypt = safe_decrypt
                 yt_dlp.cookies.WindowsChromeCookieDecryptor._jane_patched = True
             _PATCHED = True
