@@ -33,22 +33,32 @@ JaneConverter is a personal media downloader, conversion toolbox, and producer s
 
 ## Features
 
-- **Media Transcoding**: 15+ audio outputs (WAV, FLAC, MP3, AAC, Opus, AIFF, ALAC...), 15+ video outputs (MP4, MKV, WebM, MOV, AVI...), and all common image formats (PNG, WebP, JPG, TIFF, GIF, AVIF). Uses FFmpeg and Pillow under the hood.
-- **Audio Quality & Normalization**: High-precision SoX resampling (`soxr`), optional EBU R128 loudness normalization (`-14 LUFS`), automatic album cover embedding, and stream copy (`-c copy`) when re-encoding isn't needed.
-- **Hardware Acceleration**: Automatic GPU encoding via NVIDIA NVENC, AMD AMF, Intel QSV, or Linux VAAPI, with automatic fallback to multi-core CPU.
-- **Online & Social Downloader**: Powered by `yt-dlp` and `yt-dlp-ejs` with resilient fallback routines for YouTube, SoundCloud, Instagram, Pinterest (`news_hub`, boards, pins), Facebook albums, TikTok, X/Twitter, and Reddit.
-- **Streaming Catalog Matching**: Resolves metadata for Spotify and Apple Music tracks, finding matching public audio versions on YouTube Music and SoundCloud while preserving tags and album art.
-- **FL Studio (.flp) Project Downgrade**: Inspects project tempo, PPQ, channel count, and build numbers, and patches header event bytes to help collaborate with producers on older FL Studio versions.
-- **Queue & Library Explorer**: Batch drag-and-drop, real-time conversion progress, and an organized converted media library.
-- **Optional Browser Companion**: Extension to pipe audio, video, or story streams directly from active browser tabs over a local loopback port (`127.0.0.1`).
+- **Media Transcoding**: 15+ audio outputs (WAV, FLAC, MP3, AAC, Opus, AIFF, ALAC...), 15+ video outputs (MP4, MKV, WebM, MOV, AVI...), and all common image formats (PNG, WebP, JPG, TIFF, GIF, AVIF). Powered by high-speed FFmpeg and Pillow pipelines.
+- **Audio Engineering & Normalization**: High-precision SoX resampling (`soxr`), optional EBU R128 loudness normalization (`-14 LUFS`), automatic album cover embedding, and smart stream copying (`-c copy`) when re-encoding isn't needed.
+- **Harmonic Exciter (High-End Sparkle)**: Transparent analog-modeled exciter filter (`aexciter`, 7.5–20 kHz) to synthesize perceptual air, cymbal shimmer, and openness on dull lossy streaming rips.
+- **Hardware Acceleration**: Automatic GPU encoding via NVIDIA NVENC, AMD AMF, Intel QSV, or Linux VAAPI, with instantaneous multi-core CPU fallback.
+- **Online & Social Downloader**: Resilient extraction for YouTube, SoundCloud, Instagram, Pinterest (`news_hub`, boards, pins), Facebook albums, TikTok, X/Twitter, Reddit, and ephemeral stories.
+- **Streaming Catalog Matching**: Resolves metadata for Spotify and Apple Music tracks, matching lossless/high-bitrate public audio versions on YouTube Music and SoundCloud while preserving tags and cover art.
+- **Studio DAW Tools (Producer Suite)**:
+  - **FL Studio (.flp) Downgrader**: Bit-level binary chunk parser and header patcher allowing cross-version collaboration across FL Studio 24, 21, 20, and 12.
+  - **Ableton Live (.als) Migrator (Experimental)**: Gzip XML stream inspection, schema version retargeting, and device preset compatibility utilities.
+- **Queue & Converted Library**: Batch drag-and-drop, real-time conversion progress, and an organized local media library with 1-click folder/file actions.
+- **Browser Bridge Companion**: Optional extension to pipe authenticated media streams and temporary stories directly from active browser tabs over a secure local loopback port (`127.0.0.1`).
 
 ---
 
 ## Adaptive Resilience Architecture
 
-Behind JaneConverter is an adaptive recovery architecture (internally codenamed the Mahoraga Engine). When downloading or converting media across the web, roadblocks are frequent: aggressive anti-bot JavaScript challenges, login walls, rate limits, audio container mismatches, or GPU driver crashes.
+Behind JaneConverter is an adaptive recovery architecture (internally codenamed the Mahoraga Engine). In real-world media ingestion, failures are common: aggressive JavaScript signature challenges (`nsig`), login walls, strict rate limits, audio container mismatches, or GPU driver crashes.
 
-Instead of crashing or failing, JaneConverter treats runtime errors as signals to pivot strategies—analyzing roadblocks and cycling through alternative fallback routes until pristine media is delivered.
+Instead of aborting, JaneConverter treats runtime errors as deterministic signals to pivot strategies—evaluating roadblocks through a multi-tiered recovery ladder until pristine media is delivered:
+
+- **Pillar 1: Stream Extraction & Network Adaptation**: Runtime signature deciphering via `yt-dlp-ejs` and bundled Node.js execution environments, universal format selector cascades (`bv*+ba/b/best`), and bounded exponential backoff with jitter.
+- **Pillar 2: Authenticated Session Adaptation**: Air-gapped guest mode by default; volatile, zero-disk in-memory DPAPI cookie borrowing for age-gated/private links, with fallback to the local loopback Browser Bridge.
+- **Pillar 3: Cross-Platform Streaming Catalog Resolution**: Intelligent title/artist token normalization, Levenshtein distance matching, and duration verification for Spotify and Apple Music URLs across YouTube Music and SoundCloud.
+- **Pillar 4: Autonomous DOM Scraping**: Headless sandboxed browser view with clean W3C pointer sequences (`pointerdown` → `pointerup` → `click`) and settlement confirmation for dynamic React carousels (Facebook albums, Pinterest boards).
+- **Pillar 5: Transcoder & Hardware Resilience**: JIT FFmpeg command rewriting, seamless GPU (NVENC/AMF/QSV/VAAPI) to multi-core CPU failover, and lossless stream remuxing before re-encoding.
+- **Pillar 6: Host OS Resiliency**: Windows Antivirus/Search indexer retry loops (`WinError 32/33 PermissionError`), non-blocking handle duplication, and atomic file replacements.
 
 <p align="center">
   <a href="docs/MAHORAGA_ENGINE.md">
@@ -56,7 +66,7 @@ Instead of crashing or failing, JaneConverter treats runtime errors as signals t
   </a>
 </p>
 
-*For the complete technical breakdown of adaptation tiers and recovery algorithms, see the [Adaptive Resilience Engine Reference](docs/MAHORAGA_ENGINE.md).*
+*For the complete technical breakdown of adaptation tiers, failure categorizations, and recovery algorithms, see the [Adaptive Resilience Engine Reference](docs/MAHORAGA_ENGINE.md).*
 
 ---
 
@@ -76,15 +86,15 @@ Instead of crashing or failing, JaneConverter treats runtime errors as signals t
 
 | Platform | Supported Media | Extraction Route | Status |
 | :--- | :--- | :--- | :--- |
-| **YouTube, SoundCloud** | Audio, Video, Playlists | Direct yt-dlp + Node.js EJS | Supported |
-| **Spotify, Apple Music** | Tracks, Albums, Playlists | Catalog Metadata + Public Stream Matching | Supported |
-| **Instagram** | Single/Multi Photos, Reels | Internal API / Guest Scraper + Video Handoff | Supported |
-| **Facebook** | Single/Multi Photos, Group Sets, Reels | Sandboxed Guest View + Grid Scraper | Supported |
-| **TikTok** | Photos, Slideshows, Videos | Direct Stream Extractor + yt-dlp fallback | Supported |
-| **Pinterest** | Pins, Collections (`news_hub`), Boards | Direct API / Candidate Probe + CDN Fallback | Supported |
-| **X/Twitter** | Photos, Galleries, Videos | Direct Extractor / Guest Scraper | Supported |
-| **Reddit** | Videos, Audio, Galleries, Posts | Direct Stream Extractor + Guest Scraper | Supported |
-| **Stories (IG / FB / TT)** | Ephemeral Stories | Browser Bridge Extension (`Collect mode`) | Extension Required |
+| **YouTube, SoundCloud** | Audio, Video, Playlists | Direct yt-dlp + Node.js EJS | Verified Working |
+| **Spotify, Apple Music** | Tracks, Albums, Playlists | Catalog Metadata + Public Stream Matching | Verified Working |
+| **Instagram** | Single/Multi Photos, Reels, Audio | Internal API / Guest Scraper + Video Handoff | Verified Working |
+| **Facebook** | Single/Multi Photos, Group Sets, Reels | Sandboxed Guest View + Grid Scraper | Verified Working |
+| **TikTok** | Photos, Slideshows, Videos, Audio | Direct Stream Extractor + yt-dlp fallback | Verified Working |
+| **Pinterest** | Pins, Collections (`news_hub`), Boards | Direct API / Candidate Probe + CDN Fallback | Verified Working |
+| **X/Twitter** | Photos, Galleries, Videos | Direct Extractor / Guest Scraper | Verified Working |
+| **Reddit** | Videos, Audio, Galleries, Posts | Direct Stream Extractor + Guest Scraper | Verified Working |
+| **Stories (IG / FB / TT)** | Ephemeral Stories, Photos, Video Segments | Browser Bridge & Sandboxed Headless Capture | Verified Working |
 
 ---
 
