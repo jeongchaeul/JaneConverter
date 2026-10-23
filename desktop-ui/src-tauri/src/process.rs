@@ -387,10 +387,12 @@ pub fn terminate_child(child: &mut Child) {
     let _ = set_child_paused(child, false);
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         let pid_text = child.id().to_string();
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid_text, "/T", "/F"])
-            .status();
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/PID", &pid_text, "/T", "/F"]);
+        cmd.creation_flags(crate::paths::CREATE_NO_WINDOW);
+        let _ = cmd.status();
     }
     #[cfg(unix)]
     {

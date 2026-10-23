@@ -56,6 +56,7 @@ def parse_flp(data: bytes) -> FLPProject:
 
     # 2. Find and read FLdt chunk(s)
     events = []
+    total_len = len(data)
     while True:
         chunk_magic = stream.read(4)
         if not chunk_magic:
@@ -64,6 +65,11 @@ def parse_flp(data: bytes) -> FLPProject:
         if len(chunk_len_raw) < 4:
             break
         chunk_len = struct.unpack("<I", chunk_len_raw)[0]
+        remaining = total_len - stream.tell()
+        if chunk_len > remaining:
+            raise FLPParseError(
+                f"Chunk {chunk_magic!r} declared length {chunk_len} exceeds remaining stream size ({remaining} bytes)."
+            )
 
         if chunk_magic == b"FLdt":
             chunk_bytes = stream.read(chunk_len)

@@ -9,6 +9,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 import urllib.parse
 import urllib.request
 from typing import Any, Callable, Optional
@@ -52,6 +53,20 @@ PLATFORM_LABELS = {
     "tumblr": "Tumblr",
     "pinterest": "Pinterest",
 }
+
+
+def _promote_staging_dir(staging_dir: str, target_dir: str, max_attempts: int = 5) -> None:
+    """Atomically promote staging_dir to target_dir with exponential retry on Windows file locks."""
+    for attempt in range(max_attempts):
+        try:
+            os.replace(staging_dir, target_dir)
+            return
+        except PermissionError as error:
+            winerr = getattr(error, "winerror", None)
+            if os.name == "nt" and winerr in (5, 32, 33) and attempt < max_attempts - 1:
+                time.sleep(0.1 * (2 ** attempt))
+                continue
+            raise
 
 
 def _media_url(value: Any, platform: str) -> str:
@@ -278,7 +293,7 @@ def download_social_photo_manifest(
                 futures = [executor.submit(download_and_process, item) for item in enumerate(photos.values(), start=1)]
                 for future in concurrent.futures.as_completed(futures):
                     future.result()
-        os.replace(staging_dir, target_dir)
+        _promote_staging_dir(staging_dir, target_dir)
     except requests.RequestException as error:
         raise RuntimeError(f"Could not download a {platform} photo. The post may have changed or the link may have expired.") from error
     except (OSError, ValueError) as error:

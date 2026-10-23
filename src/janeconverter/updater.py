@@ -571,6 +571,10 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None,
         log("Extractor engine installation is disabled for read-only update checks.")
         return False
 
+    if getattr(sys, "frozen", False):
+        log("In packaged desktop releases, extractor engine updates are bundled with application releases.")
+        return False
+
     if info is None:
         log("Checking for real-time extractor engine updates...")
         info = check_for_engine_updates()

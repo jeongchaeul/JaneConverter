@@ -26,6 +26,7 @@ _FORMATS = {
 }
 _IMAGE_QUALITY = {"best": 95, "high": 90, "balanced": 80, "small": 65}
 _ANIMATED_FORMATS = {"GIF", "PNG", "TIFF", "WEBP"}
+MAX_ANIMATION_FRAMES = 500
 
 
 def _has_alpha(image: Image.Image) -> bool:
@@ -121,7 +122,7 @@ def convert_image_format(
         source_mode = source.mode
         frame_count = getattr(source, "n_frames", 1)
         preserve_frames = frame_count > 1 and source_format in _ANIMATED_FORMATS and pillow_format in _ANIMATED_FORMATS
-        frame_total = frame_count if preserve_frames else 1
+        frame_total = min(frame_count, MAX_ANIMATION_FRAMES) if preserve_frames else 1
         frames = []
         durations = []
         for index in range(frame_total):

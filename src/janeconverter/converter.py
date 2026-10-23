@@ -2253,6 +2253,27 @@ def _convert_media_impl(
     return destination_path
 
 
+def cleanup_stale_staging_directories(directory: str, max_age_seconds: float = 86400.0) -> int:
+    """Remove orphaned .janeconverter-convert-* temporary staging folders older than max_age_seconds."""
+    if not os.path.isdir(directory):
+        return 0
+    cleaned = 0
+    now = time.time()
+    try:
+        for entry in os.scandir(directory):
+            if entry.is_dir() and entry.name.startswith(".janeconverter-convert-"):
+                try:
+                    mtime = entry.stat().st_mtime
+                    if (now - mtime) >= max_age_seconds:
+                        shutil.rmtree(entry.path, ignore_errors=True)
+                        cleaned += 1
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return cleaned
+
+
 def convert_media(
     input_path: str,
     output_dir: str,
@@ -2306,6 +2327,8 @@ def convert_media(
             reconstruct_frequency_loss=reconstruct_frequency_loss,
             expected_category=expected_category,
         ), evidence_path=ev_path)
+
+    cleanup_stale_staging_directories(output_dir)
 
     def staged_progress(value: float, message: str) -> None:
         if progress_callback and value < 1.0:

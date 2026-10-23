@@ -2634,15 +2634,21 @@ fn set_chromium_cookie_policy(enabled: bool) -> Result<bool, String> {
             r#"Start-Process cmd.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '/c reg delete "HKCU\Software\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /f & reg delete "HKCU\Software\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /f & reg delete "HKLM\Software\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /f & reg delete "HKLM\Software\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /f'"#
         };
 
-        let status = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-WindowStyle",
-                "Hidden",
-                "-Command",
-                ps_script,
-            ])
+        let mut ps_cmd = std::process::Command::new("powershell");
+        ps_cmd.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            ps_script,
+        ]);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            ps_cmd.creation_flags(crate::paths::CREATE_NO_WINDOW);
+        }
+        let status = ps_cmd
             .status()
             .map_err(|e| format!("Could not launch administrator setup: {e}"))?;
 

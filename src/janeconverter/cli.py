@@ -1354,6 +1354,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n[!] Interrupted by user.")
         sys.exit(130)
-    except (RuntimeError, ValueError, FileNotFoundError) as e:
+    except Exception as e:
         print(f"\n[!] Error: {e}")
         sys.exit(1)

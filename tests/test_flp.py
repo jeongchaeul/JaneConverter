@@ -9,7 +9,7 @@ import pytest
 from janeconverter.flp.models import FLPEvent, FLPProject, write_varint
 from janeconverter.flp.parser import parse_varint, parse_flp, FLPParseError
 from janeconverter.flp.inspector import inspect_flp
-from janeconverter.flp.downgrade import downgrade_flp, downgrade_flp_file, normalize_target_key
+from janeconverter.flp.downgrade import downgrade_flp, downgrade_flp_file, downgrade_flp_bytes, normalize_target_key
 
 
 def test_varint_roundtrip():
@@ -305,5 +305,37 @@ def test_truncated_event_raises_flp_parse_error():
     corrupt_fldt2 = b"FLdt" + struct.pack("<I", len(bad_4byte_payload)) + bad_4byte_payload
     with pytest.raises(FLPParseError, match="Truncated 4-byte event payload"):
         parse_flp(flhd + corrupt_fldt2)
+
+
+def test_oversized_chunk_length_raises_flp_parse_error():
+    flhd = b"FLhd" + struct.pack("<I", 6) + struct.pack("<HHH", 0, 2, 96)
+    # Declares 0x10000000 bytes, but only provides 10 bytes
+    oversized_fldt = b"FLdt" + struct.pack("<I", 0x10000000) + b"\x00" * 10
+    with pytest.raises(FLPParseError, match="exceeds remaining stream size"):
+        parse_flp(flhd + oversized_fldt)
+
+
+def test_downgrade_flp_preserves_trailing_chunks():
+    proj = FLPProject(
+        format=0,
+        channels=2,
+        ppq=96,
+        events=[
+            FLPEvent(event_id=199, data=b"24.1.2.4398\x00"),
+            FLPEvent(event_id=159, data=struct.pack("<I", 4398)),
+        ],
+    )
+    sample_flp_data = proj.to_bytes()
+    trailing_magic = b"FLxx" + struct.pack("<I", 8) + b"TRAIL123"
+    data_with_trail = sample_flp_data + trailing_magic
+    downgraded_bytes, summary = downgrade_flp_bytes(data_with_trail, target_version="21.2.3")
+    assert summary["success"] is True
+    # The trailing chunk must be preserved at the end of the byte stream
+    assert downgraded_bytes.endswith(trailing_magic)
+    # FLdt chunk must not swallow the trailing chunk
+    fldt_pos = downgraded_bytes.find(b"FLdt")
+    fldt_len = struct.unpack("<I", downgraded_bytes[fldt_pos + 4 : fldt_pos + 8])[0]
+    assert fldt_pos + 8 + fldt_len + len(trailing_magic) == len(downgraded_bytes)
+
 
 

@@ -104,6 +104,20 @@ def _get_public_photo(session: requests.Session, url: str) -> requests.Response:
     raise RuntimeError("Facebook returned too many photo redirects.")
 
 
+def _promote_staging_dir(staging_dir: str, target_dir: str, max_attempts: int = 5) -> None:
+    """Atomically promote staging_dir to target_dir with exponential retry on Windows file locks."""
+    for attempt in range(max_attempts):
+        try:
+            os.replace(staging_dir, target_dir)
+            return
+        except PermissionError as error:
+            winerr = getattr(error, "winerror", None)
+            if os.name == "nt" and winerr in (5, 32, 33) and attempt < max_attempts - 1:
+                time.sleep(0.1 * (2 ** attempt))
+                continue
+            raise
+
+
 def download_facebook_photo_manifest(
     manifest: Any,
     output_dir: str,
@@ -252,7 +266,7 @@ def download_facebook_photo_manifest(
                     if os.path.exists(image_path):
                         os.remove(image_path)
 
-        os.replace(staging_dir, target_dir)
+        _promote_staging_dir(staging_dir, target_dir)
     except requests.RequestException as error:
         raise RuntimeError("Could not download a Facebook photo. The album may have changed or the link may have expired.") from error
     except (OSError, ValueError) as error:

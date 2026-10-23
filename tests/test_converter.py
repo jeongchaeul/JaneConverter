@@ -344,3 +344,26 @@ def test_is_stream_copy_safe_blocks_reconstruct_frequency_loss():
         reconstruct_frequency_loss=True,
     )
 
+
+def test_cleanup_stale_staging_directories(tmp_path):
+    from janeconverter.converter import cleanup_stale_staging_directories
+    import time
+    
+    old_staging = tmp_path / ".janeconverter-convert-old123"
+    old_staging.mkdir()
+    new_staging = tmp_path / ".janeconverter-convert-new456"
+    new_staging.mkdir()
+    unrelated = tmp_path / "normal_folder"
+    unrelated.mkdir()
+
+    # Backdate old staging directory by 2 days
+    old_time = time.time() - 172800
+    os.utime(str(old_staging), (old_time, old_time))
+
+    cleaned = cleanup_stale_staging_directories(str(tmp_path), max_age_seconds=86400.0)
+    assert cleaned == 1
+    assert not old_staging.exists()
+    assert new_staging.exists()
+    assert unrelated.exists()
+
+

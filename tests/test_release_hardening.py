@@ -294,3 +294,13 @@ def test_engine_update_version_bounds(monkeypatch):
         info={"has_update": True, "online": True, "current_version": "2026.10.01", "latest_version": "invalid_version"},
         allow_install=True,
     ) is False
+
+    # 4. In packaged frozen executable, update_engine must be skipped
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    logged = []
+    assert updater.update_engine(
+        status_callback=logged.append,
+        info={"has_update": True, "online": True, "current_version": "2026.10.01", "latest_version": "2027.01.15"},
+        allow_install=True,
+    ) is False
+    assert any("packaged desktop releases" in msg for msg in logged)

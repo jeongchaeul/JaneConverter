@@ -140,6 +140,9 @@ def downgrade_flp_bytes(
     if fldt_idx == -1:
         raise ValueError("Invalid FLP structure: missing FLdt data chunk.")
 
+    orig_fldt_len = struct.unpack("<I", raw_data[fldt_idx + 4 : fldt_idx + 8])[0]
+    trailing_chunk_len = max(0, len(raw_data) - (fldt_idx + 8 + orig_fldt_len))
+
     base_ver, target_b_int, target_maj, target_lbl, profile_key = resolve_target(
         target_version, target_build
     )
@@ -302,7 +305,7 @@ def downgrade_flp_bytes(
     # 5. Synchronize FLdt chunk length
     new_fldt_idx = data.find(b"FLdt")
     if new_fldt_idx != -1:
-        payload_length = len(data) - (new_fldt_idx + 8)
+        payload_length = max(0, len(data) - (new_fldt_idx + 8) - trailing_chunk_len)
         data[new_fldt_idx + 4 : new_fldt_idx + 8] = struct.pack("<I", payload_length)
 
     summary = {
