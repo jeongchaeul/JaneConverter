@@ -404,10 +404,10 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/65 p-6" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowGuide(false); }}>
           <div className="panel relative w-full max-w-xl p-6" role="dialog" aria-modal="true" aria-labelledby="extension-guide-title">
             <button type="button" onClick={() => setShowGuide(false)} className="absolute right-4 top-4 grid size-8 place-items-center rounded-lg text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200" aria-label="Close guide"><X className="size-4" /></button>
-            <div className="mono-label">AIR-GAPPED BROWSER BRIDGE</div>
+            <div className="mono-label">LOOPBACK BROWSER BRIDGE</div>
             <h2 id="extension-guide-title" className="mt-2 text-xl font-semibold text-white">How to Install & Use the Browser Extension</h2>
             <p className="mt-2 text-xs leading-relaxed text-zinc-400">
-              The JaneConverter Browser Bridge lets you capture media directly from your active browser tabs as a companion tool. It operates with strict air-gapped privacy: <strong>the extension captures media streams directly from the tab and never accesses passwords or writes files to disk</strong>.
+              The JaneConverter Browser Bridge lets you capture media directly from your active browser tabs as a companion tool. It operates with strict loopback privacy: <strong>the extension captures media streams directly from the tab and never accesses passwords or writes files to disk</strong>.
             </p>
             <div className="mt-4 space-y-3 text-xs leading-relaxed text-zinc-300">
               <div className="rounded-xl border border-white/[0.06] bg-black/25 p-3">

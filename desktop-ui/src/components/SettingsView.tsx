@@ -138,7 +138,7 @@ export function SettingsView({
     onSettings({ ...settings, readBrowserCookies: nextValue });
     const nextMessage = nextValue
       ? "Browser session cookie reading enabled. Private and friends-only media can now use your browser sessions."
-      : "Browser session cookie reading disabled. Conversions will use strictly public air-gapped extraction.";
+      : "Browser session cookie reading disabled. Conversions will use strictly public guest extraction.";
     setMessage(nextMessage);
     onStatus(nextMessage);
   }
@@ -546,12 +546,12 @@ export function SettingsView({
                   </div>
                   <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
                     <div className="flex items-center gap-1.5 text-xs font-medium text-sky-300">
-                      <ShieldCheck className="size-3.5 shrink-0" /> Air-gapped privacy guarantees
+                      <ShieldCheck className="size-3.5 shrink-0" /> Local-only privacy guarantees
                     </div>
                     <ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-zinc-300">
                       <li className="flex items-start gap-1.5">
                         <span className="font-mono text-sky-400 shrink-0 font-bold">•</span>
-                        <span><strong>RAM only (0 bytes to disk)</strong>: Cookies exist temporarily in memory during extraction and are instantly purged. Never written to disk.</span>
+                        <span><strong>RAM only (ephemeral)</strong>: Target cookies are extracted into memory during conversion and instantly purged upon completion. Never written to settings or logs.</span>
                       </li>
                       <li className="flex items-start gap-1.5">
                         <span className="font-mono text-sky-400 shrink-0 font-bold">•</span>

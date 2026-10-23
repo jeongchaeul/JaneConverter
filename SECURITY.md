@@ -31,10 +31,10 @@ To help us triage and reproduce the issue rapidly, please provide:
 3. The affected environment (Operating System, JaneConverter version, Python / Rust / Node version).
 4. Proposed mitigation or patch, if known.
 
-### Response Timelines & SLA
-- **Initial Acknowledgment:** Within **48 hours** of receiving the report.
-- **Triage & Assessment:** Within **5 business days**, confirming reproduction and assigning an internal priority.
-- **Remediation & Patch Release:** Critical and High severity issues will receive priority patching, followed by a coordinated public release.
+### Response Timelines
+- **Initial Acknowledgment:** Best effort, typically within 2–4 business days.
+- **Triage & Assessment:** Evaluated and reproduced based on severity and operational impact.
+- **Remediation & Patch Release:** Critical issues receive priority patching in continuous updater packages and upcoming point releases.
 - **Safe Harbor:** We will not pursue legal action against researchers who discover and disclose vulnerabilities in good faith following these guidelines, without accessing unauthorized user data, modifying external services, or disrupting availability.
 
 ---
@@ -53,7 +53,7 @@ JaneConverter is a desktop media processing utility running on local hardware.
 ### Out-of-Scope Vulnerabilities
 - Attacks requiring physical access or local administrative control (`root` / `Administrator`) over the user's workstation.
 - Denial of Service (DoS) where an attacker requires the user to manually pass unbounded local inputs that consume CPU/RAM on their own machine.
-- Requests or issues regarding inability to download DRM-protected or encrypted streams (JaneConverter by design complies with DMCA § 1201 and does not crack DRM).
+- Requests or issues regarding inability to download DRM-protected or encrypted streams (JaneConverter does not decrypt or crack DRM).
 - Flaws in third-party services (e.g. YouTube, Spotify) outside JaneConverter's control.
 
 ---
@@ -62,13 +62,14 @@ JaneConverter is a desktop media processing utility running on local hardware.
 
 JaneConverter is engineered with a strict defense-in-depth posture:
 
-1. **Zero Remote Telemetry & Complete Air-Gapping:**
+1. **Zero Remote Telemetry & 100% Local Conversion:**
    - No telemetry, analytics, tracking beacons, or conversion logs are transmitted to any remote server.
    - All conversions run 100% locally via bundled or system FFmpeg, Pillow, and Python engines.
-2. **Ephemeral In-Memory Credentials:**
-   - The sandboxed browser session fallback never touches disk storage for cookies or credentials.
-   - Cookies are held exclusively in process memory and wiped immediately upon job completion.
-   - Unrelated third-party cookies are stripped prior to extraction.
+2. **Ephemeral Session Handling:**
+   - Session recovery creates an ephemeral temporary snapshot of the browser cookie database solely to avoid file-locking conflicts with open browsers.
+   - Only cookies matching the target domain are loaded into volatile process memory; unrelated third-party cookies are ignored.
+   - The temporary database file is deleted immediately upon completion or abort, and memory cookies are purged when the task terminates.
+   - Saved passwords and credentials are never requested or accessed.
 3. **Hardened Loopback Boundary:**
    - The desktop access server and browser companion bridge bind strictly to `127.0.0.1`.
    - Origins are checked against extension schemes (`chrome-extension://`, `moz-extension://`, etc.).
@@ -78,5 +79,6 @@ JaneConverter is engineered with a strict defense-in-depth posture:
    - Filenames are normalized (NFC), bidi formatting marks are stripped, illegal OS characters are purged, and Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, etc.) are defensively escaped.
    - Output paths are canonicalized and verified before writing.
 5. **Signed & Verified Updates:**
-   - Updates are retrieved strictly from canonical HTTPS GitHub releases.
-   - SHA-256 integrity checksums and cryptographic signatures verify binary authenticity prior to installation.
+   - Updates are retrieved strictly over HTTPS from canonical GitHub releases.
+   - Windows installer packages and multi-platform updater archives (`.sig`) are cryptographically signed and verified by the Tauri updater.
+   - Standalone macOS release bundles are ad-hoc signed per repository release workflows.

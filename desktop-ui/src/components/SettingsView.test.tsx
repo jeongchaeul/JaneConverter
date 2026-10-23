@@ -358,8 +358,8 @@ describe("Settings updates", () => {
 
     expect(container.textContent).toContain("Enabled (Session Recovery)");
     expect(container.textContent).toContain("What works when enabled");
-    expect(container.textContent).toContain("Air-gapped privacy guarantees");
-    expect(container.textContent).toContain("RAM only (0 bytes to disk)");
+    expect(container.textContent).toContain("Local-only privacy guarantees");
+    expect(container.textContent).toContain("RAM only (ephemeral)");
 
     await act(async () => { root.unmount(); });
     container.remove();

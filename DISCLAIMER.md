@@ -18,13 +18,19 @@ JaneConverter is an open-source, local media transcoding utility and conversion 
 
 ---
 
-## 2. Anti-Circumvention Declaration (DMCA Section 1201 Compliance)
+## 2. DRM, Access Controls & Platform Terms
 
-JaneConverter strictly abides by Section 1201 of the United States Digital Millennium Copyright Act (17 U.S.C. § 1201), the European Union Information Society Directive (2001/29/EC), and equivalent international copyright and anti-circumvention statutes:
+**What JaneConverter does not do:**
+- **No DRM Decryption:** JaneConverter does **not** bypass, decrypt, circumvent, defeat, or disable any Digital Rights Management (DRM) or technological protection measures, including Google Widevine, Apple FairPlay, Microsoft PlayReady, or ClearKey encryption. Media streams protected by DRM cannot be decrypted and will fail.
+- **No DRM Keys or Extraction Logic:** JaneConverter contains no DRM keys, key-extraction code, proprietary decryption algorithms, or decryption tables.
+- **No Password Cracking or Impersonation:** JaneConverter does not guess passwords, harvest credentials, or authenticate as anyone other than the local user.
 
-- **No DRM Decryption or Circumvention:** JaneConverter does **not** bypass, decrypt, circumvent, defeat, or disable any technological protection measures (TPM) or Digital Rights Management (DRM) technologies, including but not limited to Google Widevine, Apple FairPlay, Microsoft PlayReady, or ClearKey encryption.
-- **No Access-Control Cracking:** JaneConverter contains no code, cryptographic keys, secret algorithms, or decryption tables capable of unlocking encrypted streams or circumventing paywalls. Any media stream protected by DRM or encryption cannot be processed by this software and will fail or be rejected.
-- **Reliance on Public or Explicitly Authorized Streams:** Online retrieval mechanisms (powered by yt-dlp and guest HTTP inspection) interact solely with publicly accessible streams or streams explicitly served to the user's active, authenticated browser session with user consent.
+**What JaneConverter does:**
+- JaneConverter retrieves media that is accessible to you, either as a public guest on the open web or, if you explicitly opt in, through your own signed-in browser session.
+- When encountering HTTP errors, bot challenges, or rate limits, the engine may retry requests using alternate standard browser headers or extraction methods available within yt-dlp and its companion extractors.
+
+**Platform Terms and User Responsibility:**
+Many online platforms restrict or prohibit automated downloading, scraping, or caching in their Terms of Service. Using JaneConverter may constitute a breach of those terms, and platforms may restrict, rate-limit, or suspend your account or IP address. Whether automated retrieval constitutes circumvention of access controls under statutes such as 17 U.S.C. § 1201 or international equivalents depends on the specific facts and jurisdiction. This document does not constitute legal advice; you are solely responsible for ensuring your use complies with applicable laws and contracts.
 
 ---
 
@@ -40,7 +46,7 @@ All product names, logos, brands, trademarks, and registered trademarks referenc
 
 ## 4. FL Studio (.flp) Project File Interoperability
 
-The FL Studio project downgrading and inspection capabilities included in JaneConverter are independent, clean-room implementations of public and reverse-engineered binary chunk specifications:
+The FL Studio project downgrading and inspection capabilities included in JaneConverter are independent implementations of public and reverse-engineered binary chunk specifications:
 
 - This tool operates solely on file metadata, header identifiers, and event chunks of user-supplied `.flp` project files.
 - It does **not** modify, hook, patch, crack, or decompile any executable or dynamic library (`.exe`, `.dll`, `.dylib`, or `.so`) of FL Studio or Image-Line software.
@@ -49,29 +55,26 @@ The FL Studio project downgrading and inspection capabilities included in JaneCo
 
 ---
 
-## 5. Privacy, Air-Gapping & Local Processing
+## 5. Privacy, Local Processing & Security
 
 To ensure complete user privacy and operational security:
 
 - **100% Local Conversion:** All audio transcoding (FFmpeg, SoX), video processing, image conversion (Pillow), and FLP patching run locally on your host machine.
 - **Zero Telemetry:** JaneConverter transmits no user tracking, analytics, media habits, filenames, or conversion history to any remote server or third party.
-- **Ephemeral Session Security:** When the user opts into sandboxed session recovery, session cookies are held strictly in temporary volatile memory for the duration of the active job, are filtered to strip unrelated domains, and are purged immediately upon job completion. No credentials or passwords are ever requested, recorded, or written to disk.
-- **Air-Gapped Loopback Bridge:** The optional Browser Bridge listens exclusively on `127.0.0.1` (localhost), rejects non-extension origins, enforces bounded payload limits, and accepts only media chunks explicitly selected and pushed by the user.
+- **Ephemeral Session Security:** When the user opts into session recovery, session cookies for the target domain are temporarily copied and held in volatile memory for the active job, and the temporary database copy is deleted immediately upon job completion or abort. No passwords or credentials are ever requested or stored.
+- **Local Loopback Bridge:** The optional Browser Bridge listens exclusively on `127.0.0.1` (localhost), rejects non-extension origins, enforces bounded payload limits, and accepts only media chunks explicitly selected and pushed by the user.
 
 ---
 
-## 6. Ephemeral Media, Stories & Audience-Restricted Content (Instagram & Facebook Stories)
+## 6. Stories & Audience-Restricted Content (Instagram & Facebook Stories)
 
-JaneConverter provides capabilities to transcode and process temporary media formats, including ephemeral story links from platforms such as Instagram (`/stories/`) and Facebook (`/stories/`):
+Instagram and Facebook Stories are ephemeral formats designed to expire within 24 hours, often shared with limited audiences (such as Close Friends or Friends Only lists). Creators hold explicit expectations of temporary and restricted visibility.
 
-1. **Ephemeral Intent & Creator Expectations:** Stories are designed by third-party platforms to expire within 24 hours and carry explicit user expectations of temporary availability. Audience-restricted stories (such as Instagram "Close Friends" or Facebook "Friends Only" lists) represent private or semi-private personal communications.
-2. **Statutory Privacy & Wiretapping Compliance:** In many jurisdictions, recording, downloading, archiving, or disseminating private communications or temporary personal media without the express knowledge and consent of the content creator is strictly prohibited by law. This includes, but is not limited to:
-   - The Philippine Data Privacy Act of 2012 (Republic Act No. 10173) and Anti-Photo and Video Voyeurism Act (RA 9995);
-   - The European Union General Data Protection Regulation (GDPR);
-   - The United States Stored Communications Act (18 U.S.C. Chapter 121) and state-level electronic privacy statutes;
-   - Applicable international privacy, personality, and human rights protections.
-3. **Mandatory Opt-In & Ethical Use:** To prevent accidental or non-consensual capture of temporary media, JaneConverter disables story extraction by default. Enabling this feature requires explicit affirmative user acknowledgement. You agree that you will **only** process stories that you have authored, that are public broadcasts, or for which you have obtained express prior written authorization from the creator.
-4. **Absolute Creator Privacy:** You may **never** use JaneConverter to stalk, harass, surveil, dox, blackmail, or republish the ephemeral content of any individual.
+1. **Disabled by Default:** Story capture is disabled by default and requires explicit affirmative user opt-in in Settings. It relies on your signed-in browser session (see Session & Cookie Handling).
+2. **Access Does Not Equal Authorization:** Having technical access to view a story in your personal feed does not automatically grant you the legal right to download, archive, or distribute it. Use this capability only for stories you authored, public content, or content where you have the creator's express permission.
+3. **Anti-Harassment & Privacy Protection:** You may never use JaneConverter to stalk, harass, surveil, dox, blackmail, or republish someone's personal or ephemeral media.
+4. **Legal Compliance:** Privacy, wiretapping, and data protection laws in many jurisdictions restrict recording or archiving private communications without consent. You assume full legal responsibility for following the laws applicable in your jurisdiction.
+5. **Platform Account Risk:** Automated access to story endpoints carries elevated risk of platform abuse detection, which may result in account restrictions or bans.
 
 ---
 

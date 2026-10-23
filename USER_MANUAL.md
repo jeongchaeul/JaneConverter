@@ -74,7 +74,7 @@ JaneConverter automatically recognizes what kind of link you paste:
 Public posts download instantly without any browser setup. However, some platforms restrict content:
 - Private videos or members-only YouTube channels.
 - Friends-only or group-locked Facebook posts and albums.
-- Private Instagram accounts you follow.
+- Content you can already view while signed in, if you have permission to save it.
 - Age-restricted media.
 
 ### Zero-Extension Setup (Automatic):
@@ -83,7 +83,7 @@ JaneConverter can read your logged-in session cookies directly from your install
 2. Go to **Browser & Sessions**.
 3. Enable **Read Browser Cookies**.
 4. *(For Edge & Chrome users)*: Enable **Direct Edge & Chrome Cookie Access**.
-   - This sets a standard Windows system policy so JaneConverter can read your sessions directly without needing third-party extensions.
+   - This sets the user policy `ApplicationBoundEncryptionEnabled` (`0`) in `HKCU\Software\Policies\Microsoft\Edge` and `Google\Chrome` so standard DPAPI decryption can read sessions without third-party extensions. Note: This lowers Edge/Chrome's App-Bound Encryption protection against other software on this PC. You can turn it off at any time in Settings.
 5. Select your **Preferred Browser** (e.g. *Vivaldi*, *Edge*, *Chrome*, *Brave*, *Firefox*).
 6. That's it! JaneConverter will automatically use your existing login session when needed.
 
@@ -152,8 +152,8 @@ All converted files are automatically saved into your **JaneConverter Export Lib
 
 ## Frequently Asked Questions & Troubleshooting
 
-### Q: Why do I see "Sign in required" or a bot check on a public video?
-JaneConverter is updated to bypass public bot challenges automatically. However, if a video is age-restricted or members-only:
+### Q: Why do I see "Sign in required" on a video?
+JaneConverter includes automatic request retries and fallback clients for public links. However, if content is age-restricted, requires account verification, or is members-only:
 1. Go to **Settings** -> **Browser & Sessions**.
 2. Make sure **Read Browser Cookies** is enabled.
 3. If using Chrome or Edge, enable **Direct Edge & Chrome Cookie Access**.

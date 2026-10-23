@@ -72,8 +72,8 @@ The following diagram tracks the lifecycle of an ingestion request through each 
 ### Pillar 2: Authenticated Session Adaptation & DPAPI Recovery
 *Modules: `src/janeconverter/social_photo_capture.py`, `src/janeconverter/auth.py`, `src/janeconverter/cookie_unlocker.py`*
 
-1. **Air-Gap First, Ephemeral Probing Second**:
-   - By default, JaneConverter operates in 100% air-gapped guest mode. No local browser profiles or cookie stores are accessed unless explicitly enabled or required by a private/authenticated link.
+1. **Guest-First, Ephemeral Probing Second**:
+   - By default, JaneConverter operates in 100% guest mode. No local browser profiles or cookie stores are accessed unless explicitly enabled or required by a private/authenticated link.
 2. **Volatile In-Memory Cookie Jars**:
    - When an authenticated or age-gated link (e.g., YouTube Error 152, friends-only posts, Pinterest notifications) is processed, the engine takes a non-locking shadow copy of the browser SQLite cookie database into temporary memory.
    - Decrypted cookies are stored in a volatile `RequestsCookieJar` in RAM and immediately zeroed out after the request completes. No plaintext cookies are ever written to disk.
