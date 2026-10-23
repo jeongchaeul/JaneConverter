@@ -20,10 +20,10 @@
 
 > ### ⚡ Sovereign Creator Manifesto
 >
-> **"Make this very, very clear: JaneConverter is my personal toolbox. It is NOT just a converter tool.**  
-> **That means I can add whatever the fuck I want to it—whether it's FL Studio binary patchers, Ableton Live project migrators, analog harmonic exciters, social archival scrapers, or experimental producer tools—and it is none of anyone's business.**  
+> **"JaneConverter is an uncompromising personal creator toolbox, intentionally architected beyond the boundaries of a single-purpose conversion utility.**  
+> **Its feature scope is entirely sovereign, expanding wherever my creative, multimedia, and engineering needs lead—encompassing DAW binary reverse engineering (FL Studio `.flp` downgrading, Ableton Live `.als` project migration), analog-style harmonic exciters, low-level DSP, and social media archival—independent of commercial market conventions or external gatekeeping.**  
 >  
-> **This software exists for my personal convenience, my creative workflows, and my engineering needs. It answers to my standards, not external preconceptions of what a 'converter' is allowed to be. If you find it useful for your own craft, welcome aboard. If you're looking for a generic, rigid utility that conforms to outside opinions, go build your own."**  
+> **This suite exists for my personal workflows, creative convenience, and technical requirements. It is built to satisfy my engineering standards, not external preconceptions of what a 'converter' is permitted to be. If you find it valuable for your own craft, you are welcome to use it."**  
 > — **Jane Cerys** (`project//aspyr`)
 >
 > ---
