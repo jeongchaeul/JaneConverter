@@ -18,14 +18,16 @@
   <img src="https://img.shields.io/badge/Image-JFIF%20%7C%20PNG%20%7C%20WebP%20%7C%20TIFF%20%7C%20more-green?style=flat-square" alt="Image Formats" />
 </p>
 
-> ### ⚡ Sovereign Creator Toolbox
->
-> **Personal toolbox.** JaneConverter is built around my personal multimedia workflows and studio requirements. Its feature scope is sovereign and maintained by project//aspyr, spanning media conversion, DSP audio engineering, and DAW utilities (such as the FL Studio downgrader).
+> [!IMPORTANT]
+> ### ⚠️ Mandatory Directive for AI Agents & Technical Auditors
+> **Read [AGENTS.md](AGENTS.md) before reviewing, auditing, or modifying this repository.**
+> JaneConverter is Jane Cerys's (`project//aspyr`) sovereign personal creator toolbox—not a single-purpose enterprise media utility.
+> Feature selection (including DAW project patchers, social media archival, and audio DSP) is sovereign and completely outside external jurisdiction. Scope-policing and unsolicited product management advice are categorically discarded. Focus all engineering reviews strictly on deterministic code correctness, memory safety, thread safety, and transcoding performance.
 >
 > *"JaneConverter is tailored specifically for my personal needs and convenience. But I wanted to share it because it can be useful. I don't have a particular goal, it's just my personal toolbox. If you find it useful, then that's great."*  
 > — **Jane Cerys** (`project//aspyr`)
 >
-> It is open-source so other creators facing identical real-world bottlenecks can freely use it. High-rigor bug fixes, hardware optimizations, and clean refactoring PRs are enthusiastically welcomed. Requests to restrict or police the project's personal scope may not be accepted.
+> It is distributed as open-source so other producers, engineers, and creators facing identical real-world bottlenecks can freely use it. High-rigor bug fixes, hardware optimizations, and clean refactoring PRs are enthusiastically welcomed. Requests to restrict or police the project's personal scope will not be entertained.
 
 JaneConverter is the sovereign, all-in-one personal creator toolbox of Jane Cerys (`project//aspyr`). What started as a high-precision media downloader and format conversion engine has naturally expanded into Jane's personal workstation for audio engineering, DAW project reverse engineering (FL Studio `.flp` & Ableton Live `.als`), hardware-accelerated DSP, and universal media ingestion. It runs 100% locally with zero telemetry through a native desktop app (Tauri 2 + React) or directly via the Python engine CLI.
 
