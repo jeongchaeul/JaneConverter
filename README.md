@@ -68,12 +68,6 @@ Instead of aborting, JaneConverter treats runtime errors as deterministic signal
 - **Pillar 5: Transcoder & Hardware Resilience**: JIT FFmpeg command rewriting, seamless GPU (NVENC/AMF/QSV/VAAPI) to multi-core CPU failover, and lossless stream remuxing before re-encoding.
 - **Pillar 6: Host OS Resiliency**: Windows Antivirus/Search indexer retry loops (`WinError 32/33 PermissionError`), non-blocking handle duplication, and atomic file replacements.
 
-<p align="center">
-  <a href="docs/MAHORAGA_ENGINE.md">
-    <img src="docs/photos/mahoraga-pipeline.svg" width="100%" alt="Adaptive Resilience Pipeline Architecture" />
-  </a>
-</p>
-
 *For the complete technical breakdown of adaptation tiers, failure categorizations, and recovery algorithms, see the [Adaptive Resilience Engine Reference](docs/MAHORAGA_ENGINE.md).*
 
 ---
