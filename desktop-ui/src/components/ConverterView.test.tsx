@@ -107,6 +107,8 @@ describe("Converter account access feedback", () => {
     window.scrollTo = vi.fn();
     bridge.openUrl.mockReset();
     bridge.openUrl.mockResolvedValue(undefined);
+    HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
+    HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false; });
   });
 
   it("offers Open in browser button when source URL is provided", async () => {
@@ -149,6 +151,32 @@ describe("Converter account access feedback", () => {
     expect(bridge.cancelPlaylist).toHaveBeenCalledTimes(1);
     expect(view.onStatus).toHaveBeenCalledWith("Playlist loading cancelled.");
     expect(view.container.textContent).not.toContain("Loading playlist");
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("shows Story items button and loads story catalog when an ephemeral story URL is entered", async () => {
+    bridge.loadPlaylist.mockResolvedValueOnce({
+      title: "Story by shinchewieeee",
+      items: [
+        { index: 1, title: "Story 1", artist: "shinchewieeee", duration: "0:15", url: "https://example.test/s1" },
+      ],
+    });
+    const view = renderView(undefined, undefined, undefined, null, undefined, { allowStoryExtraction: true });
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Source media URL or local path"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "https://www.instagram.com/stories/shinchewieeee/");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+      input?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const storyButton = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.includes("Story items"));
+    expect(storyButton).toBeDefined();
+
+    await act(async () => {
+      storyButton?.click();
+    });
+    expect(bridge.loadPlaylist).toHaveBeenCalledWith("https://www.instagram.com/stories/shinchewieeee/");
+    expect(view.onStatus).toHaveBeenCalledWith("Loaded 1 items from Story by shinchewieeee.");
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });

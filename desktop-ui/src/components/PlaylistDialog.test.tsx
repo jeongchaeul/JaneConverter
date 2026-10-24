@@ -131,4 +131,54 @@ describe("PlaylistDialog", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("adapts labels for story collections and passes selected preset on confirm", async () => {
+    const onConfirm = vi.fn();
+    const storyCatalog: PlaylistCatalog = {
+      title: "Story by shinchewieeee",
+      items: [
+        { index: 1, title: "Story 1", artist: "shinchewieeee", duration: "0:15", url: "https://example.test/s1" },
+        { index: 2, title: "Story 2", artist: "shinchewieeee", duration: "0:15", url: "https://example.test/s2" },
+      ],
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <PlaylistDialog
+          catalog={storyCatalog}
+          onClose={vi.fn()}
+          onConfirm={onConfirm}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain("2 of 2 items selected");
+    const convertBtn = Array.from(container.querySelectorAll("button")).find((btn) =>
+      btn.textContent?.includes("Convert selected stories")
+    );
+    expect(convertBtn).toBeDefined();
+
+    const select = container.querySelector<HTMLSelectElement>('select[aria-label="Target conversion preset"]');
+    expect(select).toBeDefined();
+    await act(async () => {
+      if (select) {
+        select.value = "universal-video";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+
+    await act(async () => {
+      convertBtn?.click();
+    });
+
+    expect(onConfirm).toHaveBeenCalledWith(
+      "1,2",
+      expect.objectContaining({ id: "universal-video", format: "mp4" })
+    );
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });

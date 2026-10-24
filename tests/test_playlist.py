@@ -17,11 +17,17 @@ def test_is_playlist_url():
     assert is_playlist_url("https://open.spotify.com/album/1DFixLWuPkv3KT3TnV35m3") is True
     assert is_playlist_url("https://soundcloud.com/user/sets/my-mixtape") is True
     assert is_playlist_url("https://artist.bandcamp.com/album/greatest-hits") is True
+    assert is_playlist_url("https://www.instagram.com/stories/shinchewieeee/") is True
+    assert is_playlist_url("https://www.instagram.com/stories/shinchewieeee") is True
+    assert is_playlist_url("https://www.instagram.com/stories/highlights/17987654321/") is True
+    assert is_playlist_url("https://www.facebook.com/stories/1020304050/") is True
 
     # False cases (single tracks or non-playlists)
     assert is_playlist_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ") is False
     assert is_playlist_url("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT") is False
     assert is_playlist_url("https://soundcloud.com/user/single-track") is False
+    assert is_playlist_url("https://www.instagram.com/stories/shinchewieeee/4014646097821115323/") is False
+    assert is_playlist_url("https://www.facebook.com/stories/1020304050/9876543210/") is False
     assert is_playlist_url("D:\\Music\\song.mp3") is False
     assert is_playlist_url("random text") is False
     assert is_playlist_url("") is False

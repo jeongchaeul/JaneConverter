@@ -16,6 +16,7 @@ import {
   FolderOpen,
   Inbox,
   Info,
+  Layers,
   Link2,
   ListMusic,
   ListPlus,
@@ -524,7 +525,12 @@ export function ConverterView({
       });
   }, [queueRunning, running, effectivePaused, queue, onStart, onStatus, onSettings]);
 
-  function addToQueue(customSource?: string, customIndexes?: string, customCatalog?: PlaylistCatalog) {
+  function addToQueue(
+    customSource?: string,
+    customIndexes?: string,
+    customCatalog?: PlaylistCatalog,
+    customPreset?: IntentPreset,
+  ) {
     const raw = customSource !== undefined ? customSource : source;
     const clean = raw.trim();
     if (!clean) {
@@ -538,11 +544,24 @@ export function ConverterView({
     }
 
     const detected = detectCategoryFromPath(clean);
-    const itemCategory = (customCatalog ? "Audio" : detected) || activeCategory;
+    const itemCategory = customPreset ? customPreset.category : ((customCatalog ? "Audio" : detected) || activeCategory);
     const itemName = customCatalog?.title || clean.replace(/^.*[\\/]/, "") || clean;
-    const presetName = selectedPresetId
-      ? intentPresets.find((p) => p.id === selectedPresetId)?.name
-      : undefined;
+    const presetName = customPreset
+      ? customPreset.name
+      : (selectedPresetId ? intentPresets.find((p) => p.id === selectedPresetId)?.name : undefined);
+
+    const snapshotSettings: ConverterSettings = customPreset
+      ? {
+          ...settings,
+          category: customPreset.category,
+          format: customPreset.format,
+          bitrate: customPreset.bitrate,
+          sampleRate: customPreset.sampleRate,
+          resolution: customPreset.resolution,
+          normalize: customPreset.normalize,
+          useGpu: customPreset.useGpu,
+        }
+      : { ...settings };
 
     const newItem: QueueItem = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -554,14 +573,16 @@ export function ConverterView({
       playlistIndexes: customIndexes,
       playlistCatalog: customCatalog,
       presetName,
-      settingsSnapshot: { ...settings },
+      settingsSnapshot: snapshotSettings,
     };
 
     setQueue((curr) => [...curr, newItem]);
     if (!customSource || customSource === source.trim()) {
       setSource("");
     }
-    const trackNote = customIndexes ? ` (${customIndexes.split(",").length} tracks selected)` : "";
+    const isStory = isEphemeralStoryUrl(clean);
+    const itemLabel = isStory ? "items" : "tracks";
+    const trackNote = customIndexes ? ` (${customIndexes.split(",").length} ${itemLabel} selected)` : "";
     onStatus(`Added "${itemName}"${trackNote} to conversion queue.`);
   }
 
@@ -867,17 +888,24 @@ export function ConverterView({
 
   async function loadPlaylist() {
     if (!source.trim()) {
-      onStatus("Paste a playlist or album URL first.");
+      onStatus("Paste a playlist, album, or story URL first.");
+      return;
+    }
+    const isStory = isEphemeralStoryUrl(source.trim());
+    if (isStory && !settings.allowStoryExtraction) {
+      setShowStoryTermsModal(true);
+      onStatus("Ephemeral story extraction requires accepting the Terms of Usage and legal compliance agreement.");
       return;
     }
     setLoadingPlaylist(true);
     try {
       const catalog = await bridge.loadPlaylist(source.trim());
       setPlaylist(catalog);
-      onStatus(`Loaded ${catalog.items.length} tracks from ${catalog.title}.`);
+      const itemLabel = isStory ? "items" : "tracks";
+      onStatus(`Loaded ${catalog.items.length} ${itemLabel} from ${catalog.title}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (/cancelled/i.test(message)) onStatus("Playlist loading cancelled.");
+      if (/cancelled/i.test(message)) onStatus(isStory ? "Story loading cancelled." : "Playlist loading cancelled.");
       else onError(message);
     } finally {
       setLoadingPlaylist(false);
@@ -945,7 +973,7 @@ export function ConverterView({
     }
   }
 
-  async function convert(indexes?: string) {
+  async function convert(indexes?: string, customPreset?: IntentPreset) {
     if (queue.length > 0 && queue.some((item) => item.status === "queued" || item.status === "converting")) {
       if (!running) {
         setQueue((curr) =>
@@ -965,9 +993,45 @@ export function ConverterView({
       onStatus("Ephemeral story extraction requires accepting the Terms of Usage and legal compliance agreement.");
       return;
     }
+
+    const customSettings: ConverterSettings | undefined = customPreset
+      ? {
+          ...settings,
+          category: customPreset.category,
+          format: customPreset.format,
+          bitrate: customPreset.bitrate,
+          sampleRate: customPreset.sampleRate,
+          resolution: customPreset.resolution,
+          normalize: customPreset.normalize,
+          useGpu: customPreset.useGpu,
+        }
+      : undefined;
+
+    const invokeStart = (
+      startSource: string,
+      startIndexes?: string,
+      startFbId?: string,
+      startSocialId?: string,
+      startMediaKind?: "photo" | "video",
+    ) => {
+      if (customSettings) {
+        return onStart(startSource, startIndexes, startFbId, startSocialId, startMediaKind, customSettings);
+      }
+      if (startMediaKind !== undefined) {
+        return onStart(startSource, startIndexes, startFbId, startSocialId, startMediaKind);
+      }
+      if (startSocialId !== undefined) {
+        return onStart(startSource, startIndexes, startFbId, startSocialId);
+      }
+      if (startFbId !== undefined) {
+        return onStart(startSource, startIndexes, startFbId);
+      }
+      return onStart(startSource, startIndexes);
+    };
+
     if (isPinterestNotificationRoute(trimmedSource)) {
       onStatus("Reading Pinterest collection using your browser session...");
-      await onStart(trimmedSource, indexes);
+      await invokeStart(trimmedSource, indexes);
       return;
     }
     if (settings.openInBrowser && /^https?:\/\//i.test(trimmedSource)) {
@@ -982,13 +1046,13 @@ export function ConverterView({
           ? "X/Twitter"
           : "Instagram";
       onStatus(`Sending this ${platformLabel} post to the video converter...`);
-      await onStart(trimmedSource, indexes);
+      await invokeStart(trimmedSource, indexes);
       return;
     }
     if (isFacebookPostLink(trimmedSource)) {
       if (access.active || settings.readBrowserCookies === true) {
         onStatus("Reading Facebook post using your active browser session...");
-        await onStart(trimmedSource, indexes);
+        await invokeStart(trimmedSource, indexes);
         return;
       }
       const captureId = crypto.randomUUID();
@@ -1001,10 +1065,10 @@ export function ConverterView({
         let started: void | boolean;
         if (capture.mediaKind === "video") {
           onStatus("This Facebook post contains video. Starting the video conversion...");
-          started = await onStart(trimmedSource, indexes, undefined, undefined, "video");
+          started = await invokeStart(trimmedSource, indexes, undefined, undefined, "video");
         } else {
           onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
-          started = await onStart(trimmedSource, undefined, capture.captureId);
+          started = await invokeStart(trimmedSource, undefined, capture.captureId);
         }
         sessionTransferredToConversion = started !== false;
       } catch (error) {
@@ -1014,7 +1078,7 @@ export function ConverterView({
         } else {
           onStatus("Facebook guest session unavailable or restricted. Adapting with browser session...");
           try {
-            await onStart(trimmedSource, indexes);
+            await invokeStart(trimmedSource, indexes);
           } catch (fallbackError) {
             onError(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
           }
@@ -1035,17 +1099,17 @@ export function ConverterView({
     if (photoPlatform) {
       if (photoPlatform === "instagram" && isInstagramVideoRoute(trimmedSource)) {
         onStatus("Sending this Instagram post to the video converter...");
-        await onStart(trimmedSource, indexes, undefined, undefined, "video");
+        await invokeStart(trimmedSource, indexes, undefined, undefined, "video");
         return;
       }
       if (photoPlatform === "instagram" && (access.active || settings.readBrowserCookies === true)) {
         onStatus("Reading Instagram post using your active browser session...");
-        await onStart(trimmedSource, indexes);
+        await invokeStart(trimmedSource, indexes);
         return;
       }
       if (photoPlatform === "pinterest" && (access.active || settings.readBrowserCookies === true)) {
         onStatus("Reading Pinterest using your active browser session...");
-        await onStart(trimmedSource, indexes);
+        await invokeStart(trimmedSource, indexes);
         return;
       }
       const captureId = crypto.randomUUID();
@@ -1057,10 +1121,10 @@ export function ConverterView({
         const capture = await bridge.captureSocialPostPhotos(trimmedSource, captureId);
         if (capture.mediaKind === "video") {
           onStatus(`This ${platformLabel} post contains video. Starting the video conversion...`);
-          await onStart(trimmedSource, indexes, undefined, undefined, "video");
+          await invokeStart(trimmedSource, indexes, undefined, undefined, "video");
         } else {
           onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
-          await onStart(trimmedSource, undefined, undefined, capture.captureId);
+          await invokeStart(trimmedSource, undefined, undefined, capture.captureId);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1068,11 +1132,11 @@ export function ConverterView({
           onStatus(message);
         } else if (photoPlatform === "twitter") {
           onStatus("Adapting: Passing the X/Twitter post to the media downloader...");
-          await onStart(trimmedSource, indexes, undefined, undefined, "video");
+          await invokeStart(trimmedSource, indexes, undefined, undefined, "video");
         } else {
           onStatus(`Guest session for ${platformLabel} unavailable or restricted. Adapting with browser session...`);
           try {
-            await onStart(trimmedSource, indexes);
+            await invokeStart(trimmedSource, indexes);
           } catch (fallbackError) {
             onError(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
           }
@@ -1083,7 +1147,7 @@ export function ConverterView({
       }
       return;
     }
-    await onStart(trimmedSource, indexes);
+    await invokeStart(trimmedSource, indexes);
   }
 
   async function cancelFacebookCapture() {
@@ -1300,14 +1364,27 @@ export function ConverterView({
           <button type="button" disabled={facebookCaptureBusy || socialCaptureBusy} onClick={() => void browseBatch()} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50">
             <Files className="size-3.5" /> Batch
           </button>
-          <button
-            type="button"
-            disabled={loadingPlaylist || facebookCaptureBusy || socialCaptureBusy}
-            onClick={() => void loadPlaylist()}
-            className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <ListMusic className="size-3.5" /> {loadingPlaylist ? "Loading..." : "Playlist tracks"}
-          </button>
+          {isEphemeralStoryUrl(source.trim()) ? (
+            <button
+              type="button"
+              disabled={loadingPlaylist || facebookCaptureBusy || socialCaptureBusy}
+              onClick={() => void loadPlaylist()}
+              className="subtle-button flex items-center gap-2 px-3 text-xs text-pink-300 hover:text-pink-200 border-pink-500/25 bg-pink-500/[0.04] disabled:cursor-not-allowed disabled:opacity-50"
+              title="Read all active realtime stories for this user"
+            >
+              <Layers className="size-3.5 text-pink-400" /> {loadingPlaylist ? "Reading stories..." : "Story items"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={loadingPlaylist || facebookCaptureBusy || socialCaptureBusy}
+              onClick={() => void loadPlaylist()}
+              className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+              title="Load playlist tracks and inspect catalog"
+            >
+              <ListMusic className="size-3.5" /> {loadingPlaylist ? "Loading..." : "Playlist tracks"}
+            </button>
+          )}
           <button
             type="button"
             disabled={!source.trim() || facebookCaptureBusy || socialCaptureBusy}
@@ -2006,13 +2083,13 @@ export function ConverterView({
         <PlaylistDialog
           catalog={playlist}
           onClose={() => setPlaylist(null)}
-          onConfirm={(indexes) => {
+          onConfirm={(indexes, preset) => {
             setPlaylist(null);
-            void convert(indexes);
+            void convert(indexes, preset);
           }}
-          onQueue={(indexes, catalog) => {
+          onQueue={(indexes, catalog, preset) => {
             setPlaylist(null);
-            addToQueue(source.trim(), indexes, catalog);
+            addToQueue(source.trim(), indexes, catalog, preset);
           }}
         />
       )}
@@ -2022,23 +2099,45 @@ export function ConverterView({
           initialIndexes={configuringQueueItem.playlistIndexes}
           isQueuedItem={true}
           onClose={() => setConfiguringQueueItem(null)}
-          onQueue={(indexes, catalog) => {
+          onQueue={(indexes, catalog, preset) => {
             setQueue((curr) =>
               curr.map((it) =>
                 it.id === configuringQueueItem.id
-                  ? { ...it, playlistIndexes: indexes, playlistCatalog: catalog }
+                  ? {
+                      ...it,
+                      playlistIndexes: indexes,
+                      playlistCatalog: catalog,
+                      ...(preset
+                        ? {
+                            category: preset.category,
+                            presetName: preset.name,
+                            settingsSnapshot: {
+                              ...(it.settingsSnapshot ?? settings),
+                              category: preset.category,
+                              format: preset.format,
+                              bitrate: preset.bitrate,
+                              sampleRate: preset.sampleRate,
+                              resolution: preset.resolution,
+                              normalize: preset.normalize,
+                              useGpu: preset.useGpu,
+                            },
+                          }
+                        : {}),
+                    }
                   : it
               )
             );
             setConfiguringQueueItem(null);
-            onStatus(`Saved track selection for "${configuringQueueItem.name}" (${indexes.split(",").length} tracks selected).`);
+            const isStory = isEphemeralStoryUrl(configuringQueueItem.source);
+            const itemLabel = isStory ? "items" : "tracks";
+            onStatus(`Saved selection for "${configuringQueueItem.name}" (${indexes.split(",").length} ${itemLabel} selected).`);
           }}
         />
       )}
       {(loadingPlaylist || loadingQueueConfig) && (
         <div className="fixed inset-0 z-40 grid place-items-center bg-black/45 backdrop-blur-sm">
           <div className="panel flex items-center gap-3 px-5 py-4 text-sm text-zinc-300">
-            <RefreshCw className="size-4 animate-spin text-zinc-500" /> Reading playlist catalog...
+            <RefreshCw className="size-4 animate-spin text-zinc-500" /> {isEphemeralStoryUrl(source.trim()) ? "Reading live story collection..." : "Reading playlist catalog..."}
             <button
               type="button"
               className="subtle-button px-3 py-1"

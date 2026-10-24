@@ -202,6 +202,16 @@ def is_playlist_url(url_or_path: str) -> bool:
         return True
     if "/playlist/" in path_lower or "/sets/" in path_lower:
         return True
+    if is_ephemeral_story_url(url_or_path):
+        m_ig = re.search(r"^/stories/(?P<user>[^/?#]+)(?:/(?P<id>\d+))?/?$", path_lower)
+        if m_ig:
+            ig_user = m_ig.group("user")
+            ig_id = m_ig.group("id")
+            if ig_user == "highlights" or not ig_id:
+                return True
+        m_fb = re.search(r"^/stories/(?P<bucket>\d+)(?:/(?P<story_id>[^/?#&]+))?/?$", path_lower)
+        if m_fb and not m_fb.group("story_id"):
+            return True
     return False
 
 def is_ephemeral_story_url(url_or_path: str) -> bool:
@@ -1581,7 +1591,7 @@ def fetch_playlist_entries(
             "in DISCLAIMER.md by enabling 'Ephemeral Stories Extraction' in Settings, or passing --allow-ephemeral-stories in the CLI."
         )
 
-    def report(pct: float, msg: str):
+    def report(pct: float, msg: str, *args: Any, **kwargs: Any):
         if progress_callback:
             progress_callback(pct, msg)
 

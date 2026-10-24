@@ -1724,6 +1724,13 @@ async fn load_playlist(
     state: State<'_, AppState>,
     source: String,
 ) -> Result<model::PlaylistCatalog, String> {
+    let settings = settings_get_internal();
+    let allow_story = settings.allow_story_extraction;
+    let browser = if settings.read_browser_cookies {
+        settings.browser_session
+    } else {
+        Some("none".into())
+    };
     let cancel = Arc::new(AtomicBool::new(false));
     let slot = state.playlist_cancel.clone();
     {
@@ -1735,10 +1742,11 @@ async fn load_playlist(
         }
         *current = Some(cancel.clone());
     }
-    let result =
-        tauri::async_runtime::spawn_blocking(move || load_playlist_engine(&source, None, &cancel))
-            .await
-            .map_err(|error| format!("Playlist loading stopped: {error}"));
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        load_playlist_engine(&source, browser, allow_story, &cancel)
+    })
+    .await
+    .map_err(|error| format!("Playlist loading stopped: {error}"));
     if let Ok(mut current) = slot.lock() {
         *current = None;
     }

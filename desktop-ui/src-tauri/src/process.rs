@@ -900,6 +900,7 @@ pub fn validate_capture(
 pub fn load_playlist(
     source: &str,
     browser: Option<String>,
+    allow_story_extraction: bool,
     cancel: &AtomicBool,
 ) -> Result<PlaylistCatalog, String> {
     let engine = find_python();
@@ -908,6 +909,9 @@ pub fn load_playlist(
         command.args(["run", "--locked", "janeconverter"]);
     }
     command.args(["--source", source.trim(), "--list-playlist", "--no-update"]);
+    if allow_story_extraction {
+        command.arg("--allow-ephemeral-stories");
+    }
     if let Some(browser) = browser.filter(|value| !value.trim().is_empty()) {
         let browser = normalize_browser_session_arg(&browser)?;
         command.args(["--browser-session", browser.as_str()]);
