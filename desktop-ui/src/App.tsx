@@ -136,6 +136,7 @@ interface SuccessPromptState {
   elapsedMs: number;
   fallbackNote: string | null;
   fileSizeBytes?: number;
+  status?: "succeeded" | "partial";
 }
 
 export default function App() {
@@ -452,6 +453,7 @@ export default function App() {
               exportPath,
               elapsedMs,
               fallbackNote,
+              status: isPartial ? "partial" : "succeeded",
             });
           }
           recordTimingForPath(exportPath, elapsedMs);
@@ -873,12 +875,12 @@ export default function App() {
             >
               <X className="size-4" />
             </button>
-            <div className="flex items-center gap-2 text-emerald-400">
-              <CheckCircle2 className="size-5" />
-              <span className="mono-label">Conversion complete</span>
+            <div className={`flex items-center gap-2 ${success.status === "partial" ? "text-amber-400" : "text-emerald-400"}`}>
+              {success.status === "partial" ? <AlertCircle className="size-5" /> : <CheckCircle2 className="size-5" />}
+              <span className="mono-label">{success.status === "partial" ? "Partial conversion" : "Conversion complete"}</span>
             </div>
             <h2 id="conversion-success-title" className="mt-2 text-xl font-semibold text-white">
-              Success
+              {success.status === "partial" ? "Partial Success" : "Success"}
             </h2>
             <div className="mt-3 space-y-2.5">
               <div className="break-words text-sm font-medium text-white">

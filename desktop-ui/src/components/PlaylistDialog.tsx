@@ -13,14 +13,24 @@ export function PlaylistDialog({
 }: {
   catalog: PlaylistCatalog;
   onClose: () => void;
-  onConfirm?: (indexes: string, preset?: IntentPreset) => void;
-  onQueue?: (indexes: string, catalog: PlaylistCatalog, preset?: IntentPreset) => void;
+  onConfirm?: (
+    indexes: string,
+    preset?: IntentPreset,
+    itemOverrides?: Record<number, IntentPreset>
+  ) => void;
+  onQueue?: (
+    indexes: string,
+    catalog: PlaylistCatalog,
+    preset?: IntentPreset,
+    itemOverrides?: Record<number, IntentPreset>
+  ) => void;
   initialIndexes?: string;
   isQueuedItem?: boolean;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState("");
   const [selectedPresetId, setSelectedPresetId] = useState<string>("current");
+  const [itemPresets, setItemPresets] = useState<Record<number, string>>({});
   const isStory = /story|stories|instagram|facebook/i.test(catalog.title) || catalog.items.some((item) => /story/i.test(item.title));
   const [selected, setSelected] = useState<Set<number>>(() => {
     if (initialIndexes && initialIndexes.trim()) {
@@ -65,6 +75,19 @@ export function PlaylistDialog({
     });
   }
 
+  function getResolvedPresets() {
+    const batchPreset = selectedPresetId !== "current" ? intentPresets.find((p) => p.id === selectedPresetId) : undefined;
+    const itemOverrides: Record<number, IntentPreset> = {};
+    for (const idx of selected) {
+      const customId = itemPresets[idx];
+      if (customId && customId !== "inherit") {
+        const found = intentPresets.find((p) => p.id === customId);
+        if (found) itemOverrides[idx] = found;
+      }
+    }
+    return { batchPreset, itemOverrides };
+  }
+
   return (
     <dialog ref={dialogRef} className="fixed inset-0 z-50 m-auto grid max-h-[82vh] w-[calc(100%-3rem)] max-w-3xl place-items-center overflow-hidden border-0 bg-transparent p-0 text-white backdrop:bg-black/60 backdrop:backdrop-blur-sm" aria-label={isStory ? "Story item selector" : "Playlist track selector"} onCancel={(event) => { event.preventDefault(); onClose(); }}>
       <div className="panel flex max-h-[82vh] w-full max-w-3xl flex-col overflow-hidden bg-[#090812] shadow-2xl shadow-black/50">
@@ -92,7 +115,56 @@ export function PlaylistDialog({
           <button type="button" onClick={invert} className="subtle-button px-3 py-2 text-xs">Invert</button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
-          {visible.map((item) => <label key={item.index} className="flex cursor-pointer items-center gap-3 border-b border-white/[0.04] py-3 text-xs hover:bg-white/[0.02]"><input type="checkbox" checked={selected.has(item.index)} onChange={() => toggle(item.index)} className="size-4 accent-[#c52b68]" /><span className="w-8 font-mono text-[10px] text-zinc-700">{item.index}</span><span className="min-w-0 flex-1 truncate text-zinc-300">{item.title}<span className="ml-2 text-zinc-600">{item.artist}</span></span><span className="font-mono text-[10px] text-zinc-600">{item.duration}</span>{selected.has(item.index) && <Check className="size-3.5 text-emerald-400" />}</label>)}
+          {visible.map((item) => {
+            const isSelected = selected.has(item.index);
+            const currentItemPreset = itemPresets[item.index] ?? "inherit";
+            return (
+              <div
+                key={item.index}
+                onClick={() => toggle(item.index)}
+                className="flex cursor-pointer items-center gap-3 border-b border-white/[0.04] py-2.5 text-xs hover:bg-white/[0.02] transition-colors"
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => toggle(item.index)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="size-4 accent-[#c52b68] cursor-pointer"
+                />
+                <span className="w-6 font-mono text-[10px] text-zinc-700">{item.index}</span>
+                <span className="min-w-0 flex-1 truncate text-zinc-300">
+                  {item.title}
+                  <span className="ml-2 text-zinc-600">{item.artist}</span>
+                </span>
+                <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <select
+                    value={currentItemPreset}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setItemPresets((prev) => ({ ...prev, [item.index]: val }));
+                    }}
+                    className="field py-1 px-2 text-[11px] bg-zinc-900/90 border border-white/10 rounded-lg text-zinc-300 hover:border-pink-500/40 focus:border-pink-500 focus:outline-none transition-colors max-w-[170px]"
+                    aria-label={`Preset for item ${item.index}`}
+                  >
+                    <option value="inherit">
+                      {selectedPresetId === "current"
+                        ? "Current Settings"
+                        : `${intentPresets.find((p) => p.id === selectedPresetId)?.name || "Preset"}`}
+                    </option>
+                    {intentPresets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.name} ({preset.format.toUpperCase()})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <span className="w-10 text-right font-mono text-[10px] text-zinc-600">{item.duration}</span>
+                <span className="w-4 flex justify-center">
+                  {isSelected && <Check className="size-3.5 text-emerald-400" />}
+                </span>
+              </div>
+            );
+          })}
           {!visible.length && <div className="py-10 text-center text-xs text-zinc-600">{isStory ? "No story items match this filter." : "No tracks match this filter."}</div>}
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.06] px-5 py-4">
@@ -122,12 +194,9 @@ export function PlaylistDialog({
                 type="button"
                 disabled={!selected.size}
                 onClick={() => {
-                  const chosen = selectedPresetId !== "current" ? intentPresets.find((p) => p.id === selectedPresetId) : undefined;
-                  if (chosen) {
-                    onQueue(Array.from(selected).sort((a, b) => a - b).join(","), catalog, chosen);
-                  } else {
-                    onQueue(Array.from(selected).sort((a, b) => a - b).join(","), catalog);
-                  }
+                  const { batchPreset, itemOverrides } = getResolvedPresets();
+                  const sortedIndexes = Array.from(selected).sort((a, b) => a - b).join(",");
+                  onQueue(sortedIndexes, catalog, batchPreset, itemOverrides);
                 }}
                 className="subtle-button flex items-center gap-1.5 px-4 py-2 text-xs text-pink-300 hover:text-pink-200 disabled:opacity-40"
               >
@@ -140,12 +209,9 @@ export function PlaylistDialog({
                 type="button"
                 disabled={!selected.size}
                 onClick={() => {
-                  const chosen = selectedPresetId !== "current" ? intentPresets.find((p) => p.id === selectedPresetId) : undefined;
-                  if (chosen) {
-                    onConfirm(Array.from(selected).sort((a, b) => a - b).join(","), chosen);
-                  } else {
-                    onConfirm(Array.from(selected).sort((a, b) => a - b).join(","));
-                  }
+                  const { batchPreset, itemOverrides } = getResolvedPresets();
+                  const sortedIndexes = Array.from(selected).sort((a, b) => a - b).join(",");
+                  onConfirm(sortedIndexes, batchPreset, itemOverrides);
                 }}
                 className="primary-button px-4 py-2 text-xs disabled:opacity-40"
               >

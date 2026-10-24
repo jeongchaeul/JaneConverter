@@ -668,6 +668,12 @@ def process_playlist_conversion(
         raw_title = entry.get("title", f"Track_{idx}")
         artist = entry.get("artist", "")
         item_url = entry.get("url", "")
+        if not item_url or not is_url(item_url):
+            e_id = entry.get("id", "")
+            if e_id and "instagram.com" in (playlist_title.lower() if "instagram.com" in playlist_title.lower() else ""):
+                item_url = f"https://www.instagram.com/p/{e_id}/"
+            elif e_id and is_url(f"https://{e_id}"):
+                item_url = f"https://{e_id}"
 
         # Clean any preexisting numeric prefixes to guarantee clean '1. Song1' format
         clean_title = re.sub(r'^\d+[\.\s\-_]+\s*', '', sanitize_filename(raw_title)).strip()
@@ -824,6 +830,12 @@ def process_playlist_conversion(
                 raise KeyboardInterrupt("Playlist conversion aborted by user.")
             entry, raw_title, artist, clean_title, ordered_filename, idx = def_item
             item_url = entry.get("url", "")
+        if not item_url or not is_url(item_url):
+            e_id = entry.get("id", "")
+            if e_id and "instagram.com" in (playlist_title.lower() if "instagram.com" in playlist_title.lower() else ""):
+                item_url = f"https://www.instagram.com/p/{e_id}/"
+            elif e_id and is_url(f"https://{e_id}"):
+                item_url = f"https://{e_id}"
             report_overall(1.0, f"[Adaptive Recovery] Retrying #{idx}: {clean_title} via alternate audio paths...")
             alt_title = re.sub(r'\s*[\(\[].*?[\)\]]', '', raw_title).strip()
             alt_artist = re.split(r'[,&]|\bfeat\b|\bft\b', str(artist or ""), flags=re.IGNORECASE)[0].strip()
@@ -942,7 +954,8 @@ def process_playlist_conversion(
     report_overall(1.0, f"Completed playlist! {len(converted_files)}/{total_items} tracks converted.")
     print("=" * 60)
     print(f"PLAYLIST SUMMARY: {len(converted_files)} succeeded, {len(failed_files)} failed.")
-    print(f"Export Directory: {playlist_dir}")
+    if len(converted_files) > 0:
+        print(f"Export Directory: {playlist_dir}")
     print("=" * 60)
 
     return {

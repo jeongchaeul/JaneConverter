@@ -708,8 +708,18 @@ pub fn start_conversion(
             if let Some(raw_path) = exported_output.lock().ok().and_then(|value| value.clone()) {
                 let (record_target, display_output) =
                     crate::library::resolve_exported_output(&raw_path);
-                crate::library::record_conversion_timing(&record_target, elapsed_ms);
-                resolved_output = Some(display_output);
+                let target_path = std::path::Path::new(&record_target);
+                let has_content = if target_path.is_dir() {
+                    std::fs::read_dir(target_path)
+                        .map(|mut entries| entries.next().is_some())
+                        .unwrap_or(false)
+                } else {
+                    target_path.is_file()
+                };
+                if has_content {
+                    crate::library::record_conversion_timing(&record_target, elapsed_ms);
+                    resolved_output = Some(display_output);
+                }
             }
         }
         let partial_msg = partial_summary.lock().ok().and_then(|value| value.clone());

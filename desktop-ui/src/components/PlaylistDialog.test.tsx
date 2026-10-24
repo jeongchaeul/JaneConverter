@@ -97,7 +97,7 @@ describe("PlaylistDialog", () => {
       queueButton?.click();
     });
 
-    expect(onQueue).toHaveBeenCalledWith("1,2", catalog);
+    expect(onQueue).toHaveBeenCalledWith("1,2", catalog, undefined, {});
     await act(async () => { root.unmount(); });
     container.remove();
   });
@@ -127,7 +127,7 @@ describe("PlaylistDialog", () => {
       saveButton?.click();
     });
 
-    expect(onQueue).toHaveBeenCalledWith("2", catalog);
+    expect(onQueue).toHaveBeenCalledWith("2", catalog, undefined, {});
     await act(async () => { root.unmount(); });
     container.remove();
   });
@@ -176,7 +176,60 @@ describe("PlaylistDialog", () => {
 
     expect(onConfirm).toHaveBeenCalledWith(
       "1,2",
-      expect.objectContaining({ id: "universal-video", format: "mp4" })
+      expect.objectContaining({ id: "universal-video", format: "mp4" }),
+      {}
+    );
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("allows selecting distinct presets per item and passes itemOverrides", async () => {
+    const onConfirm = vi.fn();
+    const storyCatalog: PlaylistCatalog = {
+      title: "Story by shinchewieeee",
+      items: [
+        { index: 1, title: "Story 1", artist: "shinchewieeee", duration: "0:15", url: "https://example.test/s1" },
+        { index: 2, title: "Story 2", artist: "shinchewieeee", duration: "0:15", url: "https://example.test/s2" },
+      ],
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <PlaylistDialog
+          catalog={storyCatalog}
+          onClose={vi.fn()}
+          onConfirm={onConfirm}
+        />
+      );
+    });
+
+    const itemSelect2 = container.querySelector<HTMLSelectElement>('select[aria-label="Preset for item 2"]');
+    expect(itemSelect2).toBeDefined();
+
+    await act(async () => {
+      if (itemSelect2) {
+        itemSelect2.value = "universal-music";
+        itemSelect2.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+
+    const convertBtn = Array.from(container.querySelectorAll("button")).find((btn) =>
+      btn.textContent?.includes("Convert selected stories")
+    );
+
+    await act(async () => {
+      convertBtn?.click();
+    });
+
+    expect(onConfirm).toHaveBeenCalledWith(
+      "1,2",
+      undefined,
+      expect.objectContaining({
+        2: expect.objectContaining({ id: "universal-music", format: "mp3" }),
+      })
     );
     await act(async () => { root.unmount(); });
     container.remove();

@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ConverterView } from "./ConverterView";
+import { ConverterView, groupIndexesByPreset } from "./ConverterView";
 import type { AccessStatus, ConverterSettings, FetchedMedia } from "../bridge";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -862,5 +862,45 @@ describe("Converter account access feedback", () => {
 
     await act(async () => { view.root.unmount(); });
     view.container.remove();
+  });
+it("groupIndexesByPreset groups selected items by their distinct presets", () => {
+    const presetA = {
+      id: "preset-a",
+      name: "Preset A",
+      category: "Video" as const,
+      group: "Video" as const,
+      format: "mp4",
+      bitrate: "balanced",
+      sampleRate: 48000,
+      resolution: "1080p",
+      normalize: false,
+      useGpu: true,
+      description: "A",
+    };
+    const presetB = {
+      id: "preset-b",
+      name: "Preset B",
+      category: "Audio" as const,
+      group: "Music" as const,
+      format: "mp3",
+      bitrate: "320k",
+      sampleRate: 44100,
+      resolution: "original",
+      normalize: true,
+      useGpu: false,
+      description: "B",
+    };
+
+    const single = groupIndexesByPreset("1,2,3", presetA, {});
+    expect(single).toEqual([{ indexes: "1,2,3", preset: presetA }]);
+
+    const split = groupIndexesByPreset("1,2,3", presetA, { 2: presetB });
+    expect(split).toHaveLength(2);
+    expect(split).toEqual(
+      expect.arrayContaining([
+        { indexes: "1,3", preset: presetA },
+        { indexes: "2", preset: presetB },
+      ])
+    );
   });
 });

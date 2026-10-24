@@ -73,6 +73,38 @@ export function isEphemeralStoryUrl(value: string): boolean {
   }
 }
 
+export function groupIndexesByPreset(
+  indexesStr: string,
+  fallbackPreset: IntentPreset | undefined,
+  itemOverrides?: Record<number, IntentPreset>
+): Array<{ indexes: string; preset: IntentPreset | undefined }> {
+  const idxList = indexesStr
+    .split(",")
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => !isNaN(n));
+  if (idxList.length === 0) return [];
+
+  if (!itemOverrides || Object.keys(itemOverrides).length === 0) {
+    return [{ indexes: idxList.join(","), preset: fallbackPreset }];
+  }
+
+  const groups = new Map<string, { preset: IntentPreset | undefined; indexes: number[] }>();
+
+  for (const idx of idxList) {
+    const preset = itemOverrides[idx] ?? fallbackPreset;
+    const key = preset ? preset.id : "current";
+    if (!groups.has(key)) {
+      groups.set(key, { preset, indexes: [] });
+    }
+    groups.get(key)!.indexes.push(idx);
+  }
+
+  return Array.from(groups.values()).map((g) => ({
+    indexes: g.indexes.sort((a, b) => a - b).join(","),
+    preset: g.preset,
+  }));
+}
+
 function isFacebookPostLink(value: string): boolean {
   try {
     const url = new URL(value.trim());
@@ -2083,13 +2115,26 @@ export function ConverterView({
         <PlaylistDialog
           catalog={playlist}
           onClose={() => setPlaylist(null)}
-          onConfirm={(indexes, preset) => {
+          onConfirm={(indexes, preset, itemOverrides) => {
             setPlaylist(null);
-            void convert(indexes, preset);
+            const groups = groupIndexesByPreset(indexes, preset, itemOverrides);
+            if (groups.length <= 1) {
+              const single = groups[0] || { indexes, preset };
+              void convert(single.indexes, single.preset);
+            } else {
+              for (const group of groups) {
+                addToQueue(source.trim(), group.indexes, playlist, group.preset);
+              }
+              setQueueRunning(true);
+              onStatus(`Queued ${groups.length} batches with distinct presets and started conversion queue.`);
+            }
           }}
-          onQueue={(indexes, catalog, preset) => {
+          onQueue={(indexes, catalog, preset, itemOverrides) => {
             setPlaylist(null);
-            addToQueue(source.trim(), indexes, catalog, preset);
+            const groups = groupIndexesByPreset(indexes, preset, itemOverrides);
+            for (const group of groups) {
+              addToQueue(source.trim(), group.indexes, catalog, group.preset);
+            }
           }}
         />
       )}
@@ -2099,34 +2144,68 @@ export function ConverterView({
           initialIndexes={configuringQueueItem.playlistIndexes}
           isQueuedItem={true}
           onClose={() => setConfiguringQueueItem(null)}
-          onQueue={(indexes, catalog, preset) => {
-            setQueue((curr) =>
-              curr.map((it) =>
-                it.id === configuringQueueItem.id
+          onQueue={(indexes, catalog, preset, itemOverrides) => {
+            const groups = groupIndexesByPreset(indexes, preset, itemOverrides);
+            if (groups.length <= 1) {
+              const single = groups[0] || { indexes, preset };
+              setQueue((curr) =>
+                curr.map((it) =>
+                  it.id === configuringQueueItem.id
+                    ? {
+                        ...it,
+                        playlistIndexes: single.indexes,
+                        playlistCatalog: catalog,
+                        ...(single.preset
+                          ? {
+                              category: single.preset.category,
+                              presetName: single.preset.name,
+                              settingsSnapshot: {
+                                ...(it.settingsSnapshot ?? settings),
+                                category: single.preset.category,
+                                format: single.preset.format,
+                                bitrate: single.preset.bitrate,
+                                sampleRate: single.preset.sampleRate,
+                                resolution: single.preset.resolution,
+                                normalize: single.preset.normalize,
+                                useGpu: single.preset.useGpu,
+                              },
+                            }
+                          : {}),
+                      }
+                    : it
+                )
+              );
+            } else {
+              const targetIdx = queue.findIndex((it) => it.id === configuringQueueItem.id);
+              const newItems: QueueItem[] = groups.map((g, idx) => ({
+                id: idx === 0 ? configuringQueueItem.id : crypto.randomUUID(),
+                source: configuringQueueItem.source,
+                name: `${configuringQueueItem.name} (${g.preset?.name || "Default"})`,
+                category: g.preset ? g.preset.category : configuringQueueItem.category,
+                status: "queued" as const,
+                progress: 0,
+                playlistIndexes: g.indexes,
+                playlistCatalog: catalog,
+                presetName: g.preset ? g.preset.name : configuringQueueItem.presetName,
+                settingsSnapshot: g.preset
                   ? {
-                      ...it,
-                      playlistIndexes: indexes,
-                      playlistCatalog: catalog,
-                      ...(preset
-                        ? {
-                            category: preset.category,
-                            presetName: preset.name,
-                            settingsSnapshot: {
-                              ...(it.settingsSnapshot ?? settings),
-                              category: preset.category,
-                              format: preset.format,
-                              bitrate: preset.bitrate,
-                              sampleRate: preset.sampleRate,
-                              resolution: preset.resolution,
-                              normalize: preset.normalize,
-                              useGpu: preset.useGpu,
-                            },
-                          }
-                        : {}),
+                      ...(configuringQueueItem.settingsSnapshot ?? settings),
+                      category: g.preset.category,
+                      format: g.preset.format,
+                      bitrate: g.preset.bitrate,
+                      sampleRate: g.preset.sampleRate,
+                      resolution: g.preset.resolution,
+                      normalize: g.preset.normalize,
+                      useGpu: g.preset.useGpu,
                     }
-                  : it
-              )
-            );
+                  : configuringQueueItem.settingsSnapshot,
+              }));
+              setQueue((curr) => {
+                const next = [...curr];
+                next.splice(targetIdx, 1, ...newItems);
+                return next;
+              });
+            }
             setConfiguringQueueItem(null);
             const isStory = isEphemeralStoryUrl(configuringQueueItem.source);
             const itemLabel = isStory ? "items" : "tracks";

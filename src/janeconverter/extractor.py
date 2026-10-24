@@ -1735,6 +1735,32 @@ def fetch_playlist_entries(
                 if not e_url or not is_url(e_url):
                     if e_id and ("youtube" in clean_url.lower() or "youtu.be" in clean_url.lower() or "list=" in clean_url.lower()):
                         e_url = f"https://www.youtube.com/watch?v={e_id}"
+                    elif e_id and "instagram.com" in clean_url.lower():
+                        m_user = re.search(r'instagram\.com/stories/([^/?#]+)', clean_url)
+                        if m_user:
+                            story_user = m_user.group(1)
+                            pk = e_id
+                            if not e_id.isdigit():
+                                try:
+                                    import yt_dlp.extractor.instagram as ig
+                                    pk = str(ig._id_to_pk(e_id))
+                                except Exception:
+                                    pk = e_id
+                            if pk and pk.isdigit():
+                                if story_user.lower() == "highlights":
+                                    e_url = f"https://www.instagram.com/stories/highlights/{pk}/"
+                                else:
+                                    e_url = f"https://www.instagram.com/stories/{story_user}/{pk}/"
+                            else:
+                                e_url = f"https://www.instagram.com/p/{e_id}/"
+                        else:
+                            e_url = f"https://www.instagram.com/p/{e_id}/"
+                    elif e_id and "facebook.com" in clean_url.lower():
+                        e_url = f"https://www.facebook.com/{e_id}"
+                    elif e_id and "tiktok.com" in clean_url.lower():
+                        e_url = f"https://www.tiktok.com/@video/video/{e_id}"
+                    elif e_id and is_url(f"https://{e_id}"):
+                        e_url = f"https://{e_id}"
                     elif e_id:
                         e_url = e_id
 
