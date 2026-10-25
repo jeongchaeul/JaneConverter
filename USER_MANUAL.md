@@ -213,7 +213,7 @@ JaneConverter's **Story Capturer** connects directly to platform story relay pre
 
 ### How to Snatch an Entire Story Tray or User Feed
 
-The standout power of JaneConverter's story engine is its ability to **ingest the entire live story feed of a user in a single action**:
+The standout power of JaneConverter's story engine is its ability to **snatch and capture the entire present live story feed of a user in a single action, no matter how many stories are present**:
 
 1. **Copy the Target Link:**
    - **Instagram:** Copy the user's active story URL:

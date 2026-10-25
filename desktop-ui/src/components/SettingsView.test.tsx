@@ -405,7 +405,25 @@ describe("Settings updates", () => {
     expect(container.textContent).toContain('User Manual & Quick Reference');
     expect(container.textContent).toContain('Quick Start: Convert in 3 Steps');
     expect(container.textContent).toContain('Supported Platforms & What They Do');
+    expect(container.textContent).toContain('Getting Started');
+    expect(container.textContent).toContain('Story Capturer');
+
+    // Navigate to FL Studio Downgrader sub-page
+    const flpTab = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('FL Studio Downgrader'));
+    expect(flpTab).toBeTruthy();
+    await act(async () => {
+      flpTab?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
     expect(container.textContent).toContain('FL Studio (.flp) Project Downgrader');
+
+    // Navigate to Presets & FAQ sub-page
+    const faqTab = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Presets & FAQ'));
+    expect(faqTab).toBeTruthy();
+    await act(async () => {
+      faqTab?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
     expect(container.textContent).toContain('Presets & Format Cheat Sheet');
     expect(container.textContent).toContain('Quick Troubleshooting & FAQ');
 
