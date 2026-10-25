@@ -121,3 +121,132 @@ def test_facebook_story_photo_format_synthesis():
     assert res["formats"][0]["format_id"] == "photo"
     assert res["formats"][0]["vcodec"] == "mjpeg"
     assert res["formats"][0]["url"] == "https://scontent.xx.fbcdn.net/photo_full.jpg"
+
+
+def test_facebook_comet_video_extraction():
+    from janeconverter.facebook_patch import _extract_comet_video_data
+    from yt_dlp.extractor.facebook import FacebookIE
+
+    ie = FacebookIE()
+    video_id = "1132151226070998"
+    relay_data = {
+        "require": [
+            [
+                "ScheduledServerJS",
+                "handle",
+                None,
+                [
+                    {
+                        "__bbox": {
+                            "require": [
+                                [
+                                    "RelayPrefetchedStreamCache",
+                                    "next",
+                                    [],
+                                    [
+                                        None,
+                                        {
+                                            "__bbox": {
+                                                "result": {
+                                                    "data": {
+                                                        "video": {
+                                                            "id": video_id,
+                                                            "creation_story": {
+                                                                "attachments": [
+                                                                    {
+                                                                        "media": {
+                                                                            "__typename": "Video",
+                                                                            "id": video_id,
+                                                                            "videoDeliveryResponseFragment": {
+                                                                                "videoDeliveryResponseResult": {
+                                                                                    "progressive_urls": [
+                                                                                        {
+                                                                                            "progressive_url": "https://scontent.xx.fbcdn.net/video_hd.mp4",
+                                                                                            "metadata": {"quality": "HD"},
+                                                                                        },
+                                                                                        {
+                                                                                            "progressive_url": "https://scontent.xx.fbcdn.net/video_sd.mp4",
+                                                                                            "metadata": {"quality": "SD"},
+                                                                                        },
+                                                                                    ]
+                                                                                }
+                                                                            },
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            },
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        },
+                                    ],
+                                ]
+                            ]
+                        }
+                    }
+                ],
+            ]
+        ]
+    }
+    webpage = (
+        '<html><body>'
+        '<script data-sjs>' + json.dumps(relay_data) + '</script>'
+        '<script>{"actors":[{"name":"Priquitilson Xibilson Bucetilson","id":"61591912586697"}]}</script>'
+        '<script>{"message":{"text":"Amazing Reel"}}</script>'
+        '<script>{"preferred_thumbnail":{"image":{"uri":"https://scontent.xx.fbcdn.net/thumb.jpg"}}}</script>'
+        '<script>{"length_in_second": 15.9}</script>'
+        '</body></html>'
+    )
+
+    info = _extract_comet_video_data(ie, webpage, video_id, f"https://www.facebook.com/reel/{video_id}")
+    assert info is not None
+    assert info["id"] == video_id
+    assert info["title"] == "Amazing Reel"
+    assert info["uploader"] == "Priquitilson Xibilson Bucetilson"
+    assert info["uploader_id"] == "61591912586697"
+    assert info["thumbnail"] == "https://scontent.xx.fbcdn.net/thumb.jpg"
+    assert info["duration"] == 15.9
+    assert len(info["formats"]) == 2
+    assert info["formats"][0]["format_id"] == "hd"
+    assert info["formats"][0]["url"] == "https://scontent.xx.fbcdn.net/video_hd.mp4"
+    assert info["formats"][1]["format_id"] == "sd"
+    assert info["formats"][1]["url"] == "https://scontent.xx.fbcdn.net/video_sd.mp4"
+
+
+def test_facebook_comet_fallback_rescuing_cannot_parse_data():
+    from yt_dlp.extractor.facebook import FacebookIE
+
+    patch_facebook_story_extractor()
+    ie = FacebookIE()
+    ie._downloader = MagicMock()
+    video_id = "99887766"
+
+    # Mock _download_webpage to return a Comet page
+    comet_data = {
+        "videoDeliveryResponseFragment": {
+            "videoDeliveryResponseResult": {
+                "progressive_urls": [
+                    {
+                        "progressive_url": "https://scontent.xx.fbcdn.net/rescued_video.mp4",
+                        "metadata": {"quality": "HD"},
+                    }
+                ]
+            }
+        }
+    }
+    webpage = (
+        '<html><body>'
+        '<script data-sjs>' + json.dumps(comet_data) + '</script>'
+        '<script>{"actors":[{"name":"Jane Artist","id":"12345"}]}</script>'
+        '</body></html>'
+    )
+
+    ie._download_webpage = MagicMock(return_value=webpage)
+
+    res = ie._extract_from_url("https://m.facebook.com/watch/?v=99887766&_rdr", video_id)
+    assert res is not None
+    assert res["id"] == video_id
+    assert res["uploader"] == "Jane Artist"
+    assert len(res["formats"]) == 1
+    assert res["formats"][0]["url"] == "https://scontent.xx.fbcdn.net/rescued_video.mp4"
