@@ -3,6 +3,21 @@
 All notable changes to JaneConverter are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3.4] - 2026-10-25 - Playlist Preset Selection, Live Story Trays & Process Lifecycle Hardening
+
+### Added
+- Added **Per-Item Preset Selection** within the `PlaylistDialog`, allowing individual output preset customization per queue/playlist item rather than enforcing a global format override.
+- Added **Live Story Trays Auto-Detection** and story tray URL reconstruction for contextual extraction of full ephemeral story queues.
+- Added contextual story items reader and embedded preset selector directly inside the story items ingestion workflow.
+- Formalized the **Sovereign Creator Toolbox** directives, the **Artist Principle**, and **Non-Obligatory Receptivity** within project documentation and agent guidelines (`AGENTS.md`).
+- Documented the foundational diagnostic purpose and upstream platform volatility resilience rationale behind the **Rule of 7** live verification protocol.
+
+### Fixed
+- Hardened process lifecycle tracking, stream boundary management, and cancellation cleanup across the native Tauri/Rust bridge (`process.rs`, `lib.rs`).
+- Hardened bounds checking and fault-tolerant binary parsing in the FL Studio project (`.flp`) parser and downgrader (`parser.py`, `downgrade.py`).
+- Strengthened error handling and resilience in social photo capture (`facebook_capture.py`, `social_photo_capture.py`) and image formatting pipelines.
+- Enhanced updater resilience and version comparison safety.
+
 ## [2.3.3] - 2026-10-23 - Spotify Stream Preservation, Story Compliance & Release Hardening
 
 ### Added
