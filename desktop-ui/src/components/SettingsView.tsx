@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import {
   AlertCircle,
   BookOpen,
+  Camera,
   CheckCircle2,
   ChevronDown,
   Copy,
   Cpu,
   ExternalLink,
+  Film,
   FolderOpen,
   Globe,
   HardDrive,
@@ -17,6 +19,7 @@ import {
   Paintbrush,
   Palette,
   Pipette,
+  Radio,
   RefreshCw,
   RotateCcw,
   RotateCw,
@@ -1281,7 +1284,7 @@ export function SettingsView({
               onClick={() => void bridge.openUrl("https://github.com/jeongchaeul/JaneConverter/blob/main/USER_MANUAL.md")}
               className="subtle-button flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-zinc-400 hover:text-zinc-200"
             >
-              <ExternalLink className="size-3" /> View USER_MANUAL.md on GitHub
+              <ExternalLink className="size-3" /> View Full USER_MANUAL.md on GitHub
             </button>
           </div>
 
@@ -1292,7 +1295,7 @@ export function SettingsView({
               <span id="guide-quickstart-heading">Quick Start: Convert in 3 Steps</span>
             </div>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              JaneConverter is ready to use immediately with zero mandatory setup.
+              JaneConverter is ready to use immediately with zero mandatory setup. Follow these 3 simple steps:
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
               <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3.5 space-y-1.5">
@@ -1301,7 +1304,7 @@ export function SettingsView({
                   Input Your Media
                 </div>
                 <p className="text-[11px] leading-relaxed text-zinc-400">
-                  Paste any URL (YouTube, Instagram, TikTok, Spotify...) or drag and drop a local file/folder into the window.
+                  Paste any URL (YouTube, Spotify, Instagram, TikTok, Facebook, Pinterest, SoundCloud) into the top search bar, or drag & drop local audio/video/image files or entire folders into the window.
                 </p>
               </div>
               <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3.5 space-y-1.5">
@@ -1310,7 +1313,7 @@ export function SettingsView({
                   Select Format or Preset
                 </div>
                 <p className="text-[11px] leading-relaxed text-zinc-400">
-                  Choose a Quick Preset (e.g. <em>Universal Video</em>, <em>Fast MP3</em>, <em>Lossless Image</em>) or custom format.
+                  Pick a Quick Preset (<em>Fast MP3</em>, <em>Universal Music</em>, <em>Universal Video</em>, <em>Lossless Image</em>) or click any format pill to adjust bitrates, resolution (720p–4K), or time offsets.
                 </p>
               </div>
               <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3.5 space-y-1.5">
@@ -1319,9 +1322,13 @@ export function SettingsView({
                   Convert & Done
                 </div>
                 <p className="text-[11px] leading-relaxed text-zinc-400">
-                  Hit <strong>Convert</strong>. Your media is streamed, converted, and saved directly into your Export Library.
+                  Click <strong>Convert</strong>. Real-time stream decoding, adaptive GPU acceleration, and atomic validation stage your file directly in your Export Library.
                 </p>
               </div>
+            </div>
+            <div className="rounded-lg border border-white/[0.06] bg-black/20 p-3 text-[11px] text-zinc-400 flex items-start gap-2">
+              <span className="text-amber-400 font-semibold shrink-0">PRO TIP:</span>
+              <span>Need to convert dozens or hundreds of files? Drag an entire folder into JaneConverter. The engine queues every file sequentially with zero lockups or memory leaks.</span>
             </div>
           </section>
 
@@ -1331,79 +1338,218 @@ export function SettingsView({
               <Globe size={16} style={{ color: "var(--accent-color, #c52b68)" }} />
               <span id="guide-platforms-heading">Supported Platforms & What They Do</span>
             </div>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              JaneConverter automatically detects the media source and selects the optimal extraction pipeline:
+            </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5 space-y-1.5">
                 <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
                   <span className="text-red-400 font-bold">●</span> YouTube & YouTube Music
                 </div>
                 <p className="text-zinc-400 text-[11px] leading-relaxed">
-                  Extracts 1080p/4K video or 320k audio instantly without requiring login or cookies. Handles individual videos and playlists.
+                  Extracts 1080p, 1440p, and 4K 60fps video or 320k audio streams. Supports individual videos, Shorts (<code className="text-zinc-300">/shorts/</code>), full channel feeds (<code className="text-zinc-300">/@handle</code>), and playlists. Zero login required for public content.
                 </p>
               </div>
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
-                <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
-                  <span className="text-pink-400 font-bold">●</span> Instagram (Posts, Reels & Carousels)
-                </div>
-                <p className="text-zinc-400 text-[11px] leading-relaxed">
-                  Downloads single photos, full multi-photo carousel albums, and Reels at maximum available resolution.
-                </p>
-              </div>
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
-                <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
-                  <span className="text-blue-400 font-bold">●</span> Facebook (Albums, Posts & Reels)
-                </div>
-                <p className="text-zinc-400 text-[11px] leading-relaxed">
-                  Automatically extracts public or friends-only photo albums with original titles and high-definition video.
-                </p>
-              </div>
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5 space-y-1.5">
                 <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
                   <span className="text-emerald-400 font-bold">●</span> Spotify & Apple Music Matching
                 </div>
                 <p className="text-zinc-400 text-[11px] leading-relaxed">
-                  Reads catalog metadata and automatically finds the best public audio recording, embedding genuine cover art and ID3 tags.
+                  Spotify/Apple Music streams are catalog-locked. JaneConverter resolves metadata via oEmbed and iTunes APIs, intelligently probes YouTube Music & SoundCloud for matching studio masters, enforces a 15-second duration filter, and stamps authoritative ID3 tags and high-res cover art.
                 </p>
               </div>
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5 space-y-1.5">
                 <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
-                  <span className="text-amber-400 font-bold">●</span> TikTok, SoundCloud, Pinterest & Reddit
+                  <span className="text-pink-400 font-bold">●</span> Instagram (Posts, Reels & Carousels)
                 </div>
                 <p className="text-zinc-400 text-[11px] leading-relaxed">
-                  Watermark-free TikToks, SoundCloud tracks with artwork, Pinterest original pins/boards, and Reddit media.
+                  Downloads single photos, full multi-photo carousels (2–10+ slides) at full original dimensions (up to 1440px), Reels (<code className="text-zinc-300">/reels/</code>), and standalone audio tracks. Carousels are saved into an organized local album folder.
                 </p>
               </div>
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5 space-y-1.5">
                 <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
-                  <span className="text-purple-400 font-bold">●</span> Local Files & Batch Folders
+                  <span className="text-blue-400 font-bold">●</span> Facebook (Albums, Posts & Reels)
                 </div>
                 <p className="text-zinc-400 text-[11px] leading-relaxed">
-                  Drag and drop local audio, video, or image files to convert, compress, or change format with hardware speed.
+                  Autonomous headless scraper navigates React SPAs, dismisses login prompts, injects 5-stage pointer clicks, catches CDN token expirations, and extracts high-definition Watch videos, Reels, and complete photo albums (<code className="text-zinc-300">/media/set/</code>).
+                </p>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5 space-y-1.5">
+                <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
+                  <span className="text-amber-400 font-bold">●</span> TikTok, SoundCloud & Reddit
+                </div>
+                <p className="text-zinc-400 text-[11px] leading-relaxed">
+                  Watermark-free 1080p TikTok videos or direct sound extraction. SoundCloud sets with original artwork and track tags. Reddit video, audio, and image galleries.
+                </p>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5 space-y-1.5">
+                <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
+                  <span className="text-rose-400 font-bold">●</span> Pinterest (Pins, Boards & News Hub)
+                </div>
+                <p className="text-zinc-400 text-[11px] leading-relaxed">
+                  Bypasses 236x/564x/736x preview clamping to fetch uncompressed original CDN master photos. Unpacks notification collections (<code className="text-zinc-300">news_hub</code>), unrolls <code className="text-zinc-300">pin.it</code> shortlinks, and downloads entire user boards.
                 </p>
               </div>
             </div>
           </section>
 
-          {/* 3. Browser Cookies & Private Media */}
+          {/* 3. The Story Capturer: Ephemeral Live Stories & Trays */}
+          <section className="panel space-y-4 p-5 border border-rose-500/20 bg-rose-500/[0.02]" aria-labelledby="guide-story-heading">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-medium text-rose-300">
+                <Camera size={16} className="text-rose-400" />
+                <span id="guide-story-heading">The Story Capturer: Ephemeral Live Stories & Trays</span>
+              </div>
+              <span className="rounded-full bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-300 border border-rose-500/20">
+                Borderline Capability
+              </span>
+            </div>
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              Ephemeral 24-hour stories on Instagram and Facebook are normally temporary and walled off. JaneConverter features a specialized, high-rigor extraction engine designed to capture live story trays and user feeds:
+            </p>
+            <div className="rounded-xl border border-white/[0.08] bg-black/30 p-4 space-y-3 text-xs">
+              <div className="space-y-2">
+                <div className="font-semibold text-zinc-200 flex items-center gap-2">
+                  <span className="flex size-5 items-center justify-center rounded-full bg-rose-500/20 text-rose-300 text-[11px]">★</span>
+                  Snatch an Entire Live Feed / Story Tray in One Click
+                </div>
+                <p className="text-[11px] text-zinc-400 leading-relaxed pl-7">
+                  You can simply throw in an Instagram user's profile URL (<code className="text-zinc-300">instagram.com/username/</code> or <code className="text-zinc-300">instagram.com/stories/username/</code>), or a Facebook story bucket ID (<code className="text-zinc-300">facebook.com/stories/123456789/</code>).
+                </p>
+                <p className="text-[11px] text-zinc-400 leading-relaxed pl-7">
+                  As long as JaneConverter can access your active desktop browser session (or view in guest mode), it connects to the platform's live story tray and <strong className="text-zinc-200">snatches and captures the entire preset live story feed currently active, no matter how many stories are present</strong> (whether 1, 5, or 40+ cards)!
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pl-7 pt-1 text-[11px]">
+                <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5 space-y-1">
+                  <div className="font-medium text-zinc-200 flex items-center gap-1.5">
+                    <CheckCircle2 className="size-3 text-emerald-400" /> Photo Stories
+                  </div>
+                  <p className="text-zinc-400">Synthesizes and exports full-resolution uncompressed master photos (JPG/PNG) directly from image candidate relays.</p>
+                </div>
+                <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5 space-y-1">
+                  <div className="font-medium text-zinc-200 flex items-center gap-1.5">
+                    <CheckCircle2 className="size-3 text-emerald-400" /> Video Stories & Highlights
+                  </div>
+                  <p className="text-zinc-400">Fetches pristine HD video and high-bitrate AAC audio. Also supports full Instagram Story Highlights collections (<code className="text-zinc-300">/highlights/ID/</code>).</p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-rose-500/20 bg-rose-950/20 p-3 space-y-1.5 pl-4 text-[11px]">
+                <div className="font-medium text-rose-200 flex items-center gap-1.5">
+                  <Lock className="size-3 text-rose-400" />
+                  Mandatory Activation Gate & Acceptable Use Policy
+                </div>
+                <p className="text-rose-200/80 leading-relaxed">
+                  Because ephemeral media is private and transient, story extraction is <strong>disabled by default</strong>. To unlock it:
+                </p>
+                <ol className="list-decimal pl-5 space-y-1 text-rose-200/80">
+                  <li>Go to the <strong className="text-rose-100">Browser & Sessions</strong> tab in Settings.</li>
+                  <li>Toggle <strong className="text-rose-100">Ephemeral Stories Extraction</strong> to ON.</li>
+                  <li>Review and acknowledge the Terms of Usage & Acceptable Use Policy modal confirming you have legal authorization or consent to archive.</li>
+                </ol>
+              </div>
+            </div>
+          </section>
+
+          {/* 4. Browser Cookies & Session Architecture */}
           <section className="panel space-y-3 p-5" aria-labelledby="guide-browser-heading">
             <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
               <ShieldCheck size={16} style={{ color: "var(--accent-color, #c52b68)" }} />
               <span id="guide-browser-heading">Browser Cookies & Private Media (Zero Extensions)</span>
             </div>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Public links work immediately with zero configuration. For private videos, members-only posts, or friends-only Facebook/Instagram photos, JaneConverter can read your existing browser sessions directly.
+              Public links convert anonymously with zero setup. For private YouTube videos, age-gated media (Error 152), friends-only Facebook/Instagram posts, or live stories, JaneConverter accesses your existing browser session seamlessly:
             </p>
-            <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3.5 space-y-2 text-xs">
-              <div className="font-medium text-zinc-300">How to use your browser session:</div>
-              <ul className="list-disc pl-4 space-y-1 text-zinc-400 text-[11px]">
-                <li>Go to the <strong className="text-zinc-200">Browser & Sessions</strong> tab above.</li>
-                <li>Ensure <strong className="text-zinc-200">Read Browser Cookies</strong> is turned ON.</li>
-                <li>For Microsoft Edge or Google Chrome, enable <strong className="text-zinc-200">Direct Edge & Chrome Cookie Access</strong> (one-time setup).</li>
-                <li>No browser extension or manual cookie file export is required!</li>
-              </ul>
+            <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3.5 space-y-2.5 text-xs">
+              <div className="space-y-1">
+                <div className="font-medium text-zinc-200">Direct Edge & Chrome Cookie Access (Chromium 127+ Fix):</div>
+                <p className="text-zinc-400 text-[11px] leading-relaxed">
+                  Chromium 127+ introduced Windows App-Bound Encryption, which breaks standard external cookie tools. JaneConverter fixes this natively: enable <strong className="text-zinc-200">Direct Edge & Chrome Cookie Access</strong> in the Browser tab. This configures the user policy <code className="text-zinc-300">ApplicationBoundEncryptionEnabled = 0</code>, allowing JaneConverter to read sessions via native Windows DPAPI with <strong className="text-zinc-200">zero third-party browser extensions</strong> and <strong className="text-zinc-200">zero manual .txt file exports</strong>.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <div className="font-medium text-zinc-200">Firefox, Vivaldi & Brave:</div>
+                <p className="text-zinc-400 text-[11px] leading-relaxed">
+                  These browsers use standard encryption. Simply select your browser from the dropdown in Settings.
+                </p>
+              </div>
+              <div className="rounded-lg border border-white/[0.06] bg-black/20 p-2.5 space-y-1 text-[11px]">
+                <div className="font-medium text-emerald-400 flex items-center gap-1.5">
+                  <CheckCircle2 className="size-3" />
+                  Volatile In-Memory Security Guarantee
+                </div>
+                <p className="text-zinc-400">
+                  Cookies are read into a non-locking SQLite memory snapshot, decrypted into volatile RAM, and immediately purged when the download completes. Plaintext cookies are <strong>never written to disk</strong> and never transmitted remotely.
+                </p>
+              </div>
             </div>
           </section>
 
-          {/* 4. FL Studio Downgrades */}
+          {/* 5. Video Transcoding & Hardware Acceleration */}
+          <section className="panel space-y-3 p-5" aria-labelledby="guide-video-heading">
+            <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+              <Film size={16} style={{ color: "var(--accent-color, #c52b68)" }} />
+              <span id="guide-video-heading">Video Transcoding, Trimming & Hardware Acceleration</span>
+            </div>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              JaneConverter is engineered for extreme video throughput with multi-tiered hardware fallback:
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+              <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
+                <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
+                  <Zap className="size-3.5 text-amber-400" /> Stream Copy Mode
+                </div>
+                <p className="text-[11px] text-zinc-400">
+                  When input and target codecs match (e.g. MP4 to MP4 without filters), JaneConverter executes container remuxing (<code className="text-zinc-300">-c copy</code>) in under 2 seconds with 100% original lossless quality and 0% CPU strain.
+                </p>
+              </div>
+              <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
+                <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
+                  <Cpu className="size-3.5 text-sky-400" /> GPU Acceleration
+                </div>
+                <p className="text-[11px] text-zinc-400">
+                  Automatically initializes NVIDIA NVENC, AMD AMF, Intel QuickSync (QSV), or Apple Silicon VideoToolbox to transcode videos at up to 10x real-time speed.
+                </p>
+              </div>
+              <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
+                <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
+                  <RefreshCw className="size-3.5 text-emerald-400" /> CPU Fallback Guarantee
+                </div>
+                <p className="text-[11px] text-zinc-400">
+                  If your GPU runs out of VRAM (CUDA OOM) or encounters driver errors, the engine purges the staging buffer and seamlessly falls back to multi-core CPU encoding (<code className="text-zinc-300">libx264</code>/<code className="text-zinc-300">libx265</code>) without aborting.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          {/* 6. Audio DSP & Mastering */}
+          <section className="panel space-y-3 p-5" aria-labelledby="guide-audio-heading">
+            <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+              <Radio size={16} style={{ color: "var(--accent-color, #c52b68)" }} />
+              <span id="guide-audio-heading">Audio DSP, Loudness Normalization & Formats</span>
+            </div>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Built with professional audio engineering principles in mind:
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
+                <div className="font-semibold text-zinc-200">EBU R128 (-14 LUFS) Normalization</div>
+                <p className="text-zinc-400 text-[11px] leading-relaxed">
+                  Balances volume across tracks to the international streaming standard (-14 LUFS). Includes a dynamic true-peak limiter (<code className="text-zinc-300">-1.0 dBTP</code> ceiling) to prevent inter-sample DAC clipping on loud masters.
+                </p>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
+                <div className="font-semibold text-zinc-200">Lossless Studio Masters (FLAC / WAV)</div>
+                <p className="text-zinc-400 text-[11px] leading-relaxed">
+                  Export bit-perfect 16-bit or 24-bit uncompressed audio ready for immediate import into FL Studio, Ableton Live, Pro Tools, or permanent offline archiving.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          {/* 7. FL Studio Downgrades */}
           <section className="panel space-y-3 p-5" aria-labelledby="guide-flp-heading">
             <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
               <Music size={16} style={{ color: "var(--accent-color, #c52b68)" }} />
@@ -1412,18 +1558,19 @@ export function SettingsView({
             <p className="text-xs text-zinc-400 leading-relaxed">
               Collaborating with other music producers who use older versions of FL Studio (e.g. FL 20 or 21)? Older FL Studio versions reject newer project files with a blocking error.
             </p>
-            <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3.5 space-y-1.5 text-xs">
+            <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3.5 space-y-2 text-xs">
               <div className="font-medium text-zinc-300">How to downgrade an FL Studio project:</div>
               <ol className="list-decimal pl-4 space-y-1 text-zinc-400 text-[11px]">
                 <li>Click <strong className="text-zinc-200">FL Studio Tools</strong> in the left sidebar.</li>
-                <li>Select your <code className="text-zinc-300">.flp</code> file. JaneConverter will display its tempo, PPQ, and channel count.</li>
-                <li>Choose your target version (e.g. FL 20.8.4, FL 21.0.3) and click <strong>Downgrade Project</strong>.</li>
-                <li>Your original file is kept completely safe; a new downgraded file is created next to it.</li>
+                <li>Drop or select your <code className="text-zinc-300">.flp</code> file. JaneConverter parses tempo (BPM), PPQ, channel count, and original FL build.</li>
+                <li>Choose your target version (<code className="text-zinc-300">20.8.4</code>, <code className="text-zinc-300">21.0.3</code>, <code className="text-zinc-300">21.2.3</code>).</li>
+                <li>Click <strong>Downgrade Project</strong>.</li>
+                <li>A new file named <code className="text-zinc-300">&lt;Project&gt;_downgraded.flp</code> is created safely. Your original file is 100% untouched.</li>
               </ol>
             </div>
           </section>
 
-          {/* 5. Presets Cheat Sheet */}
+          {/* 8. Presets Cheat Sheet */}
           <section className="panel space-y-3 p-5" aria-labelledby="guide-presets-heading">
             <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
               <Zap size={16} style={{ color: "var(--accent-color, #c52b68)" }} />
@@ -1460,10 +1607,10 @@ export function SettingsView({
               </div>
               <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5 space-y-1">
                 <div className="font-semibold text-zinc-200 flex items-center justify-between">
-                  <span>Lossless Image</span>
-                  <span className="mono-label text-[10px]">PNG</span>
+                  <span>4K Ultra HD</span>
+                  <span className="mono-label text-[10px]">2160p MKV/MP4</span>
                 </div>
-                <p className="text-[11px] text-zinc-400">Full uncompressed original resolution for social photos, artwork, and wallpapers.</p>
+                <p className="text-[11px] text-zinc-400">Preserves maximum available video resolution and high-bitrate audio for cinema displays.</p>
               </div>
               <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5 space-y-1">
                 <div className="font-semibold text-zinc-200 flex items-center justify-between">
@@ -1472,10 +1619,24 @@ export function SettingsView({
                 </div>
                 <p className="text-[11px] text-zinc-400">When source and target match, audio/video streams copy losslessly in milliseconds.</p>
               </div>
+              <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5 space-y-1">
+                <div className="font-semibold text-zinc-200 flex items-center justify-between">
+                  <span>Lossless Image</span>
+                  <span className="mono-label text-[10px]">PNG</span>
+                </div>
+                <p className="text-[11px] text-zinc-400">Full uncompressed original resolution for social photos, artwork, and wallpapers.</p>
+              </div>
+              <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5 space-y-1">
+                <div className="font-semibold text-zinc-200 flex items-center justify-between">
+                  <span>Compact Image</span>
+                  <span className="mono-label text-[10px]">JPG / WebP</span>
+                </div>
+                <p className="text-[11px] text-zinc-400">High-efficiency compression for fast web sharing and minimal disk footprint.</p>
+              </div>
             </div>
           </section>
 
-          {/* 6. Quick FAQ & Troubleshooting */}
+          {/* 9. Quick FAQ & Troubleshooting */}
           <section className="panel space-y-3 p-5" aria-labelledby="guide-faq-heading">
             <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
               <HelpCircle size={16} style={{ color: "var(--accent-color, #c52b68)" }} />
@@ -1485,26 +1646,32 @@ export function SettingsView({
               <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
                 <div className="font-medium text-zinc-200">Where are my files saved?</div>
                 <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  Inside your JaneConverter Export Library, organized by category (Music, Video, Images). You can change this location anytime in <strong>Settings → System & Updates → Data Root Folder</strong>.
+                  Inside your JaneConverter Export Library, organized by category (<code className="text-zinc-300">Music/</code>, <code className="text-zinc-300">Video/</code>, <code className="text-zinc-300">Images/</code>). You can change this location anytime in <strong>Settings → System & Updates → Data Root Folder</strong>.
                 </p>
               </div>
               <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
-                <div className="font-medium text-zinc-200">A video says "Sign-in required" or "Confirm you're not a bot"</div>
+                <div className="font-medium text-zinc-200">A video says "Sign-in required" or "Confirm you're not a bot" (Error 152)</div>
                 <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  Go to <strong>Settings → Browser & Sessions</strong> and verify <strong>Read Browser Cookies</strong> is enabled so JaneConverter can authenticate automatically using your desktop browser.
+                  Go to <strong>Settings → Browser & Sessions</strong>, make sure <strong>Read Browser Cookies</strong> is enabled, and turn on <strong>Direct Edge & Chrome Cookie Access</strong> so JaneConverter can authenticate automatically using your desktop browser.
+                </p>
+              </div>
+              <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
+                <div className="font-medium text-zinc-200">Story extraction fails with "Ephemeral story extraction is disabled"</div>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  Stories are gated by default. Open <strong>Settings → Browser & Sessions</strong>, turn on <strong>Ephemeral Stories Extraction</strong>, and accept the Terms of Usage modal.
                 </p>
               </div>
               <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 space-y-1">
                 <div className="font-medium text-zinc-200">How do I make conversions faster?</div>
                 <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  Make sure <strong>Adaptive GPU Acceleration</strong> is enabled in <strong>Settings → Hardware & Engine</strong>. For audio, choose the <strong>Fast MP3</strong> preset to bypass volume analysis.
+                  Ensure <strong>Adaptive GPU Acceleration</strong> is enabled in <strong>Settings → Hardware & Engine</strong>. For audio, choose the <strong>Fast MP3</strong> preset to bypass volume analysis.
                 </p>
               </div>
             </div>
           </section>
         </div>
       )}
-
+      
       {/* Status Bar */}
       <div
         className={`rounded-lg border px-3 py-2 text-[11px] ${
