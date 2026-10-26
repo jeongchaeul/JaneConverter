@@ -31,7 +31,7 @@
 
 JaneConverter is the sovereign, all-in-one personal creator toolbox of Jane Cerys (`project//aspyr`). What started as a high-precision media downloader and format conversion engine has naturally expanded into Jane's personal workstation for audio engineering, DAW project reverse engineering (FL Studio `.flp` & Ableton Live `.als`), hardware-accelerated DSP, and universal media ingestion. It runs 100% locally with zero telemetry through a native desktop app (Tauri 2 + React) or directly via the Python engine CLI.
 
-[Latest Release](https://github.com/jeongchaeul/JaneConverter/releases/latest) · [Changelog](CHANGELOG.md) · [Rebuild Guide](packaging/REBUILD.md) · [Adaptive Resilience Engine](docs/MAHORAGA_ENGINE.md)
+[Latest Release](https://github.com/jeongchaeul/JaneConverter/releases/latest) · [User Manual](USER_MANUAL.md) · [FAQ](FAQ.md) · [Changelog](CHANGELOG.md) · [Rebuild Guide](packaging/REBUILD.md) · [Adaptive Resilience Engine](docs/MAHORAGA_ENGINE.md)
 
 <p align="center">
   <img src="docs/photos/Screenshot_260.png" alt="JaneConverter Desktop UI" width="94%" />
