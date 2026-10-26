@@ -9,6 +9,18 @@ This guide documents the exact, reliable procedure for rebuilding both the Pytho
 >
 > You **MUST** use `npm run tauri:build -- --no-bundle` (or `npx tauri build --no-bundle`) so production web assets are compiled and embedded directly into the standalone binary.
 
+> [!IMPORTANT]
+> ### 🛑 Mandatory Post-Update Host Confirmation Protocol
+> Whenever code modifications, fixes, or feature updates are completed and validated through local test suites, **do NOT arbitrarily rebuild local binaries or deploy without asking**.
+>
+> The agent or contributor **MUST** first ask and confirm with the host which delivery route they desire:
+> 1. **Option 1: Recreate Local Binary Builds:**
+>    - Rebuild the frozen engine (`JaneConverterEngine.exe`) and Tauri desktop application (`janeconverter-desktop.exe`) locally and deploy them to `D:\Programs\JaneConverter\`.
+> 2. **Option 2: Commit & Push Updates for the Live In-App Updater:**
+>    - Commit and push the verified changes to `main`.
+>    - When committing and pushing updates, the **Continuous Updater Package pipeline** (`.github/workflows/continuous-updates.yml`) must be triggered and updated.
+>    - The agent/contributor must monitor the pipeline in real-time until all cross-platform package matrices, signatures, and updater manifests are verified live so the host can conveniently update using the in-app updater.
+
 ---
 
 ## Prerequisites & Environment
