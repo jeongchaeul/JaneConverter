@@ -17,6 +17,7 @@ A comprehensive, fool-proof guide to getting the most out of JaneConverter — t
    - [Zero-Loss Stream Copy Mode](#zero-loss-stream-copy-mode)
    - [Time Trimming & Offsets](#time-trimming--offsets)
    - [Hardware Acceleration (GPU vs CPU Fallback)](#hardware-acceleration-gpu-vs-cpu-fallback)
+   - [Archival Vault Recovery (Deleted & Hidden Videos)](#archival-vault-recovery-deleted--hidden-videos)
 5. [Photo, Asset & Gallery Ingestion](#5-photo-asset--gallery-ingestion)
    - [Pinterest Pins, Boards & Notification Hubs](#pinterest-pins-boards--notification-hubs)
    - [Instagram Multi-Photo Carousels](#instagram-multi-photo-carousels)
@@ -53,6 +54,7 @@ It is explicitly **NOT a generic ad-bloated media downloader or narrow commercia
 - **Cross-Platform Catalog Matching**: Paste Spotify or Apple Music URLs to automatically identify songs, locate public audio masters, and embed authoritative ID3 tags and high-resolution cover artwork.
 - **DAW Binary Reverse Engineering**: Downgrade newer FL Studio (`.flp`) project files so producers on older FL Studio versions can collaborate seamlessly without blocking error screens.
 - **Adaptive Resilience Engine (Mahoraga)**: Multi-tiered fallback pipelines that adapt to layout shifts, signature changes, anti-bot screens, CDN token expirations, and GPU memory exhaustion.
+- **Archival Vault Indexing & Recovery**: Multi-stage scientific discovery ladder querying Filmot, the Wayback Machine (CDX), Ghostarchive, and Internet Archive collections (`archiveteam_youtube`) to index and recover deleted, unlisted, or private media.
 
 JaneConverter is free, local-first, telemetry-free, and respects user sovereignty.
 
@@ -165,6 +167,65 @@ JaneConverter automatically detects and initializes dedicated GPU acceleration e
 
 #### The Self-Healing CPU Fallback Guarantee:
 If your GPU encounters VRAM exhaustion (e.g., you are playing a heavy game or running a 3D render in the background), or if a specific driver profile fails, JaneConverter's Adaptive Engine catches the error, purges the staging buffer, and seamlessly falls back to multi-threaded CPU software encoding (`libx264`, `libx265`, `svtav1`) without interrupting your conversion or failing the job.
+
+### Archival Vault Recovery (Deleted & Hidden Videos)
+
+YouTube videos and online media frequently disappear due to creator deletions, account closures, privacy changes, or copyright flags. When downloading an unlisted link or an entire playlist, deleted entries normally fail immediately with errors like `Video unavailable` or `This video has been removed by the uploader`.
+
+JaneConverter features a scientific, multi-stage **Archival Vault Recovery Pipeline** engineered to resurrect lost media directly from world archival registries.
+
+#### The Scientific 4-Stage Discovery Ladder:
+
+```
+[ Video Unavailable / Deleted ]
+               │
+               ▼
+   [ Stage 1: Filmot & Wayback Metadata Index ] ──► Uncovers original title, channel, description, duration
+               │
+               ▼
+   [ Stage 2: Archive.org Collections ] ─────────► Queries archiveteam_youtube & youtube-archive buckets
+               │
+               ▼
+   [ Stage 3: Ghostarchive Mirrors ] ────────────► Inspects direct web video archive mirrors
+               │
+               ▼
+   [ Stage 4: Wayback Machine CDX Streams ] ─────► Probes direct googlevideo captures & watch snapshots
+               │
+               ▼
+   [ FFprobe Stream Verification & Transcode ] ──► Validates media container and converts to requested format
+```
+
+1. **Stage 1 — Historical Metadata Resolution:**
+   - Probes the Filmot archive database and Wayback Machine CDX snapshots for the target video ID.
+   - Extracts the original video title, upload date, channel name, description, and running time so your converted file has its genuine title and tags instead of a cryptic ID or `[Deleted video]`.
+2. **Stage 2 — Archive.org Collections (`archiveteam_youtube`):**
+   - Queries the Internet Archive advanced search API for preserved items matching `youtube-<id>`, `archiveteam_youtube`, and `youtube-archive`.
+   - Inspects item metadata manifests and directly verifies public HTTPS video streams (`.mp4`, `.mkv`, `.webm`).
+3. **Stage 3 — Ghostarchive Mirrors:**
+   - Probes Ghostarchive (`ghostarchive.org/varchive/<id>`) for direct preserved video mirrors.
+4. **Stage 4 — Wayback Machine Stream Snapshots:**
+   - Probes the Internet Archive Wayback Machine CDX index for historical direct `googlevideo.com/videoplayback` captures and snapshot watch pages.
+5. **Validation & Transcoding:**
+   - The recovered stream is verified with `ffprobe` to ensure the container structure is intact, transcoded into your chosen target format (MP4, MKV, MP3, etc.), stamped with historical metadata, and saved into your Export Library.
+
+#### How to Enable Archival Vault Recovery:
+
+To maintain maximum conversion speed during ordinary day-to-day use, Archival Vault Recovery is **disabled by default**. You can enable it with a single click whenever you encounter dead links or missing playlist items:
+
+- **Desktop UI:**
+  1. On the main **Convert** screen, expand **Advanced settings**.
+  2. Toggle **Search archival vaults for unavailable media** to **ON**.
+  3. When enabled, any unavailable video is routed through the archival discovery ladder.
+- **CLI:**
+  - Pass the `--archival-fallback` flag:
+    ```bash
+    uv run janeconverter --source "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --archival-fallback
+    ```
+
+#### Playlist Preservation Mode:
+When archiving a large playlist that contains deleted or private items:
+- With archival fallback **disabled (default)**: Unavailable items are safely skipped to avoid halting playlist conversion.
+- With archival fallback **enabled**: JaneConverter intercepts unavailable items, resolves their historical titles, queries archival vaults in sequence, and downloads all preserved video streams directly into your playlist folder.
 
 ---
 
@@ -409,6 +470,13 @@ JaneConverter Export Library/
 2. Make sure **Read Browser Cookies** is enabled.
 3. If using Google Chrome or Microsoft Edge, turn on **Direct Edge & Chrome Cookie Access**.
 4. Ensure you are signed into YouTube in that browser. JaneConverter will use your active session automatically.
+
+### Q: A YouTube video or playlist item says "Video unavailable" or "This video has been removed". Can I recover it?
+**Why it happens:** The video has been deleted, set to private, or removed from YouTube.  
+**How to recover it:**
+1. On the **Convert** screen, expand **Advanced settings**.
+2. Toggle **Search archival vaults for unavailable media** to **ON** (or pass `--archival-fallback` in the CLI).
+3. Re-run the conversion. JaneConverter will systematically search Filmot, Archive.org collections, Ghostarchive, and the Wayback Machine to locate, verify, and download any preserved copies.
 
 ### Q: An Instagram or Facebook story link fails with "Ephemeral story extraction is disabled".
 **Why it happens:** Ephemeral story extraction is gated by default to uphold privacy boundaries.  

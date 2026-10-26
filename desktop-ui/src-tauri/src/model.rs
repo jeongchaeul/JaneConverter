@@ -29,6 +29,8 @@ pub struct ConverterSettings {
     pub end_time: Option<String>,
     #[serde(default)]
     pub allow_story_extraction: bool,
+    #[serde(default)]
+    pub archival_fallback: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -63,6 +65,8 @@ pub struct ConversionRequest {
     pub end_time: Option<String>,
     #[serde(default)]
     pub allow_story_extraction: bool,
+    #[serde(default)]
+    pub archival_fallback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

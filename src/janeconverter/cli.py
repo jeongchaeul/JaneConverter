@@ -258,6 +258,7 @@ def process_conversion(
     end_time: Optional[str] = None,
     reconstruct_frequency_loss: bool = False,
     allow_ephemeral_stories: bool = False,
+    archival_fallback: bool = False,
 ) -> str:
     """
     Orchestrates downloading/extracting stream, embedding cover art, exporting credits,
@@ -421,6 +422,7 @@ def process_conversion(
             auth_browser=auth_browser,
             browser_media_path=browser_media_path,
             allow_ephemeral_stories=allow_ephemeral_stories,
+            archival_fallback=archival_fallback,
         )
 
         input_media = stream_info["media_path"]
@@ -575,6 +577,7 @@ def process_playlist_conversion(
     max_retries: int = 2,
     reconstruct_frequency_loss: bool = False,
     allow_ephemeral_stories: bool = False,
+    archival_fallback: bool = False,
 ) -> Dict[str, Any]:
     """
     Batch-downloads and transcodes selected playlist items into a dedicated playlist folder.
@@ -714,6 +717,7 @@ def process_playlist_conversion(
                     progress_callback=item_progress_hook,
                     auth_browser=auth_browser,
                     allow_ephemeral_stories=allow_ephemeral_stories,
+                    archival_fallback=archival_fallback,
                 )
             except Exception:
                 if not keep_temp and track_work_dir and os.path.exists(track_work_dir):
@@ -854,6 +858,8 @@ def process_playlist_conversion(
                     fallback_artist=alt_artist or artist,
                     abort_event=abort_event,
                     auth_browser=auth_browser,
+                    allow_ephemeral_stories=allow_ephemeral_stories,
+                    archival_fallback=archival_fallback,
                 )
                 input_media = stream_info["media_path"]
                 track_artist = artist or stream_info.get("artist", "")
@@ -1089,6 +1095,7 @@ def main():
     parser.add_argument("--end-time", help="End time offset for media clipping/trimming (e.g. 03:45, 225, 00:03:45)")
     parser.add_argument("--no-gpu", action="store_true", help="Disable hardware GPU acceleration (use multi-core CPU libx264)")
     parser.add_argument("--allow-lossless-png-recovery", action="store_true", help="If source image validation fails, allow a validated PNG output and show the format change")
+    parser.add_argument("--archival-fallback", action="store_true", help="Search archival vaults (Wayback Machine, Archive.org, Ghostarchive, Filmot) if target media is deleted or hidden")
     parser.add_argument("--keep-temp", action="store_true", help="Keep intermediate downloaded stream files in temp directory")
     parser.add_argument("--playlist", "-p", action="store_true", help="Force treat input source as playlist")
     parser.add_argument("--list-playlist", action="store_true", help="List playlist entries for a graphical frontend and exit")
@@ -1248,12 +1255,14 @@ def main():
     elif args.browser_cookies and args.browser_session in (None, "none"):
         args.browser_session = "auto"
 
+    args.browser_session = normalize_browser_session(args.browser_session)
+
     if args.list_playlist:
-        args.browser_session = normalize_browser_session(args.browser_session)
         pdata = fetch_playlist_entries(
             args.source,
             auth_browser=args.browser_session,
             allow_ephemeral_stories=args.allow_ephemeral_stories,
+            archival_fallback=args.archival_fallback,
         )
         def clean_field(value):
             return str(value or "").replace("\t", " ").replace("\r", " ").replace("\n", " ").strip()
@@ -1270,11 +1279,11 @@ def main():
 
     if args.playlist or is_playlist_url(args.source):
         print("[*] Detected playlist source. Fetching items...")
-        args.browser_session = normalize_browser_session(args.browser_session)
         pdata = fetch_playlist_entries(
             args.source,
             auth_browser=args.browser_session,
             allow_ephemeral_stories=args.allow_ephemeral_stories,
+            archival_fallback=args.archival_fallback,
         )
         selected_entries = pdata["entries"]
         if args.playlist_indexes:
@@ -1300,6 +1309,7 @@ def main():
             max_retries=args.retries,
             reconstruct_frequency_loss=args.reconstruct_frequency_loss,
             allow_ephemeral_stories=args.allow_ephemeral_stories,
+            archival_fallback=args.archival_fallback,
         )
         failed = summary.get("failed_count", 0)
         successful = summary.get("successful_count", 0)
@@ -1310,7 +1320,6 @@ def main():
             else:
                 print(f"[*] Partial completion: {successful} tracks converted, {failed} failed.", flush=True)
     else:
-        args.browser_session = normalize_browser_session(args.browser_session)
         refresh_callback = None
         if facebook_photo_manifest is not None and args.facebook_capture_id:
             def request_facebook_refresh(photo_id: str) -> list[str]:
@@ -1359,6 +1368,7 @@ def main():
             end_time=args.end_time,
             reconstruct_frequency_loss=args.reconstruct_frequency_loss,
             allow_ephemeral_stories=args.allow_ephemeral_stories,
+            archival_fallback=args.archival_fallback,
         )
 
 if __name__ == "__main__":

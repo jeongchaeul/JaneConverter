@@ -1065,6 +1065,7 @@ def fetch_media_stream(
     auth_browser: Optional[str] = None,
     browser_media_path: Optional[str] = None,
     allow_ephemeral_stories: bool = False,
+    archival_fallback: bool = False,
 ) -> Dict[str, Any]:
     """
     Fetches the media stream from a URL (or validates local file) into output_dir.
@@ -1422,6 +1423,13 @@ def fetch_media_stream(
                     continue
 
             if not info:
+                if archival_fallback:
+                    from .archival import probe_archival_vaults, download_archival_stream
+                    arc_res = probe_archival_vaults(source, report=report)
+                    if arc_res and arc_res.found:
+                        return download_archival_stream(
+                            arc_res, output_dir, abort_event=abort_event, progress_callback=progress_callback
+                        )
                 if is_tiktok_source:
                     report(0.18, "Engaging direct TikTok stream extractor...", force=True)
                     return _fetch_tiktok_direct(
@@ -1542,6 +1550,13 @@ def fetch_media_stream(
                 "is_local": False
             }
     except BrowserSessionError:
+        if archival_fallback:
+            from .archival import probe_archival_vaults, download_archival_stream
+            arc_res = probe_archival_vaults(source, report=report)
+            if arc_res and arc_res.found:
+                return download_archival_stream(
+                    arc_res, output_dir, abort_event=abort_event, progress_callback=progress_callback
+                )
         if is_tiktok_source:
             report(0.18, "Engaging direct TikTok stream extractor...", force=True)
             return _fetch_tiktok_direct(
@@ -1555,6 +1570,13 @@ def fetch_media_stream(
             )
         raise
     except Exception as e:
+        if archival_fallback:
+            from .archival import probe_archival_vaults, download_archival_stream
+            arc_res = probe_archival_vaults(source, report=report)
+            if arc_res and arc_res.found:
+                return download_archival_stream(
+                    arc_res, output_dir, abort_event=abort_event, progress_callback=progress_callback
+                )
         if is_tiktok_source:
             report(0.18, "Engaging direct TikTok stream extractor...", force=True)
             try:
@@ -1578,6 +1600,7 @@ def fetch_playlist_entries(
     progress_callback: Optional[Callable[[float, str], None]] = None,
     auth_browser: Optional[str] = None,
     allow_ephemeral_stories: bool = False,
+    archival_fallback: bool = False,
 ) -> Dict[str, Any]:
     """
     Extracts metadata for all tracks or videos in a playlist without downloading media stream files.
@@ -1714,13 +1737,42 @@ def fetch_playlist_entries(
                 if not e:
                     continue
                 raw_t = (e.get("title") or "").strip()
-                if raw_t.lower() in {
+                is_unavailable = raw_t.lower() in {
                     "[private video]", "[deleted video]", "[unavailable video]",
                     "[private]", "[deleted]", "[unavailable]"
-                }:
+                } or e.get("availability") in ("private", "deleted", "unavailable", "needs_auth")
+
+                if is_unavailable:
+                    if not archival_fallback:
+                        continue
+                    # Archival fallback active: retain item and resolve historical metadata
+                    e_id = e.get("id") or ""
+                    if not e_id:
+                        continue
+                    from .archival import lookup_historical_metadata
+                    hist_meta = lookup_historical_metadata(e_id)
+                    t_title = hist_meta.title or f"[Archived Video] {e_id}"
+                    t_artist = hist_meta.uploader or e.get("uploader") or e.get("channel") or "Archived Vault"
+                    t_dur_sec = hist_meta.duration or int(e.get("duration") or 0)
+                    e_url = f"https://www.youtube.com/watch?v={e_id}"
+                    e_thumb = hist_meta.thumbnail_url or playlist_cover
+                    e_desc = hist_meta.description or "Unavailable on YouTube. Queued for Archival Vault recovery."
+                    entries.append({
+                        "index": valid_idx,
+                        "title": t_title,
+                        "artist": t_artist,
+                        "duration": t_dur_sec,
+                        "duration_str": format_duration(t_dur_sec),
+                        "url": e_url,
+                        "id": e_id,
+                        "thumbnail": e_thumb,
+                        "description": e_desc,
+                        "album": playlist_title,
+                        "is_archival_candidate": True,
+                    })
+                    valid_idx += 1
                     continue
-                if e.get("availability") in ("private", "deleted", "unavailable", "needs_auth"):
-                    continue
+
                 if not raw_t and not e.get("duration") and not (e.get("uploader") or e.get("channel")):
                     continue
 

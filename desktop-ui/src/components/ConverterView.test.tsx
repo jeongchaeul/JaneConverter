@@ -213,6 +213,18 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
+  it("toggles archival vault fallback under advanced settings", async () => {
+    const view = renderView();
+    const advanced = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.includes("Advanced settings"));
+    await act(async () => { advanced?.click(); await Promise.resolve(); });
+    const archival = Array.from(view.container.querySelectorAll("label")).find((item) => item.textContent?.includes("Search archival vaults"));
+    expect(archival?.textContent).toContain("Wayback Machine");
+    await act(async () => { archival?.querySelector("input")?.click(); await Promise.resolve(); });
+    expect(view.onSettings).toHaveBeenCalledWith(expect.objectContaining({ archivalFallback: true }));
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
   it("unselects a preset and restores the prior manual settings", async () => {
     const view = renderView();
     const presetButton = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Studio Master");

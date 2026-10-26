@@ -470,6 +470,9 @@ pub fn build_conversion_args_with_capture(
     if request.allow_png_fallback && request.format == "source" && request.category == "Image" {
         args.push("--allow-lossless-png-recovery".into());
     }
+    if request.archival_fallback {
+        args.push("--archival-fallback".into());
+    }
     let explicit_browser = browser.or_else(|| request.browser_session.clone());
     let browser_enabled = request.read_browser_cookies
         || explicit_browser
@@ -1056,6 +1059,7 @@ mod tests {
             start_time: None,
             end_time: None,
             allow_story_extraction: false,
+            archival_fallback: false,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false)
             .expect("display labels should be accepted");
@@ -1098,6 +1102,7 @@ mod tests {
             start_time: None,
             end_time: None,
             allow_story_extraction: false,
+            archival_fallback: false,
         };
         let args = build_conversion_args_with_capture(&request, None, None, true).unwrap();
 
@@ -1140,6 +1145,7 @@ mod tests {
             start_time: None,
             end_time: None,
             allow_story_extraction: false,
+            archival_fallback: false,
         };
 
         let args =
@@ -1179,6 +1185,7 @@ mod tests {
             start_time: None,
             end_time: None,
             allow_story_extraction: false,
+            archival_fallback: false,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false)
             .expect("public conversion should be valid");
@@ -1212,6 +1219,7 @@ mod tests {
             start_time: Some("00:01:15".into()),
             end_time: Some("00:03:45".into()),
             allow_story_extraction: false,
+            archival_fallback: false,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         let s_pos = args
@@ -1252,6 +1260,7 @@ mod tests {
             start_time: None,
             end_time: None,
             allow_story_extraction: false,
+            archival_fallback: false,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         let session_pos = args
@@ -1293,6 +1302,7 @@ mod tests {
             start_time: None,
             end_time: None,
             allow_story_extraction: false,
+            archival_fallback: false,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         assert!(args.contains(&"--reconstruct-frequency-loss".into()));
@@ -1328,6 +1338,7 @@ mod tests {
             start_time: None,
             end_time: None,
             allow_story_extraction: true,
+            archival_fallback: false,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         assert!(args.contains(&"--allow-ephemeral-stories".into()));
@@ -1335,5 +1346,41 @@ mod tests {
         request.allow_story_extraction = false;
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         assert!(!args.contains(&"--allow-ephemeral-stories".into()));
+    }
+
+    #[test]
+    fn archival_fallback_adds_cli_flag() {
+        let mut request = ConversionRequest {
+            source: "https://www.youtube.com/watch?v=dQw4w9WgXcQ".into(),
+            output_dir: "out".into(),
+            category: "Video".into(),
+            format: "mp4".into(),
+            bitrate: "original".into(),
+            sample_rate: 48000,
+            resolution: "original".into(),
+            normalize: false,
+            use_gpu: false,
+            save_cover: false,
+            save_metadata: false,
+            allow_png_fallback: false,
+            reconstruct_frequency_loss: false,
+            retries: 2,
+            playlist_indexes: None,
+            read_browser_cookies: false,
+            browser_session: None,
+            browser_capture_path: None,
+            facebook_capture_id: None,
+            social_capture_id: None,
+            start_time: None,
+            end_time: None,
+            allow_story_extraction: false,
+            archival_fallback: true,
+        };
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        assert!(args.contains(&"--archival-fallback".into()));
+
+        request.archival_fallback = false;
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        assert!(!args.contains(&"--archival-fallback".into()));
     }
 }

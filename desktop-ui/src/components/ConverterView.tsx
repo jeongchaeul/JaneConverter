@@ -1875,7 +1875,26 @@ export function ConverterView({
                     }
                     disabled={hardwareAccelerationDisabled}
                   />
+                  <Toggle
+                    checked={settings.archivalFallback ?? false}
+                    onChange={(archivalFallback) => update({ archivalFallback })}
+                    label="Search archival vaults for unavailable media"
+                    hint="Index Wayback Machine, Archive.org, Ghostarchive, and Filmot if a video is deleted or private"
+                  />
                 </div>
+                {settings.archivalFallback && (
+                  <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] p-3 text-xs leading-relaxed text-zinc-300">
+                    <div className="font-medium text-amber-300 mb-1 flex items-center gap-1.5">
+                      <span>Archival Vault Indexing (Wayback Machine, Archive.org & Ghostarchive)</span>
+                    </div>
+                    <p className="text-zinc-400">
+                      <strong className="text-zinc-200">What it does:</strong> When JaneConverter encounters a deleted, hidden, or private video (standalone or inside a playlist), it initiates a multi-stage archival recovery pipeline: queries historical metadata via Filmot and Wayback Machine CDX, locates raw video/audio files preserved across Internet Archive (ArchiveTeam & YouTube collections), and probes Ghostarchive mirrors.
+                    </p>
+                    <p className="mt-1 text-[11px] text-zinc-500">
+                      Note: Archival recovery depends on whether public internet preservation archives crawled the media before removal.
+                    </p>
+                  </div>
+                )}
                 {isAudio && settings.reconstructFrequencyLoss && !isSourceFormat && (
                   <div className="mt-3 rounded-lg border border-purple-500/20 bg-purple-500/[0.04] p-3 text-xs leading-relaxed text-zinc-300">
                     <div className="font-medium text-purple-300 mb-1 flex items-center gap-1.5">

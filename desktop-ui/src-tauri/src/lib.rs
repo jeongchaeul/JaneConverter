@@ -2878,6 +2878,7 @@ mod tests {
             start_time: None,
             end_time: None,
             allow_story_extraction: false,
+            archival_fallback: false,
         };
         assert!(
             crate::process::build_conversion_args_with_capture(&request, None, None, false)

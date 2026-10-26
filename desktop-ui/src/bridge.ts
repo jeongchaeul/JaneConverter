@@ -56,6 +56,7 @@ export interface ConverterSettings {
   startTime?: string;
   endTime?: string;
   allowStoryExtraction?: boolean;
+  archivalFallback?: boolean;
 }
 
 export interface UpdateCheckResult {
@@ -301,6 +302,7 @@ const demoSettings: ConverterSettings = {
   startTime: "",
   endTime: "",
   allowStoryExtraction: false,
+  archivalFallback: false,
 };
 
 const demoBridge: JaneBridge = {

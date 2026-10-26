@@ -31,6 +31,7 @@ const defaultSettings: ConverterSettings = {
   startTime: "",
   endTime: "",
   allowStoryExtraction: false,
+  archivalFallback: false,
 };
 
 const HISTORY_STORAGE_KEY = "janeconverter.conversionHistory";
