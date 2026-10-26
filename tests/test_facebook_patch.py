@@ -250,3 +250,142 @@ def test_facebook_comet_fallback_rescuing_cannot_parse_data():
     assert res["uploader"] == "Jane Artist"
     assert len(res["formats"]) == 1
     assert res["formats"][0]["url"] == "https://scontent.xx.fbcdn.net/rescued_video.mp4"
+
+
+def test_facebook_comet_multi_video_isolation_prevents_audio_bleeding():
+    """Verify that preloaded next reels or recommended videos do not contaminate target video formats/audios."""
+    from janeconverter.facebook_patch import _extract_comet_video_data
+    from yt_dlp.extractor.facebook import FacebookIE
+
+    ie = FacebookIE()
+    target_video_id = "1132151226070998"
+    preloaded_reel_id = "9999999999999999"
+
+    target_data = {
+        "require": [
+            [
+                "ScheduledServerJS",
+                "handle",
+                None,
+                [
+                    {
+                        "__bbox": {
+                            "require": [
+                                [
+                                    "RelayPrefetchedStreamCache",
+                                    "next",
+                                    [],
+                                    [
+                                        None,
+                                        {
+                                            "__bbox": {
+                                                "result": {
+                                                    "data": {
+                                                        "video": {
+                                                            "id": target_video_id,
+                                                            "creation_story": {
+                                                                "attachments": [
+                                                                    {
+                                                                        "media": {
+                                                                            "__typename": "Video",
+                                                                            "id": target_video_id,
+                                                                            "videoDeliveryResponseFragment": {
+                                                                                "videoDeliveryResponseResult": {
+                                                                                    "id": target_video_id,
+                                                                                    "progressive_urls": [
+                                                                                        {
+                                                                                            "progressive_url": "https://scontent.xx.fbcdn.net/target_hd.mp4",
+                                                                                            "metadata": {"quality": "HD"},
+                                                                                        },
+                                                                                    ],
+                                                                                }
+                                                                            },
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            },
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        },
+                                    ],
+                                ]
+                            ]
+                        }
+                    }
+                ],
+            ]
+        ]
+    }
+
+    preloaded_next_reel = {
+        "require": [
+            [
+                "ScheduledServerJS",
+                "handle",
+                None,
+                [
+                    {
+                        "__bbox": {
+                            "require": [
+                                [
+                                    "RelayPrefetchedStreamCache",
+                                    "next",
+                                    [],
+                                    [
+                                        None,
+                                        {
+                                            "__bbox": {
+                                                "result": {
+                                                    "data": {
+                                                        "node": {
+                                                            "attachments": [
+                                                                {
+                                                                    "media": {
+                                                                        "__typename": "Video",
+                                                                        "id": preloaded_reel_id,
+                                                                        "videoDeliveryResponseFragment": {
+                                                                            "videoDeliveryResponseResult": {
+                                                                                "id": preloaded_reel_id,
+                                                                                "progressive_urls": [
+                                                                                    {
+                                                                                        "progressive_url": "https://scontent.xx.fbcdn.net/unwanted_preloaded_audio.mp4",
+                                                                                        "metadata": {"quality": "HD"},
+                                                                                    },
+                                                                                ],
+                                                                            }
+                                                                        },
+                                                                    }
+                                                                }
+                                                            ]
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        },
+                                    ],
+                                ]
+                            ]
+                        }
+                    }
+                ],
+            ]
+        ]
+    }
+
+    webpage = (
+        '<html><body>'
+        '<script data-sjs>' + json.dumps(target_data) + '</script>'
+        '<script data-sjs>' + json.dumps(preloaded_next_reel) + '</script>'
+        '<script>{"actors":[{"name":"Original Creator","id":"11111"}]}</script>'
+        '</body></html>'
+    )
+
+    info = _extract_comet_video_data(ie, webpage, target_video_id, f"https://www.facebook.com/reel/{target_video_id}")
+    assert info is not None
+    assert info["id"] == target_video_id
+    assert len(info["formats"]) == 1
+    assert info["formats"][0]["url"] == "https://scontent.xx.fbcdn.net/target_hd.mp4"
+    assert not any("unwanted_preloaded_audio" in f["url"] for f in info["formats"])
+

@@ -79,7 +79,6 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
     if not raw_scripts:
         raw_scripts = re.findall(r'<script[^>]*type="application/json"[^>]*>(.*?)</script>', webpage)
 
-    found_nodes = []
     stream_keys = (
         "videoDeliveryResponse",
         "dash_manifests",
@@ -87,22 +86,89 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
         "progressive_urls",
         "playable_url",
     )
+
+    def harvest_delivery_targets(
+        obj: Any,
+        parent_ids: Optional[list[str]] = None,
+        parent_nodes: Optional[list[Any]] = None,
+    ):
+        if parent_ids is None:
+            parent_ids = []
+        if parent_nodes is None:
+            parent_nodes = []
+
+        current_ids = list(parent_ids)
+        current_nodes = list(parent_nodes)
+        if isinstance(obj, dict):
+            current_nodes.append(obj)
+            for k in ("id", "videoId", "video_id", "legacy_token"):
+                val = obj.get(k)
+                if val and str(val) not in current_ids:
+                    current_ids.append(str(val))
+                    decoded = decode_fb_story_id(str(val))
+                    if decoded and decoded not in current_ids:
+                        current_ids.append(decoded)
+
+            fmt_payload = None
+            if "videoDeliveryResponseResult" in obj and isinstance(obj["videoDeliveryResponseResult"], dict):
+                fmt_payload = obj["videoDeliveryResponseResult"]
+            elif "videoDeliveryResponseFragment" in obj and isinstance(obj["videoDeliveryResponseFragment"], dict):
+                frag = obj["videoDeliveryResponseFragment"]
+                fmt_payload = frag.get("videoDeliveryResponseResult") or frag
+            elif "progressive_urls" in obj and isinstance(obj["progressive_urls"], list):
+                fmt_payload = obj
+
+            if fmt_payload:
+                payload_id = fmt_payload.get("id")
+                target_ids = list(current_ids)
+                if payload_id and str(payload_id) not in target_ids:
+                    target_ids.append(str(payload_id))
+                    decoded = decode_fb_story_id(str(payload_id))
+                    if decoded and decoded not in target_ids:
+                        target_ids.append(decoded)
+                yield (target_ids, fmt_payload, current_nodes)
+
+            for v in obj.values():
+                yield from harvest_delivery_targets(v, current_ids, current_nodes)
+        elif isinstance(obj, list):
+            for item in obj:
+                yield from harvest_delivery_targets(item, current_ids, current_nodes)
+
+    all_targets = []
     for s in raw_scripts:
         if not any(k in s for k in stream_keys):
             continue
         try:
             data = json.loads(s)
-            found_nodes.append(data)
+            for item in harvest_delivery_targets(data):
+                all_targets.append(item)
         except Exception:
             continue
 
-    if not found_nodes:
+    if not all_targets:
         return None
+
+    # Filter targets strictly by video_id to prevent multi-video stream mixing
+    target_id_str = str(video_id).strip()
+    matching_targets = [
+        t for t in all_targets
+        if any(target_id_str == i or target_id_str in i for i in t[0])
+    ]
+
+    if matching_targets:
+        selected_targets = matching_targets
+    else:
+        # If no explicit match, isolate by the first video's identity so we never mix streams across different videos
+        first_group_id = all_targets[0][0][0] if all_targets[0][0] else None
+        if first_group_id:
+            selected_targets = [t for t in all_targets if t[0] and t[0][0] == first_group_id]
+        else:
+            selected_targets = [all_targets[0]]
 
     formats = []
     q = qualities(["sd", "hd"])
 
-    def process_delivery_result(fmt_data: dict) -> None:
+    def process_delivery_result(fmt_data: dict, enclosing_node: Optional[dict] = None) -> None:
         if not fmt_data or not isinstance(fmt_data, dict):
             return
 
@@ -125,7 +191,19 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
                 except Exception:
                     pass
 
-        if not dash_manifests and mpd_urls:
+        raw_manifest_str = (
+            fmt_data.get("dash_manifest")
+            or fmt_data.get("dash_manifest_xml_string")
+            or fmt_data.get("manifest_xml")
+        )
+        if raw_manifest_str and isinstance(raw_manifest_str, str):
+            try:
+                parsed_mpd = ET.fromstring(urllib.parse.unquote_plus(raw_manifest_str))
+                formats.extend(ie._parse_mpd_formats(parsed_mpd))
+            except Exception:
+                pass
+
+        if not dash_manifests and not raw_manifest_str and mpd_urls:
             for mpd_url in mpd_urls:
                 try:
                     formats.extend(ie._extract_mpd_formats(mpd_url, video_id, fatal=False))
@@ -174,7 +252,7 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
             ("browser_native_hd_url", "hd"),
             ("browser_native_sd_url", "sd"),
         ):
-            raw_url = fmt_data.get(key)
+            raw_url = fmt_data.get(key) or (enclosing_node.get(key) if isinstance(enclosing_node, dict) else None)
             if raw_url and url_or_none(raw_url):
                 formats.append({
                     "format_id": fid,
@@ -186,24 +264,9 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
                     "downloader_options": {"http_chunk_size": 250 << 20},
                 })
 
-    def deep_search(obj: Any) -> None:
-        if isinstance(obj, dict):
-            if "videoDeliveryResponseResult" in obj and isinstance(obj["videoDeliveryResponseResult"], dict):
-                process_delivery_result(obj["videoDeliveryResponseResult"])
-            elif "videoDeliveryResponseFragment" in obj and isinstance(obj["videoDeliveryResponseFragment"], dict):
-                frag = obj["videoDeliveryResponseFragment"]
-                process_delivery_result(frag.get("videoDeliveryResponseResult") or frag)
-            elif "progressive_urls" in obj and isinstance(obj["progressive_urls"], list):
-                process_delivery_result(obj)
-
-            for v in obj.values():
-                deep_search(v)
-        elif isinstance(obj, list):
-            for item in obj:
-                deep_search(item)
-
-    for n in found_nodes:
-        deep_search(n)
+    for ids, payload, nodes in selected_targets:
+        enc_node = nodes[-1] if nodes else None
+        process_delivery_result(payload, enc_node)
 
     if not formats:
         return None
@@ -221,31 +284,93 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
         f.setdefault("downloader_options", {})["http_chunk_size"] = 250 << 20
         unique_formats.append(f)
 
-    # Metadata extraction
+    # Metadata extraction from matched nodes first
+    matched_nodes = selected_targets[0][2] if selected_targets else []
     uploader = None
     uploader_id = None
-    m_actor = re.search(r'"actors"\s*:\s*\[\s*\{[^}]*"name"\s*:\s*"([^"]+)"', webpage)
-    if m_actor:
-        uploader = _unescape_fb_text(m_actor.group(1))
-    else:
-        m_owner = re.search(r'"owner"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"', webpage)
-        if m_owner:
-            uploader = _unescape_fb_text(m_owner.group(1))
-
-    m_uid = re.search(r'"actors"\s*:\s*\[\s*\{[^}]*"id"\s*:\s*"(\d+)"', webpage)
-    if m_uid:
-        uploader_id = m_uid.group(1)
-    else:
-        m_oid = re.search(r'"owner"\s*:\s*\{[^}]*"id"\s*:\s*"(\d+)"', webpage)
-        if m_oid:
-            uploader_id = m_oid.group(1)
-
     title = None
     description = None
-    m_msg = re.search(r'"message"\s*:\s*\{\s*"text"\s*:\s*"([^"]+)"', webpage)
-    if m_msg:
-        description = _unescape_fb_text(m_msg.group(1))
-        title = description
+    thumbnail = None
+    duration = None
+    timestamp = None
+
+    for n in reversed(matched_nodes):
+        if isinstance(n, dict):
+            if not uploader and "owner" in n and isinstance(n["owner"], dict):
+                uploader = n["owner"].get("name")
+                uploader_id = n["owner"].get("id")
+            if not uploader and "actors" in n and isinstance(n["actors"], list) and n["actors"]:
+                first_actor = n["actors"][0]
+                if isinstance(first_actor, dict):
+                    uploader = first_actor.get("name")
+                    uploader_id = first_actor.get("id")
+            if not duration:
+                if "length_in_second" in n and n["length_in_second"] is not None:
+                    try:
+                        duration = float(n["length_in_second"])
+                    except Exception:
+                        pass
+                elif "playable_duration_in_ms" in n and n["playable_duration_in_ms"] is not None:
+                    try:
+                        duration = float(n["playable_duration_in_ms"]) / 1000.0
+                    except Exception:
+                        pass
+            if not thumbnail:
+                if "preferred_thumbnail" in n and isinstance(n["preferred_thumbnail"], dict):
+                    thumbnail = (n["preferred_thumbnail"].get("image") or {}).get("uri")
+                elif "thumbnailImage" in n and isinstance(n["thumbnailImage"], dict):
+                    thumbnail = n["thumbnailImage"].get("uri")
+                elif "first_frame_thumbnail" in n and isinstance(n["first_frame_thumbnail"], str):
+                    thumbnail = n["first_frame_thumbnail"]
+            if not title:
+                if "name" in n and isinstance(n["name"], str) and n["name"].strip():
+                    title = n["name"].strip()
+                elif "title" in n and isinstance(n["title"], str) and n["title"].strip():
+                    title = n["title"].strip()
+                elif "savable_description" in n and isinstance(n["savable_description"], dict):
+                    title = n["savable_description"].get("text")
+                    description = title
+                elif "creation_story" in n and isinstance(n["creation_story"], dict):
+                    msg = (n["creation_story"].get("message") or {}).get("text")
+                    if msg:
+                        title = msg
+                        description = msg
+            if not timestamp:
+                if "publish_time" in n and n["publish_time"] is not None:
+                    try:
+                        timestamp = int(n["publish_time"])
+                    except Exception:
+                        pass
+                elif "creation_time" in n and n["creation_time"] is not None:
+                    try:
+                        timestamp = int(n["creation_time"])
+                    except Exception:
+                        pass
+
+    # Webpage regex fallbacks for any missing metadata
+    if not uploader:
+        m_actor = re.search(r'"actors"\s*:\s*\[\s*\{[^}]*"name"\s*:\s*"([^"]+)"', webpage)
+        if m_actor:
+            uploader = _unescape_fb_text(m_actor.group(1))
+        else:
+            m_owner = re.search(r'"owner"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"', webpage)
+            if m_owner:
+                uploader = _unescape_fb_text(m_owner.group(1))
+
+    if not uploader_id:
+        m_uid = re.search(r'"actors"\s*:\s*\[\s*\{[^}]*"id"\s*:\s*"(\d+)"', webpage)
+        if m_uid:
+            uploader_id = m_uid.group(1)
+        else:
+            m_oid = re.search(r'"owner"\s*:\s*\{[^}]*"id"\s*:\s*"(\d+)"', webpage)
+            if m_oid:
+                uploader_id = m_oid.group(1)
+
+    if not title:
+        m_msg = re.search(r'"message"\s*:\s*\{\s*"text"\s*:\s*"([^"]+)"', webpage)
+        if m_msg:
+            description = _unescape_fb_text(m_msg.group(1))
+            title = description
     if not title:
         m_desc = re.search(r'"savable_description"\s*:\s*\{\s*"text"\s*:\s*"([^"]+)"', webpage)
         if m_desc:
@@ -254,25 +379,26 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
     if not title:
         title = f"Reel by {uploader}" if uploader else f"Facebook video #{video_id}"
 
-    thumbnail = None
-    m_thumb = re.search(r'"preferred_thumbnail"\s*:\s*\{\s*"image"\s*:\s*\{\s*"uri"\s*:\s*"([^"]+)"', webpage)
-    if m_thumb:
-        thumbnail = m_thumb.group(1).replace(r"\/", "/").replace(r"\u0025", "%")
-    else:
-        m_t2 = re.search(r'"thumbnailImage"\s*:\s*\{\s*"uri"\s*:\s*"([^"]+)"', webpage)
-        if m_t2:
-            thumbnail = m_t2.group(1).replace(r"\/", "/").replace(r"\u0025", "%")
+    if not thumbnail:
+        m_thumb = re.search(r'"preferred_thumbnail"\s*:\s*\{\s*"image"\s*:\s*\{\s*"uri"\s*:\s*"([^"]+)"', webpage)
+        if m_thumb:
+            thumbnail = m_thumb.group(1).replace(r"\/", "/").replace(r"\u0025", "%")
+        else:
+            m_t2 = re.search(r'"thumbnailImage"\s*:\s*\{\s*"uri"\s*:\s*"([^"]+)"', webpage)
+            if m_t2:
+                thumbnail = m_t2.group(1).replace(r"\/", "/").replace(r"\u0025", "%")
 
-    duration = None
-    dur_m = re.search(r'"length_in_second"\s*:\s*([\d\.]+)', webpage)
-    if dur_m:
-        try:
-            duration = float(dur_m.group(1))
-        except Exception:
-            pass
+    if not duration:
+        dur_m = re.search(r'"length_in_second"\s*:\s*([\d\.]+)', webpage)
+        if dur_m:
+            try:
+                duration = float(dur_m.group(1))
+            except Exception:
+                pass
 
-    time_m = re.search(r'"publish_time"\s*:\s*(\d{9,12})', webpage)
-    timestamp = int(time_m.group(1)) if time_m else None
+    if not timestamp:
+        time_m = re.search(r'"publish_time"\s*:\s*(\d{9,12})', webpage)
+        timestamp = int(time_m.group(1)) if time_m else None
 
     return {
         "id": video_id,
