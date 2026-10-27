@@ -136,9 +136,15 @@ def downgrade_flp_bytes(
     if len(raw_data) < 22 or raw_data[:4] != b"FLhd":
         raise ValueError("Invalid FLP header: not a valid FL Studio project file.")
 
-    fldt_idx = raw_data.find(b"FLdt")
+    flhd_len = struct.unpack("<I", raw_data[4:8])[0]
+    if flhd_len < 6 or 8 + flhd_len > len(raw_data):
+        raise ValueError("Invalid FLP header: truncated FLhd chunk.")
+
+    fldt_idx = raw_data.find(b"FLdt", 8 + flhd_len)
     if fldt_idx == -1:
-        raise ValueError("Invalid FLP structure: missing FLdt data chunk.")
+        fldt_idx = raw_data.find(b"FLdt")
+    if fldt_idx == -1 or fldt_idx + 8 > len(raw_data):
+        raise ValueError("Invalid FLP structure: missing or truncated FLdt data chunk.")
 
     orig_fldt_len = struct.unpack("<I", raw_data[fldt_idx + 4 : fldt_idx + 8])[0]
     trailing_chunk_len = max(0, len(raw_data) - (fldt_idx + 8 + orig_fldt_len))
@@ -151,13 +157,13 @@ def downgrade_flp_bytes(
     records_adjusted = 0
 
     # 1. Parse source version and event 0xC7 (FLVersion ASCII string)
-    match_c7 = re.search(rb"\xc7[\x00-\x7f]([0-9]+\.[0-9]+\.[0-9]+[^\x00]*\x00)", data[:1024])
+    match_c7 = re.search(rb"\xc7([\x01-\x7f])([0-9]+\.[0-9]+\.[0-9]+[^\x00]*\x00)", data[:1024])
     source_ver_full = "Unknown"
     source_major = 0
     source_build = 0
 
-    if match_c7:
-        source_ver_full = match_c7.group(1).rstrip(b"\x00").decode("ascii", errors="ignore")
+    if match_c7 and match_c7.group(1)[0] == len(match_c7.group(2)):
+        source_ver_full = match_c7.group(2).rstrip(b"\x00").decode("ascii", errors="ignore")
         old_c7_match = match_c7.group(0)
         s_parts = source_ver_full.split(".")
         if s_parts and s_parts[0].isdigit():
@@ -170,8 +176,8 @@ def downgrade_flp_bytes(
         new_c7_event = b"\xc7" + write_varint(len(target_ver_bytes)) + target_ver_bytes
 
         # Replace 0xC7 in header
-        c7_pos = data.find(old_c7_match[:6])
-        if c7_pos != -1 and c7_pos < 1024:
+        c7_pos = match_c7.start()
+        if 0 <= c7_pos < 1024:
             data = bytearray(
                 data[:c7_pos] + new_c7_event + data[c7_pos + len(old_c7_match):]
             )
@@ -188,13 +194,42 @@ def downgrade_flp_bytes(
             patched_9f = True
 
     if not patched_9f:
-        for p in range(16, min(512, len(data) - 5)):
-            if data[p] == 0x9F:
-                cur_val = struct.unpack("<I", data[p + 1 : p + 5])[0]
-                if 10 <= cur_val <= 99999:
-                    data[p : p + 5] = new_build_payload
-                    patched_9f = True
-                    break
+        from .parser import parse_varint as _parse_varint
+
+        cur_fldt_idx = data.find(b"FLdt", 8 + flhd_len)
+        if cur_fldt_idx == -1:
+            cur_fldt_idx = data.find(b"FLdt")
+        if cur_fldt_idx != -1 and cur_fldt_idx + 8 < len(data):
+            scan_stream = io.BytesIO(data[cur_fldt_idx + 8 : min(len(data), cur_fldt_idx + 4096)])
+            try:
+                for _ in range(64):
+                    ev_pos = cur_fldt_idx + 8 + scan_stream.tell()
+                    ev_raw = scan_stream.read(1)
+                    if not ev_raw:
+                        break
+                    ev_id = ev_raw[0]
+                    if ev_id < 64:
+                        if len(scan_stream.read(1)) < 1:
+                            break
+                    elif ev_id < 128:
+                        if len(scan_stream.read(2)) < 2:
+                            break
+                    elif ev_id < 192:
+                        payload4 = scan_stream.read(4)
+                        if len(payload4) < 4:
+                            break
+                        if ev_id == 0x9F:
+                            cur_val = struct.unpack("<I", payload4)[0]
+                            if 10 <= cur_val <= 99999:
+                                data[ev_pos : ev_pos + 5] = new_build_payload
+                                patched_9f = True
+                                break
+                    else:
+                        vlen = _parse_varint(scan_stream)
+                        if len(scan_stream.read(vlen)) < vlen:
+                            break
+            except Exception:
+                pass
 
     # 3. Patch UTF-16LE version strings in header (Events 0xC0, 0xC8, etc.)
     fl_needle = "FL Studio ".encode("utf-16le")
@@ -218,35 +253,44 @@ def downgrade_flp_bytes(
                     break
                 str_end += 2
 
-            old_chunk = bytes(data[ev_start:str_end])
-            try:
-                old_text = bytes(data[idx:str_end]).decode("utf-16le").rstrip("\x00")
-                has_double_build = old_text.count(".") >= 4
-                if has_double_build:
-                    new_text = f"FL Studio {base_ver}.{target_b_int}.{target_b_int}\x00"
-                else:
-                    new_text = f"FL Studio {base_ver}.{target_b_int}\x00"
+            expected_varint = write_varint(str_end - idx)
+            if bytes(data[ev_start + 1 : idx]) == expected_varint:
+                old_chunk = bytes(data[ev_start:str_end])
+                try:
+                    old_text = bytes(data[idx:str_end]).decode("utf-16le").rstrip("\x00")
+                    has_double_build = old_text.count(".") >= 4
+                    if has_double_build:
+                        new_text = f"FL Studio {base_ver}.{target_b_int}.{target_b_int}\x00"
+                    else:
+                        new_text = f"FL Studio {base_ver}.{target_b_int}\x00"
 
-                new_text_bytes = new_text.encode("utf-16le")
-                new_chunk = (
-                    bytes([ev_id])
-                    + write_varint(len(new_text_bytes))
-                    + new_text_bytes
-                )
-
-                chunk_pos = data.find(old_chunk)
-                if chunk_pos != -1:
-                    data = bytearray(
-                        data[:chunk_pos]
-                        + new_chunk
-                        + data[chunk_pos + len(old_chunk) :]
+                    new_text_bytes = new_text.encode("utf-16le")
+                    new_chunk = (
+                        bytes([ev_id])
+                        + write_varint(len(new_text_bytes))
+                        + new_text_bytes
                     )
-            except (ValueError, KeyError, IndexError):
-                pass
+
+                    chunk_pos = data.find(old_chunk)
+                    if chunk_pos != -1:
+                        data = bytearray(
+                            data[:chunk_pos]
+                            + new_chunk
+                            + data[chunk_pos + len(old_chunk) :]
+                        )
+                except (ValueError, KeyError, IndexError):
+                    pass
+
+    # Synchronize FLdt chunk length after header event edits before Step 4
+    new_fldt_idx = data.find(b"FLdt", 8 + flhd_len)
+    if new_fldt_idx == -1:
+        new_fldt_idx = data.find(b"FLdt")
+    if new_fldt_idx != -1 and len(data) >= new_fldt_idx + 8:
+        pre_step4_len = max(0, len(data) - (new_fldt_idx + 8) - trailing_chunk_len)
+        data[new_fldt_idx + 4 : new_fldt_idx + 8] = struct.pack("<I", pre_step4_len)
 
     # 4. Truncate modern 80-byte playlist clip arrangement records (Event 0xD4 / 212)
     if source_major >= 25 and target_maj <= 24:
-        new_fldt_idx = data.find(b"FLdt")
         if new_fldt_idx != -1 and len(data) >= new_fldt_idx + 8:
             old_fldt_len = struct.unpack("<I", data[new_fldt_idx + 4 : new_fldt_idx + 8])[0]
             fldt_data = data[new_fldt_idx + 8 : new_fldt_idx + 8 + old_fldt_len]
@@ -264,19 +308,27 @@ def downgrade_flp_bytes(
                     ev_id = ev_id_raw[0]
                     if ev_id < 64:
                         ev_payload = stream.read(1)
+                        if len(ev_payload) < 1:
+                            raise ValueError("Truncated 1-byte FLP event")
                         out_stream.write(ev_id_raw)
                         out_stream.write(ev_payload)
                     elif ev_id < 128:
                         ev_payload = stream.read(2)
+                        if len(ev_payload) < 2:
+                            raise ValueError("Truncated 2-byte FLP event")
                         out_stream.write(ev_id_raw)
                         out_stream.write(ev_payload)
                     elif ev_id < 192:
                         ev_payload = stream.read(4)
+                        if len(ev_payload) < 4:
+                            raise ValueError("Truncated 4-byte FLP event")
                         out_stream.write(ev_id_raw)
                         out_stream.write(ev_payload)
                     else:
                         var_len = parse_varint(stream)
                         ev_payload = stream.read(var_len)
+                        if len(ev_payload) < var_len:
+                            raise ValueError("Truncated variable-length FLP event")
                         if ev_id == 212 and len(ev_payload) > 0 and len(ev_payload) % 80 == 0:
                             num_recs = len(ev_payload) // 80
                             new_payload = bytearray()
@@ -303,8 +355,10 @@ def downgrade_flp_bytes(
                 pass
 
     # 5. Synchronize FLdt chunk length
-    new_fldt_idx = data.find(b"FLdt")
-    if new_fldt_idx != -1:
+    new_fldt_idx = data.find(b"FLdt", 8 + flhd_len)
+    if new_fldt_idx == -1:
+        new_fldt_idx = data.find(b"FLdt")
+    if new_fldt_idx != -1 and len(data) >= new_fldt_idx + 8:
         payload_length = max(0, len(data) - (new_fldt_idx + 8) - trailing_chunk_len)
         data[new_fldt_idx + 4 : new_fldt_idx + 8] = struct.pack("<I", payload_length)
 

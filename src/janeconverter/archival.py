@@ -298,6 +298,10 @@ def query_ghostarchive(
         else:
             stream_url = video_href
 
+        from .extractor import _is_safe_public_url
+        if not _is_safe_public_url(stream_url):
+            return None
+
         # Verify accessibility
         head_resp = requests.head(stream_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT, allow_redirects=True)
         if head_resp.status_code in (200, 206, 302):
@@ -471,25 +475,38 @@ def download_archival_stream(
         progress_callback(0.45, f"Downloading recovered stream from {stream_result.source_name}...")
 
     if stream_result.is_direct_media:
+        from .extractor import _is_safe_public_url
+        if not _is_safe_public_url(stream_result.stream_url):
+            raise ValueError("Archival stream URL failed public safety verification.")
         resp = requests.get(stream_result.stream_url, headers=ARCHIVE_HEADERS, stream=True, timeout=30)
         if resp.status_code not in (200, 206):
             raise RuntimeError(f"Failed to download archival stream from {stream_result.source_name} (HTTP {resp.status_code})")
 
         total_len = int(resp.headers.get("content-length") or 0)
         downloaded = 0
-        with open(dest_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=128 * 1024):
-                if abort_event and abort_event.is_set():
-                    raise KeyboardInterrupt("Archival stream download aborted by user.")
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total_len > 0 and progress_callback:
-                        pct = 0.45 + (downloaded / total_len) * 0.30
-                        progress_callback(
-                            pct,
-                            f"Downloading {stream_result.source_name} media: {downloaded // 1024} KB / {total_len // 1024} KB"
-                        )
+        try:
+            with open(dest_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=128 * 1024):
+                    if abort_event and abort_event.is_set():
+                        raise KeyboardInterrupt("Archival stream download aborted by user.")
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if downloaded > 2 * 1024 * 1024 * 1024:
+                            raise RuntimeError("Archival media stream exceeds the 2 GB limit.")
+                        if total_len > 0 and progress_callback:
+                            pct = 0.45 + (downloaded / total_len) * 0.30
+                            progress_callback(
+                                pct,
+                                f"Downloading {stream_result.source_name} media: {downloaded // 1024} KB / {total_len // 1024} KB"
+                            )
+        except BaseException:
+            if os.path.exists(dest_path):
+                try:
+                    os.remove(dest_path)
+                except OSError:
+                    pass
+            raise
     else:
         import yt_dlp
         ydl_opts = {
@@ -537,12 +554,9 @@ def download_archival_stream(
     thumb_path = None
     if stream_result.thumbnail_url:
         try:
-            t_resp = requests.get(stream_result.thumbnail_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT)
-            if t_resp.status_code == 200:
-                t_path = os.path.join(output_dir, "archived_cover.jpg")
-                with open(t_path, "wb") as tf:
-                    tf.write(t_resp.content)
-                thumb_path = t_path
+            from .extractor import download_and_convert_thumbnail
+            t_path = os.path.join(output_dir, "archived_cover.jpg")
+            thumb_path = download_and_convert_thumbnail(stream_result.thumbnail_url, t_path)
         except Exception:
             pass
 

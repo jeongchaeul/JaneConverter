@@ -340,66 +340,61 @@ def download_and_convert_thumbnail(thumbnail_url: str, output_path: str) -> Opti
         from PIL import Image
         import io
 
-        orig_max_pixels = getattr(Image, "MAX_IMAGE_PIXELS", None)
-        Image.MAX_IMAGE_PIXELS = MAX_THUMBNAIL_PIXELS
-        try:
-            if is_url(thumbnail_url):
-                current_url = thumbnail_url.strip()
-                session = requests.Session()
-                session.headers.update({
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                })
-                downloaded_bytes = bytearray()
-                for _ in range(MAX_REDIRECTS + 1):
-                    if not _is_safe_public_url(current_url):
-                        return None
-                    resp = session.get(current_url, stream=True, timeout=12, allow_redirects=False)
-                    if resp.status_code in (301, 302, 303, 307, 308):
-                        location = resp.headers.get("Location")
-                        resp.close()
-                        if not location:
-                            return None
-                        current_url = urllib.parse.urljoin(current_url, location)
-                        continue
-                    if resp.status_code != 200:
-                        resp.close()
-                        return None
-
-                    for chunk in resp.iter_content(chunk_size=65536):
-                        if not chunk:
-                            continue
-                        downloaded_bytes.extend(chunk)
-                        if len(downloaded_bytes) > MAX_THUMBNAIL_BYTES:
-                            resp.close()
-                            return None
+        if is_url(thumbnail_url):
+            current_url = thumbnail_url.strip()
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            })
+            downloaded_bytes = bytearray()
+            for _ in range(MAX_REDIRECTS + 1):
+                if not _is_safe_public_url(current_url):
+                    return None
+                resp = session.get(current_url, stream=True, timeout=12, allow_redirects=False)
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("Location")
                     resp.close()
-                    break
-                else:
+                    if not location:
+                        return None
+                    current_url = urllib.parse.urljoin(current_url, location)
+                    continue
+                if resp.status_code != 200:
+                    resp.close()
                     return None
 
-                if not downloaded_bytes:
-                    return None
-                img = Image.open(io.BytesIO(downloaded_bytes))
-            elif os.path.isfile(thumbnail_url):
-                if os.path.getsize(thumbnail_url) > MAX_THUMBNAIL_BYTES:
-                    return None
-                img = Image.open(thumbnail_url)
+                for chunk in resp.iter_content(chunk_size=65536):
+                    if not chunk:
+                        continue
+                    downloaded_bytes.extend(chunk)
+                    if len(downloaded_bytes) > MAX_THUMBNAIL_BYTES:
+                        resp.close()
+                        return None
+                resp.close()
+                break
             else:
                 return None
 
-            with img:
-                if img.width > MAX_THUMBNAIL_DIMENSION or img.height > MAX_THUMBNAIL_DIMENSION:
-                    return None
-                if img.width * img.height > MAX_THUMBNAIL_PIXELS:
-                    return None
-                converted = img.convert("RGB")
+            if not downloaded_bytes:
+                return None
+            img = Image.open(io.BytesIO(downloaded_bytes))
+        elif os.path.isfile(thumbnail_url):
+            if os.path.getsize(thumbnail_url) > MAX_THUMBNAIL_BYTES:
+                return None
+            img = Image.open(thumbnail_url)
+        else:
+            return None
 
-            abs_out = os.path.abspath(output_path)
-            os.makedirs(os.path.dirname(abs_out), exist_ok=True)
-            converted.save(abs_out, "JPEG", quality=95)
-            return abs_out
-        finally:
-            Image.MAX_IMAGE_PIXELS = orig_max_pixels
+        with img:
+            if img.width > MAX_THUMBNAIL_DIMENSION or img.height > MAX_THUMBNAIL_DIMENSION:
+                return None
+            if img.width * img.height > MAX_THUMBNAIL_PIXELS:
+                return None
+            converted = img.convert("RGB")
+
+        abs_out = os.path.abspath(output_path)
+        os.makedirs(os.path.dirname(abs_out), exist_ok=True)
+        converted.save(abs_out, "JPEG", quality=95)
+        return abs_out
     except Exception as e:
         print(f"[Thumbnail] Could not process cover image: {e}")
     return None
@@ -989,28 +984,48 @@ def _fetch_tiktok_direct(
     if not _is_safe_public_url(stream_url):
         raise ValueError("Direct TikTok stream URL failed public safety verification.")
 
-    with requests.get(stream_url, headers=stream_headers, stream=True, timeout=30) as stream_resp:
-        stream_resp.raise_for_status()
-        total_size = int(stream_resp.headers.get("content-length") or 0)
-        downloaded = 0
-        with open(target_filename, "wb") as f:
-            for chunk in stream_resp.iter_content(chunk_size=65536):
-                if abort_event and abort_event.is_set():
-                    try:
-                        f.close()
-                        if os.path.exists(target_filename):
-                            os.remove(target_filename)
-                    except OSError:
-                        pass
-                    raise KeyboardInterrupt("Stream extraction aborted by user.")
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if downloaded > 1024 * 1024 * 1024:
-                        raise RuntimeError("TikTok media stream exceeds the 1 GB limit.")
-                    if total_size > 0:
-                        pct = 0.25 + (downloaded / total_size) * 0.45
-                        _rep(pct, f"Downloaded {downloaded // 1024} KB of {total_size // 1024} KB...")
+    try:
+        current_url = stream_url
+        stream_resp = None
+        for _ in range(MAX_REDIRECTS + 1):
+            if not _is_safe_public_url(current_url):
+                raise ValueError("Direct TikTok redirect URL failed public safety verification.")
+            resp = requests.get(current_url, headers=stream_headers, stream=True, timeout=30, allow_redirects=False)
+            if resp.status_code in (301, 302, 303, 307, 308):
+                location = resp.headers.get("Location")
+                resp.close()
+                if not location:
+                    raise ValueError("TikTok stream redirect missing Location header.")
+                current_url = urllib.parse.urljoin(current_url, location)
+                continue
+            stream_resp = resp
+            break
+        if stream_resp is None:
+            raise RuntimeError("TikTok stream exceeded maximum redirects.")
+
+        with stream_resp:
+            stream_resp.raise_for_status()
+            total_size = int(stream_resp.headers.get("content-length") or 0)
+            downloaded = 0
+            with open(target_filename, "wb") as f:
+                for chunk in stream_resp.iter_content(chunk_size=65536):
+                    if abort_event and abort_event.is_set():
+                        raise KeyboardInterrupt("Stream extraction aborted by user.")
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if downloaded > 1024 * 1024 * 1024:
+                            raise RuntimeError("TikTok media stream exceeds the 1 GB limit.")
+                        if total_size > 0:
+                            pct = 0.25 + (downloaded / total_size) * 0.45
+                            _rep(pct, f"Downloaded {downloaded // 1024} KB of {total_size // 1024} KB...")
+    except BaseException:
+        if os.path.exists(target_filename):
+            try:
+                os.remove(target_filename)
+            except OSError:
+                pass
+        raise
 
     if not os.path.exists(target_filename) or os.path.getsize(target_filename) == 0:
         raise FileNotFoundError(f"Failed to stream direct TikTok media to {target_filename}")

@@ -174,27 +174,31 @@ fn job_is_active(active_job: Option<&str>, requested_job: &str) -> bool {
 }
 
 #[tauri::command]
-fn runtime_info() -> RuntimeInfo {
-    let (gpu_available, gpu_label) = detect_gpu();
-    let python = find_python();
-    let ffmpeg = find_ffmpeg();
-    let packaged = packaged_engine(&python);
-    RuntimeInfo {
-        mode: "tauri",
-        python_ready: if python.is_file() {
-            true
-        } else {
-            command_available(python.to_str().unwrap_or("python"))
-        },
-        ffmpeg_ready: command_available(ffmpeg.to_str().unwrap_or("ffmpeg")),
-        ffmpeg_path: ffmpeg.display().to_string(),
-        python_path: python.display().to_string(),
-        data_root: data_root().display().to_string(),
-        project_root: project_root().display().to_string(),
-        gpu_available,
-        gpu_label,
-        packaged,
-    }
+async fn runtime_info() -> Result<RuntimeInfo, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let (gpu_available, gpu_label) = detect_gpu();
+        let python = find_python();
+        let ffmpeg = find_ffmpeg();
+        let packaged = packaged_engine(&python);
+        RuntimeInfo {
+            mode: "tauri",
+            python_ready: if python.is_file() {
+                true
+            } else {
+                command_available(python.to_str().unwrap_or("python"))
+            },
+            ffmpeg_ready: command_available(ffmpeg.to_str().unwrap_or("ffmpeg")),
+            ffmpeg_path: ffmpeg.display().to_string(),
+            python_path: python.display().to_string(),
+            data_root: data_root().display().to_string(),
+            project_root: project_root().display().to_string(),
+            gpu_available,
+            gpu_label,
+            packaged,
+        }
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))
 }
 
 #[tauri::command]
@@ -381,7 +385,7 @@ async fn flp_inspect(path: String) -> Result<FlpProjectInfo, String> {
             command.args(["run", "--locked", "janeconverter"]);
         }
         command
-            .args(["--flp-inspect", &path])
+            .arg(format!("--flp-inspect={path}"))
             .current_dir(project_root());
         prepare_command(&mut command);
         let output = command
@@ -417,16 +421,19 @@ async fn flp_downgrade(
             command.args(["run", "--locked", "janeconverter"]);
         }
         command
-            .args(["--flp-downgrade", &source, "--flp-target", &target_version])
+            .args([
+                format!("--flp-downgrade={source}"),
+                format!("--flp-target={target_version}"),
+            ])
             .current_dir(project_root());
         if let Some(build) = target_build {
             if build > 0 {
-                command.args(["--flp-build", &build.to_string()]);
+                command.arg(format!("--flp-build={build}"));
             }
         }
         if let Some(ref out) = output_path {
             if !out.trim().is_empty() {
-                command.args(["--flp-output", out]);
+                command.arg(format!("--flp-output={}", out.trim()));
             }
         }
         if overwrite.unwrap_or(false) {
@@ -483,10 +490,15 @@ async fn flp_detect_installed() -> Result<Vec<InstalledFlStudio>, String> {
 
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
-    let target = PathBuf::from(library::clean_windows_path(&path));
-    if !target.exists() {
+    let raw_target = PathBuf::from(library::clean_windows_path(&path));
+    if !raw_target.exists() {
         return Err("That file or folder no longer exists.".into());
     }
+    let canonical = fs::canonicalize(&raw_target)
+        .map_err(|error| format!("Could not resolve path: {error}"))?;
+    let target = PathBuf::from(library::clean_windows_path(
+        &canonical.display().to_string(),
+    ));
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -529,24 +541,37 @@ fn open_file(path: String) -> Result<(), String> {
     if target.is_dir() {
         return open_path(target.display().to_string());
     }
+    let sym_meta = fs::symlink_metadata(&target)
+        .map_err(|error| format!("Could not inspect file metadata: {error}"))?;
+    if sym_meta.file_type().is_symlink() {
+        return Err("Opening symbolic links is not supported.".into());
+    }
+    if !library::openable_file_extension(&target) {
+        return Err("Only supported media, DAW project, and metadata files can be opened.".into());
+    }
+    let canonical = fs::canonicalize(&target)
+        .map_err(|error| format!("Could not resolve file path: {error}"))?;
+    let clean_target = PathBuf::from(library::clean_windows_path(
+        &canonical.display().to_string(),
+    ));
     #[cfg(target_os = "windows")]
     {
         Command::new("explorer")
-            .arg(&target)
+            .arg(&clean_target)
             .spawn()
             .map_err(|error| error.to_string())?;
     }
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
-            .arg(&target)
+            .arg(&clean_target)
             .spawn()
             .map_err(|error| error.to_string())?;
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         Command::new("xdg-open")
-            .arg(&target)
+            .arg(&clean_target)
             .spawn()
             .map_err(|error| error.to_string())?;
     }
@@ -575,13 +600,19 @@ fn open_url(state: State<'_, AppState>, url: String) -> Result<(), String> {
         })
         .unwrap_or(false);
 
-    let lower = value.to_ascii_lowercase();
-    if !is_active_access_link
-        && (lower.contains("localhost")
-            || lower.contains("127.0.0.1")
-            || lower.contains("0.0.0.0")
-            || lower.contains("[::1]"))
-    {
+    let parsed = url::Url::parse(value).map_err(|_| "Invalid URL.".to_string())?;
+    let is_local_host = match parsed.host() {
+        Some(url::Host::Domain(domain)) => {
+            let d = domain.to_ascii_lowercase();
+            d == "localhost" || d.ends_with(".localhost") || d.ends_with(".local")
+        }
+        Some(url::Host::Ipv4(ip)) => {
+            ip.is_loopback() || ip.is_unspecified() || ip.is_private() || ip.is_link_local()
+        }
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback() || ip.is_unspecified(),
+        None => true,
+    };
+    if !is_active_access_link && is_local_host {
         return Err("Opening local or loopback addresses in external browsers is blocked.".into());
     }
     #[cfg(target_os = "windows")]
@@ -1789,13 +1820,17 @@ fn conversion_history(
 }
 
 #[tauri::command]
-fn path_size(path: String) -> u64 {
-    library::path_total_bytes(&path)
+async fn path_size(path: String) -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(move || library::path_total_bytes(&path))
+        .await
+        .map_err(|e| format!("Task execution error: {e}"))
 }
 
 #[tauri::command]
-fn scan_library(path: String) -> Result<Vec<LibraryEntry>, String> {
-    library::scan(&path)
+async fn scan_library(path: String) -> Result<Vec<LibraryEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || library::scan(&path))
+        .await
+        .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]
@@ -1816,8 +1851,10 @@ fn is_converted_library_path(path: String) -> bool {
 }
 
 #[tauri::command]
-fn recent_conversions(path: String, limit: usize) -> Result<Vec<LibraryEntry>, String> {
-    library::recent(&path, limit)
+async fn recent_conversions(path: String, limit: usize) -> Result<Vec<LibraryEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || library::recent(&path, limit))
+        .await
+        .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]
@@ -1858,8 +1895,10 @@ async fn drag_library_file(
 }
 
 #[tauri::command]
-fn get_thumbnail(root: String, path: String) -> Result<Option<String>, String> {
-    library::thumbnail(&root, &path)
+async fn get_thumbnail(root: String, path: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || library::thumbnail(&root, &path))
+        .await
+        .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]
@@ -2067,19 +2106,20 @@ fn access_diagnostics(state: State<'_, AppState>) -> Vec<AccessDiagnostic> {
 }
 
 #[tauri::command]
-fn fetched_media_thumbnail(
+async fn fetched_media_thumbnail(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<Option<String>, String> {
-    let fallback_root = settings_get_internal().fetched_dir;
-    let access = state
+    let active_root = state
         .access
         .lock()
-        .map_err(|_| "The access registry is unavailable.".to_owned())?;
-    match access.as_ref() {
-        Some(server) => server.fetched_media_thumbnail(&path),
-        None => library::thumbnail(&fallback_root, &path),
-    }
+        .map_err(|_| "The access registry is unavailable.".to_owned())?
+        .as_ref()
+        .map(|server| server.capture_root_path().to_string_lossy().into_owned());
+    let root = active_root.unwrap_or_else(|| settings_get_internal().fetched_dir);
+    tauri::async_runtime::spawn_blocking(move || library::thumbnail(&root, &path))
+        .await
+        .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]
@@ -2441,7 +2481,7 @@ async fn check_updates(
                             .lines()
                             .map(|s| {
                                 s.trim()
-                                    .trim_start_matches(|c| c == '-' || c == '*' || c == '•')
+                                    .trim_start_matches(['-', '*', '•'])
                                     .trim()
                                     .to_string()
                             })
@@ -2473,7 +2513,7 @@ async fn check_updates(
                             .lines()
                             .map(|s| {
                                 s.trim()
-                                    .trim_start_matches(|c| c == '-' || c == '*' || c == '•')
+                                    .trim_start_matches(['-', '*', '•'])
                                     .trim()
                                     .to_string()
                             })
@@ -2610,7 +2650,13 @@ fn get_chromium_cookie_policy() -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn set_chromium_cookie_policy(enabled: bool) -> Result<bool, String> {
+async fn set_chromium_cookie_policy(enabled: bool) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || set_chromium_cookie_policy_sync(enabled))
+        .await
+        .map_err(|e| format!("Task execution error: {e}"))?
+}
+
+fn set_chromium_cookie_policy_sync(enabled: bool) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
         use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
@@ -2624,9 +2670,10 @@ fn set_chromium_cookie_policy(enabled: bool) -> Result<bool, String> {
         let mut direct_ok = true;
         for target in targets {
             if enabled {
-                if let Err(_) = hkcu
+                if hkcu
                     .create_subkey(target)
                     .and_then(|(k, _)| k.set_value("ApplicationBoundEncryptionEnabled", &0u32))
+                    .is_err()
                 {
                     direct_ok = false;
                     break;

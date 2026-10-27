@@ -70,9 +70,20 @@ jobs:
           set -euo pipefail
           if ! command -v ffmpeg >/dev/null 2>&1; then
             mkdir -p "$HOME/.local/bin"
-            curl -fsSL --retry 3 https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-linux-x64 -o "$HOME/.local/bin/ffmpeg"
-            curl -fsSL --retry 3 https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-linux-x64 -o "$HOME/.local/bin/ffprobe"
-            chmod +x "$HOME/.local/bin/ffmpeg" "$HOME/.local/bin/ffprobe"
+            tag=autobuild-2026-09-30-13-08
+            name=ffmpeg-N-127021-ge0c94b2d1c-linux64-gpl.tar.xz
+            expected=3a2a94e704752287833604501a79505c2319ad1d8b2f5577c63f2b1b7a6f2b66
+            url="https://github.com/BtbN/FFmpeg-Builds/releases/download/$tag/$name"
+            curl --fail --location --retry 3 --output "$name" "$url"
+            actual="$(sha256sum "$name" | cut -d' ' -f1)"
+            test "$actual" = "$expected"
+            mkdir -p ffmpeg-static
+            tar -xJf "$name" -C ffmpeg-static
+            ffmpeg_bin="$(find "$PWD/ffmpeg-static" -type f -name ffmpeg -perm -111 -print -quit)"
+            ffprobe_bin="$(find "$PWD/ffmpeg-static" -type f -name ffprobe -perm -111 -print -quit)"
+            test -n "$ffmpeg_bin" && test -n "$ffprobe_bin"
+            install -m 0755 "$ffmpeg_bin" "$HOME/.local/bin/ffmpeg"
+            install -m 0755 "$ffprobe_bin" "$HOME/.local/bin/ffprobe"
             echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           fi
 
@@ -85,9 +96,13 @@ jobs:
           if [ "$arch" = "arm64" ]; then
             curl -fsSL --retry 3 https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-arm64 -o "$HOME/.local/bin/ffmpeg"
             curl -fsSL --retry 3 https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-darwin-arm64 -o "$HOME/.local/bin/ffprobe"
+            test "$(shasum -a 256 "$HOME/.local/bin/ffmpeg" | awk '{print $1}')" = "a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584"
+            test "$(shasum -a 256 "$HOME/.local/bin/ffprobe" | awk '{print $1}')" = "bb2db6f5d8cef919da12fbf592119a987202a8c060a886f3cab091f9cab90b64"
           else
             curl -fsSL --retry 3 https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-x64 -o "$HOME/.local/bin/ffmpeg"
             curl -fsSL --retry 3 https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-darwin-x64 -o "$HOME/.local/bin/ffprobe"
+            test "$(shasum -a 256 "$HOME/.local/bin/ffmpeg" | awk '{print $1}')" = "ebdddc936f61e14049a2d4b549a412b8a40deeff6540e58a9f2a2da9e6b18894"
+            test "$(shasum -a 256 "$HOME/.local/bin/ffprobe" | awk '{print $1}')" = "fa3add0ce901f7241abe0dfc0155d958fc834aca3f8ce61f87cc712ae669c1e0"
           fi
           chmod +x "$HOME/.local/bin/ffmpeg" "$HOME/.local/bin/ffprobe"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
@@ -104,7 +119,7 @@ jobs:
         run: uv pip check
 
       - name: Lint with pyflakes
-        run: uv run --locked pyflakes src/janeconverter packaging/engine_entry.py
+        run: uv run --locked pyflakes src/janeconverter packaging/engine_entry.py packaging/create_updater_manifest.py
 
       - name: Run hermetic test suite
         run: uv run --locked pytest tests/ -v

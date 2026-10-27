@@ -229,3 +229,51 @@ def test_linear_loudnorm_filter_builder():
     assert ":measured_LRA=8.0" in filter_str
     assert ":measured_thresh=-27.0" in filter_str
     assert ":offset=0.5" in filter_str
+
+
+def test_process_playlist_conversion_retries_all_deferred_items(tmp_path, monkeypatch):
+    from janeconverter import cli
+
+    attempts = {}
+
+    def fake_fetch(source, output_dir, **kwargs):
+        count = attempts.get(source, 0) + 1
+        attempts[source] = count
+        if count <= 2:
+            raise RuntimeError(f"Transient CDN failure for {source}")
+        os.makedirs(output_dir, exist_ok=True)
+        media_path = os.path.join(output_dir, "track.mp3")
+        with open(media_path, "wb") as f:
+            f.write(b"ID3" + b"\x00" * 64)
+        return {"media_path": media_path, "title": "Track Title", "artist": "Jane"}
+
+    def fake_convert(input_path, output_dir, output_filename, target_format, **kwargs):
+        os.makedirs(output_dir, exist_ok=True)
+        out_path = os.path.join(output_dir, f"{output_filename}.{target_format}")
+        with open(out_path, "wb") as f:
+            f.write(b"converted")
+        return out_path
+
+    monkeypatch.setattr(cli, "fetch_media_stream", fake_fetch)
+    monkeypatch.setattr(cli, "convert_media", fake_convert)
+
+    entries = [
+        {"index": 1, "title": "Song Alpha", "artist": "Jane", "url": "https://www.youtube.com/watch?v=alpha"},
+        {"index": 2, "title": "Song Beta", "artist": "Jane", "url": "https://www.youtube.com/watch?v=beta"},
+    ]
+
+    summary = process_playlist_conversion(
+        playlist_title="Deferred Recovery Mix",
+        selected_entries=entries,
+        output_dir=str(tmp_path),
+        target_format="mp3",
+        max_retries=1,
+        check_updates=False,
+    )
+
+    assert attempts["https://www.youtube.com/watch?v=alpha"] == 3
+    assert attempts["https://www.youtube.com/watch?v=beta"] == 3
+    assert summary["successful_count"] == 2
+    assert summary["failed_count"] == 0
+    assert summary["failed_files"] == []
+

@@ -169,6 +169,7 @@ impl Drop for PromptGuard {
     fn drop(&mut self) {
         if !self.0.is_null() {
             unsafe {
+                ReleaseMutex(self.0);
                 CloseHandle(self.0);
             }
         }

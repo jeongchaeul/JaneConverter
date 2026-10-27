@@ -62,7 +62,7 @@ function decodeBase64(value) {
   return bytes;
 }
 
-async function uploadCollectedMedia(payload) {
+async function uploadCollectedMedia(payload, senderTab) {
   const deadline = Date.now() + 120000;
   if (!payload || typeof payload.base64 !== "string" || !payload.base64) {
     throw new Error("The browser did not provide media bytes.");
@@ -78,6 +78,7 @@ async function uploadCollectedMedia(payload) {
   const mediaKind = payload.mediaKind === "audio" ? "audio" : payload.mediaKind === "image" ? "image" : "video";
   const fallbackMime = mediaKind + "/" + (mediaKind === "image" ? "png" : mediaKind === "audio" ? "webm" : "webm");
   const mimeType = String(payload.contentType || fallbackMime).split(";")[0].toLowerCase();
+  const senderPageUrl = (senderTab && typeof senderTab.url === "string" && senderTab.url) || "";
   const start = await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/capture/start"), {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-JaneConverter-Bridge": bridge.challenge.bridgeToken },
@@ -87,7 +88,7 @@ async function uploadCollectedMedia(payload) {
       mimeType: mimeType,
       captureMode: "collect",
       captureMethod: payload.captureMethod || "rendered",
-      pageUrl: payload.pageUrl || bridge.challenge.sourceUrl || "",
+      pageUrl: senderPageUrl || payload.pageUrl || bridge.challenge.sourceUrl || "",
       expectedBytes: bytes.byteLength,
       title: payload.title || "Collected browser media"
     })
@@ -277,6 +278,13 @@ async function uploadSessionResponse(bridge, payload, response, mimeType, expect
 async function fetchAuthenticatedMedia(payload) {
   const request = requireSessionFetchPayload(payload);
   const bridge = await findConfirmedAccess();
+  if (
+    bridge.challenge &&
+    bridge.challenge.sourceUrl &&
+    !globalThis.JaneMediaUtils.sameSite(bridge.challenge.sourceUrl, request.pageUrl)
+  ) {
+    throw new Error("The open browser tab does not match the platform requested by JaneConverter.");
+  }
   const pagePlatform = globalThis.JaneMediaUtils.sessionPlatformForPage(request.pageUrl);
   const host = new URL(request.mediaUrl).hostname.toLowerCase();
   await sendDiagnostic(bridge, "session_fetch_started", { platform: pagePlatform.id, host: host, mediaKind: request.mediaKind });
@@ -325,7 +333,7 @@ async function setBadge(tabId, text, color) {
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   if (sender.id !== chrome.runtime.id) return false;
   if (!message || message.type !== "jane-collect-media") return false;
-  uploadCollectedMedia(message.payload)
+  uploadCollectedMedia(message.payload, sender.tab)
     .then(async function (result) {
       const count = Number(result && result.captureCount || 0);
       await setBadge(sender.tab && sender.tab.id, count ? String(Math.min(count, 99)) : "OK", "#0f766e");
@@ -339,7 +347,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 });
 
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
-  if (sender.id !== chrome.runtime.id || !message || message.type !== "jane-authenticated-fetch") return false;
+  if (sender.id !== chrome.runtime.id || sender.tab || !message || message.type !== "jane-authenticated-fetch") return false;
   fetchAuthenticatedMedia(message.payload)
     .then(function (result) { sendResponse(result); })
     .catch(function (error) { sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }); });
@@ -347,6 +355,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 });
 
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+  if (sender.id !== chrome.runtime.id) return false;
   if (!message || message.type !== "jane-collect-status") return false;
   setBadge(sender.tab && sender.tab.id, message.enabled ? "ON" : "", message.enabled ? "#0f766e" : "#52525b")
     .then(function () { sendResponse({ ok: true }); });

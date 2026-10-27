@@ -185,9 +185,11 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
             manifest_xml = dm.get("manifest_xml")
             if manifest_xml:
                 try:
-                    parsed_mpd = ET.fromstring(urllib.parse.unquote_plus(manifest_xml))
-                    mpd_url = mpd_urls[idx] if idx < len(mpd_urls) else None
-                    formats.extend(ie._parse_mpd_formats(parsed_mpd, mpd_url=mpd_url))
+                    unquoted_mpd = urllib.parse.unquote_plus(manifest_xml)
+                    if "<!doctype" not in unquoted_mpd.lower() and "<!entity" not in unquoted_mpd.lower():
+                        parsed_mpd = ET.fromstring(unquoted_mpd)
+                        mpd_url = mpd_urls[idx] if idx < len(mpd_urls) else None
+                        formats.extend(ie._parse_mpd_formats(parsed_mpd, mpd_url=mpd_url))
                 except Exception:
                     pass
 
@@ -198,8 +200,10 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
         )
         if raw_manifest_str and isinstance(raw_manifest_str, str):
             try:
-                parsed_mpd = ET.fromstring(urllib.parse.unquote_plus(raw_manifest_str))
-                formats.extend(ie._parse_mpd_formats(parsed_mpd))
+                unquoted_mpd = urllib.parse.unquote_plus(raw_manifest_str)
+                if "<!doctype" not in unquoted_mpd.lower() and "<!entity" not in unquoted_mpd.lower():
+                    parsed_mpd = ET.fromstring(unquoted_mpd)
+                    formats.extend(ie._parse_mpd_formats(parsed_mpd))
             except Exception:
                 pass
 

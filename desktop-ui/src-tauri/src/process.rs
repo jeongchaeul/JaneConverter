@@ -156,24 +156,35 @@ pub fn forward_output<R: Read + Send + 'static>(
     thread::spawn(move || {
         let mut buf_reader = BufReader::new(reader);
         let mut line_buf = Vec::new();
+        const MAX_LINE_BYTES: usize = 64 * 1024;
 
         loop {
             line_buf.clear();
             let mut byte = [0u8; 1];
+            let mut eof = false;
             loop {
                 match buf_reader.read(&mut byte) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        eof = true;
+                        break;
+                    }
                     Ok(_) => {
                         if byte[0] == b'\n' || byte[0] == b'\r' {
                             break;
                         }
-                        line_buf.push(byte[0]);
+                        if byte[0] != 0 && line_buf.len() < MAX_LINE_BYTES {
+                            line_buf.push(byte[0]);
+                        }
                     }
-                    Err(_) => break,
+                    Err(ref err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => {
+                        eof = true;
+                        break;
+                    }
                 }
             }
 
-            if line_buf.is_empty() && byte[0] == 0 {
+            if line_buf.is_empty() && eof {
                 break;
             }
 
@@ -422,11 +433,24 @@ pub fn build_conversion_args_with_capture(
     if request.source.trim().is_empty() && browser_media_path.is_none() {
         return Err("Paste a media URL or choose a local file first.".into());
     }
+    if request.source.trim().starts_with('-') {
+        return Err("Source URL or path cannot begin with '-'.".into());
+    }
     if request.output_dir.trim().is_empty() {
         return Err("Choose an export folder first.".into());
     }
     if ![44100, 48000, 96000].contains(&request.sample_rate) {
         return Err("Unsupported sample rate.".into());
+    }
+    for (label, value) in [
+        ("format", request.format.trim()),
+        ("bitrate", request.bitrate.trim()),
+        ("resolution", request.resolution.trim()),
+        ("category", request.category.trim()),
+    ] {
+        if value.starts_with('-') {
+            return Err(format!("Unsupported {label} value."));
+        }
     }
     let engine = find_python();
     let mut args = Vec::new();
@@ -502,6 +526,9 @@ pub fn build_conversion_args_with_capture(
     if has_facebook_manifest {
         args.push("--facebook-photo-manifest-stdin".into());
         if let Some(capture_id) = request.facebook_capture_id.as_ref() {
+            if capture_id.trim().starts_with('-') {
+                return Err("Invalid Facebook capture ID.".into());
+            }
             args.extend(["--facebook-capture-id".into(), capture_id.clone()]);
         }
     }
@@ -510,6 +537,9 @@ pub fn build_conversion_args_with_capture(
     }
     if let Some(indexes) = &request.playlist_indexes {
         if !indexes.trim().is_empty() {
+            if indexes.trim().starts_with('-') {
+                return Err("Playlist selection cannot begin with '-'.".into());
+            }
             args.extend([
                 "--playlist".into(),
                 "--playlist-indexes".into(),
@@ -519,11 +549,17 @@ pub fn build_conversion_args_with_capture(
     }
     if let Some(start) = &request.start_time {
         if !start.trim().is_empty() {
+            if start.trim().starts_with('-') {
+                return Err("Start time cannot be negative.".into());
+            }
             args.extend(["--start-time".into(), start.trim().into()]);
         }
     }
     if let Some(end) = &request.end_time {
         if !end.trim().is_empty() {
+            if end.trim().starts_with('-') {
+                return Err("End time cannot be negative.".into());
+            }
             args.extend(["--end-time".into(), end.trim().into()]);
         }
     }

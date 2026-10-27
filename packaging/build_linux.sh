@@ -198,6 +198,7 @@ export JANECONVERTER_STAGED_FFMPEG_INFO="$PAYLOAD_ROOT/FFMPEG-BUILD-INFO.txt"
 export JANECONVERTER_STAGED_FFMPEG_SOURCE_INFO="$PAYLOAD_ROOT/FFMPEG-SOURCE-INFO.txt"
 write_tauri_config() {
   local config_mode="$1"
+  export JANECONVERTER_REPO_ROOT="$REPO_ROOT"
   export JANECONVERTER_RELEASE_VERSION="$TAURI_VERSION"
   export JANECONVERTER_TAURI_CONFIG="$TAURI_CONFIG"
   export JANECONVERTER_ENABLE_UPDATER="$ENABLE_UPDATER"
@@ -207,7 +208,7 @@ import json
 import os
 from pathlib import Path
 
-source = Path("desktop-ui/src-tauri/tauri.conf.json")
+source = Path(os.environ["JANECONVERTER_REPO_ROOT"]) / "desktop-ui/src-tauri/tauri.conf.json"
 config = json.loads(source.read_text(encoding="utf-8"))
 config["productName"] = "JaneConverter"
 config["version"] = os.environ["JANECONVERTER_RELEASE_VERSION"]

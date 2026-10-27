@@ -7,7 +7,10 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+static TIMINGS_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn clean_windows_path(value: &str) -> String {
     let trimmed = value.trim();
@@ -39,6 +42,9 @@ fn load_conversion_timings() -> HashMap<String, u64> {
 }
 
 pub fn record_conversion_timing(path: &Path, elapsed_ms: u64) {
+    let Ok(_guard) = TIMINGS_LOCK.lock() else {
+        return;
+    };
     let mut timings = load_conversion_timings();
     timings.insert(timing_key(path), elapsed_ms);
     if path.is_dir() {
@@ -52,17 +58,28 @@ pub fn record_conversion_timing(path: &Path, elapsed_ms: u64) {
         }
     }
     if timings.len() > 2000 {
-        let keys: Vec<String> = timings.keys().take(timings.len() - 2000).cloned().collect();
-        for key in keys {
+        let mut sorted_keys: Vec<String> = timings.keys().cloned().collect();
+        sorted_keys.sort();
+        for key in sorted_keys.into_iter().take(timings.len() - 2000) {
             timings.remove(&key);
         }
     }
     if let Ok(serialized) = serde_json::to_vec(&timings) {
-        let _ = fs::write(timings_file(), serialized);
+        let target = timings_file();
+        if let Some(parent) = target.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let temp = target.with_extension("json.tmp");
+        if fs::write(&temp, &serialized).is_ok() {
+            let _ = fs::rename(&temp, &target);
+        }
     }
 }
 
 pub fn clear_conversion_timings() -> Result<(), String> {
+    let _guard = TIMINGS_LOCK
+        .lock()
+        .map_err(|_| "The conversion timing registry is unavailable.".to_string())?;
     let path = timings_file();
     if path.exists() {
         fs::remove_file(path)
@@ -184,6 +201,20 @@ fn image_extension(path: &Path) -> bool {
 
 fn library_file_extension(path: &Path) -> bool {
     media_extension(path) || image_extension(path)
+}
+
+pub fn openable_file_extension(path: &Path) -> bool {
+    if library_file_extension(path) {
+        return true;
+    }
+    matches!(
+        path.extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "flp" | "als" | "txt" | "json" | "bak"
+    )
 }
 
 fn is_metadata_path(path: &Path) -> bool {
@@ -615,6 +646,12 @@ fn render_preview(path: &Path) -> Option<Vec<u8>> {
     command.stdout(Stdio::piped()).stderr(Stdio::null());
     prepare_command(&mut command);
     let mut child = command.spawn().ok()?;
+    let stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stdout.take(2 * 1024 * 1024 + 1).read_to_end(&mut bytes);
+        bytes
+    });
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         match child.try_wait() {
@@ -622,8 +659,7 @@ fn render_preview(path: &Path) -> Option<Vec<u8>> {
                 if !status.success() {
                     return None;
                 }
-                let mut bytes = Vec::new();
-                child.stdout.take()?.read_to_end(&mut bytes).ok()?;
+                let bytes = reader.join().ok()?;
                 if bytes.is_empty() || bytes.len() > 2 * 1024 * 1024 {
                     return None;
                 }
@@ -635,6 +671,7 @@ fn render_preview(path: &Path) -> Option<Vec<u8>> {
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = reader.join();
                 return None;
             }
         }

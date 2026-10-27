@@ -61,13 +61,13 @@ if os.name == "nt":
     ]
     kernel32.ReadFile.restype = wintypes.BOOL
 
-    kernel32.SetFilePointer.argtypes = [
+    kernel32.SetFilePointerEx.argtypes = [
         wintypes.HANDLE,
-        wintypes.LONG,
-        ctypes.POINTER(wintypes.LONG),
+        wintypes.LARGE_INTEGER,
+        ctypes.POINTER(wintypes.LARGE_INTEGER),
         wintypes.DWORD,
     ]
-    kernel32.SetFilePointer.restype = wintypes.DWORD
+    kernel32.SetFilePointerEx.restype = wintypes.BOOL
 
     class RM_UNIQUE_PROCESS(ctypes.Structure):
         _fields_ = [
@@ -239,9 +239,22 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
                                 if plen > 0:
                                     clean = clean_nt_path(path_buf.value)
                                     if os.path.normcase(clean) == norm_target:
-                                        # Save original file position to leave handle untouched
-                                        orig_pos = kernel32.SetFilePointer(target_handle, 0, None, FILE_CURRENT)
-                                        kernel32.SetFilePointer(target_handle, 0, None, FILE_BEGIN)
+                                        # Save original 64-bit file position to leave handle untouched
+                                        orig_pos = wintypes.LARGE_INTEGER(0)
+                                        has_orig_pos = bool(
+                                            kernel32.SetFilePointerEx(
+                                                target_handle,
+                                                wintypes.LARGE_INTEGER(0),
+                                                ctypes.byref(orig_pos),
+                                                FILE_CURRENT,
+                                            )
+                                        )
+                                        kernel32.SetFilePointerEx(
+                                            target_handle,
+                                            wintypes.LARGE_INTEGER(0),
+                                            None,
+                                            FILE_BEGIN,
+                                        )
 
                                         chunk_size = 64 * 1024
                                         read_buf = ctypes.create_string_buffer(chunk_size)
@@ -259,8 +272,13 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
                                                     break
                                                 out_f.write(read_buf.raw[: bytes_read.value])
 
-                                        if orig_pos != 0xFFFFFFFF:
-                                            kernel32.SetFilePointer(target_handle, orig_pos, None, FILE_BEGIN)
+                                        if has_orig_pos:
+                                            kernel32.SetFilePointerEx(
+                                                target_handle,
+                                                orig_pos,
+                                                None,
+                                                FILE_BEGIN,
+                                            )
 
                                         kernel32.CloseHandle(target_handle)
                                         os.replace(tmp_dst, dst_path)

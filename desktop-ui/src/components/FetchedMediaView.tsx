@@ -90,13 +90,23 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
         if (!next.some((item) => item.path === path)) thumbnailPaths.current.delete(path);
       }
       const pending = next.filter((item) => !thumbnailPaths.current.has(item.path));
-      const previews = await Promise.all(pending.map(async (item) => {
-        try {
-          return [item.path, await bridge.fetchedMediaThumbnail(item.path)] as const;
-        } catch (_) {
-          return [item.path, null] as const;
-        }
-      }));
+      const previews: Array<readonly [string, string | null]> = [];
+      let cursor = 0;
+      const workerCount = Math.min(3, pending.length);
+      await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+          while (cursor < pending.length) {
+            const index = cursor++;
+            const item = pending[index];
+            if (!item) break;
+            try {
+              previews.push([item.path, await bridge.fetchedMediaThumbnail(item.path)] as const);
+            } catch (_) {
+              previews.push([item.path, null] as const);
+            }
+          }
+        }),
+      );
       if (mountedRef.current) {
         setThumbnails((current) => {
           const updated = { ...current };

@@ -180,6 +180,9 @@ def _check_release_updates_via_atom(
         feed_content = response.content or response.text
         if isinstance(feed_content, str):
             feed_content = feed_content.encode("utf-8")
+        lower_feed = feed_content.lower()
+        if b"<!doctype" in lower_feed or b"<!entity" in lower_feed:
+            raise ValueError("Forbidden XML entity declaration in release feed")
         feed = ET.fromstring(feed_content)
         entry = feed.find(f"{ATOM_NAMESPACE}entry")
     except (ET.ParseError, TypeError, ValueError) as error:

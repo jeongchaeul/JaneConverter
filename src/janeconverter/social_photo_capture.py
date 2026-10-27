@@ -271,7 +271,7 @@ def download_social_photo_manifest(
             try:
                 with Image.open(download_path) as image:
                     extension = IMAGE_EXTENSIONS.get(image.format or "")
-                    if not extension:
+                    if not extension or image.width < 1 or image.height < 1 or image.width * image.height > 100_000_000:
                         raise RuntimeError(f"{platform} returned an unsupported image format for photo {index}.")
                     image.verify()
             except (OSError, ValueError) as error:
@@ -392,7 +392,10 @@ def fetch_pinterest_collection_manifest(
 
     expanded_url = resolve_pinterest_shortlink(url)
     parsed = urllib.parse.urlparse(expanded_url)
-    domain = parsed.netloc or "www.pinterest.com"
+    host = (parsed.hostname or "").lower()
+    if not (host == "pinterest.com" or host.endswith(".pinterest.com")):
+        raise ValueError(f"Invalid Pinterest media URL: {url}")
+    domain = host if host != "pinterest.com" else "www.pinterest.com"
 
     mps_match = re.search(r"/multi-pin-share/(\d+)", expanded_url)
     news_match = re.search(r"/(?:news_hub|notifications)/(\d+)", expanded_url)

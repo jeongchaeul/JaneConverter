@@ -338,4 +338,38 @@ def test_downgrade_flp_preserves_trailing_chunks():
     assert fldt_pos + 8 + fldt_len + len(trailing_magic) == len(downgraded_bytes)
 
 
+def test_downgrade_flp_bytes_rejects_truncated_fldt_and_preserves_embedded_9f():
+    # 1. Truncated FLdt header (< 8 bytes after FLdt magic) raises ValueError cleanly
+    bad_raw = b"FLhd" + struct.pack("<I", 10) + (b"\x00" * 10) + b"FLdt\x01\x02"
+    with pytest.raises(ValueError, match="missing or truncated FLdt data chunk"):
+        downgrade_flp_bytes(bad_raw, target_version="24.1.2")
+
+    # 2. Event 212 (80-byte clips) following a version string whose length changes on downgrade
+    # plus a 2-byte event containing 0x9F in its payload must not corrupt either event
+    clip_data = b"X" * 60 + b"Y" * 20
+    proj = FLPProject(
+        format=0,
+        channels=2,
+        ppq=96,
+        events=[
+            FLPEvent(event_id=199, data=b"25.100.200.9999\x00"),
+            FLPEvent(event_id=68, data=b"\x9f\x05"),
+            FLPEvent(event_id=159, data=struct.pack("<I", 9999)),
+            FLPEvent(event_id=212, data=clip_data),
+        ],
+    )
+    downgraded_bytes, summary = downgrade_flp_bytes(proj.to_bytes(), target_version="24.1.2", target_build=4398)
+    assert summary["success"] is True
+    assert summary["recordsAdjusted"] == 1
+
+    parsed = parse_flp(downgraded_bytes)
+    assert parsed.events[1].event_id == 68
+    assert parsed.events[1].data == b"\x9f\x05"
+    assert parsed.events[2].event_id == 159
+    assert struct.unpack("<I", parsed.events[2].data)[0] == 4398
+    assert parsed.events[3].event_id == 212
+    assert parsed.events[3].data == b"X" * 60
+
+
+
 

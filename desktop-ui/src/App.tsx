@@ -282,6 +282,8 @@ export default function App() {
   const [historyError, setHistoryError] = useState("");
   const pendingHistoryWrites = useRef<Array<() => Promise<void>>>([]);
   const writingHistory = useRef(false);
+  const deletedHistoryIds = useRef<Set<string>>(new Set());
+  const historyClearEpoch = useRef(0);
   function queueHistory(action: () => Promise<void>) {
     pendingHistoryWrites.current.push(action);
     void flushHistory();
@@ -333,12 +335,15 @@ export default function App() {
   }
 
   function handleRemoveHistoryItem(id: string) {
+    deletedHistoryIds.current.add(id);
     queueHistory(async () => {
       const result = await bridge.conversionHistory([], undefined, id);
       setHistory(result.history);
     });
   }
   function handleClearHistory() {
+    historyClearEpoch.current += 1;
+    deletedHistoryIds.current.clear();
     queueHistory(async () => {
       const result = await bridge.conversionHistory([], undefined, undefined, true);
       await bridge.clearConversionTimings();
@@ -412,7 +417,10 @@ export default function App() {
         setStatus(event.message);
         const ctx = activeJobContextRef.current;
         if (ctx) {
-          if (event.message) ctx.logs.push(event.message);
+          if (event.message) {
+            if (ctx.logs.length >= 500) ctx.logs.shift();
+            ctx.logs.push(event.message);
+          }
           const parsedPath = (event.output && cleanDisplayPath(event.output)) || extractExportedPathFromMessage(event.message);
           if (parsedPath) {
             ctx.exportedPath = parsedPath;
@@ -457,6 +465,7 @@ export default function App() {
               status: isPartial ? "partial" : "succeeded",
             });
           }
+          const clearEpochAtStart = historyClearEpoch.current;
           recordTimingForPath(exportPath, elapsedMs);
           recordHistoryEntry(historyItem);
           void bridge.pathSize(exportPath).then((totalBytes) => {
@@ -466,7 +475,12 @@ export default function App() {
                   ? { ...current, fileSizeBytes: totalBytes }
                   : current,
               );
-              recordHistoryEntry({ ...historyItem, totalBytes });
+              if (
+                historyClearEpoch.current === clearEpochAtStart &&
+                !deletedHistoryIds.current.has(historyId)
+              ) {
+                recordHistoryEntry({ ...historyItem, totalBytes });
+              }
             }
           }).catch(() => {});
         }

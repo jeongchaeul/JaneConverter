@@ -194,6 +194,10 @@ def measure_audio_loudness(
     input_path: str,
     ffmpeg_bin: Optional[str] = None,
     sample_rate: Optional[int] = None,
+    input_sample_rate: Optional[int] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    reconstruct_frequency_loss: bool = False,
 ) -> Optional[Dict[str, str]]:
     """
     Pass 1 measurement for EBU R128 loudness normalization.
@@ -207,17 +211,32 @@ def measure_audio_loudness(
         return None
 
     filters = []
-    if sample_rate and has_soxr_support():
+    source_rate_matches = (
+        input_sample_rate is not None
+        and sample_rate
+        and int(input_sample_rate) == int(sample_rate)
+    )
+    if sample_rate and not source_rate_matches and has_soxr_support():
         filters.append("aresample=resampler=soxr:precision=28:cutoff=0.99:dither_method=triangular")
+    if reconstruct_frequency_loss:
+        filters.append("aexciter=freq=7500:ceil=20000:amount=2.5:drive=8.5:blend=0")
     filters.append("loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json")
 
-    cmd = [
-        ffmpeg, "-hide_banner", "-nostats",
+    cmd = [ffmpeg, "-hide_banner", "-nostats"]
+    safe_start = sanitize_time_offset(start_time) if start_time else None
+    safe_end = sanitize_time_offset(end_time) if end_time else None
+    if safe_start:
+        cmd.extend(["-ss", safe_start])
+    if safe_end:
+        cmd.extend(["-to", safe_end])
+    cmd.extend([
         "-i", input_path,
         "-vn", "-sn",
         "-af", ",".join(filters),
-        "-f", "null", "-"
-    ]
+    ])
+    if sample_rate:
+        cmd.extend(["-ar", str(sample_rate)])
+    cmd.extend(["-f", "null", "-"])
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         res = subprocess.run(
@@ -1802,7 +1821,13 @@ def _convert_media_impl(
             else:
                 cmd.extend(["-c", "copy"])
             cmd.extend(["-threads", "0", destination_path])
-            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            res = subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                timeout=300,
+            )
             if res.returncode == 0 and os.path.isfile(destination_path) and os.path.getsize(destination_path) > 0:
                 actual_ext = preferred_ext
                 remux_succeeded = True
@@ -1985,7 +2010,15 @@ def _convert_media_impl(
         measured_loudness = None
         if normalize_audio and os.path.isfile(input_path):
             report(0.68, "Analyzing audio loudness dynamics (linear EBU R128 pass)...")
-            measured_loudness = measure_audio_loudness(input_path, ffmpeg_bin=ffmpeg_bin, sample_rate=sample_rate)
+            measured_loudness = measure_audio_loudness(
+                input_path,
+                ffmpeg_bin=ffmpeg_bin,
+                sample_rate=sample_rate,
+                input_sample_rate=input_sample_rate,
+                start_time=start_time,
+                end_time=end_time,
+                reconstruct_frequency_loss=reconstruct_frequency_loss,
+            )
 
         report(0.70, f"Transcoding media to {target_format.upper()}...")
         cmd = build_ffmpeg_args(

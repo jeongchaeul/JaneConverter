@@ -834,12 +834,12 @@ def process_playlist_conversion(
                 raise KeyboardInterrupt("Playlist conversion aborted by user.")
             entry, raw_title, artist, clean_title, ordered_filename, idx = def_item
             item_url = entry.get("url", "")
-        if not item_url or not is_url(item_url):
-            e_id = entry.get("id", "")
-            if e_id and "instagram.com" in (playlist_title.lower() if "instagram.com" in playlist_title.lower() else ""):
-                item_url = f"https://www.instagram.com/p/{e_id}/"
-            elif e_id and is_url(f"https://{e_id}"):
-                item_url = f"https://{e_id}"
+            if not item_url or not is_url(item_url):
+                e_id = entry.get("id", "")
+                if e_id and "instagram.com" in (playlist_title.lower() if "instagram.com" in playlist_title.lower() else ""):
+                    item_url = f"https://www.instagram.com/p/{e_id}/"
+                elif e_id and is_url(f"https://{e_id}"):
+                    item_url = f"https://{e_id}"
             report_overall(1.0, f"[Adaptive Recovery] Retrying #{idx}: {clean_title} via alternate audio paths...")
             alt_title = re.sub(r'\s*[\(\[].*?[\)\]]', '', raw_title).strip()
             alt_artist = re.split(r'[,&]|\bfeat\b|\bft\b', str(artist or ""), flags=re.IGNORECASE)[0].strip()

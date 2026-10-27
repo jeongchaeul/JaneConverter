@@ -51,3 +51,51 @@ def test_linear_loudnorm_filter_widens_lra_and_caps_gain_for_headroom():
     assert "I=-21.35" in filter_hot
     assert ":TP=-1.5" in filter_hot
     assert ":linear=true" in filter_hot
+
+
+def test_measure_audio_loudness_matches_pass2_trim_and_exciter(tmp_path, monkeypatch):
+    import subprocess
+    from janeconverter.converter import measure_audio_loudness, LOUDNORM_FILTER
+
+    dummy_wav = tmp_path / "dummy.wav"
+    dummy_wav.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+    captured_cmd = []
+
+    class DummyCompleted:
+        stderr = (
+            b'{\n'
+            b'  "input_i" : "-18.20",\n'
+            b'  "input_tp" : "-1.80",\n'
+            b'  "input_lra" : "6.40",\n'
+            b'  "input_thresh" : "-28.50",\n'
+            b'  "target_offset" : "0.10"\n'
+            b'}\n'
+        )
+
+    def fake_run(cmd, **kwargs):
+        captured_cmd.extend(cmd)
+        return DummyCompleted()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(converter, "has_soxr_support", lambda: True)
+
+    result = measure_audio_loudness(
+        str(dummy_wav),
+        ffmpeg_bin=str(dummy_wav),
+        sample_rate=48000,
+        input_sample_rate=44100,
+        start_time="00:00:05",
+        end_time="00:00:25",
+        reconstruct_frequency_loss=True,
+    )
+
+    assert result is not None
+    assert result["input_i"] == "-18.20"
+    assert "-ss" in captured_cmd and "00:00:05" in captured_cmd
+    assert "-to" in captured_cmd and "00:00:25" in captured_cmd
+    af_idx = captured_cmd.index("-af")
+    af_chain = captured_cmd[af_idx + 1]
+    assert "aresample=resampler=soxr:precision=28" in af_chain
+    assert "aexciter=freq=7500:ceil=20000:amount=2.5:drive=8.5:blend=0" in af_chain
+    assert LOUDNORM_FILTER in af_chain
+

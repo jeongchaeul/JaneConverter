@@ -58,15 +58,47 @@ Expected output: `JaneConverter <version>`
 
 ## Step 2: Rebuilding the Desktop Application (`janeconverter-desktop.exe`)
 
-Run from the `desktop-ui` directory:
+> [!IMPORTANT]
+> Always compile the local desktop binary with `--features updater`, `JANECONVERTER_BUILD_COMMIT`, and the `plugins.updater` configuration so that `D:\Programs\JaneConverter\` stays aligned with the signed GitHub `continuous` release feed and never degrades into an unsigned "local build" without in-app updater support.
+
+Run from the repository root:
 
 ```powershell
-cd desktop-ui
+$pubkey = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhGRkFGRDkwQkI2Njc4MzIKUldReWVHYTdrUDM2ajEvSzREOFo4M0JVbnNWZGxjVnByaGpJcnphL0NSRVhvQi9vbHhBOGlpSVAK"
+$commit = (git rev-parse HEAD).Trim()
+$env:JANECONVERTER_BUILD_COMMIT = $commit
 $env:PATH = "D:\node.js\Node.js;" + $env:PATH
-npm run tauri:build -- --no-bundle
+
+$cfgPath = Join-Path $PWD "desktop-ui\src-tauri\tauri.local-updater.json"
+uv run --locked python -c "
+import json, requests
+from pathlib import Path
+cfg = json.loads(Path('desktop-ui/src-tauri/tauri.conf.json').read_text(encoding='utf-8'))
+try:
+    rel = requests.get('https://github.com/jeongchaeul/JaneConverter/releases/download/continuous/latest.json', timeout=10).json()
+    ver = rel.get('version') or cfg['version']
+except Exception:
+    ver = cfg['version']
+cfg['productName'] = 'JaneConverter'
+cfg['version'] = ver
+cfg['bundle']['active'] = False
+cfg.setdefault('plugins', {})['updater'] = {
+    'pubkey': '$pubkey',
+    'endpoints': ['https://github.com/jeongchaeul/JaneConverter/releases/download/continuous/latest.json'],
+    'windows': {'installMode': 'passive'},
+}
+Path(r'$cfgPath').write_text(json.dumps(cfg, indent=2) + '\n', encoding='utf-8')
+"
+try {
+    Set-Location desktop-ui
+    .\node_modules\.bin\tauri.cmd build --features updater --no-bundle --config "$cfgPath"
+} finally {
+    Set-Location ..
+    Remove-Item -LiteralPath $cfgPath -Force -ErrorAction SilentlyContinue
+}
 ```
 
-This runs `beforeBuildCommand` (`npm run build`) to produce the optimized bundle in `desktop-ui/dist`, then compiles Rust with assets embedded directly into:
+This runs `beforeBuildCommand` (`npm run build`) to produce the optimized bundle in `desktop-ui/dist`, then compiles Rust with web assets and the signed GitHub updater configuration embedded directly into:
 `desktop-ui/src-tauri/target/release/janeconverter-desktop.exe`
 
 ---

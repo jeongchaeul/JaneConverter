@@ -293,12 +293,8 @@ impl AccessServer {
         Ok(target)
     }
 
-    pub fn fetched_media_thumbnail(&self, path: &str) -> Result<Option<String>, String> {
-        let target = self.validated_capture_path(path)?;
-        crate::library::thumbnail(
-            self.capture_root.to_string_lossy().as_ref(),
-            target.to_string_lossy().as_ref(),
-        )
+    pub fn capture_root_path(&self) -> PathBuf {
+        self.capture_root.clone()
     }
 
     pub fn discard_fetched_media(&self, path: &str) -> Result<(), String> {
@@ -1207,6 +1203,7 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
                         );
                         continue;
                     }
+                    drop(state);
                     let stored = current.file.flush().and_then(|_| current.file.sync_all());
                     drop(current.file);
                     let validation = stored
@@ -1258,7 +1255,6 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
                         continue;
                     }
                     let capture_id = current.id.clone();
-                    let count = state.paths.len() + 1;
                     let record = FetchedMedia {
                         path: path.to_string_lossy().into_owned(),
                         name: file_name,
@@ -1289,9 +1285,25 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
                         );
                         continue;
                     }
+                    let mut state = match capture_state.lock() {
+                        Ok(state) => state,
+                        Err(_) => {
+                            send_json_cors_or_plain(
+                                &mut stream,
+                                500,
+                                "Internal Server Error",
+                                origin.as_deref(),
+                                &json!({"error": "The capture registry is unavailable."})
+                                    .to_string(),
+                            );
+                            continue;
+                        }
+                    };
                     state.fetched.push(record);
                     state.total_bytes = state.total_bytes.saturating_add(current.bytes_written);
                     state.paths.push(path);
+                    let count = state.paths.len();
+                    drop(state);
                     send_json_cors_or_plain(
                         &mut stream,
                         200,

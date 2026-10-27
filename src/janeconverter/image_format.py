@@ -102,6 +102,8 @@ def convert_image_format(
     pillow_format, extension = _FORMATS[normalized_format]
     source_extension = os.path.splitext(image_path)[1].lower()
     with Image.open(image_path) as source:
+        if source.width < 1 or source.height < 1 or source.width * source.height > 100_000_000:
+            raise ValueError("Image dimensions are invalid or exceed the 100 MP safety limit.")
         source_format = source.format
         if (
             source_format == pillow_format

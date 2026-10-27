@@ -254,7 +254,7 @@ def download_facebook_photo_manifest(
                                 image_file.write(chunk)
                     with Image.open(image_path) as image:
                         extension = IMAGE_EXTENSIONS.get(image.format or "")
-                        if not extension or image.width < 1 or image.height < 1:
+                        if not extension or image.width < 1 or image.height < 1 or image.width * image.height > 100_000_000:
                             raise ValueError("unsupported image format")
                         image.verify()
                     verified_path = os.path.splitext(image_path)[0] + extension

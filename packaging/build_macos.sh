@@ -231,6 +231,7 @@ uv run --locked python "$REPO_ROOT/packaging/smoke_test_engine.py" \
 "$RUNTIME_BIN/node" --version >/dev/null
 
 TAURI_CONFIG="$BUILD_ROOT/tauri.release.json"
+export JANECONVERTER_REPO_ROOT="$REPO_ROOT"
 export JANECONVERTER_RELEASE_VERSION="$TAURI_VERSION"
 export JANECONVERTER_RUNTIME_ROOT="$RUNTIME_ROOT"
 export JANECONVERTER_STAGED_LICENSE="$STAGING_ROOT/LICENSE"
@@ -245,7 +246,7 @@ import json
 import os
 from pathlib import Path
 
-source = Path("desktop-ui/src-tauri/tauri.conf.json")
+source = Path(os.environ["JANECONVERTER_REPO_ROOT"]) / "desktop-ui/src-tauri/tauri.conf.json"
 config = json.loads(source.read_text(encoding="utf-8"))
 config["productName"] = "JaneConverter"
 config["version"] = os.environ["JANECONVERTER_RELEASE_VERSION"]
