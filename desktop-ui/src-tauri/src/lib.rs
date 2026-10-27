@@ -1,11 +1,16 @@
 mod access;
 mod catalog;
 mod facebook_capture;
+pub mod instances;
 mod library;
 mod model;
 mod paths;
 mod process;
 mod social_photo_capture;
+
+pub use instances::{
+    acquire_instance_slot, bring_active_window_to_top, InstanceGuard, MAX_INSTANCES,
+};
 
 use model::{
     AccessDiagnostic, AccessStatus, ConversionRequest, ConverterEvent, FacebookCaptureResult,
