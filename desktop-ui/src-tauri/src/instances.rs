@@ -347,6 +347,18 @@ pub fn acquire_instance_slot() -> Option<InstanceGuard> {
 }
 
 #[cfg(not(windows))]
+extern "C" {
+    fn flock(fd: std::os::raw::c_int, operation: std::os::raw::c_int) -> std::os::raw::c_int;
+}
+
+#[cfg(not(windows))]
+const LOCK_EX: std::os::raw::c_int = 2;
+#[cfg(not(windows))]
+const LOCK_NB: std::os::raw::c_int = 4;
+#[cfg(not(windows))]
+const LOCK_UN: std::os::raw::c_int = 8;
+
+#[cfg(not(windows))]
 fn get_unix_instances_dir() -> std::path::PathBuf {
     let base = std::env::var("XDG_DATA_HOME")
         .map(std::path::PathBuf::from)
@@ -366,7 +378,7 @@ fn acquire_instance_slot_unix() -> Option<InstanceGuard> {
     let coord_file = File::create(dir.join("coord.lock")).ok()?;
     let coord_fd = coord_file.as_raw_fd();
     unsafe {
-        if libc::flock(coord_fd, libc::LOCK_EX) != 0 {
+        if flock(coord_fd, LOCK_EX) != 0 {
             return None;
         }
     }
@@ -377,12 +389,12 @@ fn acquire_instance_slot_unix() -> Option<InstanceGuard> {
         let path = dir.join(format!("slot_{}.lock", slot));
         if let Ok(f) = File::create(&path) {
             let fd = f.as_raw_fd();
-            let is_locked = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) != 0 };
+            let is_locked = unsafe { flock(fd, LOCK_EX | LOCK_NB) != 0 };
             if is_locked {
                 active_count += 1;
             } else {
                 unsafe {
-                    libc::flock(fd, libc::LOCK_UN);
+                    flock(fd, LOCK_UN);
                 }
             }
         }
@@ -399,14 +411,14 @@ fn acquire_instance_slot_unix() -> Option<InstanceGuard> {
     // Try prompt lock
     let prompt_file = File::create(dir.join("prompt.lock")).ok()?;
     let prompt_fd = prompt_file.as_raw_fd();
-    let got_prompt_lock = unsafe { libc::flock(prompt_fd, libc::LOCK_EX | libc::LOCK_NB) == 0 };
+    let got_prompt_lock = unsafe { flock(prompt_fd, LOCK_EX | LOCK_NB) == 0 };
     if !got_prompt_lock {
         return None;
     }
 
     // Release coordination lock before showing prompt
     unsafe {
-        libc::flock(coord_fd, libc::LOCK_UN);
+        flock(coord_fd, LOCK_UN);
     }
 
     let confirmed = rfd::MessageDialog::new()
@@ -417,7 +429,7 @@ fn acquire_instance_slot_unix() -> Option<InstanceGuard> {
         == rfd::MessageDialogResult::Yes;
 
     unsafe {
-        libc::flock(prompt_fd, libc::LOCK_UN);
+        flock(prompt_fd, LOCK_UN);
     }
 
     if !confirmed {
@@ -425,7 +437,7 @@ fn acquire_instance_slot_unix() -> Option<InstanceGuard> {
     }
 
     unsafe {
-        if libc::flock(coord_fd, libc::LOCK_EX) != 0 {
+        if flock(coord_fd, LOCK_EX) != 0 {
             return None;
         }
     }
@@ -439,7 +451,7 @@ fn try_claim_free_slot_unix(dir: &std::path::Path) -> Option<InstanceGuard> {
         let path = dir.join(format!("slot_{}.lock", slot));
         if let Ok(file) = File::create(&path) {
             let fd = file.as_raw_fd();
-            let locked = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) == 0 };
+            let locked = unsafe { flock(fd, LOCK_EX | LOCK_NB) == 0 };
             if locked {
                 return Some(InstanceGuard { slot, _file: file });
             }
