@@ -88,15 +88,15 @@ Stress-tested under the Rule of 7 and actively verified across releases:
 
 | Platform | Supported Media | Extraction Route | Status |
 | :--- | :--- | :--- | :--- |
-| **YouTube, SoundCloud** | Audio, Video, Playlists | yt-dlp + bundled Node.js runtime | Verified on v2.3.4 (Oct 2026) |
-| **Spotify, Apple Music** | Tracks, Albums, Playlists | Catalog Metadata + Public Stream Matching | Verified on v2.3.4 (Oct 2026) |
-| **Instagram** | Photos, Reels, Audio | Guest Scraper & Internal API + Video Handoff | Verified on v2.3.4 (Oct 2026) |
-| **Facebook** | Photos, Albums, Reels | Sandboxed Guest View + Grid Scraper | Verified on v2.3.4 (Oct 2026) |
-| **Stories (IG / FB)** | Ephemeral Stories, Video Segments | Signed-in session (Session Recovery, opt-in) | Verified on v2.3.4 (Oct 2026) |
-| **TikTok** | Photos, Slideshows, Videos, Audio | Direct Stream Extractor + yt-dlp fallback | Verified on v2.3.4 (Oct 2026) |
-| **Pinterest** | Pins, Collections (`news_hub`), Boards | Direct API / Candidate Probe + CDN Fallback | Verified on v2.3.4 (Oct 2026) |
-| **X/Twitter** | Photos, Galleries, Videos | Direct Extractor / Guest Scraper | Verified on v2.3.4 (Oct 2026) |
-| **Reddit** | Videos, Audio, Galleries, Posts | Direct Stream Extractor + Guest Scraper | Verified on v2.3.4 (Oct 2026) |
+| **YouTube, SoundCloud** | Audio, Video, Playlists | yt-dlp + bundled Node.js runtime | Verified on v2.3.5 (Oct 2026) |
+| **Spotify, Apple Music** | Tracks, Albums, Playlists | Catalog Metadata + Public Stream Matching | Verified on v2.3.5 (Oct 2026) |
+| **Instagram** | Photos, Reels, Audio | Guest Scraper & Internal API + Video Handoff | Verified on v2.3.5 (Oct 2026) |
+| **Facebook** | Photos, Albums, Reels | Sandboxed Guest View + Grid Scraper | Verified on v2.3.5 (Oct 2026) |
+| **Stories (IG / FB)** | Ephemeral Stories, Video Segments | Signed-in session (Session Recovery, opt-in) | Verified on v2.3.5 (Oct 2026) |
+| **TikTok** | Photos, Slideshows, Videos, Audio | Direct Stream Extractor + yt-dlp fallback | Verified on v2.3.5 (Oct 2026) |
+| **Pinterest** | Pins, Collections (`news_hub`), Boards | Direct API / Candidate Probe + CDN Fallback | Verified on v2.3.5 (Oct 2026) |
+| **X/Twitter** | Photos, Galleries, Videos | Direct Extractor / Guest Scraper | Verified on v2.3.5 (Oct 2026) |
+| **Reddit** | Videos, Audio, Galleries, Posts | Direct Stream Extractor + Guest Scraper | Verified on v2.3.5 (Oct 2026) |
 
 ### Universal Open Web & Adult / 18+ Ingestion (Unrestricted)
 JaneConverter is **not restricted to the platforms above**. Its ingestion engine is inherently universal:

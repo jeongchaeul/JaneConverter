@@ -3,6 +3,23 @@
 All notable changes to JaneConverter are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3.5] - 2026-10-29 - Verified Updater Milestone & Repository-Wide Hardening
+
+### Added
+- **First Stable Updater Release Milestone**: Certified v2.3.5 as the first release with end-to-end verified continuous update packaging, signed update manifests, and automated in-place app updating. This represents the definitive transition release—the final build consumers need to install fresh from standalone installers, after which all subsequent releases update automatically in-place.
+- **Probe Caching (`media_probe.py`)**: Added an LRU-cached media probe with filesystem `(mtime_ns, size)` invalidation and fast container duration parsing to eliminate redundant `ffprobe` subprocess executions.
+- **Cross-Platform Binary Resolution (`binaries.py`)**: Centralized deterministic, cached binary lookup paths with platform-specific executable extensions (`.exe` on Windows).
+
+### Fixed
+- **Subprocess Deadlock Elimination (`audio_dsp.py`)**: Resolved pipe buffer deadlocks in EBU R128 loudness measurement when aborting early by draining output through `communicate(timeout=0.1)` instead of unbuffered polling.
+- **Bridge Session Slot Leak (`access.rs`)**: Resolved 24-slot session exhaustion where discarded media tokens failed to match existing relative paths, ensuring complete handle deallocation and disk cleanup.
+- **Cookie Unlocker Scan Optimization (`cookie_unlocker.py`)**: Optimized system handle scan complexity from $O(P \times H)$ to single-pass $O(H)$ using set-based PID lookups, drastically speeding up browser cookie unlocking.
+- **Archival Stream Redirection (`archival.py`)**: Fixed `TypeError` on unsafe HTTP redirects in Ghostarchive lookup and added post-redirect SSRF IP validation.
+- **Batch Queue State Consistency (`ConverterView.tsx`)**: Propagated per-item settings snapshots directly into queue task invocations, eliminating stale closure overrides during batch conversions.
+- **Library File Size Waterfall (`LibraryView.tsx`)**: Removed circular state dependencies in size calculations, eliminating redundant $O(N^2)$ native IPC calls.
+- **Browser Extension Fixes (`popup.js`, `collect.js`)**: Fixed temporal dead zone `ReferenceError` on extension popup initialization, switched memory buffers to zero-copy `Uint8Array.subarray()`, and maintained dynamic story frame capture responsiveness.
+- **Trimming Progress Calculation (`converter.py`)**: Corrected progress percent calculation during time offsets (`-ss` / `-to`) to align progress bars with the trimmed clip duration rather than the source duration.
+
 ## [2.3.4] - 2026-10-25 - Playlist Preset Selection, Live Story Trays, Categorized User Manual & Process Lifecycle Hardening
 
 ### Added
