@@ -1188,11 +1188,16 @@ def _convert_media_impl(
 
         try:
             from .paths import APP_DATA_DIR
+            triggering_cat = (
+                _recovery.attempts[0].result
+                if _recovery and len(_recovery.attempts) > 1 and _recovery.attempts[0].result is not None
+                else category
+            )
             record_local_failure(
                 os.path.join(APP_DATA_DIR, "recovery-evidence.json"),
                 target=target_format,
                 failed_method=method,
-                category=category,
+                category=triggering_cat,
             )
         except OSError:
             pass

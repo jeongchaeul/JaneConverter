@@ -165,6 +165,41 @@ def lookup_historical_metadata(
     return meta
 
 
+def _safe_request(
+    method: str,
+    url: str,
+    *,
+    headers: Optional[Dict[str, str]] = None,
+    timeout: float = ARCHIVE_TIMEOUT,
+    stream: bool = False,
+    max_redirects: int = 5,
+) -> requests.Response:
+    from .extractor import _is_safe_public_url
+
+    current_url = url
+    resp = None
+    for _ in range(max(1, max_redirects + 1)):
+        if not _is_safe_public_url(current_url):
+            raise ValueError(f"Unsafe target URL: {current_url}")
+        if method.upper() == "HEAD":
+            resp = requests.head(current_url, headers=headers, timeout=timeout, allow_redirects=False)
+        else:
+            resp = requests.get(current_url, headers=headers, timeout=timeout, stream=stream, allow_redirects=False)
+
+        is_redirect = getattr(resp, "is_redirect", False)
+        status = getattr(resp, "status_code", 200)
+        if (is_redirect or status in (301, 302, 303, 307, 308)) and hasattr(resp, "headers") and "Location" in resp.headers:
+            location = resp.headers["Location"]
+            current_url = urllib.parse.urljoin(current_url, location)
+            if hasattr(resp, "close"):
+                resp.close()
+            continue
+        return resp
+    if hasattr(resp, "close"):
+        resp.close()
+    raise ValueError(f"Too many redirects ({max_redirects}) for URL: {url}")
+
+
 def _is_safe_response_target(response: Any) -> bool:
     from .extractor import _is_safe_public_url
     target_url = getattr(response, "url", None)
@@ -249,32 +284,36 @@ def query_archive_org_collections(
             stream_url = f"https://archive.org/download/{urllib.parse.quote(item_id)}/{urllib.parse.quote(fname)}"
 
             # Verify accessibility
-            head_resp = requests.head(stream_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT, allow_redirects=True)
-            if head_resp.status_code in (200, 206, 302):
-                if not _is_safe_response_target(head_resp):
-                    return None
-                resolved_title = (
-                    metadata.title
-                    or doc.get("title")
-                    or f"Archived YouTube Video ({video_id})"
-                )
-                resolved_uploader = (
-                    metadata.uploader
-                    or doc.get("collection", ["Internet Archive"])[0]
-                )
-                return ArchivalStreamResult(
-                    found=True,
-                    source_name="Internet Archive",
-                    stream_url=stream_url,
-                    title=resolved_title,
-                    uploader=resolved_uploader,
-                    description=metadata.description or f"Recovered from Internet Archive item {item_id}",
-                    ext=fext,
-                    duration=metadata.duration,
-                    thumbnail_url=metadata.thumbnail_url,
-                    is_direct_media=True,
-                    item_identifier=item_id,
-                )
+            head_resp = _safe_request("HEAD", stream_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT)
+            try:
+                if head_resp.status_code in (200, 206, 302):
+                    if not _is_safe_response_target(head_resp):
+                        return None
+                    resolved_title = (
+                        metadata.title
+                        or doc.get("title")
+                        or f"Archived YouTube Video ({video_id})"
+                    )
+                    resolved_uploader = (
+                        metadata.uploader
+                        or doc.get("collection", ["Internet Archive"])[0]
+                    )
+                    return ArchivalStreamResult(
+                        found=True,
+                        source_name="Internet Archive",
+                        stream_url=stream_url,
+                        title=resolved_title,
+                        uploader=resolved_uploader,
+                        description=metadata.description or f"Recovered from Internet Archive item {item_id}",
+                        ext=fext,
+                        duration=metadata.duration,
+                        thumbnail_url=metadata.thumbnail_url,
+                        is_direct_media=True,
+                        item_identifier=item_id,
+                    )
+            finally:
+                if hasattr(head_resp, "close"):
+                    head_resp.close()
     except Exception as exc:
         logger.debug(f"Archive.org search error: {exc}")
 
@@ -319,22 +358,29 @@ def query_ghostarchive(
             return None
 
         # Verify accessibility
-        head_resp = requests.head(stream_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT, allow_redirects=True)
-        if head_resp.status_code in (200, 206, 302):
-            if not _is_safe_response_target(head_resp):
-                return None
-            return ArchivalStreamResult(
-                found=True,
-                source_name="Ghostarchive",
-                stream_url=stream_url,
-                title=metadata.title or f"Ghostarchive Video ({video_id})",
-                uploader=metadata.uploader or "Ghostarchive Vault",
-                description=metadata.description or "Recovered from Ghostarchive preservation index.",
-                ext="mp4",
-                duration=metadata.duration,
-                thumbnail_url=metadata.thumbnail_url,
-                is_direct_media=True,
-            )
+        try:
+            head_resp = _safe_request("HEAD", stream_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT)
+            try:
+                if head_resp.status_code in (200, 206, 302):
+                    if not _is_safe_response_target(head_resp):
+                        return None
+                    return ArchivalStreamResult(
+                        found=True,
+                        source_name="Ghostarchive",
+                        stream_url=stream_url,
+                        title=metadata.title or f"Ghostarchive Video ({video_id})",
+                        uploader=metadata.uploader or "Ghostarchive Vault",
+                        description=metadata.description or "Recovered from Ghostarchive preservation index.",
+                        ext="mp4",
+                        duration=metadata.duration,
+                        thumbnail_url=metadata.thumbnail_url,
+                        is_direct_media=True,
+                    )
+            finally:
+                if hasattr(head_resp, "close"):
+                    head_resp.close()
+        except Exception as head_err:
+            logger.debug(f"Ghostarchive stream HEAD probe failed: {head_err}")
     except Exception as exc:
         logger.debug(f"Ghostarchive query error: {exc}")
 
@@ -365,22 +411,29 @@ def query_wayback_machine_stream(
                 latest = rows[-1]
                 ts, orig_url = latest[0], latest[1]
                 stream_url = f"https://web.archive.org/web/{ts}id_/{orig_url}"
-                head_resp = requests.head(stream_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT, allow_redirects=True)
-                if head_resp.status_code in (200, 206, 302):
-                    if not _is_safe_response_target(head_resp):
-                        return None
-                    return ArchivalStreamResult(
-                        found=True,
-                        source_name="Wayback Machine Playback",
-                        stream_url=stream_url,
-                        title=metadata.title or f"Archived Playback ({video_id})",
-                        uploader=metadata.uploader or "Wayback Machine",
-                        description=metadata.description or "Recovered via Wayback Machine googlevideo playback snapshot.",
-                        ext="mp4",
-                        duration=metadata.duration,
-                        thumbnail_url=metadata.thumbnail_url,
-                        is_direct_media=True,
-                    )
+                try:
+                    head_resp = _safe_request("HEAD", stream_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT)
+                    try:
+                        if head_resp.status_code in (200, 206, 302):
+                            if not _is_safe_response_target(head_resp):
+                                return None
+                            return ArchivalStreamResult(
+                                found=True,
+                                source_name="Wayback Machine Playback",
+                                stream_url=stream_url,
+                                title=metadata.title or f"Archived Playback ({video_id})",
+                                uploader=metadata.uploader or "Wayback Machine",
+                                description=metadata.description or "Recovered via Wayback Machine googlevideo playback snapshot.",
+                                ext="mp4",
+                                duration=metadata.duration,
+                                thumbnail_url=metadata.thumbnail_url,
+                                is_direct_media=True,
+                            )
+                    finally:
+                        if hasattr(head_resp, "close"):
+                            head_resp.close()
+                except Exception as head_err:
+                    logger.debug(f"Wayback stream HEAD probe failed: {head_err}")
     except Exception as exc:
         logger.debug(f"Wayback googlevideo CDX error: {exc}")
 
@@ -498,37 +551,41 @@ def download_archival_stream(
         from .extractor import _is_safe_public_url
         if not _is_safe_public_url(stream_result.stream_url):
             raise ValueError("Archival stream URL failed public safety verification.")
-        resp = requests.get(stream_result.stream_url, headers=ARCHIVE_HEADERS, stream=True, timeout=30)
-        if not _is_safe_response_target(resp):
-            raise ValueError("Archival stream URL redirected to an unsafe target.")
-        if resp.status_code not in (200, 206):
-            raise RuntimeError(f"Failed to download archival stream from {stream_result.source_name} (HTTP {resp.status_code})")
-
-        total_len = int(resp.headers.get("content-length") or 0)
-        downloaded = 0
+        resp = _safe_request("GET", stream_result.stream_url, headers=ARCHIVE_HEADERS, stream=True, timeout=30)
         try:
-            with open(dest_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=128 * 1024):
-                    if abort_event and abort_event.is_set():
-                        raise KeyboardInterrupt("Archival stream download aborted by user.")
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if downloaded > 2 * 1024 * 1024 * 1024:
-                            raise RuntimeError("Archival media stream exceeds the 2 GB limit.")
-                        if total_len > 0 and progress_callback:
-                            pct = 0.45 + (downloaded / total_len) * 0.30
-                            progress_callback(
-                                pct,
-                                f"Downloading {stream_result.source_name} media: {downloaded // 1024} KB / {total_len // 1024} KB"
-                            )
-        except BaseException:
-            if os.path.exists(dest_path):
-                try:
-                    os.remove(dest_path)
-                except OSError:
-                    pass
-            raise
+            if not _is_safe_response_target(resp):
+                raise ValueError("Archival stream URL redirected to an unsafe target.")
+            if resp.status_code not in (200, 206):
+                raise RuntimeError(f"Failed to download archival stream from {stream_result.source_name} (HTTP {resp.status_code})")
+
+            total_len = int(resp.headers.get("content-length") or 0)
+            downloaded = 0
+            try:
+                with open(dest_path, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=128 * 1024):
+                        if abort_event and abort_event.is_set():
+                            raise KeyboardInterrupt("Archival stream download aborted by user.")
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if downloaded > 2 * 1024 * 1024 * 1024:
+                                raise RuntimeError("Archival media stream exceeds the 2 GB limit.")
+                            if total_len > 0 and progress_callback:
+                                pct = 0.45 + (downloaded / total_len) * 0.30
+                                progress_callback(
+                                    pct,
+                                    f"Downloading {stream_result.source_name} media: {downloaded // 1024} KB / {total_len // 1024} KB"
+                                )
+            except BaseException:
+                if os.path.exists(dest_path):
+                    try:
+                        os.remove(dest_path)
+                    except OSError:
+                        pass
+                raise
+        finally:
+            if hasattr(resp, "close"):
+                resp.close()
     else:
         import yt_dlp
         ydl_opts = {

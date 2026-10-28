@@ -82,15 +82,22 @@ pub fn open_path(path: String) -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     {
-        Command::new("open")
-            .arg(&target)
-            .spawn()
-            .map_err(|error| error.to_string())?;
+        let mut command = Command::new("open");
+        if target.is_file() {
+            command.arg("-R");
+        }
+        command.arg(&target);
+        command.spawn().map_err(|error| error.to_string())?;
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
+        let folder = if target.is_file() {
+            target.parent().unwrap_or(&target)
+        } else {
+            &target
+        };
         Command::new("xdg-open")
-            .arg(&target)
+            .arg(folder)
             .spawn()
             .map_err(|error| error.to_string())?;
     }

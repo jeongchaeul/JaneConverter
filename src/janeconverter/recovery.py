@@ -351,7 +351,8 @@ def _record_local_failure_locked(
                         "updated": max(0, int(item_value.get("updated", 0))),
                     }
                     for item_key, item_value in previous["entries"].items()
-                    if isinstance(item_value, dict)
+                    if re.fullmatch(r"[a-z0-9]{2,6}\|[a-z_]+\|(?:cpu-transcode|gpu-transcode|cover-normalized|image-ffmpeg-frame|image-png)", item_key)
+                    and isinstance(item_value, dict)
                 }
     except (OSError, ValueError, TypeError, AttributeError):
         pass

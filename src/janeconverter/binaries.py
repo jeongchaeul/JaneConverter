@@ -81,7 +81,6 @@ def get_node_binary() -> Optional[str]:
 
     if os.name == "nt":
         candidates = [
-            r"D:\node.js\Node.js\node.exe",
             os.path.expandvars(r"%ProgramFiles%\nodejs\node.exe"),
             os.path.expandvars(r"%ProgramFiles(x86)%\nodejs\node.exe"),
             os.path.expandvars(r"%LOCALAPPDATA%\Programs\node\node.exe"),
@@ -89,6 +88,7 @@ def get_node_binary() -> Optional[str]:
             os.path.expandvars(r"%USERPROFILE%\AppData\Local\hermes\node\node.exe"),
             r"C:\nodejs\node.exe",
             r"D:\nodejs\node.exe",
+            r"D:\node.js\Node.js\node.exe",
         ]
         for c in candidates:
             if os.path.isfile(c) and os.access(c, os.X_OK):

@@ -318,6 +318,9 @@ def resolve_pinterest_shortlink(url: str, timeout: float = 8.0) -> str:
         raw = str(url or "").strip()
         parsed = urllib.parse.urlparse(raw)
         if (parsed.hostname or "").lower() == "pin.it":
+            from .extractor import _is_safe_public_url
+            if not _is_safe_public_url(raw):
+                return url
             req = urllib.request.Request(
                 raw,
                 headers={
@@ -328,7 +331,9 @@ def resolve_pinterest_shortlink(url: str, timeout: float = 8.0) -> str:
                 },
             )
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.geturl()
+                resolved = resp.geturl()
+                if _is_safe_public_url(resolved):
+                    return resolved
     except Exception:
         pass
     return url

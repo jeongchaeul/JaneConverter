@@ -272,6 +272,7 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
                                             chunk_size = 64 * 1024
                                             read_buf = ctypes.create_string_buffer(chunk_size)
                                             bytes_read = wintypes.DWORD(0)
+                                            read_success = True
                                             with open(tmp_dst, "wb") as out_f:
                                                 while True:
                                                     r_ok = kernel32.ReadFile(
@@ -281,7 +282,10 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
                                                         ctypes.byref(bytes_read),
                                                         None,
                                                     )
-                                                    if not r_ok or bytes_read.value == 0:
+                                                    if not r_ok:
+                                                        read_success = False
+                                                        break
+                                                    if bytes_read.value == 0:
                                                         break
                                                     out_f.write(read_buf.raw[: bytes_read.value])
                                         finally:
@@ -293,10 +297,16 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
                                                     FILE_BEGIN,
                                                 )
 
-                                        kernel32.CloseHandle(target_handle)
-                                        target_handle = None
-                                        os.replace(tmp_dst, dst_path)
-                                        return True
+                                        if read_success and os.path.exists(tmp_dst) and os.path.getsize(tmp_dst) > 0:
+                                            kernel32.CloseHandle(target_handle)
+                                            target_handle = None
+                                            os.replace(tmp_dst, dst_path)
+                                            return True
+                                        elif os.path.exists(tmp_dst):
+                                            try:
+                                                os.remove(tmp_dst)
+                                            except OSError:
+                                                pass
                         finally:
                             if target_handle and target_handle.value:
                                 kernel32.CloseHandle(target_handle)
@@ -375,14 +385,25 @@ def _win32_shared_copy(src: str, dst: str) -> bool:
             bytes_read = wintypes.DWORD(0)
             os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
             tmp_dst = dst + ".tmp"
+            read_success = True
             with open(tmp_dst, "wb") as out_f:
                 while True:
                     success = kernel32.ReadFile(handle, buf, chunk_size, ctypes.byref(bytes_read), None)
-                    if not success or bytes_read.value == 0:
+                    if not success:
+                        read_success = False
+                        break
+                    if bytes_read.value == 0:
                         break
                     out_f.write(buf.raw[: bytes_read.value])
-            os.replace(tmp_dst, dst)
-            return True
+            if read_success and os.path.exists(tmp_dst) and os.path.getsize(tmp_dst) > 0:
+                os.replace(tmp_dst, dst)
+                return True
+            if os.path.exists(tmp_dst):
+                try:
+                    os.remove(tmp_dst)
+                except OSError:
+                    pass
+            return False
         finally:
             kernel32.CloseHandle(handle)
     except Exception:
