@@ -642,26 +642,23 @@ pub fn set_chromium_cookie_policy_sync(enabled: bool) -> Result<bool, String> {
             }
         }
 
-        if direct_ok && (!enabled || get_chromium_cookie_policy().unwrap_or(false)) {
-            return Ok(enabled);
+        if direct_ok {
+            let current = get_chromium_cookie_policy().unwrap_or(false);
+            if current == enabled {
+                return Ok(enabled);
+            }
         }
 
-        // Direct write was blocked by Windows ACL. Elevate via PowerShell Start-Process -Verb RunAs.
+        // Direct write was blocked by Windows ACL or a legacy policy remains. Elevate via PowerShell Start-Process -Verb RunAs.
+        // We strictly modify HKCU for enabling (per-user policy), and ensure both HKCU and any legacy HKLM keys are cleaned on disable.
         let ps_script = if enabled {
-            r#"Start-Process cmd.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '/c reg add "HKCU\Software\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f & reg add "HKCU\Software\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f & reg add "HKLM\Software\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f & reg add "HKLM\Software\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f'"#
+            r#"Start-Process cmd.exe -Verb RunAs -Wait -ArgumentList '/c reg add "HKCU\Software\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f & reg add "HKCU\Software\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f'"#
         } else {
-            r#"Start-Process cmd.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '/c reg delete "HKCU\Software\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /f & reg delete "HKCU\Software\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /f & reg delete "HKLM\Software\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /f & reg delete "HKLM\Software\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /f'"#
+            r#"Start-Process cmd.exe -Verb RunAs -Wait -ArgumentList '/c reg delete "HKCU\Software\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /f & reg delete "HKCU\Software\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /f & reg delete "HKLM\Software\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /f & reg delete "HKLM\Software\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /f'"#
         };
 
         let mut ps_cmd = std::process::Command::new("powershell");
-        ps_cmd.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-WindowStyle",
-            "Hidden",
-            "-Command",
-            ps_script,
-        ]);
+        ps_cmd.args(["-NoProfile", "-NonInteractive", "-Command", ps_script]);
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;

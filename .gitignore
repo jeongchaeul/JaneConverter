@@ -7,6 +7,7 @@ __pycache__/
 
 # Build artifacts
 .cache/
+browser-extension/releases/
 ffmpeg.exe
 build/
 build_engine/

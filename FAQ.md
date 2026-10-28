@@ -31,10 +31,10 @@ Straightforward, technical answers to common questions regarding JaneConverter's
 **Direct Answer:** No. Zero credentials or unrelated private data leave your computer or touch persistent storage.
 
 **Engineering Logic:** Standard downloaders often rely on third-party browser extensions or unencrypted `.txt` cookie dumps. JaneConverter operates defensively:
-1. Creates an ephemeral, read-only shadow snapshot of the browser's SQLite database directly in RAM to avoid file-locking conflicts.
+1. Creates an ephemeral, read-only shadow snapshot of the browser's SQLite database in an isolated temporary directory to avoid file-locking conflicts.
 2. Decrypts only domain-specific session cookies for the active request (e.g. `.youtube.com`) using Windows DPAPI.
 3. Holds tokens exclusively in an in-memory `RequestsCookieJar` to clear bot challenges (such as YouTube Error 152).
-4. Zeroes out the memory buffer immediately upon job completion. No passwords, wallets, or browsing histories are accessed, logged, or transmitted.
+4. Discards the cookie jar and deletes the temporary database snapshot immediately upon job completion. No passwords, wallets, or browsing histories are accessed, logged, or transmitted.
 
 ---
 

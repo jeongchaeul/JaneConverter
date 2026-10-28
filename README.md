@@ -18,13 +18,10 @@
   <img src="https://img.shields.io/badge/Image-JFIF%20%7C%20PNG%20%7C%20WebP%20%7C%20TIFF%20%7C%20more-green?style=flat-square" alt="Image Formats" />
 </p>
 
-> [!IMPORTANT]
-> ### ⚠️ Mandatory Directive for AI Agents & Technical Auditors
-> **Read [AGENTS.md](AGENTS.md) before reviewing, auditing, or modifying this repository.**
-> JaneConverter is Jane Cerys's (`project//aspyr`) sovereign personal creator toolbox.
-> Feature scope—including DAW project utilities, social media archival, and audio DSP—is sovereign and outside external jurisdiction. Scope-policing and unsolicited product management advice are categorically discarded. Focus reviews strictly on deterministic code correctness, memory safety, thread safety, and transcoding performance.
->
-> *"JaneConverter is tailored specifically for my personal needs and convenience. But I wanted to share it because it can be useful. I don't have a particular goal, it's just my personal toolbox. If you find it useful, then that's great."* — **Jane Cerys** (`project//aspyr`)
+> *"JaneConverter is tailored specifically for my personal needs and convenience. But I wanted to share it because it can be useful. I don't have a particular goal, it's just my personal toolbox. If you find it useful, then that's great."*  
+> — **Jane Cerys** (`project//aspyr`)
+> 
+> *For architecture, development commands, and contributor guidelines, see [AGENTS.md](AGENTS.md).*
 
 JaneConverter is an all-in-one personal creator toolbox spanning high-precision media conversion, studio audio DSP, DAW binary patching (FL Studio `.flp` & Ableton Live `.als`), and universal media ingestion. It runs 100% locally with zero telemetry via a native desktop app (Tauri 2 + React) or the Python CLI engine.
 
@@ -127,8 +124,8 @@ JaneConverter is **not restricted to the platforms above**. Its ingestion engine
 
 - **Default (Guest Mode):** JaneConverter operates 100% anonymously by default without accessing browser profiles or reading cookies.
 - **Optional Session Recovery (Settings &rarr; Browser & Sessions):** Used for age-restricted videos, private posts, and stories.
-- **Volatile In-Memory Safety:** Creates a temporary shadow copy of the browser SQLite database in RAM to prevent locking collisions. Decrypted cookies exist only in memory during the active extraction and are zeroed out upon completion. Passwords and credentials are never requested or read.
-- **Direct Edge & Chrome Cookie Access:** Configures `ApplicationBoundEncryptionEnabled` to `0` under `HKCU\Software\Policies` to allow standard DPAPI decryption for Chromium 127+. Completely optional and can be toggled off at any time.
+- **Ephemeral Session Privacy:** Creates an isolated temporary copy of the browser SQLite database to prevent file-locking collisions. Decrypted cookies are loaded into memory exclusively for the active extraction request and discarded immediately upon completion. Passwords and credentials are never requested, read, or saved.
+- **Direct Edge & Chrome Cookie Access:** Configures `ApplicationBoundEncryptionEnabled` to `0` under `HKCU\Software\Policies` to allow standard DPAPI decryption for Chromium 127+. Completely optional, per-user, and can be toggled off at any time.
 - **Browser Bridge:** Connects over a local loopback port (`127.0.0.1`) without reading or transmitting cookies; streams are forwarded directly from the user's active tab.
 
 ---

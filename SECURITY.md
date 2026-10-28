@@ -58,7 +58,8 @@ JaneConverter is a desktop media processing utility running on local hardware.
 ## 4. Architectural Security Guarantees
 
 1. **Zero Remote Telemetry & 100% Local Processing:** No tracking beacons, analytics, or conversion logs are sent to remote servers. All conversions execute locally.
-2. **Ephemeral Volatile Sessions:** Session cookies are loaded into volatile RAM only for active requests and cleared immediately upon completion. Passwords and credentials are never requested or stored.
-3. **Hardened Loopback Interface:** The desktop access server and Browser Bridge bind strictly to `127.0.0.1`, validate extension origins, require session tokens, and enforce bounded payload limits.
-4. **Input Sanitization & Safe Paths:** Filenames are NFC-normalized, bidi control marks stripped, illegal OS characters removed, and Windows reserved names escaped. File paths are canonicalized prior to writing.
-5. **Cryptographically Signed Updates:** Updates are served over HTTPS from canonical GitHub releases, verified via Minisign cryptographic signatures in the Tauri updater.
+2. **Ephemeral Sessions & Isolated Staging:** Session cookies are borrowed only for active requests and discarded immediately upon completion. Temporary database copies for locked files are isolated in private temporary directories and deleted promptly. Passwords and credentials are never requested or stored.
+3. **Opt-in Windows Cookie Policy:** For Chromium 127+ App-Bound Encryption, the app provides an optional toggle configuring `ApplicationBoundEncryptionEnabled=0` under `HKCU\Software\Policies` (per-user policy). This is disabled by default, completely opt-in, and can be disabled at any time.
+4. **Hardened Loopback Interface:** The desktop access server and Browser Bridge bind strictly to `127.0.0.1`, validate extension origins, require session tokens, and enforce bounded payload limits.
+5. **Input Sanitization & Safe Paths:** Filenames are NFC-normalized, bidi control marks stripped, illegal OS characters removed, and Windows reserved names escaped. File paths are canonicalized prior to writing.
+6. **Cryptographically Signed Updates:** Updates are served over HTTPS from canonical GitHub releases, verified via Minisign cryptographic signatures in the Tauri updater.

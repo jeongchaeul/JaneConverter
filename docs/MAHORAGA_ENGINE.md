@@ -63,7 +63,7 @@ The Adaptive Resilience Engine treats runtime errors as deterministic signals to
 *Modules: `src/janeconverter/social_photo_capture.py`, `src/janeconverter/auth.py`, `src/janeconverter/cookie_unlocker.py`*
 
 1. **Guest-First Policy:** Operates in 100% anonymous guest mode by default without touching local browser profiles.
-2. **Volatile In-Memory Cookie Jars:** For authenticated or age-gated links (YouTube Error 152, friends-only posts), makes a non-locking shadow copy of the browser SQLite database in RAM. Decrypted cookies exist in an ephemeral `RequestsCookieJar` and are cleared immediately upon completion.
+2. **Ephemeral Session Recovery:** For authenticated or age-gated links (YouTube Error 152, friends-only posts), makes an isolated non-locking shadow copy of the browser SQLite database. Decrypted cookies exist in an ephemeral `RequestsCookieJar` and are discarded immediately upon completion.
 3. **Chromium App-Bound Encryption Negotiation:** Negotiates with browsers using standard DPAPI (Vivaldi, Firefox, Brave, Edge), discovering active sessions automatically.
 4. **Loopback Browser Bridge Fallback:** Falls back to the authenticated loopback Browser Bridge (`127.0.0.1`) when local storage access is restricted.
 
@@ -133,5 +133,5 @@ When a user submits a Pinterest notification collection (`ph.pinterest.com/news_
 1. **Never Fail Fast on Expected Volatility:** External sites and hardware encoders fail frequently; always implement deterministic fallback paths.
 2. **Classify Errors Structurally:** Route errors through structured enum classifiers (`ExtractionCategory`, `FailureCategory`) rather than generic exception blocks.
 3. **Preserve Maximum Quality:** Fallbacks must maintain original resolution, audio sample rates, and bit-depths. Prioritize `/originals/` CDN mirrors over downscaled assets.
-4. **Zero Persistent Secrets:** Keep cookies and credentials strictly in volatile RAM. Never write tokens to logs or configuration files.
+4. **Zero Persistent Secrets:** Keep borrowed session tokens strictly in memory during active jobs. Never write session tokens to persistent configuration files or logs.
 5. **Record Evidence to Adaptation Memory:** Save winning strategies to adaptation memory so subsequent jobs execute the optimal strategy immediately.

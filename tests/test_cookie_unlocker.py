@@ -124,5 +124,11 @@ def test_robust_open_database_copy_raises_if_all_copies_fail(tmp_path, monkeypat
 
 
 def test_patch_yt_dlp_cookie_database_reader_applies_patch():
+    import inspect
+
     cookie_unlocker.patch_yt_dlp_cookie_database_reader()
     assert yt_dlp.cookies._open_database_copy == cookie_unlocker.robust_open_database_copy
+    sig = inspect.signature(cookie_unlocker.robust_open_database_copy)
+    assert "database_path" in sig.parameters
+    assert "tmpdir" in sig.parameters
+    assert getattr(yt_dlp.cookies.WindowsChromeCookieDecryptor, "_jane_patched", False) is True

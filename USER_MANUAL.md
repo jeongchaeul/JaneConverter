@@ -253,10 +253,10 @@ Chromium 127+ introduced Windows App-Bound Encryption, blocking standard externa
 ### Non-Chromium Browsers
 Firefox, Vivaldi, and Brave use standard encryption vaults. Select your browser in the **Preferred Browser** dropdown in Settings without requiring registry policies.
 
-### Volatile Memory Safety & Privacy Guarantees
-- **Non-Locking Shadow Snapshot:** Creates a temporary copy of the SQLite database in RAM to prevent browser file-locking collisions.
-- **Volatile Storage:** Decrypted cookies exist only in an ephemeral in-memory `RequestsCookieJar` during the active job.
-- **Zero Disk Writes:** Passwords, session cookies, and tokens are **never written to disk or logs**. Memory is immediately cleared upon job completion.
+### Ephemeral Session Privacy Guarantees
+- **Non-Locking Shadow Snapshot:** Creates an isolated temporary copy of the browser SQLite database to prevent browser file-locking collisions.
+- **In-Memory Request Scope:** Decrypted cookies exist only in an ephemeral in-memory `RequestsCookieJar` during the active job and are discarded upon completion.
+- **No Persistent Secrets:** Passwords, session cookies, and tokens are **never written to persistent configuration files or logs**. The temporary snapshot is deleted immediately upon job completion.
 - **Zero Telemetry:** No cookies or browsing history are ever transmitted to remote servers.
 
 ---

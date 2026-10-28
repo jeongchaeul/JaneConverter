@@ -23,7 +23,7 @@ An application that asks users to manually open browsers, click extension icons,
    - *"Copy cookies from your browser manually"*
 2. **Autonomous Platform Resolution:**
    - **Shortlink Unwrapping:** Programmatically expands `pin.it`, `t.co`, `bit.ly`, `youtu.be`, and redirects.
-   - **Silent Session Access:** For authenticated routes (Instagram carousels, Facebook albums, age-gated YouTube), silently accesses active desktop browser sessions (DPAPI shadow copies across Vivaldi, Firefox, Chrome, Edge) in RAM without locking databases or notifying the host.
+   - **Session Access:** For authenticated routes (Instagram carousels, Facebook albums, age-gated YouTube), accesses active desktop browser sessions (DPAPI shadow copies across Vivaldi, Firefox, Chrome, Edge) without locking databases.
    - **Dynamic Failover:** Blocks or login walls trigger seamless failover to internal platform API endpoints.
    - **Direct Extraction Interception:** If upstream extractors (`yt-dlp`) fail on custom routes, internal extractors query platform APIs directly to build media manifests.
 
@@ -49,7 +49,7 @@ An application that asks users to manually open browsers, click extension icons,
              │                               │
              ▼                               ▼
    [ Headless / API Ingestion ]   [ Silent Desktop Browser Session ]
-             │                     (Non-locking RAM cookie jar)
+             │                     (Non-locking ephemeral cookie jar)
              │                               │
              └───────────────┬───────────────┘
                              ▼
