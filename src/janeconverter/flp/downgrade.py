@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import struct
+import threading
 from typing import Any, Dict, Optional, Tuple
 
 from .models import FLPProject, KNOWN_FL_VERSIONS, write_varint
@@ -157,7 +158,9 @@ def downgrade_flp_bytes(
     records_adjusted = 0
 
     # 1. Parse source version and event 0xC7 (FLVersion ASCII string)
-    match_c7 = re.search(rb"\xc7([\x01-\x7f])([0-9]+\.[0-9]+\.[0-9]+[^\x00]*\x00)", data[:1024])
+    search_start = (fldt_idx + 8) if (0 <= fldt_idx < len(data)) else 0
+    match_c7 = re.search(rb"\xc7([\x01-\x7f])([0-9]+\.[0-9]+\.[0-9]+[^\x00]*\x00)", data[search_start:search_start + 1024])
+    c7_offset_bias = search_start
     source_ver_full = "Unknown"
     source_major = 0
     source_build = 0
@@ -176,8 +179,8 @@ def downgrade_flp_bytes(
         new_c7_event = b"\xc7" + write_varint(len(target_ver_bytes)) + target_ver_bytes
 
         # Replace 0xC7 in header
-        c7_pos = match_c7.start()
-        if 0 <= c7_pos < 1024:
+        c7_pos = match_c7.start() + c7_offset_bias
+        if 0 <= c7_pos < len(data):
             data = bytearray(
                 data[:c7_pos] + new_c7_event + data[c7_pos + len(old_c7_match):]
             )
@@ -254,8 +257,7 @@ def downgrade_flp_bytes(
                 str_end += 2
 
             expected_varint = write_varint(str_end - idx)
-            if bytes(data[ev_start + 1 : idx]) == expected_varint:
-                old_chunk = bytes(data[ev_start:str_end])
+            if bytes(data[ev_start + 1 : idx]) == expected_varint and str_end <= search_window:
                 try:
                     old_text = bytes(data[idx:str_end]).decode("utf-16le").rstrip("\x00")
                     has_double_build = old_text.count(".") >= 4
@@ -271,13 +273,11 @@ def downgrade_flp_bytes(
                         + new_text_bytes
                     )
 
-                    chunk_pos = data.find(old_chunk)
-                    if chunk_pos != -1:
-                        data = bytearray(
-                            data[:chunk_pos]
-                            + new_chunk
-                            + data[chunk_pos + len(old_chunk) :]
-                        )
+                    data = bytearray(
+                        data[:ev_start]
+                        + new_chunk
+                        + data[str_end:]
+                    )
                 except (ValueError, KeyError, IndexError):
                     pass
 
@@ -446,7 +446,7 @@ def downgrade_flp_file(
     if out_dir and not os.path.exists(out_dir):
         os.makedirs(out_dir, exist_ok=True)
 
-    temp_target = f"{target_dest}.tmp.{os.getpid()}"
+    temp_target = f"{target_dest}.tmp.{os.getpid()}.{threading.get_ident()}"
     try:
         with open(temp_target, "wb") as f:
             f.write(downgraded_bytes)

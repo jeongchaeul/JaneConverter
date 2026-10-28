@@ -248,6 +248,30 @@ pub fn captures(path: &Path) -> Result<Vec<FetchedMedia>, String> {
     Ok(load(path)?.captures)
 }
 
+pub fn remove_capture(path: &Path, media_path: &Path) -> Result<(), String> {
+    let _guard = CATALOG_LOCK
+        .lock()
+        .map_err(|_| "The local catalog is unavailable.")?;
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut catalog = load(path)?;
+    let target_name = media_path.file_name();
+    catalog
+        .captures
+        .retain(|value| Path::new(&value.path).file_name() != target_name);
+    save(path, &catalog)
+}
+
+pub fn save_captures(path: &Path, items: &[FetchedMedia]) -> Result<(), String> {
+    let _guard = CATALOG_LOCK
+        .lock()
+        .map_err(|_| "The local catalog is unavailable.")?;
+    let mut catalog = load(path)?;
+    catalog.captures = items.to_vec();
+    save(path, &catalog)
+}
+
 pub fn backup_for_update(root: &Path, fetched: &Path) -> Result<(), String> {
     let _guard = CATALOG_LOCK
         .lock()

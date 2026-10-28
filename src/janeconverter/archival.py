@@ -165,6 +165,20 @@ def lookup_historical_metadata(
     return meta
 
 
+def _is_safe_response_target(response: Any) -> bool:
+    from .extractor import _is_safe_public_url
+    target_url = getattr(response, "url", None)
+    if isinstance(target_url, str) and not _is_safe_public_url(target_url):
+        return False
+    history = getattr(response, "history", None)
+    if isinstance(history, (list, tuple)):
+        for item in history:
+            item_url = getattr(item, "url", None)
+            if isinstance(item_url, str) and not _is_safe_public_url(item_url):
+                return False
+    return True
+
+
 def query_archive_org_collections(
     video_id: str,
     metadata: ArchivalMetadata,
@@ -237,6 +251,8 @@ def query_archive_org_collections(
             # Verify accessibility
             head_resp = requests.head(stream_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT, allow_redirects=True)
             if head_resp.status_code in (200, 206, 302):
+                if not _is_safe_response_target(head_resp):
+                    return ArchivalStreamResult(found=False)
                 resolved_title = (
                     metadata.title
                     or doc.get("title")
@@ -349,6 +365,8 @@ def query_wayback_machine_stream(
                 stream_url = f"https://web.archive.org/web/{ts}id_/{orig_url}"
                 head_resp = requests.head(stream_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT, allow_redirects=True)
                 if head_resp.status_code in (200, 206, 302):
+                    if not _is_safe_response_target(head_resp):
+                        return ArchivalStreamResult(found=False)
                     return ArchivalStreamResult(
                         found=True,
                         source_name="Wayback Machine Playback",

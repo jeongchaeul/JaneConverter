@@ -101,9 +101,10 @@ def _nvidia_snapshot(target_pids: set[int]) -> dict[str, Any]:
             creationflags=creation_flags,
             check=False,
         )
-        for row in csv.reader(process_result.stdout.splitlines(), skipinitialspace=True):
-            if len(row) >= 2 and row[0].strip().isdigit() and int(row[0]) in target_pids:
-                app_vram += int(_number(row[1]))
+        if process_result.returncode == 0 and process_result.stdout:
+            for row in csv.reader(process_result.stdout.splitlines(), skipinitialspace=True):
+                if len(row) >= 2 and row[0].strip().isdigit() and int(row[0]) in target_pids:
+                    app_vram += int(_number(row[1]))
 
         return {
             "gpuName": fields[0].strip() or "NVIDIA GPU",

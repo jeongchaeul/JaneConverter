@@ -8,7 +8,10 @@ import json
 import os
 import re
 import tempfile
+import threading
 import time
+
+_RECOVERY_LOCK = threading.Lock()
 
 
 class FailureCategory(str, Enum):
@@ -257,6 +260,11 @@ def rank_candidate_strategies(
 
 def record_local_success(path: str, coordinator: RecoveryCoordinator) -> None:
     """Keep bounded structural success counts without any source or media data."""
+    with _RECOVERY_LOCK:
+        _record_local_success_locked(path, coordinator)
+
+
+def _record_local_success_locked(path: str, coordinator: RecoveryCoordinator) -> None:
     if len(coordinator.attempts) < 2:
         return
     target = coordinator.intent.target_format
@@ -314,6 +322,16 @@ def record_local_failure(
     category: FailureCategory | str,
 ) -> None:
     """Record a strategy failure in adaptation memory to penalize its ranking."""
+    with _RECOVERY_LOCK:
+        _record_local_failure_locked(path, target, failed_method, category)
+
+
+def _record_local_failure_locked(
+    path: str,
+    target: str,
+    failed_method: str,
+    category: FailureCategory | str,
+) -> None:
     if not re.fullmatch(r"[a-z0-9]{2,6}", target):
         return
     cat_str = category.value if isinstance(category, FailureCategory) else str(category)
@@ -381,7 +399,7 @@ def quarantine_failure(
 
         sanitized_diag = str(diagnostic or "")
         sanitized_diag = re.sub(r"https?://[^\s\"']+", "<url>", sanitized_diag)
-        sanitized_diag = re.sub(r"[A-Za-z]:\\[^\s\"']+", "<path>", sanitized_diag)
+        sanitized_diag = re.sub(r'[A-Za-z]:\\(?:[^<>:"/\\|?*\r\n]+\\)*[^<>:"/\\|?*\r\n]*', "<path>", sanitized_diag)
         sanitized_diag = re.sub(r"/(?:[a-zA-Z0-9._-]+/)+[a-zA-Z0-9._-]+", "<path>", sanitized_diag)
         sanitized_diag = sanitized_diag[:500]
 

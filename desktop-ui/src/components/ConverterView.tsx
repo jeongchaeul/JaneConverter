@@ -502,6 +502,195 @@ export function ConverterView({
     }
   }, [progress]);
 
+  async function executeConversion(
+    sourceToConvert: string,
+    indexesToConvert?: string,
+    customPreset?: IntentPreset
+  ): Promise<boolean> {
+    const trimmedSource = sourceToConvert.trim();
+    if (!trimmedSource && !access.bridgeConnected) return false;
+    if (trimmedSource && isEphemeralStoryUrl(trimmedSource) && !settings.allowStoryExtraction) {
+      setShowStoryTermsModal(true);
+      onStatus("Ephemeral story extraction requires accepting the Terms of Usage and legal compliance agreement.");
+      return false;
+    }
+
+    const customSettings: ConverterSettings | undefined = customPreset
+      ? {
+          ...settings,
+          category: customPreset.category,
+          format: customPreset.format,
+          bitrate: customPreset.bitrate,
+          sampleRate: customPreset.sampleRate,
+          resolution: customPreset.resolution,
+          normalize: customPreset.normalize,
+          useGpu: customPreset.useGpu,
+        }
+      : undefined;
+
+    const invokeStart = (
+      startSource: string,
+      startIndexes?: string,
+      startFbId?: string,
+      startSocialId?: string,
+      startMediaKind?: "photo" | "video",
+    ) => {
+      if (customSettings) {
+        return onStart(startSource, startIndexes, startFbId, startSocialId, startMediaKind, customSettings);
+      }
+      if (startMediaKind !== undefined) {
+        return onStart(startSource, startIndexes, startFbId, startSocialId, startMediaKind);
+      }
+      if (startSocialId !== undefined) {
+        return onStart(startSource, startIndexes, startFbId, startSocialId);
+      }
+      if (startFbId !== undefined) {
+        return onStart(startSource, startIndexes, startFbId);
+      }
+      return onStart(startSource, startIndexes);
+    };
+
+    if (isPinterestNotificationRoute(trimmedSource)) {
+      onStatus("Reading Pinterest collection using your browser session...");
+      const started = await invokeStart(trimmedSource, indexesToConvert);
+      return started !== false;
+    }
+    if (settings.openInBrowser && /^https?:\/\//i.test(trimmedSource)) {
+      void bridge.openUrl(trimmedSource).catch(() => {});
+    }
+    const photoPlatform = trimmedSource ? socialPhotoPlatform(trimmedSource) : null;
+    const categoryToCheck = customSettings ? customSettings.category : activeCategory;
+    const formatToCheck = customSettings ? customSettings.format : activeFormat;
+    const isSourceToCheck = formatToCheck === "source";
+    const isVideoToCheck = isSourceToCheck
+      ? categoryToCheck === "Video"
+      : videoFormats.includes(formatToCheck) && categoryToCheck !== "Image";
+    const explicitVideoFormat = categoryToCheck === "Video" && isVideoToCheck && !isSourceToCheck;
+    if (explicitVideoFormat && (isFacebookPostLink(trimmedSource) || isInstagramVideoRoute(trimmedSource) || photoPlatform === "twitter")) {
+      const platformLabel = isFacebookPostLink(trimmedSource)
+        ? "Facebook"
+        : photoPlatform === "twitter"
+          ? "X/Twitter"
+          : "Instagram";
+      onStatus(`Sending this ${platformLabel} post to the video converter...`);
+      const started = await invokeStart(trimmedSource, indexesToConvert);
+      return started !== false;
+    }
+    if (isFacebookPostLink(trimmedSource)) {
+      if (access.active || settings.readBrowserCookies === true) {
+        onStatus("Reading Facebook post using your active browser session...");
+        const started = await invokeStart(trimmedSource, indexesToConvert);
+        return started !== false;
+      }
+      const captureId = crypto.randomUUID();
+      facebookCaptureIdRef.current = captureId;
+      setFacebookCaptureBusy(true);
+      onStatus("Reading the public Facebook post in a hidden guest session...");
+      let sessionTransferredToConversion = false;
+      try {
+        const capture = await bridge.captureFacebookAlbum(trimmedSource, captureId);
+        let started: void | boolean;
+        if (capture.mediaKind === "video") {
+          onStatus("This Facebook post contains video. Starting the video conversion...");
+          started = await invokeStart(trimmedSource, indexesToConvert, undefined, undefined, "video");
+        } else {
+          onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
+          started = await invokeStart(trimmedSource, undefined, capture.captureId);
+        }
+        sessionTransferredToConversion = started !== false;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/cancelled|canceled/i.test(message)) {
+          onStatus(message);
+        } else {
+          onStatus("Facebook guest session unavailable or restricted. Adapting with browser session...");
+          try {
+            const started = await invokeStart(trimmedSource, indexesToConvert);
+            sessionTransferredToConversion = started !== false;
+          } catch (fallbackError) {
+            onError(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
+          }
+        }
+      } finally {
+        if (!sessionTransferredToConversion && facebookCaptureIdRef.current === captureId) {
+          try {
+            await bridge.cancelFacebookAlbum(captureId);
+          } catch {
+            // Preserve the original conversion error; the capture expires automatically.
+          }
+        }
+        facebookCaptureIdRef.current = null;
+        setFacebookCaptureBusy(false);
+      }
+      return sessionTransferredToConversion;
+    }
+    if (photoPlatform) {
+      if (photoPlatform === "instagram" && isInstagramVideoRoute(trimmedSource)) {
+        onStatus("Sending this Instagram post to the video converter...");
+        const started = await invokeStart(trimmedSource, indexesToConvert, undefined, undefined, "video");
+        return started !== false;
+      }
+      if (photoPlatform === "instagram" && (access.active || settings.readBrowserCookies === true)) {
+        onStatus("Reading Instagram post using your active browser session...");
+        const started = await invokeStart(trimmedSource, indexesToConvert);
+        return started !== false;
+      }
+      if (photoPlatform === "pinterest" && (access.active || settings.readBrowserCookies === true)) {
+        onStatus("Reading Pinterest using your active browser session...");
+        const started = await invokeStart(trimmedSource, indexesToConvert);
+        return started !== false;
+      }
+      const captureId = crypto.randomUUID();
+      socialCaptureIdRef.current = captureId;
+      setSocialCaptureBusy(true);
+      const platformLabel = socialPhotoPlatformLabel(photoPlatform);
+      onStatus(`Reading the public ${platformLabel} post in a hidden guest session...`);
+      let sessionTransferredToConversion = false;
+      try {
+        const capture = await bridge.captureSocialPostPhotos(trimmedSource, captureId);
+        let started: void | boolean;
+        if (capture.mediaKind === "video") {
+          onStatus(`This ${platformLabel} post contains video. Starting the video conversion...`);
+          started = await invokeStart(trimmedSource, indexesToConvert, undefined, undefined, "video");
+        } else {
+          onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
+          started = await invokeStart(trimmedSource, undefined, undefined, capture.captureId);
+        }
+        sessionTransferredToConversion = started !== false;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/cancelled|canceled/i.test(message)) {
+          onStatus(message);
+        } else if (photoPlatform === "twitter") {
+          onStatus("Adapting: Passing the X/Twitter post to the media downloader...");
+          const started = await invokeStart(trimmedSource, indexesToConvert, undefined, undefined, "video");
+          sessionTransferredToConversion = started !== false;
+        } else {
+          onStatus(`Guest session for ${platformLabel} unavailable or restricted. Adapting with browser session...`);
+          try {
+            const started = await invokeStart(trimmedSource, indexesToConvert);
+            sessionTransferredToConversion = started !== false;
+          } catch (fallbackError) {
+            onError(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
+          }
+        }
+      } finally {
+        if (!sessionTransferredToConversion && socialCaptureIdRef.current === captureId) {
+          try {
+            await bridge.cancelSocialPostPhotos(captureId);
+          } catch {
+            // Preserve the original conversion error; the capture expires automatically.
+          }
+        }
+        socialCaptureIdRef.current = null;
+        setSocialCaptureBusy(false);
+      }
+      return sessionTransferredToConversion;
+    }
+    const started = await invokeStart(trimmedSource, indexesToConvert);
+    return started !== false;
+  }
+
   // Sequential queue runner
   useEffect(() => {
     if (!queueRunning) return;
@@ -531,7 +720,7 @@ export function ConverterView({
       onSettings(targetItem.settingsSnapshot);
     }
 
-    onStart(targetItem.source, targetItem.playlistIndexes)
+    executeConversion(targetItem.source, targetItem.playlistIndexes)
       .then((started) => {
         if (!started) {
           activeQueueItemIdRef.current = null;
@@ -1019,167 +1208,7 @@ export function ConverterView({
       onStatus("Paste a source URL, choose a local file, or capture media in the browser first.");
       return;
     }
-    const trimmedSource = source.trim();
-    if (isEphemeralStoryUrl(trimmedSource) && !settings.allowStoryExtraction) {
-      setShowStoryTermsModal(true);
-      onStatus("Ephemeral story extraction requires accepting the Terms of Usage and legal compliance agreement.");
-      return;
-    }
-
-    const customSettings: ConverterSettings | undefined = customPreset
-      ? {
-          ...settings,
-          category: customPreset.category,
-          format: customPreset.format,
-          bitrate: customPreset.bitrate,
-          sampleRate: customPreset.sampleRate,
-          resolution: customPreset.resolution,
-          normalize: customPreset.normalize,
-          useGpu: customPreset.useGpu,
-        }
-      : undefined;
-
-    const invokeStart = (
-      startSource: string,
-      startIndexes?: string,
-      startFbId?: string,
-      startSocialId?: string,
-      startMediaKind?: "photo" | "video",
-    ) => {
-      if (customSettings) {
-        return onStart(startSource, startIndexes, startFbId, startSocialId, startMediaKind, customSettings);
-      }
-      if (startMediaKind !== undefined) {
-        return onStart(startSource, startIndexes, startFbId, startSocialId, startMediaKind);
-      }
-      if (startSocialId !== undefined) {
-        return onStart(startSource, startIndexes, startFbId, startSocialId);
-      }
-      if (startFbId !== undefined) {
-        return onStart(startSource, startIndexes, startFbId);
-      }
-      return onStart(startSource, startIndexes);
-    };
-
-    if (isPinterestNotificationRoute(trimmedSource)) {
-      onStatus("Reading Pinterest collection using your browser session...");
-      await invokeStart(trimmedSource, indexes);
-      return;
-    }
-    if (settings.openInBrowser && /^https?:\/\//i.test(trimmedSource)) {
-      void bridge.openUrl(trimmedSource).catch(() => {});
-    }
-    const photoPlatform = socialPhotoPlatform(trimmedSource);
-    const explicitVideoFormat = activeCategory === "Video" && isVideo && !isSourceFormat;
-    if (explicitVideoFormat && (isFacebookPostLink(trimmedSource) || isInstagramVideoRoute(trimmedSource) || photoPlatform === "twitter")) {
-      const platformLabel = isFacebookPostLink(trimmedSource)
-        ? "Facebook"
-        : photoPlatform === "twitter"
-          ? "X/Twitter"
-          : "Instagram";
-      onStatus(`Sending this ${platformLabel} post to the video converter...`);
-      await invokeStart(trimmedSource, indexes);
-      return;
-    }
-    if (isFacebookPostLink(trimmedSource)) {
-      if (access.active || settings.readBrowserCookies === true) {
-        onStatus("Reading Facebook post using your active browser session...");
-        await invokeStart(trimmedSource, indexes);
-        return;
-      }
-      const captureId = crypto.randomUUID();
-      facebookCaptureIdRef.current = captureId;
-      setFacebookCaptureBusy(true);
-      onStatus("Reading the public Facebook post in a hidden guest session...");
-      let sessionTransferredToConversion = false;
-      try {
-        const capture = await bridge.captureFacebookAlbum(trimmedSource, captureId);
-        let started: void | boolean;
-        if (capture.mediaKind === "video") {
-          onStatus("This Facebook post contains video. Starting the video conversion...");
-          started = await invokeStart(trimmedSource, indexes, undefined, undefined, "video");
-        } else {
-          onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
-          started = await invokeStart(trimmedSource, undefined, capture.captureId);
-        }
-        sessionTransferredToConversion = started !== false;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (/cancelled|canceled/i.test(message)) {
-          onStatus(message);
-        } else {
-          onStatus("Facebook guest session unavailable or restricted. Adapting with browser session...");
-          try {
-            await invokeStart(trimmedSource, indexes);
-          } catch (fallbackError) {
-            onError(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
-          }
-        }
-      } finally {
-        if (!sessionTransferredToConversion && facebookCaptureIdRef.current === captureId) {
-          try {
-            await bridge.cancelFacebookAlbum(captureId);
-          } catch {
-            // Preserve the original conversion error; the capture expires automatically.
-          }
-        }
-        facebookCaptureIdRef.current = null;
-        setFacebookCaptureBusy(false);
-      }
-      return;
-    }
-    if (photoPlatform) {
-      if (photoPlatform === "instagram" && isInstagramVideoRoute(trimmedSource)) {
-        onStatus("Sending this Instagram post to the video converter...");
-        await invokeStart(trimmedSource, indexes, undefined, undefined, "video");
-        return;
-      }
-      if (photoPlatform === "instagram" && (access.active || settings.readBrowserCookies === true)) {
-        onStatus("Reading Instagram post using your active browser session...");
-        await invokeStart(trimmedSource, indexes);
-        return;
-      }
-      if (photoPlatform === "pinterest" && (access.active || settings.readBrowserCookies === true)) {
-        onStatus("Reading Pinterest using your active browser session...");
-        await invokeStart(trimmedSource, indexes);
-        return;
-      }
-      const captureId = crypto.randomUUID();
-      socialCaptureIdRef.current = captureId;
-      setSocialCaptureBusy(true);
-      const platformLabel = socialPhotoPlatformLabel(photoPlatform);
-      onStatus(`Reading the public ${platformLabel} post in a hidden guest session...`);
-      try {
-        const capture = await bridge.captureSocialPostPhotos(trimmedSource, captureId);
-        if (capture.mediaKind === "video") {
-          onStatus(`This ${platformLabel} post contains video. Starting the video conversion...`);
-          await invokeStart(trimmedSource, indexes, undefined, undefined, "video");
-        } else {
-          onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
-          await invokeStart(trimmedSource, undefined, undefined, capture.captureId);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (/cancelled|canceled/i.test(message)) {
-          onStatus(message);
-        } else if (photoPlatform === "twitter") {
-          onStatus("Adapting: Passing the X/Twitter post to the media downloader...");
-          await invokeStart(trimmedSource, indexes, undefined, undefined, "video");
-        } else {
-          onStatus(`Guest session for ${platformLabel} unavailable or restricted. Adapting with browser session...`);
-          try {
-            await invokeStart(trimmedSource, indexes);
-          } catch (fallbackError) {
-            onError(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
-          }
-        }
-      } finally {
-        socialCaptureIdRef.current = null;
-        setSocialCaptureBusy(false);
-      }
-      return;
-    }
-    await invokeStart(trimmedSource, indexes);
+    await executeConversion(source, indexes, customPreset);
   }
 
   async function cancelFacebookCapture() {

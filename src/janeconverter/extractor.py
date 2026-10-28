@@ -649,7 +649,7 @@ def fetch_apple_music_playlist_entries(apple_url: str, progress_callback: Option
                 "title": t_title,
                 "artist": t_artist,
                 "album": t_album,
-                "duration": dur,
+                "duration": t_dur_sec,
                 "duration_str": format_duration(t_dur_sec),
                 "url": track_url,
                 "thumbnail": t_thumb,
@@ -787,16 +787,16 @@ def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
     try:
         page_resp = requests.get(clean_url, headers=headers, timeout=8)
         if page_resp.status_code == 200:
-            html = page_resp.text
-            desc_match = re.search(r'<meta property="og:description" content="([^"]+)"', html)
+            page_html = page_resp.text
+            desc_match = re.search(r'<meta property="og:description" content="([^"]+)"', page_html)
             if desc_match:
-                desc_text = desc_match.group(1)
+                desc_text = html.unescape(desc_match.group(1))
                 description = desc_text
                 parts = [p.strip() for p in re.split(r'[·•|]', desc_text)]
                 if parts and artist == "Unknown Artist":
-                    artist = parts[0]
+                    artist = html.unescape(parts[0])
                 if len(parts) > 1 and "Song" not in parts[1] and not album:
-                    album = parts[1]
+                    album = html.unescape(parts[1])
                 if len(parts) > 3 and not year and parts[-1].isdigit():
                     year = parts[-1]
     except (requests.RequestException, IndexError, ValueError):

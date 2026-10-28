@@ -9,6 +9,7 @@ const {
   networkCaptureDisposition,
   networkMediaCandidate,
   normalizeMediaUrl,
+  sameSite,
   sameStoryFingerprint,
   sessionPlatformForPage,
   selectCaptureItems,
@@ -176,4 +177,14 @@ test("discards tiny network assets that are likely avatars or interface chrome",
   assert.equal(networkCaptureDisposition("image", 8 * 1024).accepted, true);
   assert.equal(networkCaptureDisposition("video", 31 * 1024).accepted, false);
   assert.equal(networkCaptureDisposition("video", 32 * 1024).accepted, true);
+});
+test("sameSite correctly compares URLs and hostnames across subdomains", () => {
+  assert.equal(sameSite("https://m.facebook.com/story", "https://www.facebook.com/watch"), true);
+  assert.equal(sameSite("https://instagram.com/p/123", "https://www.instagram.com/stories/"), true);
+  assert.equal(sameSite("m.facebook.com", "facebook.com"), true);
+  assert.equal(sameSite("facebook.com", "m.facebook.com"), true);
+  assert.equal(sameSite("https://facebook.com/feed", "https://evil-facebook.com/feed"), false);
+  assert.equal(sameSite("https://facebook.com", "https://google.com"), false);
+  assert.equal(sameSite("", "https://facebook.com"), false);
+  assert.equal(sameSite(null, undefined), false);
 });

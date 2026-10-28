@@ -4,7 +4,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -204,7 +204,17 @@ pub fn scan_fetched_media(root: &Path) -> Vec<FetchedMedia> {
             .to_ascii_lowercase()
             .cmp(&right.name.to_ascii_lowercase())
     });
-    if let Ok(saved) = crate::catalog::captures(&root.join("capture-catalog.json")) {
+    if let Ok(mut saved) = crate::catalog::captures(&root.join("capture-catalog.json")) {
+        let before_count = saved.len();
+        saved.retain(|record| {
+            Path::new(&record.path).exists()
+                || root
+                    .join(Path::new(&record.path).file_name().unwrap_or_default())
+                    .exists()
+        });
+        if saved.len() != before_count {
+            let _ = crate::catalog::save_captures(&root.join("capture-catalog.json"), &saved);
+        }
         for item in &mut items {
             if let Some(record) = saved.iter().find(|record| {
                 Path::new(&record.path).file_name() == Path::new(&item.path).file_name()
@@ -304,6 +314,10 @@ impl AccessServer {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("Could not discard the captured media: {error}")),
         }
+        let _ = crate::catalog::remove_capture(
+            &self.capture_root.join("capture-catalog.json"),
+            &target,
+        );
         let mut state = self
             .capture_state
             .lock()
@@ -680,6 +694,7 @@ fn record_diagnostic(
     Ok(())
 }
 
+#[derive(Clone)]
 struct ServeState {
     source: Arc<Mutex<Option<String>>>,
     default_browser: Option<String>,
@@ -691,7 +706,14 @@ struct ServeState {
     stop: Arc<AtomicBool>,
 }
 
-fn serve(listener: TcpListener, token: String, state: ServeState) {
+struct ConnectionGuard(Arc<std::sync::atomic::AtomicUsize>);
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+fn handle_connection(mut stream: TcpStream, token: &str, state: &ServeState) {
     let ServeState {
         source,
         default_browser,
@@ -702,7 +724,626 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
         capture_root,
         stop,
     } = state;
+
+    let request = match read_request(&mut stream, stop) {
+        Ok(request) => request,
+        Err(_) if stop.load(Ordering::Relaxed) => return,
+        Err(error) => {
+            let (status, reason) = if error.contains("timed out") {
+                (408, "Request Timeout")
+            } else if error.contains("headers are too large") {
+                (431, "Request Header Fields Too Large")
+            } else if error.contains("content length") || error.contains("transfer encoding") {
+                (400, "Bad Request")
+            } else {
+                (413, "Payload Too Large")
+            };
+            send_json(
+                &mut stream,
+                status,
+                reason,
+                &json!({"error": error}).to_string(),
+            );
+            return;
+        }
+    };
+    let base = format!("/access/{token}");
+    if request.method == "OPTIONS" && request.path.starts_with(&base) {
+        match bridge_origin(&request.headers) {
+            Ok(Some(origin)) => send_json_cors(&mut stream, 200, "OK", &origin, "{}"),
+            Ok(None) => send_json(&mut stream, 200, "OK", "{}"),
+            Err(error) => send_json(
+                &mut stream,
+                403,
+                "Forbidden",
+                &json!({"error": error}).to_string(),
+            ),
+        }
+        return;
+    }
+    if request.method == "GET" && request.path == format!("{base}/ready") {
+        let signal = browser_signal_from_headers(&request.headers);
+        let label = resolve_browser_label(&signal, default_browser.as_deref());
+        if let Ok(mut value) = browser.lock() {
+            *value = Some(label.clone());
+        }
+        confirmed.store(true, Ordering::Relaxed);
+        send_html(&mut stream, 200, "OK", &access_page("Access confirmed", &format!("<p>Browser detected: <strong>{}</strong>.</p><p>Return to JaneConverter, open the Browser Capture extension, and choose <strong>Capture current media</strong> or <strong>Capture story sequence</strong>.</p><p class=\"note\">Only selected media bytes are sent to this app. No password, cookie, cache, or browser profile data is read or uploaded.</p>", html_escape(&label))));
+        return;
+    }
+    if request.method == "GET" && request.path == format!("{base}/bridge/challenge") {
+        let origin = match bridge_origin(&request.headers) {
+            Ok(origin) => origin,
+            Err(error) => {
+                send_json(
+                    &mut stream,
+                    403,
+                    "Forbidden",
+                    &json!({"error": error}).to_string(),
+                );
+                return;
+            }
+        };
+        if !confirmed.load(Ordering::Relaxed) {
+            send_json_cors_or_plain(
+                &mut stream,
+                409,
+                "Conflict",
+                origin.as_deref(),
+                &json!({"error": "Confirm account access in the browser first."}).to_string(),
+            );
+        } else {
+            let count = capture_state
+                .lock()
+                .map(|value| value.paths.len())
+                .unwrap_or(0);
+            let source_url = source
+                .lock()
+                .ok()
+                .and_then(|value| value.clone())
+                .unwrap_or_default();
+            let response = json!({
+                "sourceUrl": source_url,
+                "confirmed": true,
+                "connected": count > 0,
+                "captureCount": count,
+                "bridgeToken": bridge_nonce.clone(),
+                "protocolVersion": BRIDGE_PROTOCOL_VERSION
+            });
+            send_json_cors_or_plain(
+                &mut stream,
+                200,
+                "OK",
+                origin.as_deref(),
+                &response.to_string(),
+            );
+        }
+        return;
+    }
+    if request.method == "POST" && request.path == format!("{base}/bridge/diagnostic") {
+        let origin = match bridge_ready(&request.headers, bridge_nonce, confirmed) {
+            Ok(origin) => origin,
+            Err((status, error, origin)) => {
+                send_json_cors_or_plain(
+                    &mut stream,
+                    status,
+                    "Request rejected",
+                    origin.as_deref(),
+                    &json!({"error": error}).to_string(),
+                );
+                return;
+            }
+        };
+        if request.body.is_empty() || request.body.len() > MAX_METADATA_BYTES {
+            send_json_cors_or_plain(
+                &mut stream,
+                413,
+                "Payload Too Large",
+                origin.as_deref(),
+                &json!({"error": "The browser diagnostic was empty or too large."}).to_string(),
+            );
+            return;
+        }
+        let payload = match serde_json::from_slice::<DiagnosticPayload>(&request.body) {
+            Ok(payload) => payload,
+            Err(_) => {
+                send_json_cors_or_plain(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    origin.as_deref(),
+                    &json!({"error": "The browser diagnostic was not valid JSON."}).to_string(),
+                );
+                return;
+            }
+        };
+        match record_diagnostic(capture_state, payload) {
+            Ok(()) => {
+                send_json_cors_or_plain(&mut stream, 200, "OK", origin.as_deref(), "{\"ok\":true}")
+            }
+            Err(error) => send_json_cors_or_plain(
+                &mut stream,
+                400,
+                "Bad Request",
+                origin.as_deref(),
+                &json!({"error": error}).to_string(),
+            ),
+        }
+        return;
+    }
+    if request.method == "POST" && request.path == format!("{base}/bridge/capture/start") {
+        let origin = match bridge_ready(&request.headers, bridge_nonce, confirmed) {
+            Ok(origin) => origin,
+            Err((status, error, origin)) => {
+                send_json_cors_or_plain(
+                    &mut stream,
+                    status,
+                    "Request rejected",
+                    origin.as_deref(),
+                    &json!({"error": error}).to_string(),
+                );
+                return;
+            }
+        };
+        if request.body.len() > MAX_METADATA_BYTES {
+            send_json_cors_or_plain(
+                &mut stream,
+                413,
+                "Payload Too Large",
+                origin.as_deref(),
+                &json!({"error": "The browser capture metadata is too large."}).to_string(),
+            );
+            return;
+        }
+        let current_source = source.lock().ok().and_then(|value| value.clone());
+        let metadata = match validate_capture_metadata(&request.body, current_source.as_deref()) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                send_json_cors_or_plain(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    origin.as_deref(),
+                    &json!({"error": error}).to_string(),
+                );
+                return;
+            }
+        };
+        if current_source.is_none() {
+            if let Ok(mut bound_source) = source.lock() {
+                if bound_source.is_none() {
+                    *bound_source = Some(metadata.page_url.clone());
+                }
+            }
+        }
+        let mut state = match capture_state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                send_json_cors_or_plain(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    origin.as_deref(),
+                    &json!({"error": "The capture registry is unavailable."}).to_string(),
+                );
+                return;
+            }
+        };
+        if state.paths.len() + usize::from(state.pending.is_some()) >= MAX_CAPTURE_ITEMS
+            || state.pending.is_some()
+        {
+            send_json_cors_or_plain(&mut stream, 409, "Conflict", origin.as_deref(), &json!({"error": "Another browser capture is already uploading or the session is full."}).to_string());
+            return;
+        }
+        let id: String = rand::rng()
+            .sample_iter(&Alphanumeric)
+            .take(24)
+            .map(char::from)
+            .collect();
+        let file_name = PathBuf::from(&metadata.file_name);
+        let suffix = file_name
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("bin");
+        let path = capture_root.join(format!("{id}.{suffix}.part"));
+        let file = match File::create(&path) {
+            Ok(file) => file,
+            Err(error) => {
+                send_json_cors_or_plain(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    origin.as_deref(),
+                    &json!({"error": format!("Could not create the captured media file: {error}")})
+                        .to_string(),
+                );
+                return;
+            }
+        };
+        state.pending = Some(PendingCapture {
+            id: id.clone(),
+            path,
+            file,
+            bytes_written: 0,
+            expected_bytes: metadata.expected_bytes,
+            file_name: metadata.file_name.clone(),
+            media_kind: metadata.media_kind.clone(),
+            capture_mode: metadata.capture_mode.clone(),
+            title: metadata.title.clone(),
+            page_url: crate::catalog::source_url(&metadata.page_url),
+            started_at: Instant::now(),
+            capture_method: metadata.capture_method.clone(),
+        });
+        send_json_cors_or_plain(
+            &mut stream,
+            200,
+            "OK",
+            origin.as_deref(),
+            &json!({"captureId": id}).to_string(),
+        );
+        return;
+    }
+    if request.method == "POST" && request.path == format!("{base}/bridge/capture/abort") {
+        let origin = match bridge_ready(&request.headers, bridge_nonce, confirmed) {
+            Ok(origin) => origin,
+            Err((status, error, origin)) => {
+                send_json_cors_or_plain(
+                    &mut stream,
+                    status,
+                    "Request rejected",
+                    origin.as_deref(),
+                    &json!({"error":error}).to_string(),
+                );
+                return;
+            }
+        };
+        let id = serde_json::from_slice::<serde_json::Value>(&request.body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("captureId")
+                    .and_then(|id| id.as_str())
+                    .map(str::to_owned)
+            });
+        if let Ok(mut captures) = capture_state.lock() {
+            if captures
+                .pending
+                .as_ref()
+                .is_some_and(|pending| Some(pending.id.as_str()) == id.as_deref())
+            {
+                if let Some(pending) = captures.pending.take() {
+                    drop(pending.file);
+                    let _ = fs::remove_file(pending.path);
+                }
+            }
+        }
+        send_json_cors_or_plain(
+            &mut stream,
+            200,
+            "OK",
+            origin.as_deref(),
+            &json!({"ok":true}).to_string(),
+        );
+        return;
+    }
+    if request.method == "POST" && request.path == format!("{base}/bridge/capture/chunk") {
+        let origin = match bridge_ready(&request.headers, bridge_nonce, confirmed) {
+            Ok(origin) => origin,
+            Err((status, error, origin)) => {
+                send_json_cors_or_plain(
+                    &mut stream,
+                    status,
+                    "Request rejected",
+                    origin.as_deref(),
+                    &json!({"error": error}).to_string(),
+                );
+                return;
+            }
+        };
+        let capture_id = header_value(&request.headers, CAPTURE_ID_HEADER).unwrap_or_default();
+        let offset = header_value(&request.headers, CAPTURE_OFFSET_HEADER)
+            .and_then(|value| value.parse::<u64>().ok());
+        let mut state = match capture_state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                send_json_cors_or_plain(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    origin.as_deref(),
+                    &json!({"error": "The capture registry is unavailable."}).to_string(),
+                );
+                return;
+            }
+        };
+        let total_bytes = state.total_bytes;
+        let Some(current) = state.pending.as_mut() else {
+            send_json_cors_or_plain(
+                &mut stream,
+                400,
+                "Bad Request",
+                origin.as_deref(),
+                &json!({"error": "The browser capture upload is not active."}).to_string(),
+            );
+            return;
+        };
+        let next_size = current
+            .bytes_written
+            .saturating_add(request.body.len() as u64);
+        if capture_id != current.id || offset != Some(current.bytes_written) {
+            send_json_cors_or_plain(
+                &mut stream,
+                400,
+                "Bad Request",
+                origin.as_deref(),
+                &json!({"error": "The browser capture chunk offset was out of order."}).to_string(),
+            );
+            return;
+        }
+        if request.body.is_empty()
+            || request.body.len() > MAX_CHUNK_BYTES
+            || next_size > MAX_MEDIA_BYTES
+            || total_bytes.saturating_add(next_size) > MAX_TOTAL_CAPTURE_BYTES
+        {
+            send_json_cors_or_plain(
+                &mut stream,
+                413,
+                "Payload Too Large",
+                origin.as_deref(),
+                &json!({"error": "The browser capture is too large or empty."}).to_string(),
+            );
+            return;
+        }
+        if let Err(error) = current.file.write_all(&request.body) {
+            send_json_cors_or_plain(
+                &mut stream,
+                500,
+                "Internal Server Error",
+                origin.as_deref(),
+                &json!({"error": format!("Could not store the browser capture: {error}")})
+                    .to_string(),
+            );
+            return;
+        }
+        current.bytes_written = next_size;
+        send_json_cors_or_plain(
+            &mut stream,
+            200,
+            "OK",
+            origin.as_deref(),
+            &json!({"ok": true, "offset": next_size}).to_string(),
+        );
+        return;
+    }
+    if request.method == "POST" && request.path == format!("{base}/bridge/capture/finish") {
+        let origin = match bridge_ready(&request.headers, bridge_nonce, confirmed) {
+            Ok(origin) => origin,
+            Err((status, error, origin)) => {
+                send_json_cors_or_plain(
+                    &mut stream,
+                    status,
+                    "Request rejected",
+                    origin.as_deref(),
+                    &json!({"error": error}).to_string(),
+                );
+                return;
+            }
+        };
+        let requested_id = serde_json::from_slice::<serde_json::Value>(&request.body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("captureId")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned)
+            })
+            .or_else(|| header_value(&request.headers, CAPTURE_ID_HEADER).map(str::to_owned));
+        let mut state = match capture_state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                send_json_cors_or_plain(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    origin.as_deref(),
+                    &json!({"error": "The capture registry is unavailable."}).to_string(),
+                );
+                return;
+            }
+        };
+        if state
+            .pending
+            .as_ref()
+            .is_some_and(|pending| requested_id.as_deref() != Some(pending.id.as_str()))
+        {
+            send_json_cors_or_plain(
+                &mut stream,
+                400,
+                "Bad Request",
+                origin.as_deref(),
+                &json!({"error":"The capture id does not match the active upload."}).to_string(),
+            );
+            return;
+        }
+        let Some(mut current) = state.pending.take() else {
+            send_json_cors_or_plain(
+                &mut stream,
+                400,
+                "Bad Request",
+                origin.as_deref(),
+                &json!({"error": "The browser capture upload is not active."}).to_string(),
+            );
+            return;
+        };
+        if requested_id.as_deref() != Some(current.id.as_str())
+            || current.bytes_written == 0
+            || current
+                .expected_bytes
+                .map(|expected| expected != current.bytes_written)
+                .unwrap_or(false)
+        {
+            drop(current.file);
+            let _ = fs::remove_file(&current.path);
+            send_json_cors_or_plain(
+                &mut stream,
+                400,
+                "Bad Request",
+                origin.as_deref(),
+                &json!({"error": "The browser capture id or size was invalid."}).to_string(),
+            );
+            return;
+        }
+        drop(state);
+        let stored = current.file.flush().and_then(|_| current.file.sync_all());
+        drop(current.file);
+        let validation = stored
+            .map_err(|error| format!("Could not store the capture: {error}"))
+            .and_then(|_| {
+                crate::process::validate_capture(&current.path, &current.media_kind, stop)
+            });
+        let mime = match validation {
+            Ok(mime) => mime,
+            Err(error) => {
+                let _ = fs::remove_file(&current.path);
+                send_json_cors_or_plain(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    origin.as_deref(),
+                    &json!({"error": error}).to_string(),
+                );
+                return;
+            }
+        };
+        let extension = match capture_extension(&mime) {
+            Ok(extension) => extension,
+            Err(error) => {
+                let _ = fs::remove_file(&current.path);
+                send_json_cors_or_plain(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    origin.as_deref(),
+                    &json!({"error": error}).to_string(),
+                );
+                return;
+            }
+        };
+        // The detected container owns the suffix; page-supplied names are untrusted.
+        let path = capture_root.join(format!("{}.{}", current.id, extension));
+        let file_name = PathBuf::from(&current.file_name)
+            .with_extension(extension)
+            .to_string_lossy()
+            .into_owned();
+        if let Err(error) = fs::rename(&current.path, &path) {
+            let _ = fs::remove_file(&current.path);
+            send_json_cors_or_plain(
+                &mut stream,
+                500,
+                "Internal Server Error",
+                origin.as_deref(),
+                &json!({"error": format!("Could not publish the validated capture: {error}")})
+                    .to_string(),
+            );
+            return;
+        }
+        let capture_id = current.id.clone();
+        let record = FetchedMedia {
+            path: path.to_string_lossy().into_owned(),
+            name: file_name,
+            media_kind: current.media_kind,
+            mime_type: mime,
+            capture_mode: current.capture_mode,
+            capture_method: current.capture_method,
+            title: current.title,
+            size: current.bytes_written,
+            source_url: current.page_url,
+            captured_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+        if let Err(error) =
+            crate::catalog::capture(&capture_root.join("capture-catalog.json"), record.clone())
+        {
+            // Keep validated bytes quarantined so a storage failure cannot lose them.
+            let _ = fs::rename(&path, &current.path);
+            send_json_cors_or_plain(
+                &mut stream,
+                500,
+                "Internal Server Error",
+                origin.as_deref(),
+                &json!({"error": error}).to_string(),
+            );
+            return;
+        }
+        let mut state = match capture_state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                send_json_cors_or_plain(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    origin.as_deref(),
+                    &json!({"error": "The capture registry is unavailable."}).to_string(),
+                );
+                return;
+            }
+        };
+        state.fetched.push(record);
+        state.total_bytes = state.total_bytes.saturating_add(current.bytes_written);
+        state.paths.push(path);
+        let count = state.paths.len();
+        drop(state);
+        send_json_cors_or_plain(
+            &mut stream,
+            200,
+            "OK",
+            origin.as_deref(),
+            &json!({"ok": true, "captureId": capture_id, "captureCount": count}).to_string(),
+        );
+        return;
+    }
+    if request.method == "GET" && (request.path == base || request.path == format!("{base}/")) {
+        let signal = browser_signal_from_headers(&request.headers);
+        let detection = resolve_browser_label(&signal, default_browser.as_deref());
+        if let Ok(mut value) = browser.lock() {
+            *value = Some(detection.clone());
+        }
+        let source_url = source.lock().ok().and_then(|value| value.clone());
+        let content = if let Some(source_url) = source_url {
+            format!(
+                r#"<div class="eyebrow">Temporary browser access</div><h1>JaneConverter account access</h1><p class="lead">Use this temporary page in the browser where the media session is already signed in. Browser Capture lets you send only the media you choose back to JaneConverter.</p><div class="card"><h2>How Browser Capture works</h2><ol class="steps"><li>Open the source page below and sign in normally if the site asks.</li><li>Return here and select <strong>Confirm Access</strong>.</li><li>On the media page, open the JaneConverter Browser Capture extension and choose <strong>Capture current media</strong> for one item or <strong>Capture story sequence</strong> for a sequence.</li><li>Return to JaneConverter. The selected media appears in <strong>Media Capturer</strong>, ready to convert.</li></ol></div><p class="privacy">Only media you explicitly capture is sent to JaneConverter. The extension does not read or store passwords, cookies, cache, or browser profile data. This temporary access ends when JaneConverter closes or access is cleared.</p><p class="actions"><a class="primary" href="{}" target="_blank" rel="noreferrer">Open source page</a><a class="confirm" href="/access/{token}/ready">Confirm Access</a></p><p class="note">Browser Capture is optional and is intended for private or browser-only media. Public URLs and local files can continue through the normal conversion flow.</p>"#,
+                html_escape(&source_url)
+            )
+        } else {
+            format!(
+                r#"<div class="eyebrow">Temporary browser access</div><h1>JaneConverter account access</h1><p class="lead">Use this temporary page in the browser where the media session is already signed in. Browser Capture lets you send only the media you choose back to JaneConverter.</p><div class="card"><h2>How Browser Capture works</h2><ol class="steps"><li>Open the media page you want to capture and sign in normally if the site asks.</li><li>Return here and select <strong>Confirm Access</strong>.</li><li>On the media page, open the JaneConverter Browser Capture extension and choose <strong>Capture current media</strong> for one item or <strong>Capture story sequence</strong> for a sequence.</li><li>Return to JaneConverter. The selected media appears in <strong>Media Capturer</strong>, ready to convert.</li></ol></div><p class="privacy">Only media you explicitly capture is sent to JaneConverter. The extension does not read or store passwords, cookies, cache, or browser profile data. This temporary access ends when JaneConverter closes or access is cleared.</p><p class="actions"><a class="confirm" href="/access/{token}/ready">Confirm Access</a></p><p class="note">Browser Capture is optional and is intended for private or browser-only media. The first capture binds this temporary session to the media page's site.</p>"#
+            )
+        };
+        send_html(
+            &mut stream,
+            200,
+            "OK",
+            &access_page("JaneConverter account access", &content),
+        );
+        return;
+    }
+    send_html(
+        &mut stream,
+        404,
+        "Not Found",
+        &access_page("Link unavailable", "<p>This access link is not valid.</p>"),
+    );
+}
+
+fn serve(listener: TcpListener, token: String, state: ServeState) {
+    const MAX_CONCURRENT_CLIENTS: usize = 16;
+    let active_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let _ = listener.set_nonblocking(true);
+    let stop = Arc::clone(&state.stop);
+    let capture_state = Arc::clone(&state.capture_state);
+
     while !stop.load(Ordering::Relaxed) {
         if let Ok(mut captures) = capture_state.lock() {
             if captures
@@ -718,638 +1359,28 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
         }
         match listener.accept() {
             Ok((mut stream, _)) => {
-                let request = match read_request(&mut stream, &stop) {
-                    Ok(request) => request,
-                    Err(_) if stop.load(Ordering::Relaxed) => break,
-                    Err(error) => {
-                        let (status, reason) = if error.contains("timed out") {
-                            (408, "Request Timeout")
-                        } else if error.contains("headers are too large") {
-                            (431, "Request Header Fields Too Large")
-                        } else if error.contains("content length")
-                            || error.contains("transfer encoding")
-                        {
-                            (400, "Bad Request")
-                        } else {
-                            (413, "Payload Too Large")
-                        };
-                        send_json(
-                            &mut stream,
-                            status,
-                            reason,
-                            &json!({"error": error}).to_string(),
-                        );
-                        continue;
-                    }
-                };
-                let base = format!("/access/{token}");
-                if request.method == "OPTIONS" && request.path.starts_with(&base) {
-                    match bridge_origin(&request.headers) {
-                        Ok(Some(origin)) => send_json_cors(&mut stream, 200, "OK", &origin, "{}"),
-                        Ok(None) => send_json(&mut stream, 200, "OK", "{}"),
-                        Err(error) => send_json(
-                            &mut stream,
-                            403,
-                            "Forbidden",
-                            &json!({"error": error}).to_string(),
-                        ),
-                    }
+                if active_connections.load(Ordering::Relaxed) >= MAX_CONCURRENT_CLIENTS {
+                    send_json(
+                        &mut stream,
+                        503,
+                        "Service Unavailable",
+                        &json!({"error": "JaneConverter access server is busy."}).to_string(),
+                    );
                     continue;
                 }
-                if request.method == "GET" && request.path == format!("{base}/ready") {
-                    let signal = browser_signal_from_headers(&request.headers);
-                    let label = resolve_browser_label(&signal, default_browser.as_deref());
-                    if let Ok(mut value) = browser.lock() {
-                        *value = Some(label.clone());
-                    }
-                    confirmed.store(true, Ordering::Relaxed);
-                    send_html(&mut stream, 200, "OK", &access_page("Access confirmed", &format!("<p>Browser detected: <strong>{}</strong>.</p><p>Return to JaneConverter, open the Browser Capture extension, and choose <strong>Capture current media</strong> or <strong>Capture story sequence</strong>.</p><p class=\"note\">Only selected media bytes are sent to this app. No password, cookie, cache, or browser profile data is read or uploaded.</p>", html_escape(&label))));
-                    continue;
-                }
-                if request.method == "GET" && request.path == format!("{base}/bridge/challenge") {
-                    let origin = match bridge_origin(&request.headers) {
-                        Ok(origin) => origin,
-                        Err(error) => {
-                            send_json(
-                                &mut stream,
-                                403,
-                                "Forbidden",
-                                &json!({"error": error}).to_string(),
-                            );
-                            continue;
-                        }
-                    };
-                    if !confirmed.load(Ordering::Relaxed) {
-                        send_json_cors_or_plain(
-                            &mut stream,
-                            409,
-                            "Conflict",
-                            origin.as_deref(),
-                            &json!({"error": "Confirm account access in the browser first."})
-                                .to_string(),
-                        );
-                    } else {
-                        let count = capture_state
-                            .lock()
-                            .map(|value| value.paths.len())
-                            .unwrap_or(0);
-                        let source_url = source
-                            .lock()
-                            .ok()
-                            .and_then(|value| value.clone())
-                            .unwrap_or_default();
-                        let response = json!({
-                            "sourceUrl": source_url,
-                            "confirmed": true,
-                            "connected": count > 0,
-                            "captureCount": count,
-                            "bridgeToken": bridge_nonce.clone(),
-                            "protocolVersion": BRIDGE_PROTOCOL_VERSION
-                        });
-                        send_json_cors_or_plain(
-                            &mut stream,
-                            200,
-                            "OK",
-                            origin.as_deref(),
-                            &response.to_string(),
-                        );
-                    }
-                    continue;
-                }
-                if request.method == "POST" && request.path == format!("{base}/bridge/diagnostic") {
-                    let origin = match bridge_ready(&request.headers, &bridge_nonce, &confirmed) {
-                        Ok(origin) => origin,
-                        Err((status, error, origin)) => {
-                            send_json_cors_or_plain(
-                                &mut stream,
-                                status,
-                                "Request rejected",
-                                origin.as_deref(),
-                                &json!({"error": error}).to_string(),
-                            );
-                            continue;
-                        }
-                    };
-                    if request.body.is_empty() || request.body.len() > MAX_METADATA_BYTES {
-                        send_json_cors_or_plain(
-                            &mut stream,
-                            413,
-                            "Payload Too Large",
-                            origin.as_deref(),
-                            &json!({"error": "The browser diagnostic was empty or too large."})
-                                .to_string(),
-                        );
-                        continue;
-                    }
-                    let payload = match serde_json::from_slice::<DiagnosticPayload>(&request.body) {
-                        Ok(payload) => payload,
-                        Err(_) => {
-                            send_json_cors_or_plain(
-                                &mut stream,
-                                400,
-                                "Bad Request",
-                                origin.as_deref(),
-                                &json!({"error": "The browser diagnostic was not valid JSON."})
-                                    .to_string(),
-                            );
-                            continue;
-                        }
-                    };
-                    match record_diagnostic(&capture_state, payload) {
-                        Ok(()) => send_json_cors_or_plain(
-                            &mut stream,
-                            200,
-                            "OK",
-                            origin.as_deref(),
-                            "{\"ok\":true}",
-                        ),
-                        Err(error) => send_json_cors_or_plain(
-                            &mut stream,
-                            400,
-                            "Bad Request",
-                            origin.as_deref(),
-                            &json!({"error": error}).to_string(),
-                        ),
-                    }
-                    continue;
-                }
-                if request.method == "POST"
-                    && request.path == format!("{base}/bridge/capture/start")
-                {
-                    let origin = match bridge_ready(&request.headers, &bridge_nonce, &confirmed) {
-                        Ok(origin) => origin,
-                        Err((status, error, origin)) => {
-                            send_json_cors_or_plain(
-                                &mut stream,
-                                status,
-                                "Request rejected",
-                                origin.as_deref(),
-                                &json!({"error": error}).to_string(),
-                            );
-                            continue;
-                        }
-                    };
-                    if request.body.len() > MAX_METADATA_BYTES {
-                        send_json_cors_or_plain(
-                            &mut stream,
-                            413,
-                            "Payload Too Large",
-                            origin.as_deref(),
-                            &json!({"error": "The browser capture metadata is too large."})
-                                .to_string(),
-                        );
-                        continue;
-                    }
-                    let current_source = source.lock().ok().and_then(|value| value.clone());
-                    let metadata =
-                        match validate_capture_metadata(&request.body, current_source.as_deref()) {
-                            Ok(metadata) => metadata,
-                            Err(error) => {
-                                send_json_cors_or_plain(
-                                    &mut stream,
-                                    400,
-                                    "Bad Request",
-                                    origin.as_deref(),
-                                    &json!({"error": error}).to_string(),
-                                );
-                                continue;
-                            }
-                        };
-                    if current_source.is_none() {
-                        if let Ok(mut bound_source) = source.lock() {
-                            if bound_source.is_none() {
-                                *bound_source = Some(metadata.page_url.clone());
-                            }
-                        }
-                    }
-                    let mut state = match capture_state.lock() {
-                        Ok(state) => state,
-                        Err(_) => {
-                            send_json_cors_or_plain(
-                                &mut stream,
-                                500,
-                                "Internal Server Error",
-                                origin.as_deref(),
-                                &json!({"error": "The capture registry is unavailable."})
-                                    .to_string(),
-                            );
-                            continue;
-                        }
-                    };
-                    if state.paths.len() + usize::from(state.pending.is_some()) >= MAX_CAPTURE_ITEMS
-                        || state.pending.is_some()
-                    {
-                        send_json_cors_or_plain(&mut stream, 409, "Conflict", origin.as_deref(), &json!({"error": "Another browser capture is already uploading or the session is full."}).to_string());
-                        continue;
-                    }
-                    let id: String = rand::rng()
-                        .sample_iter(&Alphanumeric)
-                        .take(24)
-                        .map(char::from)
-                        .collect();
-                    let file_name = PathBuf::from(&metadata.file_name);
-                    let suffix = file_name
-                        .extension()
-                        .and_then(|value| value.to_str())
-                        .unwrap_or("bin");
-                    let path = capture_root.join(format!("{id}.{suffix}.part"));
-                    let file = match File::create(&path) {
-                        Ok(file) => file,
-                        Err(error) => {
-                            send_json_cors_or_plain(&mut stream, 500, "Internal Server Error", origin.as_deref(), &json!({"error": format!("Could not create the captured media file: {error}")}).to_string());
-                            continue;
-                        }
-                    };
-                    state.pending = Some(PendingCapture {
-                        id: id.clone(),
-                        path,
-                        file,
-                        bytes_written: 0,
-                        expected_bytes: metadata.expected_bytes,
-                        file_name: metadata.file_name.clone(),
-                        media_kind: metadata.media_kind.clone(),
-                        capture_mode: metadata.capture_mode.clone(),
-                        title: metadata.title.clone(),
-                        page_url: crate::catalog::source_url(&metadata.page_url),
-                        started_at: Instant::now(),
-                        capture_method: metadata.capture_method.clone(),
+                active_connections.fetch_add(1, Ordering::Relaxed);
+                let conn_guard = ConnectionGuard(Arc::clone(&active_connections));
+                let conn_token = token.clone();
+                let conn_state = state.clone();
+                let _ = std::thread::Builder::new()
+                    .name("jane-access-conn".into())
+                    .spawn(move || {
+                        let _guard = conn_guard;
+                        handle_connection(stream, &conn_token, &conn_state);
                     });
-                    send_json_cors_or_plain(
-                        &mut stream,
-                        200,
-                        "OK",
-                        origin.as_deref(),
-                        &json!({"captureId": id}).to_string(),
-                    );
-                    continue;
-                }
-                if request.method == "POST"
-                    && request.path == format!("{base}/bridge/capture/abort")
-                {
-                    let origin = match bridge_ready(&request.headers, &bridge_nonce, &confirmed) {
-                        Ok(origin) => origin,
-                        Err((status, error, origin)) => {
-                            send_json_cors_or_plain(
-                                &mut stream,
-                                status,
-                                "Request rejected",
-                                origin.as_deref(),
-                                &json!({"error":error}).to_string(),
-                            );
-                            continue;
-                        }
-                    };
-                    let id = serde_json::from_slice::<serde_json::Value>(&request.body)
-                        .ok()
-                        .and_then(|value| {
-                            value
-                                .get("captureId")
-                                .and_then(|id| id.as_str())
-                                .map(str::to_owned)
-                        });
-                    if let Ok(mut captures) = capture_state.lock() {
-                        if captures
-                            .pending
-                            .as_ref()
-                            .is_some_and(|pending| Some(pending.id.as_str()) == id.as_deref())
-                        {
-                            if let Some(pending) = captures.pending.take() {
-                                drop(pending.file);
-                                let _ = fs::remove_file(pending.path);
-                            }
-                        }
-                    }
-                    send_json_cors_or_plain(
-                        &mut stream,
-                        200,
-                        "OK",
-                        origin.as_deref(),
-                        &json!({"ok":true}).to_string(),
-                    );
-                    continue;
-                }
-                if request.method == "POST"
-                    && request.path == format!("{base}/bridge/capture/chunk")
-                {
-                    let origin = match bridge_ready(&request.headers, &bridge_nonce, &confirmed) {
-                        Ok(origin) => origin,
-                        Err((status, error, origin)) => {
-                            send_json_cors_or_plain(
-                                &mut stream,
-                                status,
-                                "Request rejected",
-                                origin.as_deref(),
-                                &json!({"error": error}).to_string(),
-                            );
-                            continue;
-                        }
-                    };
-                    let capture_id =
-                        header_value(&request.headers, CAPTURE_ID_HEADER).unwrap_or_default();
-                    let offset = header_value(&request.headers, CAPTURE_OFFSET_HEADER)
-                        .and_then(|value| value.parse::<u64>().ok());
-                    let mut state = match capture_state.lock() {
-                        Ok(state) => state,
-                        Err(_) => {
-                            send_json_cors_or_plain(
-                                &mut stream,
-                                500,
-                                "Internal Server Error",
-                                origin.as_deref(),
-                                &json!({"error": "The capture registry is unavailable."})
-                                    .to_string(),
-                            );
-                            continue;
-                        }
-                    };
-                    let total_bytes = state.total_bytes;
-                    let Some(current) = state.pending.as_mut() else {
-                        send_json_cors_or_plain(
-                            &mut stream,
-                            400,
-                            "Bad Request",
-                            origin.as_deref(),
-                            &json!({"error": "The browser capture upload is not active."})
-                                .to_string(),
-                        );
-                        continue;
-                    };
-                    let next_size = current
-                        .bytes_written
-                        .saturating_add(request.body.len() as u64);
-                    if capture_id != current.id || offset != Some(current.bytes_written) {
-                        send_json_cors_or_plain(
-                            &mut stream,
-                            400,
-                            "Bad Request",
-                            origin.as_deref(),
-                            &json!({"error": "The browser capture chunk offset was out of order."})
-                                .to_string(),
-                        );
-                        continue;
-                    }
-                    if request.body.is_empty()
-                        || request.body.len() > MAX_CHUNK_BYTES
-                        || next_size > MAX_MEDIA_BYTES
-                        || total_bytes.saturating_add(next_size) > MAX_TOTAL_CAPTURE_BYTES
-                    {
-                        send_json_cors_or_plain(
-                            &mut stream,
-                            413,
-                            "Payload Too Large",
-                            origin.as_deref(),
-                            &json!({"error": "The browser capture is too large or empty."})
-                                .to_string(),
-                        );
-                        continue;
-                    }
-                    if let Err(error) = current.file.write_all(&request.body) {
-                        send_json_cors_or_plain(&mut stream, 500, "Internal Server Error", origin.as_deref(), &json!({"error": format!("Could not store the browser capture: {error}")}).to_string());
-                        continue;
-                    }
-                    current.bytes_written = next_size;
-                    send_json_cors_or_plain(
-                        &mut stream,
-                        200,
-                        "OK",
-                        origin.as_deref(),
-                        &json!({"ok": true, "offset": next_size}).to_string(),
-                    );
-                    continue;
-                }
-                if request.method == "POST"
-                    && request.path == format!("{base}/bridge/capture/finish")
-                {
-                    let origin = match bridge_ready(&request.headers, &bridge_nonce, &confirmed) {
-                        Ok(origin) => origin,
-                        Err((status, error, origin)) => {
-                            send_json_cors_or_plain(
-                                &mut stream,
-                                status,
-                                "Request rejected",
-                                origin.as_deref(),
-                                &json!({"error": error}).to_string(),
-                            );
-                            continue;
-                        }
-                    };
-                    let requested_id = serde_json::from_slice::<serde_json::Value>(&request.body)
-                        .ok()
-                        .and_then(|value| {
-                            value
-                                .get("captureId")
-                                .and_then(|value| value.as_str())
-                                .map(str::to_owned)
-                        })
-                        .or_else(|| {
-                            header_value(&request.headers, CAPTURE_ID_HEADER).map(str::to_owned)
-                        });
-                    let mut state = match capture_state.lock() {
-                        Ok(state) => state,
-                        Err(_) => {
-                            send_json_cors_or_plain(
-                                &mut stream,
-                                500,
-                                "Internal Server Error",
-                                origin.as_deref(),
-                                &json!({"error": "The capture registry is unavailable."})
-                                    .to_string(),
-                            );
-                            continue;
-                        }
-                    };
-                    if state
-                        .pending
-                        .as_ref()
-                        .is_some_and(|pending| requested_id.as_deref() != Some(pending.id.as_str()))
-                    {
-                        send_json_cors_or_plain(
-                            &mut stream,
-                            400,
-                            "Bad Request",
-                            origin.as_deref(),
-                            &json!({"error":"The capture id does not match the active upload."})
-                                .to_string(),
-                        );
-                        continue;
-                    }
-                    let Some(mut current) = state.pending.take() else {
-                        send_json_cors_or_plain(
-                            &mut stream,
-                            400,
-                            "Bad Request",
-                            origin.as_deref(),
-                            &json!({"error": "The browser capture upload is not active."})
-                                .to_string(),
-                        );
-                        continue;
-                    };
-                    if requested_id.as_deref() != Some(current.id.as_str())
-                        || current.bytes_written == 0
-                        || current
-                            .expected_bytes
-                            .map(|expected| expected != current.bytes_written)
-                            .unwrap_or(false)
-                    {
-                        drop(current.file);
-                        let _ = fs::remove_file(&current.path);
-                        send_json_cors_or_plain(
-                            &mut stream,
-                            400,
-                            "Bad Request",
-                            origin.as_deref(),
-                            &json!({"error": "The browser capture id or size was invalid."})
-                                .to_string(),
-                        );
-                        continue;
-                    }
-                    drop(state);
-                    let stored = current.file.flush().and_then(|_| current.file.sync_all());
-                    drop(current.file);
-                    let validation = stored
-                        .map_err(|error| format!("Could not store the capture: {error}"))
-                        .and_then(|_| {
-                            crate::process::validate_capture(
-                                &current.path,
-                                &current.media_kind,
-                                &stop,
-                            )
-                        });
-                    let mime = match validation {
-                        Ok(mime) => mime,
-                        Err(error) => {
-                            let _ = fs::remove_file(&current.path);
-                            send_json_cors_or_plain(
-                                &mut stream,
-                                400,
-                                "Bad Request",
-                                origin.as_deref(),
-                                &json!({"error": error}).to_string(),
-                            );
-                            continue;
-                        }
-                    };
-                    let extension = match capture_extension(&mime) {
-                        Ok(extension) => extension,
-                        Err(error) => {
-                            let _ = fs::remove_file(&current.path);
-                            send_json_cors_or_plain(
-                                &mut stream,
-                                400,
-                                "Bad Request",
-                                origin.as_deref(),
-                                &json!({"error": error}).to_string(),
-                            );
-                            continue;
-                        }
-                    };
-                    // The detected container owns the suffix; page-supplied names are untrusted.
-                    let path = capture_root.join(format!("{}.{}", current.id, extension));
-                    let file_name = PathBuf::from(&current.file_name)
-                        .with_extension(extension)
-                        .to_string_lossy()
-                        .into_owned();
-                    if let Err(error) = fs::rename(&current.path, &path) {
-                        let _ = fs::remove_file(&current.path);
-                        send_json_cors_or_plain(&mut stream, 500, "Internal Server Error", origin.as_deref(), &json!({"error": format!("Could not publish the validated capture: {error}")}).to_string());
-                        continue;
-                    }
-                    let capture_id = current.id.clone();
-                    let record = FetchedMedia {
-                        path: path.to_string_lossy().into_owned(),
-                        name: file_name,
-                        media_kind: current.media_kind,
-                        mime_type: mime,
-                        capture_mode: current.capture_mode,
-                        capture_method: current.capture_method,
-                        title: current.title,
-                        size: current.bytes_written,
-                        source_url: current.page_url,
-                        captured_at: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs(),
-                    };
-                    if let Err(error) = crate::catalog::capture(
-                        &capture_root.join("capture-catalog.json"),
-                        record.clone(),
-                    ) {
-                        // Keep validated bytes quarantined so a storage failure cannot lose them.
-                        let _ = fs::rename(&path, &current.path);
-                        send_json_cors_or_plain(
-                            &mut stream,
-                            500,
-                            "Internal Server Error",
-                            origin.as_deref(),
-                            &json!({"error": error}).to_string(),
-                        );
-                        continue;
-                    }
-                    let mut state = match capture_state.lock() {
-                        Ok(state) => state,
-                        Err(_) => {
-                            send_json_cors_or_plain(
-                                &mut stream,
-                                500,
-                                "Internal Server Error",
-                                origin.as_deref(),
-                                &json!({"error": "The capture registry is unavailable."})
-                                    .to_string(),
-                            );
-                            continue;
-                        }
-                    };
-                    state.fetched.push(record);
-                    state.total_bytes = state.total_bytes.saturating_add(current.bytes_written);
-                    state.paths.push(path);
-                    let count = state.paths.len();
-                    drop(state);
-                    send_json_cors_or_plain(
-                        &mut stream,
-                        200,
-                        "OK",
-                        origin.as_deref(),
-                        &json!({"ok": true, "captureId": capture_id, "captureCount": count})
-                            .to_string(),
-                    );
-                    continue;
-                }
-                if request.method == "GET"
-                    && (request.path == base || request.path == format!("{base}/"))
-                {
-                    let signal = browser_signal_from_headers(&request.headers);
-                    let detection = resolve_browser_label(&signal, default_browser.as_deref());
-                    if let Ok(mut value) = browser.lock() {
-                        *value = Some(detection.clone());
-                    }
-                    let source_url = source.lock().ok().and_then(|value| value.clone());
-                    let content = if let Some(source_url) = source_url {
-                        format!(
-                            r#"<div class="eyebrow">Temporary browser access</div><h1>JaneConverter account access</h1><p class="lead">Use this temporary page in the browser where the media session is already signed in. Browser Capture lets you send only the media you choose back to JaneConverter.</p><div class="card"><h2>How Browser Capture works</h2><ol class="steps"><li>Open the source page below and sign in normally if the site asks.</li><li>Return here and select <strong>Confirm Access</strong>.</li><li>On the media page, open the JaneConverter Browser Capture extension and choose <strong>Capture current media</strong> for one item or <strong>Capture story sequence</strong> for a sequence.</li><li>Return to JaneConverter. The selected media appears in <strong>Media Capturer</strong>, ready to convert.</li></ol></div><p class="privacy">Only media you explicitly capture is sent to JaneConverter. The extension does not read or store passwords, cookies, cache, or browser profile data. This temporary access ends when JaneConverter closes or access is cleared.</p><p class="actions"><a class="primary" href="{}" target="_blank" rel="noreferrer">Open source page</a><a class="confirm" href="/access/{token}/ready">Confirm Access</a></p><p class="note">Browser Capture is optional and is intended for private or browser-only media. Public URLs and local files can continue through the normal conversion flow.</p>"#,
-                            html_escape(&source_url)
-                        )
-                    } else {
-                        format!(
-                            r#"<div class="eyebrow">Temporary browser access</div><h1>JaneConverter account access</h1><p class="lead">Use this temporary page in the browser where the media session is already signed in. Browser Capture lets you send only the media you choose back to JaneConverter.</p><div class="card"><h2>How Browser Capture works</h2><ol class="steps"><li>Open the media page you want to capture and sign in normally if the site asks.</li><li>Return here and select <strong>Confirm Access</strong>.</li><li>On the media page, open the JaneConverter Browser Capture extension and choose <strong>Capture current media</strong> for one item or <strong>Capture story sequence</strong> for a sequence.</li><li>Return to JaneConverter. The selected media appears in <strong>Media Capturer</strong>, ready to convert.</li></ol></div><p class="privacy">Only media you explicitly capture is sent to JaneConverter. The extension does not read or store passwords, cookies, cache, or browser profile data. This temporary access ends when JaneConverter closes or access is cleared.</p><p class="actions"><a class="confirm" href="/access/{token}/ready">Confirm Access</a></p><p class="note">Browser Capture is optional and is intended for private or browser-only media. The first capture binds this temporary session to the media page's site.</p>"#
-                        )
-                    };
-                    send_html(
-                        &mut stream,
-                        200,
-                        "OK",
-                        &access_page("JaneConverter account access", &content),
-                    );
-                    continue;
-                }
-                send_html(
-                    &mut stream,
-                    404,
-                    "Not Found",
-                    &access_page("Link unavailable", "<p>This access link is not valid.</p>"),
-                );
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(100))
+                thread::sleep(Duration::from_millis(25));
             }
             Err(_) => break,
         }

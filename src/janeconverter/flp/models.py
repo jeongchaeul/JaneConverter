@@ -147,10 +147,13 @@ def get_file_version_info(path: str) -> Optional[Tuple[str, str, int]]:
         if not size:
             return None
         res = ctypes.create_string_buffer(size)
-        ctypes.windll.version.GetFileVersionInfoW(path, 0, size, res)
+        if not ctypes.windll.version.GetFileVersionInfoW(path, 0, size, res):
+            return None
         u_len = ctypes.c_uint()
         lp_data = ctypes.c_void_p()
         if ctypes.windll.version.VerQueryValueW(res, "\\", ctypes.byref(lp_data), ctypes.byref(u_len)):
+            if u_len.value < 16:
+                return None
             val = ctypes.string_at(lp_data, u_len.value)
             _, _, ms, ls = struct.unpack("<IIII", val[:16])
             major = ms >> 16
@@ -210,11 +213,13 @@ def detect_installed_fl_studios() -> List[Dict[str, Any]]:
                 try:
                     with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, subkey) as k:
                         val, _ = winreg.QueryValueEx(k, "")
-                        parts = val.split('"')
-                        cmd = parts[1] if len(parts) > 1 else val.split()[0]
-                        if os.path.isfile(cmd):
-                            candidate_exes.append(cmd)
-                except OSError:
+                        if val and isinstance(val, str) and val.strip():
+                            parts = val.split('"')
+                            tokens = val.split()
+                            cmd = parts[1] if len(parts) > 1 else (tokens[0] if tokens else "")
+                            if cmd and os.path.isfile(cmd):
+                                candidate_exes.append(cmd)
+                except (OSError, IndexError, ValueError):
                     pass
         except OSError:
             pass

@@ -31,6 +31,40 @@
     return Boolean(value && allowed) && (value === allowed || value.endsWith("." + allowed));
   }
 
+  function extractHost(value) {
+    if (!value || typeof value !== "string") return "";
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    try {
+      if (trimmed.includes("://")) {
+        return new URL(trimmed).hostname.toLowerCase();
+      }
+      return new URL("http://" + trimmed).hostname.toLowerCase();
+    } catch (_) {
+      return trimmed.split("/")[0].split(":")[0].toLowerCase();
+    }
+  }
+
+  function baseDomain(host) {
+    if (!host) return "";
+    const parts = host.split(".").filter(Boolean);
+    if (parts.length <= 2) return host;
+    if (parts.length >= 3 && ["co", "com", "org", "gov", "edu", "net"].includes(parts[parts.length - 2])) {
+      return parts.slice(-3).join(".");
+    }
+    return parts.slice(-2).join(".");
+  }
+
+  function sameSite(left, right) {
+    const hostA = extractHost(left);
+    const hostB = extractHost(right);
+    if (!hostA || !hostB) return false;
+    if (hostMatches(hostA, hostB) || hostMatches(hostB, hostA)) return true;
+    const baseA = baseDomain(hostA);
+    const baseB = baseDomain(hostB);
+    return Boolean(baseA && baseB && baseA === baseB);
+  }
+
   function parsedHttpsUrl(value) {
     try {
       const parsed = new URL(value);
@@ -276,6 +310,7 @@
     networkCaptureDisposition,
     networkMediaCandidate,
     normalizeMediaUrl,
+    sameSite,
     sameStoryFingerprint,
     sessionPlatformForPage,
     selectCaptureItems,

@@ -73,7 +73,9 @@
   function keyFor(candidate) {
     const element = candidate.element;
     const url = currentUrl(element);
-    const visual = candidate.tag === "canvas" ? visualHashForElement(element) || "" : "";
+    const visual = (candidate.tag === "canvas" || (candidate.tag === "video" && !url))
+      ? visualHashForElement(element) || ""
+      : "";
     return [candidate.tag, url, element.videoWidth || element.naturalWidth || element.width, element.videoHeight || element.naturalHeight || element.height, visual].join("|");
   }
 
@@ -242,6 +244,7 @@
     const candidate = candidates()[0];
     if (!candidate) return;
     const key = keyFor(candidate);
+    if (candidate.tag === "video" && key && state.lastKeys.has(key)) return;
     // A reused media URL cannot establish that a story is unchanged.
     state.busy = true;
     try {
@@ -277,7 +280,13 @@
     }
   }
 
+  let debounceTimer = null;
+
   function stopWatching() {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
     if (state.stopCapture) state.stopCapture();
     if (state.timer) clearInterval(state.timer);
     state.timer = null;
@@ -288,7 +297,6 @@
   function startWatching() {
     stopWatching();
     state.timer = setInterval(function () { void scan(); }, 900);
-    let debounceTimer = null;
     state.observer = new MutationObserver(function () {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(function () { void scan(); }, 250);

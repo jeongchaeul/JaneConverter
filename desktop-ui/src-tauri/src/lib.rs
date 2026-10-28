@@ -796,52 +796,81 @@ fn recv_with_pause<T>(
     }
 }
 
+fn clean_profile_directory_delayed(path: PathBuf, prefix: &'static str) {
+    let _ = std::thread::Builder::new()
+        .name("jane-clean-profile".into())
+        .spawn(move || {
+            let Ok(temp_root) = fs::canonicalize(std::env::temp_dir()) else {
+                return;
+            };
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                return;
+            };
+            if !name.starts_with(prefix)
+                || path
+                    .parent()
+                    .and_then(|parent| fs::canonicalize(parent).ok())
+                    .as_deref()
+                    != Some(temp_root.as_path())
+            {
+                return;
+            }
+            for attempt in 0..6 {
+                if !path.exists() {
+                    break;
+                }
+                if let Ok(metadata) = fs::symlink_metadata(&path) {
+                    if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+                        if fs::remove_dir_all(&path).is_ok() {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(100 * (1 << attempt.min(3))));
+            }
+        });
+}
+
 fn clean_facebook_capture_profile(path: &Path) {
-    let Ok(temp_root) = fs::canonicalize(std::env::temp_dir()) else {
-        return;
-    };
-    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
-        return;
-    };
-    if !name.starts_with("JaneConverter-facebook-")
-        || path
-            .parent()
-            .and_then(|parent| fs::canonicalize(parent).ok())
-            .as_deref()
-            != Some(temp_root.as_path())
-    {
-        return;
-    }
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return;
-    };
-    if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
-        let _ = fs::remove_dir_all(path);
-    }
+    clean_profile_directory_delayed(path.to_path_buf(), "JaneConverter-facebook-");
 }
 
 fn clean_social_capture_profile(path: &Path) {
-    let Ok(temp_root) = fs::canonicalize(std::env::temp_dir()) else {
-        return;
-    };
-    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
-        return;
-    };
-    if !name.starts_with("JaneConverter-social-")
-        || path
-            .parent()
-            .and_then(|parent| fs::canonicalize(parent).ok())
-            .as_deref()
-            != Some(temp_root.as_path())
-    {
-        return;
-    }
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return;
-    };
-    if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
-        let _ = fs::remove_dir_all(path);
-    }
+    clean_profile_directory_delayed(path.to_path_buf(), "JaneConverter-social-");
+}
+
+fn sweep_stale_webview_profiles() {
+    let _ = std::thread::Builder::new()
+        .name("jane-sweep-profiles".into())
+        .spawn(|| {
+            let temp = std::env::temp_dir();
+            let Ok(entries) = fs::read_dir(&temp) else {
+                return;
+            };
+            let max_age = Duration::from_secs(15 * 60);
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with("JaneConverter-facebook-")
+                    || name.starts_with("JaneConverter-social-")
+                {
+                    let path = entry.path();
+                    if let Ok(metadata) = fs::symlink_metadata(&path) {
+                        if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+                            let is_stale = metadata
+                                .modified()
+                                .ok()
+                                .and_then(|m| m.elapsed().ok())
+                                .is_some_and(|elapsed| elapsed > max_age);
+                            if is_stale {
+                                let _ = fs::remove_dir_all(&path);
+                            }
+                        }
+                    }
+                }
+            }
+        });
 }
 
 #[tauri::command]
@@ -1413,6 +1442,7 @@ fn start_conversion(
     }
     state.active_paused.store(false, Ordering::Relaxed);
     let facebook_capture_id = request.facebook_capture_id.clone();
+    let social_capture_id = request.social_capture_id.clone();
     close_idle_facebook_captures(&state.facebook_captures, facebook_capture_id.as_deref());
     let facebook_session = {
         let captures = state
@@ -1530,6 +1560,7 @@ fn start_conversion(
     }
 
     let retry_manifest = facebook_manifest.clone();
+    let retry_social_manifest = social_manifest.clone();
     let storage_guard = match state.storage_operation.try_lock() {
         Ok(guard) => guard,
         Err(std::sync::TryLockError::WouldBlock) => {
@@ -1618,14 +1649,25 @@ fn start_conversion(
                 *active_job = None;
             }
         }
-        if let (Some(capture_id), Some(manifest)) = (facebook_capture_id, retry_manifest) {
+        if let (Some(capture_id), Some(manifest)) = (&facebook_capture_id, &retry_manifest) {
             if let Ok(captures) = state.facebook_captures.lock() {
-                if let Some(session) = captures.get(&capture_id) {
+                if let Some(session) = captures.get(capture_id) {
                     session.in_use.store(false, Ordering::Relaxed);
                     if let Ok(mut manifests) = state.facebook_manifests.lock() {
-                        manifests.insert(capture_id, (source_for_retry, manifest, Instant::now()));
+                        manifests.insert(
+                            capture_id.clone(),
+                            (source_for_retry.clone(), manifest.clone(), Instant::now()),
+                        );
                     }
                 }
+            }
+        }
+        if let (Some(capture_id), Some(manifest)) = (&social_capture_id, &retry_social_manifest) {
+            if let Ok(mut manifests) = state.social_manifests.lock() {
+                manifests.insert(
+                    capture_id.clone(),
+                    (source_for_retry.clone(), manifest.clone(), Instant::now()),
+                );
             }
         }
         return Err(error);
@@ -2044,7 +2086,14 @@ fn delete_library_entry(
     if !is_valid_root {
         return Err("For safety, JaneConverter can only delete items inside the configured library or fetched directories.".into());
     }
-    library::delete_inside(&root, &path)
+    let res = library::delete_inside(&root, &path);
+    if res.is_ok() {
+        let _ = crate::catalog::remove_capture(
+            &Path::new(&root).join("capture-catalog.json"),
+            Path::new(&path),
+        );
+    }
+    res
 }
 
 #[tauri::command]
@@ -2150,7 +2199,16 @@ fn discard_fetched_media(state: State<'_, AppState>, path: String) -> Result<(),
         .map_err(|_| "The access registry is unavailable.".to_owned())?;
     match access.as_ref() {
         Some(server) => server.discard_fetched_media(&path),
-        None => library::delete_inside(&fallback_root, &path),
+        None => {
+            let res = library::delete_inside(&fallback_root, &path);
+            if res.is_ok() {
+                let _ = crate::catalog::remove_capture(
+                    &Path::new(&fallback_root).join("capture-catalog.json"),
+                    Path::new(&path),
+                );
+            }
+            res
+        }
     }
 }
 
@@ -2735,6 +2793,7 @@ fn notify_attention(app: tauri::AppHandle) {
 }
 
 pub fn run() {
+    sweep_stale_webview_profiles();
     let builder = tauri::Builder::default();
     #[cfg(feature = "updater")]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());

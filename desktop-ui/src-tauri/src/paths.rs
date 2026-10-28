@@ -91,13 +91,24 @@ fn ffmpeg_name() -> &'static str {
 
 #[cfg(target_os = "windows")]
 fn copy_dir_all(source: &Path, destination: &Path) -> io::Result<()> {
+    copy_dir_all_bounded(source, destination, 0)
+}
+
+#[cfg(target_os = "windows")]
+fn copy_dir_all_bounded(source: &Path, destination: &Path, depth: usize) -> io::Result<()> {
+    if depth > 32 {
+        return Ok(());
+    }
     fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
         let dest_path = destination.join(entry.file_name());
         if file_type.is_dir() {
-            copy_dir_all(&entry.path(), &dest_path)?;
+            copy_dir_all_bounded(&entry.path(), &dest_path, depth + 1)?;
         } else if !dest_path.exists() {
             let _ = fs::copy(entry.path(), dest_path);
         }
@@ -107,31 +118,34 @@ fn copy_dir_all(source: &Path, destination: &Path) -> io::Result<()> {
 
 #[cfg(target_os = "windows")]
 fn migrate_legacy_local_appdata(target: &Path) {
-    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        let legacy = PathBuf::from(local).join("JaneConverter");
-        if legacy.is_dir() && legacy != target {
-            let user_entries = [
-                "settings.ini",
-                "config.json",
-                "converted",
-                "fetched",
-                "logs",
-                "JaneConverter.data-root",
-            ];
-            for entry_name in user_entries {
-                let source = legacy.join(entry_name);
-                let dest = target.join(entry_name);
-                if source.exists() && !dest.exists() {
-                    let _ = fs::create_dir_all(target);
-                    if source.is_dir() {
-                        let _ = copy_dir_all(&source, &dest);
-                    } else {
-                        let _ = fs::copy(&source, &dest);
+    static MIGRATED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    MIGRATED.get_or_init(|| {
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            let legacy = PathBuf::from(local).join("JaneConverter");
+            if legacy.is_dir() && legacy != target {
+                let user_entries = [
+                    "settings.ini",
+                    "config.json",
+                    "converted",
+                    "fetched",
+                    "logs",
+                    "JaneConverter.data-root",
+                ];
+                for entry_name in user_entries {
+                    let source = legacy.join(entry_name);
+                    let dest = target.join(entry_name);
+                    if source.exists() && !dest.exists() {
+                        let _ = fs::create_dir_all(target);
+                        if source.is_dir() {
+                            let _ = copy_dir_all(&source, &dest);
+                        } else {
+                            let _ = fs::copy(&source, &dest);
+                        }
                     }
                 }
             }
         }
-    }
+    });
 }
 
 fn user_data_root() -> PathBuf {

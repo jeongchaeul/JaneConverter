@@ -375,10 +375,13 @@ chrome.tabs.onUpdated.addListener(function (tabId, changeInfo) {
   });
 });
 
+let removeCollectQueue = Promise.resolve();
 chrome.tabs.onRemoved.addListener(function (tabId) {
-  chrome.storage.local.get({ janeCollectTabs: {} }).then(function (stored) {
-    const next = Object.assign({}, stored.janeCollectTabs || {});
-    delete next[String(tabId)];
-    return chrome.storage.local.set({ janeCollectTabs: next });
+  removeCollectQueue = removeCollectQueue.then(function () {
+    return chrome.storage.local.get({ janeCollectTabs: {} }).then(function (stored) {
+      const next = Object.assign({}, stored.janeCollectTabs || {});
+      delete next[String(tabId)];
+      return chrome.storage.local.set({ janeCollectTabs: next });
+    });
   }).catch(function () {});
 });

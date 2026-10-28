@@ -226,6 +226,13 @@ fn is_metadata_path(path: &Path) -> bool {
 }
 
 fn directory_summary(path: &Path) -> (usize, u64) {
+    directory_summary_bounded(path, 0)
+}
+
+fn directory_summary_bounded(path: &Path, depth: usize) -> (usize, u64) {
+    if depth > 32 {
+        return (0, 0);
+    }
     let mut count = 0;
     let mut bytes = 0;
     let Ok(entries) = fs::read_dir(path) else {
@@ -236,8 +243,11 @@ fn directory_summary(path: &Path) -> (usize, u64) {
         let Ok(kind) = entry.file_type() else {
             continue;
         };
+        if kind.is_symlink() {
+            continue;
+        }
         if kind.is_dir() {
-            let (nested_count, nested_bytes) = directory_summary(&child);
+            let (nested_count, nested_bytes) = directory_summary_bounded(&child, depth + 1);
             count += nested_count;
             bytes += nested_bytes;
         } else if kind.is_file() && library_file_extension(&child) && !is_metadata_path(&child) {
@@ -252,13 +262,23 @@ fn directory_summary(path: &Path) -> (usize, u64) {
 }
 
 fn recursive_folder_bytes(path: &Path) -> u64 {
+    recursive_folder_bytes_bounded(path, 0)
+}
+
+fn recursive_folder_bytes_bounded(path: &Path, depth: usize) -> u64 {
+    if depth > 32 {
+        return 0;
+    }
     let mut total = 0;
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
             let child = entry.path();
             if let Ok(file_type) = entry.file_type() {
+                if file_type.is_symlink() {
+                    continue;
+                }
                 if file_type.is_dir() {
-                    total += recursive_folder_bytes(&child);
+                    total += recursive_folder_bytes_bounded(&child, depth + 1);
                 } else if file_type.is_file() {
                     total += entry.metadata().map(|m| m.len()).unwrap_or(0);
                 }

@@ -1676,16 +1676,33 @@ def _extract_png_frame(input_path: str, output_path: str, abort_event: Optional[
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
 
-    while process.poll() is None:
+    start_extract = time.monotonic()
+    max_frame_wait = 30.0
+    while True:
         if abort_event and abort_event.is_set():
             process.kill()
-            _, stderr = process.communicate()
+            try:
+                _, stderr = process.communicate(timeout=1.0)
+            except Exception:
+                stderr = b""
             if os.path.exists(output_path):
-                os.remove(output_path)
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    pass
             raise KeyboardInterrupt("Conversion aborted by user.")
-        time.sleep(0.05)
-
-    _, stderr = process.communicate()
+        if time.monotonic() - start_extract > max_frame_wait:
+            process.kill()
+            try:
+                _, stderr = process.communicate(timeout=1.0)
+            except Exception:
+                stderr = b""
+            raise TimeoutError("FFmpeg frame extraction timed out.")
+        try:
+            _, stderr = process.communicate(timeout=0.1)
+            break
+        except subprocess.TimeoutExpired:
+            continue
     if process.returncode != 0:
         category = FailureEvidence.ffmpeg(stderr).category.value
         raise RuntimeError(f"FFmpegProcessError: image frame extraction failed ({category}).")
@@ -2127,10 +2144,13 @@ def _convert_media_impl(
                         except OSError:
                             pass
                     raise KeyboardInterrupt("Conversion aborted by user.")
-                if len(_recovery.attempts) > 1 and (
-                    time.monotonic() - _recovery.started_at > _recovery.max_recovery_seconds
-                    or time.monotonic() - _recovery.attempts[-1].started_at > STRATEGIES[method].max_seconds
-                ):
+                attempt_elapsed = time.monotonic() - _recovery.attempts[-1].started_at if _recovery.attempts else 0.0
+                total_elapsed = time.monotonic() - _recovery.started_at
+                is_stalled = (
+                    attempt_elapsed > STRATEGIES[method].max_seconds
+                    or (len(_recovery.attempts) > 1 and total_elapsed > _recovery.max_recovery_seconds)
+                )
+                if is_stalled:
                     proc.kill()
                     proc.wait()
                     reader_thread.join(timeout=1.0)

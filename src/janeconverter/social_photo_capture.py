@@ -61,9 +61,9 @@ def _promote_staging_dir(staging_dir: str, target_dir: str, max_attempts: int = 
         try:
             os.replace(staging_dir, target_dir)
             return
-        except PermissionError as error:
+        except (PermissionError, FileExistsError, OSError) as error:
             winerr = getattr(error, "winerror", None)
-            if os.name == "nt" and winerr in (5, 32, 33) and attempt < max_attempts - 1:
+            if attempt < max_attempts - 1 and (os.name != "nt" or winerr in (5, 32, 33, 183)):
                 time.sleep(0.1 * (2 ** attempt))
                 continue
             raise

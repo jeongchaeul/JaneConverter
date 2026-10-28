@@ -88,12 +88,16 @@
     return entry;
   }
 
+  let storageQueue = Promise.resolve();
   async function writeEntry(tabId, entry) {
-    const stored = await chrome.storage.local.get({ [NETWORK_STORAGE_KEY]: {} });
-    const next = Object.assign({}, stored[NETWORK_STORAGE_KEY] || {});
-    if (entry) next[String(tabId)] = entry;
-    else delete next[String(tabId)];
-    await chrome.storage.local.set({ [NETWORK_STORAGE_KEY]: next });
+    storageQueue = storageQueue.then(async function () {
+      const stored = await chrome.storage.local.get({ [NETWORK_STORAGE_KEY]: {} });
+      const next = Object.assign({}, stored[NETWORK_STORAGE_KEY] || {});
+      if (entry) next[String(tabId)] = entry;
+      else delete next[String(tabId)];
+      await chrome.storage.local.set({ [NETWORK_STORAGE_KEY]: next });
+    }).catch(function () {});
+    return storageQueue;
   }
 
   async function getState(tabId) {
@@ -313,8 +317,22 @@
         await detachNetworkMode(tabId, true);
         return;
       }
-      await detachNetworkMode(tabId, false);
-      try { await attachNetworkMode(tabId, tab.url); } catch (_) { await writeEntry(tabId, entry); }
+      const current = states.get(tabId);
+      if (current && current.attached) {
+        current.pageUrl = tab.url;
+        await writeEntry(tabId, {
+          enabled: true,
+          platform: entry.platform,
+          pageUrl: tab.url,
+          updatedAt: Date.now()
+        });
+        return;
+      }
+      try {
+        await attachNetworkMode(tabId, tab.url);
+      } catch (_) {
+        await detachNetworkMode(tabId, true);
+      }
     }());
   });
 
