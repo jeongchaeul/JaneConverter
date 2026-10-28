@@ -64,12 +64,6 @@ KNOWN_MEDIA_EXTENSIONS = {
     ".jpe", ".jfi", ".jif", ".jxl", ".pcx", ".pfm", ".pic", ".psd", ".ras",
     ".sgi", ".svg", ".xbm", ".xpm", ".qoi",
 }
-VIDEO_QUALITY_SETTINGS = {
-    "best": {"crf": 16, "audio_bitrate": "192k", "gif_fps": 30},
-    "high": {"crf": 18, "audio_bitrate": "160k", "gif_fps": 24},
-    "balanced": {"crf": 23, "audio_bitrate": "128k", "gif_fps": 15},
-    "small": {"crf": 28, "audio_bitrate": "96k", "gif_fps": 10},
-}
 
 # Explicit bit-depth selection for lossless containers (no substring sniffing)
 WAV_BIT_DEPTH_CODECS = {

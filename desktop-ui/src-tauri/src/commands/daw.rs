@@ -1,5 +1,5 @@
 use crate::model::{FlpDowngradeResult, FlpProjectInfo, InstalledFlStudio};
-use crate::paths::{find_python, packaged_engine, prepare_command, project_root};
+use crate::paths::{find_python, packaged_engine, project_root};
 use rfd::FileDialog;
 use std::process::Command;
 
@@ -32,10 +32,12 @@ pub async fn flp_inspect(path: String) -> Result<FlpProjectInfo, String> {
         command
             .arg(format!("--flp-inspect={path}"))
             .current_dir(project_root());
-        prepare_command(&mut command);
-        let output = command
-            .output()
-            .map_err(|error| format!("Could not inspect FL Studio project: {error}"))?;
+        let output = crate::process::bounded_output(
+            &mut command,
+            std::time::Duration::from_secs(30),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .map_err(|error| format!("Could not inspect FL Studio project: {error}"))?;
         if !output.status.success() {
             let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(if detail.is_empty() {
@@ -84,10 +86,12 @@ pub async fn flp_downgrade(
         if overwrite.unwrap_or(false) {
             command.arg("--flp-overwrite");
         }
-        prepare_command(&mut command);
-        let output = command
-            .output()
-            .map_err(|error| format!("Could not downgrade FL Studio project: {error}"))?;
+        let output = crate::process::bounded_output(
+            &mut command,
+            std::time::Duration::from_secs(30),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .map_err(|error| format!("Could not downgrade FL Studio project: {error}"))?;
         if !output.status.success() {
             let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(if detail.is_empty() {
@@ -114,10 +118,12 @@ pub async fn flp_detect_installed() -> Result<Vec<InstalledFlStudio>, String> {
         command
             .arg("--flp-detect-installed")
             .current_dir(project_root());
-        prepare_command(&mut command);
-        let output = command
-            .output()
-            .map_err(|error| format!("Could not detect FL Studio installations: {error}"))?;
+        let output = crate::process::bounded_output(
+            &mut command,
+            std::time::Duration::from_secs(30),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .map_err(|error| format!("Could not detect FL Studio installations: {error}"))?;
         if !output.status.success() {
             let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(if detail.is_empty() {

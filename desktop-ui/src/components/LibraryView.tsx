@@ -402,18 +402,21 @@ export function LibraryView({
   const safeHistoryPage = Math.min(Math.max(1, historyPage), totalHistoryPages);
   const pagedHistory = history.slice((safeHistoryPage - 1) * HISTORY_PAGE_SIZE, safeHistoryPage * HISTORY_PAGE_SIZE);
 
+  const requestedHistoryIdsRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     if (section !== "history") return;
     for (const item of pagedHistory) {
       if (item.totalBytes !== undefined || !item.exportPath || item.status === "failed") continue;
-      if (historySizes[item.id] !== undefined) continue;
+      if (requestedHistoryIdsRef.current.has(item.id)) continue;
+      requestedHistoryIdsRef.current.add(item.id);
       void bridge.pathSize(item.exportPath).then((bytes) => {
         if (bytes > 0) {
           setHistorySizes((prev) => ({ ...prev, [item.id]: bytes }));
         }
       }).catch(() => {});
     }
-  }, [section, pagedHistory, historySizes]);
+  }, [section, pagedHistory]);
 
   const confirmation = pendingActionCopy();
   const atRoot = pathKey(currentPath) === pathKey(root);

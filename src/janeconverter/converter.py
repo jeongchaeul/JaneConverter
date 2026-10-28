@@ -632,7 +632,6 @@ def _extract_png_frame(input_path: str, output_path: str, abort_event: Optional[
         use_gpu=False,
         stream_copy=False,
     )
-    cmd[1:1] = ["-hide_banner", "-loglevel", "error"]
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.DEVNULL,
@@ -1049,6 +1048,13 @@ def _convert_media_impl(
                     pass
 
             duration = probe_media_duration(input_path)
+            if duration and duration > 0:
+                s_sec = parse_time_offset_seconds(start_time) if start_time else None
+                e_sec = parse_time_offset_seconds(end_time) if end_time else None
+                effective_start = max(0.0, s_sec) if s_sec is not None else 0.0
+                effective_end = min(duration, e_sec) if e_sec is not None else duration
+                if effective_end > effective_start:
+                    duration = effective_end - effective_start
             transcode_base, transcode_span = 0.70, 0.25
             last_report_time = [0.0]
             cur_speed = [""]

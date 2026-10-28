@@ -3,7 +3,7 @@ use crate::model::{
     SocialPhotoManifest,
 };
 use crate::paths::{find_python, packaged_engine, prepare_command, project_root};
-use std::io::{BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -160,36 +160,25 @@ pub fn forward_output<R: Read + Send + 'static>(
 
         loop {
             line_buf.clear();
-            let mut byte = [0u8; 1];
-            let mut eof = false;
-            loop {
-                match buf_reader.read(&mut byte) {
-                    Ok(0) => {
-                        eof = true;
-                        break;
+            match buf_reader.read_until(b'\n', &mut line_buf) {
+                Ok(0) => break,
+                Ok(_) => {
+                    while line_buf.last() == Some(&b'\n') || line_buf.last() == Some(&b'\r') {
+                        line_buf.pop();
                     }
-                    Ok(_) => {
-                        if byte[0] == b'\n' || byte[0] == b'\r' {
-                            break;
-                        }
-                        if byte[0] != 0 && line_buf.len() < MAX_LINE_BYTES {
-                            line_buf.push(byte[0]);
-                        }
+                    if line_buf.is_empty() {
+                        continue;
                     }
-                    Err(ref err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
-                    Err(_) => {
-                        eof = true;
-                        break;
+                    if line_buf.len() > MAX_LINE_BYTES {
+                        line_buf.truncate(MAX_LINE_BYTES);
+                    }
+                    line_buf.retain(|&b| b != 0);
+                    if line_buf.is_empty() {
+                        continue;
                     }
                 }
-            }
-
-            if line_buf.is_empty() && eof {
-                break;
-            }
-
-            if line_buf.is_empty() {
-                continue;
+                Err(ref err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
             }
 
             let message = String::from_utf8_lossy(&line_buf).trim().to_owned();
@@ -395,6 +384,9 @@ pub fn set_child_paused(child: &mut Child, paused: bool) -> Result<(), String> {
 }
 
 pub fn terminate_child(child: &mut Child) {
+    if let Ok(Some(_)) = child.try_wait() {
+        return;
+    }
     let _ = set_child_paused(child, false);
     #[cfg(target_os = "windows")]
     {
@@ -413,7 +405,9 @@ pub fn terminate_child(child: &mut Child) {
             .status();
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
-            let _ = child.try_wait();
+            if let Ok(Some(_)) = child.try_wait() {
+                return;
+            }
             thread::sleep(Duration::from_millis(50));
         }
         let _ = Command::new("kill")
@@ -990,7 +984,6 @@ pub fn load_playlist(
         });
     }
     let mut catalog = parse_playlist_output(&String::from_utf8_lossy(&output.stdout))?;
-    let _ = browser;
     catalog.items.shrink_to_fit();
     Ok(catalog)
 }

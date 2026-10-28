@@ -123,30 +123,34 @@ def measure_audio_loudness(
         if abort_event is not None:
             proc = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 creationflags=no_window,
             )
             start_t = time.time()
+            stderr_chunks = []
             while True:
                 if abort_event.is_set():
                     proc.kill()
                     proc.wait()
                     return None
-                ret = proc.poll()
-                if ret is not None:
+                try:
+                    _, err_chunk = proc.communicate(timeout=0.1)
+                    if err_chunk:
+                        stderr_chunks.append(err_chunk)
                     break
-                if time.time() - start_t > 300:
-                    proc.kill()
-                    proc.wait()
-                    return None
-                time.sleep(0.05)
-            _, stderr_bytes = proc.communicate()
-            stderr_text = stderr_bytes.decode("utf-8", errors="ignore")
+                except subprocess.TimeoutExpired as exc:
+                    if exc.stderr:
+                        stderr_chunks.append(exc.stderr)
+                    if time.time() - start_t > 300:
+                        proc.kill()
+                        proc.wait()
+                        return None
+            stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="ignore")
         else:
             res = subprocess.run(
                 cmd,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 creationflags=no_window,
                 timeout=300,

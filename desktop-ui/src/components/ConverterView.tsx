@@ -390,6 +390,7 @@ export function ConverterView({
   const presetCategory = activeCategory === "Video" || activeCategory === "Image" ? activeCategory : "Audio";
   const visiblePresets = intentPresets.filter((preset) => preset.group === (presetCategory === "Audio" ? "Music" : presetCategory) || preset.group === "Other");
   const hardwareAccelerationDisabled = !isVideo || isSourceFormat || activeFormat === "gif" || (runtime !== null && runtime !== undefined && !runtime.gpuAvailable);
+  const processedEventCountRef = useRef(0);
   const lastEvent = events.length ? events[events.length - 1] : null;
 
   useEffect(() => {
@@ -419,64 +420,67 @@ export function ConverterView({
     if (settings.category !== nextCategory || settings.format !== nextFormat) {
       onSettings({ ...settings, category: nextCategory, format: nextFormat, bitrate: qualitiesFor(nextFormat)[0] });
     }
-  }, [selectedCapture?.mediaKind]);
+  }, [selectedCapture?.mediaKind, selectedCapture?.path]);
 
-  // Track finished completions and queue progress
+  // Track finished completions and queue progress scanning all unprocessed events
   useEffect(() => {
-    if (!lastEvent || lastHandledEventRef.current === lastEvent) return;
-    lastHandledEventRef.current = lastEvent;
+    if (events.length <= processedEventCountRef.current) return;
+    const unprocessed = events.slice(processedEventCountRef.current);
+    processedEventCountRef.current = events.length;
 
-    if (lastEvent.kind === "finished" || (lastEvent.kind as string) === "partial") {
-      let outName = "media file";
-      if (lastEvent.message.startsWith("Conversion complete: ")) {
-        outName = lastEvent.message.replace("Conversion complete: ", "").trim();
-      } else if (lastEvent.output) {
-        outName = lastEvent.output.replace(/^.*[\\/]/, "");
-      }
-      const outPath = lastEvent.output || (settings.outputDir ? `${settings.outputDir.replace(/[\\/]+$/, "")}/${outName}` : undefined);
-      setCompletedItem({ name: outName, path: outPath });
+    for (const evt of unprocessed) {
+      if (evt.kind === "finished" || (evt.kind as string) === "partial") {
+        let outName = "media file";
+        if (evt.message.startsWith("Conversion complete: ")) {
+          outName = evt.message.replace("Conversion complete: ", "").trim();
+        } else if (evt.output) {
+          outName = evt.output.replace(/^.*[\\/]/, "");
+        }
+        const outPath = evt.output || (settings.outputDir ? `${settings.outputDir.replace(/[\\/]+$/, "")}/${outName}` : undefined);
+        setCompletedItem({ name: outName, path: outPath });
 
-      const activeId = activeQueueItemIdRef.current;
-      if (activeId || queue.some((it) => it.status === "converting")) {
-        setQueue((curr) =>
-          curr.map((item) => {
-            if (item.id === activeId || (item.status === "converting" && !activeId)) {
-              return { ...item, status: "completed", progress: 1.0, outputPath: outPath };
-            }
-            return item;
-          })
-        );
+        const activeId = activeQueueItemIdRef.current;
+        if (activeId || queue.some((it) => it.status === "converting")) {
+          setQueue((curr) =>
+            curr.map((item) => {
+              if (item.id === activeId || (item.status === "converting" && !activeId)) {
+                return { ...item, status: "completed", progress: 1.0, outputPath: outPath };
+              }
+              return item;
+            })
+          );
+          activeQueueItemIdRef.current = null;
+        }
+      } else if (evt.kind === "failed") {
+        const activeId = activeQueueItemIdRef.current;
+        if (activeId || queue.some((it) => it.status === "converting")) {
+          setQueue((curr) =>
+            curr.map((item) => {
+              if (item.id === activeId || (item.status === "converting" && !activeId)) {
+                return { ...item, status: "failed", errorMessage: evt.message };
+              }
+              return item;
+            })
+          );
+          activeQueueItemIdRef.current = null;
+        }
+      } else if (evt.kind === "cancelled") {
+        if (queueRunning) {
+          setQueueRunning(false);
+        }
+        isStartingQueueRef.current = false;
+        const abortedId = activeQueueItemIdRef.current;
         activeQueueItemIdRef.current = null;
-      }
-    } else if (lastEvent.kind === "failed") {
-      const activeId = activeQueueItemIdRef.current;
-      if (activeId || queue.some((it) => it.status === "converting")) {
         setQueue((curr) =>
-          curr.map((item) => {
-            if (item.id === activeId || (item.status === "converting" && !activeId)) {
-              return { ...item, status: "failed", errorMessage: lastEvent.message };
-            }
-            return item;
-          })
+          curr.map((item) =>
+            item.id === abortedId || item.status === "converting"
+              ? { ...item, status: "queued", progress: 0 }
+              : item
+          )
         );
-        activeQueueItemIdRef.current = null;
       }
-    } else if (lastEvent.kind === "cancelled") {
-      if (queueRunning) {
-        setQueueRunning(false);
-      }
-      isStartingQueueRef.current = false;
-      const abortedId = activeQueueItemIdRef.current;
-      activeQueueItemIdRef.current = null;
-      setQueue((curr) =>
-        curr.map((item) =>
-          item.id === abortedId || item.status === "converting"
-            ? { ...item, status: "queued", progress: 0 }
-            : item
-        )
-      );
     }
-  }, [lastEvent, queueRunning, settings.outputDir]);
+  }, [events, queueRunning, settings.outputDir]);
 
   // Live progress updates for currently converting queue item
   useEffect(() => {
@@ -495,7 +499,8 @@ export function ConverterView({
   async function executeConversion(
     sourceToConvert: string,
     indexesToConvert?: string,
-    customPreset?: IntentPreset
+    customPreset?: IntentPreset,
+    overrideSettings?: ConverterSettings
   ): Promise<boolean> {
     const trimmedSource = sourceToConvert.trim();
     if (!trimmedSource && !access.bridgeConnected) return false;
@@ -505,9 +510,10 @@ export function ConverterView({
       return false;
     }
 
+    const effectiveBaseSettings = overrideSettings || settings;
     const customSettings: ConverterSettings | undefined = customPreset
       ? {
-          ...settings,
+          ...effectiveBaseSettings,
           category: customPreset.category,
           format: customPreset.format,
           bitrate: customPreset.bitrate,
@@ -516,7 +522,7 @@ export function ConverterView({
           normalize: customPreset.normalize,
           useGpu: customPreset.useGpu,
         }
-      : undefined;
+      : overrideSettings;
 
     const invokeStart = (
       startSource: string,
@@ -525,7 +531,7 @@ export function ConverterView({
       startSocialId?: string,
       startMediaKind?: "photo" | "video",
     ) => {
-      if (customSettings) {
+      if (customPreset && customSettings) {
         return onStart(startSource, startIndexes, startFbId, startSocialId, startMediaKind, customSettings);
       }
       if (startMediaKind !== undefined) {
@@ -710,7 +716,7 @@ export function ConverterView({
       onSettings(targetItem.settingsSnapshot);
     }
 
-    executeConversion(targetItem.source, targetItem.playlistIndexes)
+    executeConversion(targetItem.source, targetItem.playlistIndexes, undefined, targetItem.settingsSnapshot)
       .then((started) => {
         if (!started) {
           activeQueueItemIdRef.current = null;

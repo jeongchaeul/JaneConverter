@@ -5,6 +5,7 @@ Locates FFmpeg, FFprobe, and JavaScript runtimes (Node, Deno, Bun).
 
 from __future__ import annotations
 
+import functools
 import os
 from pathlib import Path
 import shutil
@@ -18,14 +19,16 @@ PROJECT_ROOT = str(
     else Path(__file__).resolve().parents[1]
 )
 
+@functools.lru_cache(maxsize=1)
 def get_ffmpeg_binary() -> str:
     """
     Finds FFmpeg executable in local application root, bin folder, or system PATH.
     """
+    exe_name = "ffmpeg" + (".exe" if os.name == "nt" else "")
     candidates = [
-        os.path.join(PROJECT_ROOT, "ffmpeg.exe"),
-        os.path.join(PROJECT_ROOT, "bin", "ffmpeg.exe"),
-        os.path.join(ENGINE_DIR, "ffmpeg.exe"),
+        os.path.join(PROJECT_ROOT, exe_name),
+        os.path.join(PROJECT_ROOT, "bin", exe_name),
+        os.path.join(ENGINE_DIR, exe_name),
     ]
     for c in candidates:
         if os.path.isfile(c):
@@ -37,21 +40,26 @@ def get_ffmpeg_binary() -> str:
 
     return "ffmpeg"
 
+@functools.lru_cache(maxsize=1)
 def get_ffprobe_binary() -> str:
     """
     Finds FFprobe next to the selected FFmpeg binary or on system PATH.
     """
     ffmpeg_bin = get_ffmpeg_binary()
-    sibling = os.path.join(os.path.dirname(os.path.abspath(ffmpeg_bin)),
-                           "ffprobe" + (".exe" if os.name == "nt" else ""))
-    if os.path.isfile(sibling):
-        return sibling
+    if ffmpeg_bin and os.path.isabs(ffmpeg_bin):
+        sibling = os.path.join(
+            os.path.dirname(ffmpeg_bin),
+            "ffprobe" + (".exe" if os.name == "nt" else "")
+        )
+        if os.path.isfile(sibling):
+            return os.path.abspath(sibling)
     which_path = shutil.which("ffprobe")
     if which_path:
         return which_path
     return "ffprobe"
 
 
+@functools.lru_cache(maxsize=1)
 def get_node_binary() -> Optional[str]:
     """Finds Node.js executable next to FFmpeg, in application root, or system PATH."""
     ffmpeg_bin = get_ffmpeg_binary()

@@ -69,16 +69,16 @@ def main() -> int:
         else:
             engine = [sys.executable, "-m", "janeconverter.cli"]
         version = _run([*engine, "--version"], environment, work_directory)
+        if version.returncode != 0 or "JaneConverter" not in version.stdout:
+            raise RuntimeError(
+                f"Packaged engine did not start successfully: {version.stderr.strip() or version.stdout.strip()}"
+            )
         compatibility = _run([*engine, "--compatibility-info"], environment, work_directory)
         if compatibility.returncode:
             raise RuntimeError("The packaged engine compatibility check failed.")
         contract = json.loads(compatibility.stdout)
         if contract.get("bridgeProtocol") != 2 or not contract.get("captureValidation") or not contract.get("extractorVersion"):
             raise RuntimeError("The packaged engine has an incompatible Browser Bridge or extractor runtime.")
-        if version.returncode != 0 or "JaneConverter" not in version.stdout:
-            raise RuntimeError(
-                f"Packaged engine did not start successfully: {version.stderr.strip() or version.stdout.strip()}"
-            )
 
         conversion = _run(
             [

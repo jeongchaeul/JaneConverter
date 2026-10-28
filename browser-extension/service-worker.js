@@ -235,7 +235,7 @@ async function uploadSessionResponse(bridge, payload, response, mimeType, expect
       const read = await reader.read();
       if (read.done) break;
       for (let index = 0; index < read.value.byteLength; index += MAX_CHUNK_BYTES) {
-        const chunkData = read.value.slice(index, Math.min(index + MAX_CHUNK_BYTES, read.value.byteLength));
+        const chunkData = read.value.subarray(index, Math.min(index + MAX_CHUNK_BYTES, read.value.byteLength));
         if (!chunkData.byteLength || offset + chunkData.byteLength > MAX_SESSION_FETCH_BYTES) {
           throw new Error("The authenticated media response exceeded JaneConverter's 1 GB capture limit.");
         }

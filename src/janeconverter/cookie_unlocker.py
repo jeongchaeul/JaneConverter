@@ -217,81 +217,89 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
         FILE_BEGIN = 0
         FILE_CURRENT = 1
 
+        pid_set = set(pids)
+        pid_handles: dict[int, list[int]] = {p: [] for p in pids}
+        for i in range(count):
+            entry = SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX.from_buffer(buf, 16 + i * entry_size)
+            if entry.UniqueProcessId in pid_set:
+                pid_handles[entry.UniqueProcessId].append(entry.HandleValue)
+
         for pid in pids:
+            handles = pid_handles.get(pid)
+            if not handles:
+                continue
             h_proc = kernel32.OpenProcess(PROCESS_DUP_HANDLE, False, pid)
             if not h_proc:
                 continue
             try:
-                for i in range(count):
-                    entry = SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX.from_buffer(buf, 16 + i * entry_size)
-                    if entry.UniqueProcessId == pid:
-                        target_handle = wintypes.HANDLE()
-                        ok = kernel32.DuplicateHandle(
-                            h_proc,
-                            wintypes.HANDLE(entry.HandleValue),
-                            curr_proc,
-                            ctypes.byref(target_handle),
-                            0,
-                            False,
-                            DUPLICATE_SAME_ACCESS,
-                        )
-                        if ok and target_handle.value:
-                            try:
-                                if kernel32.GetFileType(target_handle) == FILE_TYPE_DISK:
-                                    path_buf = ctypes.create_unicode_buffer(1024)
-                                    plen = kernel32.GetFinalPathNameByHandleW(target_handle, path_buf, 1024, 0)
-                                    if plen > 0:
-                                        clean = clean_nt_path(path_buf.value)
-                                        if os.path.normcase(clean) == norm_target:
-                                            # Save original 64-bit file position to leave handle untouched
-                                            orig_pos = wintypes.LARGE_INTEGER(0)
-                                            has_orig_pos = bool(
-                                                kernel32.SetFilePointerEx(
-                                                    target_handle,
-                                                    wintypes.LARGE_INTEGER(0),
-                                                    ctypes.byref(orig_pos),
-                                                    FILE_CURRENT,
-                                                )
+                for handle_val in handles:
+                    target_handle = wintypes.HANDLE()
+                    ok = kernel32.DuplicateHandle(
+                        h_proc,
+                        wintypes.HANDLE(handle_val),
+                        curr_proc,
+                        ctypes.byref(target_handle),
+                        0,
+                        False,
+                        DUPLICATE_SAME_ACCESS,
+                    )
+                    if ok and target_handle.value:
+                        try:
+                            if kernel32.GetFileType(target_handle) == FILE_TYPE_DISK:
+                                path_buf = ctypes.create_unicode_buffer(1024)
+                                plen = kernel32.GetFinalPathNameByHandleW(target_handle, path_buf, 1024, 0)
+                                if plen > 0:
+                                    clean = clean_nt_path(path_buf.value)
+                                    if os.path.normcase(clean) == norm_target:
+                                        # Save original 64-bit file position to leave handle untouched
+                                        orig_pos = wintypes.LARGE_INTEGER(0)
+                                        has_orig_pos = bool(
+                                            kernel32.SetFilePointerEx(
+                                                target_handle,
+                                                wintypes.LARGE_INTEGER(0),
+                                                ctypes.byref(orig_pos),
+                                                FILE_CURRENT,
                                             )
-                                            try:
+                                        )
+                                        try:
+                                            kernel32.SetFilePointerEx(
+                                                target_handle,
+                                                wintypes.LARGE_INTEGER(0),
+                                                None,
+                                                FILE_BEGIN,
+                                            )
+
+                                            chunk_size = 64 * 1024
+                                            read_buf = ctypes.create_string_buffer(chunk_size)
+                                            bytes_read = wintypes.DWORD(0)
+                                            with open(tmp_dst, "wb") as out_f:
+                                                while True:
+                                                    r_ok = kernel32.ReadFile(
+                                                        target_handle,
+                                                        read_buf,
+                                                        chunk_size,
+                                                        ctypes.byref(bytes_read),
+                                                        None,
+                                                    )
+                                                    if not r_ok or bytes_read.value == 0:
+                                                        break
+                                                    out_f.write(read_buf.raw[: bytes_read.value])
+                                        finally:
+                                            if has_orig_pos:
                                                 kernel32.SetFilePointerEx(
                                                     target_handle,
-                                                    wintypes.LARGE_INTEGER(0),
+                                                    orig_pos,
                                                     None,
                                                     FILE_BEGIN,
                                                 )
 
-                                                chunk_size = 64 * 1024
-                                                read_buf = ctypes.create_string_buffer(chunk_size)
-                                                bytes_read = wintypes.DWORD(0)
-                                                with open(tmp_dst, "wb") as out_f:
-                                                    while True:
-                                                        r_ok = kernel32.ReadFile(
-                                                            target_handle,
-                                                            read_buf,
-                                                            chunk_size,
-                                                            ctypes.byref(bytes_read),
-                                                            None,
-                                                        )
-                                                        if not r_ok or bytes_read.value == 0:
-                                                            break
-                                                        out_f.write(read_buf.raw[: bytes_read.value])
-                                            finally:
-                                                if has_orig_pos:
-                                                    kernel32.SetFilePointerEx(
-                                                        target_handle,
-                                                        orig_pos,
-                                                        None,
-                                                        FILE_BEGIN,
-                                                    )
-
-                                            kernel32.CloseHandle(target_handle)
-                                            target_handle = None
-                                            os.replace(tmp_dst, dst_path)
-                                            return True
-                            finally:
-                                if target_handle and target_handle.value:
-                                    kernel32.CloseHandle(target_handle)
+                                        kernel32.CloseHandle(target_handle)
+                                        target_handle = None
+                                        os.replace(tmp_dst, dst_path)
+                                        return True
+                        finally:
+                            if target_handle and target_handle.value:
+                                kernel32.CloseHandle(target_handle)
             finally:
                 kernel32.CloseHandle(h_proc)
 

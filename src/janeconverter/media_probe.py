@@ -20,10 +20,34 @@ from .constants import (
 )
 from .recovery import OutputIntent
 
+import threading
+
+_PROBE_CACHE_LOCK = threading.Lock()
+_PROBE_CACHE: Dict[tuple, Dict[str, Any]] = {}
+_MAX_PROBE_CACHE_ENTRIES = 64
+
 def probe_media_duration(input_path: str) -> Optional[float]:
     """
     Returns the duration of the media in seconds via ffprobe, or None if it cannot be determined.
     """
+    if not input_path or not os.path.exists(input_path):
+        return None
+    try:
+        st = os.stat(input_path)
+        cache_key = (os.path.abspath(input_path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        cache_key = None
+
+    if cache_key is not None:
+        with _PROBE_CACHE_LOCK:
+            cached = _PROBE_CACHE.get(cache_key)
+            if cached:
+                dur_str = cached.get("format", {}).get("duration")
+                if dur_str:
+                    try:
+                        return float(dur_str)
+                    except (ValueError, TypeError):
+                        pass
     try:
         no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         res = subprocess.run(
@@ -46,6 +70,17 @@ def probe_media_streams(input_path: str) -> Optional[Dict[str, Any]]:
     if not input_path or not os.path.exists(input_path):
         return None
     try:
+        st = os.stat(input_path)
+        cache_key = (os.path.abspath(input_path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        cache_key = None
+
+    if cache_key is not None:
+        with _PROBE_CACHE_LOCK:
+            if cache_key in _PROBE_CACHE:
+                return _PROBE_CACHE[cache_key]
+
+    try:
         no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         res = subprocess.run(
             [
@@ -65,7 +100,13 @@ def probe_media_streams(input_path: str) -> Optional[Dict[str, Any]]:
             creationflags=no_window,
         )
         if res.returncode == 0 and res.stdout.strip():
-            return json.loads(res.stdout)
+            parsed = json.loads(res.stdout)
+            if cache_key is not None:
+                with _PROBE_CACHE_LOCK:
+                    if len(_PROBE_CACHE) >= _MAX_PROBE_CACHE_ENTRIES:
+                        _PROBE_CACHE.pop(next(iter(_PROBE_CACHE)))
+                    _PROBE_CACHE[cache_key] = parsed
+            return parsed
     except (subprocess.SubprocessError, json.JSONDecodeError, OSError):
         pass
     return None

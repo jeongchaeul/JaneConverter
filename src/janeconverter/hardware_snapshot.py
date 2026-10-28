@@ -7,10 +7,12 @@ import math
 import os
 import platform
 import shutil
+import functools
 import subprocess
 from typing import Any
 
 
+@functools.lru_cache(maxsize=1)
 def _cpu_name() -> str:
     if os.name == "nt":
         try:

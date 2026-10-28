@@ -1,3 +1,14 @@
+function isColorLight(hex: string): boolean {
+  const clean = (hex || "").replace("#", "");
+  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+  const num = parseInt(full, 16);
+  if (isNaN(num)) return false;
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return (r * 299 + g * 587 + b * 114) / 1000 > 135;
+}
+
 import { useEffect, useState } from "react";
 import {
   AlertCircle,
@@ -380,7 +391,7 @@ export function SettingsView({
         updateResult={effectiveUpdateResult}
         installing={installing}
         onInstall={() => void installUpdate()}
-        theme={bgColor === "#ffffff" || bgColor === "#fdf7fa" || bgColor === "#f4f4f5" ? "light" : "dark"}
+        theme={isColorLight(bgColor) ? "light" : "dark"}
       />
     </div>
   );

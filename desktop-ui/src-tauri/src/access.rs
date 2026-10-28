@@ -245,6 +245,17 @@ impl Drop for AccessServer {
 
 impl AccessServer {
     pub fn status(&self) -> AccessStatus {
+        let (bridge_connected, capture_count, captured_media_kind) = self
+            .capture_state
+            .lock()
+            .map(|value| {
+                (
+                    !value.paths.is_empty(),
+                    value.fetched.len(),
+                    value.fetched.last().map(|item| item.media_kind.clone()),
+                )
+            })
+            .unwrap_or((false, 0, None));
         AccessStatus {
             active: true,
             link: self.link.clone(),
@@ -255,21 +266,9 @@ impl AccessServer {
                 .and_then(|value| value.clone())
                 .unwrap_or_default(),
             source: self.source.lock().ok().and_then(|value| value.clone()),
-            bridge_connected: self
-                .capture_state
-                .lock()
-                .map(|value| !value.paths.is_empty())
-                .unwrap_or(false),
-            capture_count: self
-                .capture_state
-                .lock()
-                .map(|value| value.fetched.len())
-                .unwrap_or(0),
-            captured_media_kind: self
-                .capture_state
-                .lock()
-                .ok()
-                .and_then(|value| value.fetched.last().map(|item| item.media_kind.clone())),
+            bridge_connected,
+            capture_count,
+            captured_media_kind,
         }
     }
 
@@ -309,6 +308,8 @@ impl AccessServer {
 
     pub fn discard_fetched_media(&self, path: &str) -> Result<(), String> {
         let target = self.validated_capture_path(path)?;
+        let target_canonical = fs::canonicalize(&target).ok();
+        let target_name = target.file_name().map(|n| n.to_os_string());
         match fs::remove_file(&target) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -322,9 +323,17 @@ impl AccessServer {
             .capture_state
             .lock()
             .map_err(|_| "The capture registry is unavailable.".to_owned())?;
-        state
-            .paths
-            .retain(|candidate| fs::canonicalize(candidate).ok().as_ref() != Some(&target));
+        state.paths.retain(|candidate| {
+            if candidate == &target || candidate.file_name() == target_name.as_deref() {
+                return false;
+            }
+            if let (Some(tc), Ok(cc)) = (&target_canonical, fs::canonicalize(candidate)) {
+                if &cc == tc {
+                    return false;
+                }
+            }
+            true
+        });
         if let Some(item_index) = state
             .fetched
             .iter()
@@ -537,11 +546,13 @@ fn read_request_with_deadlines(
                 let mut fields = request_line.split_whitespace();
                 let method = fields.next().unwrap_or_default().to_owned();
                 let path = fields.next().unwrap_or_default().to_owned();
+                bytes.drain(..end);
+                bytes.truncate(content_length);
                 return Ok(HttpRequest {
                     method,
                     path,
                     headers,
-                    body: bytes[end..end + content_length].to_vec(),
+                    body: bytes,
                 });
             }
         }

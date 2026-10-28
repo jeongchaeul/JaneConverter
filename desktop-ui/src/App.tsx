@@ -241,15 +241,24 @@ export default function App() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [success]);
 
+  const lastTaskbarRef = useRef<{ pct?: number; status: "normal" | "paused" | "error" | "none" | "indeterminate" }>({ status: "none" });
+
   useEffect(() => {
+    let nextPct: number | undefined = undefined;
+    let nextStatus: "normal" | "paused" | "error" | "none" | "indeterminate" = "none";
     if (jobId || captureBusy) {
-      const status = paused ? "paused" : "normal";
-      const pct = Math.min(100, Math.max(0, Math.round(progress * 100)));
-      void bridge.setTaskbarProgress(pct, status);
+      nextStatus = paused ? "paused" : "normal";
+      nextPct = Math.min(100, Math.max(0, Math.round(progress * 100)));
     } else if (failure) {
-      void bridge.setTaskbarProgress(100, "error");
-    } else {
-      void bridge.setTaskbarProgress(undefined, "none");
+      nextStatus = "error";
+      nextPct = 100;
+    }
+    if (
+      lastTaskbarRef.current.pct !== nextPct ||
+      lastTaskbarRef.current.status !== nextStatus
+    ) {
+      lastTaskbarRef.current = { pct: nextPct, status: nextStatus };
+      void bridge.setTaskbarProgress(nextPct, nextStatus);
     }
   }, [jobId, captureBusy, progress, paused, failure]);
 

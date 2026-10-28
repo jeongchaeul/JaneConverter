@@ -673,7 +673,7 @@ def process_playlist_conversion(
         item_url = entry.get("url", "")
         if not item_url or not is_url(item_url):
             e_id = entry.get("id", "")
-            if e_id and "instagram.com" in (playlist_title.lower() if "instagram.com" in playlist_title.lower() else ""):
+            if e_id and (source_type == "instagram" or "instagram.com" in playlist_title.lower()):
                 item_url = f"https://www.instagram.com/p/{e_id}/"
             elif e_id and is_url(f"https://{e_id}"):
                 item_url = f"https://{e_id}"
@@ -836,7 +836,7 @@ def process_playlist_conversion(
             item_url = entry.get("url", "")
             if not item_url or not is_url(item_url):
                 e_id = entry.get("id", "")
-                if e_id and "instagram.com" in (playlist_title.lower() if "instagram.com" in playlist_title.lower() else ""):
+                if e_id and (source_type == "instagram" or "instagram.com" in playlist_title.lower()):
                     item_url = f"https://www.instagram.com/p/{e_id}/"
                 elif e_id and is_url(f"https://{e_id}"):
                     item_url = f"https://{e_id}"

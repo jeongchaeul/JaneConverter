@@ -218,11 +218,16 @@ pub fn openable_file_extension(path: &Path) -> bool {
 }
 
 fn is_metadata_path(path: &Path) -> bool {
-    path.ancestors().any(|ancestor| {
-        ancestor
+    if let Some(parent) = path.parent() {
+        if parent
             .file_name()
             .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("metadata"))
-    })
+        {
+            return true;
+        }
+    }
+    path.file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("metadata"))
 }
 
 fn directory_summary(path: &Path) -> (usize, u64) {
@@ -652,16 +657,11 @@ fn first_preview_source(path: &Path, depth: usize) -> Option<PathBuf> {
     None
 }
 
-fn render_preview(path: &Path) -> Option<Vec<u8>> {
+fn render_preview_at(path: &Path, seek_sec: Option<&str>) -> Option<Vec<u8>> {
     let mut command = Command::new(find_ffmpeg());
     command.arg("-hide_banner").arg("-loglevel").arg("error");
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if matches!(extension.as_str(), "mp4" | "mkv" | "webm" | "mov" | "gif") {
-        command.arg("-ss").arg("1");
+    if let Some(ss) = seek_sec {
+        command.arg("-ss").arg(ss);
     }
     command
         .arg("-i")
@@ -712,6 +712,22 @@ fn render_preview(path: &Path) -> Option<Vec<u8>> {
             }
         }
     }
+}
+
+fn render_preview(path: &Path) -> Option<Vec<u8>> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let is_video = matches!(extension.as_str(), "mp4" | "mkv" | "webm" | "mov" | "gif");
+    if is_video {
+        if let Some(bytes) = render_preview_at(path, Some("1")) {
+            return Some(bytes);
+        }
+        return render_preview_at(path, Some("0"));
+    }
+    render_preview_at(path, None)
 }
 
 pub fn thumbnail(root: &str, path: &str) -> Result<Option<String>, String> {

@@ -281,10 +281,12 @@ pub async fn hardware_snapshot() -> Result<HardwareSnapshot, String> {
                 &target_pid,
             ])
             .current_dir(project_root());
-        prepare_command(&mut command);
-        let output = command
-            .output()
-            .map_err(|error| format!("Could not read local hardware telemetry: {error}"))?;
+        let output = crate::process::bounded_output(
+            &mut command,
+            std::time::Duration::from_secs(15),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .map_err(|error| format!("Could not read local hardware telemetry: {error}"))?;
         if !output.status.success() {
             let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(if detail.is_empty() {

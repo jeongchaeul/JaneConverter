@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, ExternalLink, Scale, ShieldAlert, X } from "lucide-react";
 import { bridge } from "../bridge";
 
@@ -16,6 +16,19 @@ export function StoryTermsModal({
   accentColor = "#c52b68",
 }: StoryTermsModalProps) {
   const [acknowledged, setAcknowledged] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) setAcknowledged(false);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 

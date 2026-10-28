@@ -191,17 +191,25 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                         if "drm" in message or "geo-restricted" in message:
                             raise
                         detail = f"Automatic browser-session retry did not succeed. Check that the source plays in {b.title()}, then retry."
+                        if browser == "auto":
+                            last_error = BrowserSessionError(detail)
+                            continue
                         raise BrowserSessionError(detail) from None
 
             except KeyboardInterrupt:
                 raise
             except BrowserSessionError:
+                if browser == "auto":
+                    continue
                 raise
             except Exception as error:
                 last_error = error
                 message = str(error).casefold()
                 if any(word in message for word in ("cookie database", "decrypt", "dpapi", "keyring", "extract cookies", "cookies from", "load cookies")):
                     detail = f"yt-dlp could not read the {b.title()} session. The browser may be locked or its cookie encryption unsupported. Close it and retry."
+                    if browser == "auto":
+                        last_error = BrowserSessionError(detail)
+                        continue
                     raise BrowserSessionError(detail) from None
                 continue
             finally:

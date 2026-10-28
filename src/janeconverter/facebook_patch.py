@@ -75,9 +75,9 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
     """Extract formats and metadata from Facebook Comet Relay / GraphQL embedded JSON."""
     from yt_dlp.utils import qualities, url_or_none
 
-    raw_scripts = re.findall(r"<script[^>]*\bdata-sjs\b[^>]*>(.*?)</script>", webpage)
+    raw_scripts = re.findall(r"<script[^>]*\bdata-sjs\b[^>]*>(.*?)</script>", webpage, flags=re.DOTALL | re.IGNORECASE)
     if not raw_scripts:
-        raw_scripts = re.findall(r'<script[^>]*type="application/json"[^>]*>(.*?)</script>', webpage)
+        raw_scripts = re.findall(r'<script[^>]*type="application/json"[^>]*>(.*?)</script>', webpage, flags=re.DOTALL | re.IGNORECASE)
 
     stream_keys = (
         "videoDeliveryResponse",
@@ -97,13 +97,15 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
         if parent_nodes is None:
             parent_nodes = []
 
-        current_ids = list(parent_ids)
-        current_nodes = list(parent_nodes)
         if isinstance(obj, dict):
+            current_nodes = list(parent_nodes)
             current_nodes.append(obj)
+            current_ids = parent_ids
             for k in ("id", "videoId", "video_id", "legacy_token"):
                 val = obj.get(k)
                 if val and str(val) not in current_ids:
+                    if current_ids is parent_ids:
+                        current_ids = list(parent_ids)
                     current_ids.append(str(val))
                     decoded = decode_fb_story_id(str(val))
                     if decoded and decoded not in current_ids:
@@ -132,7 +134,7 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
                 yield from harvest_delivery_targets(v, current_ids, current_nodes)
         elif isinstance(obj, list):
             for item in obj:
-                yield from harvest_delivery_targets(item, current_ids, current_nodes)
+                yield from harvest_delivery_targets(item, parent_ids, parent_nodes)
 
     all_targets = []
     for s in raw_scripts:
@@ -687,7 +689,11 @@ def _build_facebook_story_ie():
 def patch_facebook_story_extractor() -> None:
     """Register FacebookStoryIE with yt-dlp and patch FacebookIE Comet fallback."""
     global _PATCHED
+    if _PATCHED:
+        return
     with _LOCK:
+        if _PATCHED:
+            return
         try:
             import yt_dlp.extractor as yde
 

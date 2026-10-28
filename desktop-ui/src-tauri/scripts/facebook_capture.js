@@ -1,3 +1,4 @@
+  const seenScripts = new WeakSet();
 (() => {
   const nonce = __NONCE_JSON__;
   const prefix = "__JANE_FACEBOOK_CAPTURE__" + nonce + "__";
@@ -110,6 +111,8 @@
       } catch (_) {}
     }
     for (const script of document.scripts) {
+      if (seenScripts.has(script)) continue;
+      seenScripts.add(script);
       const text = script.textContent || "";
       if (!text.includes("fbid=") && !text.includes("nextMediaAfterNodeId") && !text.includes("all_subattachments")) continue;
       for (const match of text.matchAll(/photo\.php\?fbid=([0-9]{5,30})/g)) {

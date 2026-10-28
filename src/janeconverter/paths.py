@@ -39,22 +39,28 @@ def ensure_extended_length_path(path: str) -> str:
                 return prefix + norm
     return path
 
+_WRITABLE_CACHE: dict[str, bool] = {}
+
 def _writable_directory(path: str) -> bool:
     """Return whether *path* can be created and written to."""
+    clean = os.path.abspath(path)
+    if clean in _WRITABLE_CACHE:
+        return _WRITABLE_CACHE[clean]
     probe = None
     try:
-        os.makedirs(ensure_extended_length_path(path), exist_ok=True)
+        os.makedirs(ensure_extended_length_path(clean), exist_ok=True)
         # Use an exclusive, unique probe so a real user file named
         # ``.write-test`` can never be overwritten or deleted by startup.
         with tempfile.NamedTemporaryFile(
             prefix=".write-test-",
             suffix=".tmp",
-            dir=path,
+            dir=clean,
             delete=False,
         ) as handle:
             probe = handle.name
             handle.write(b"JaneConverter write test\n")
         os.remove(probe)
+        _WRITABLE_CACHE[clean] = True
         return True
     except OSError:
         if probe:
@@ -62,6 +68,7 @@ def _writable_directory(path: str) -> bool:
                 os.remove(probe)
             except OSError:
                 pass
+        _WRITABLE_CACHE[clean] = False
         return False
 
 

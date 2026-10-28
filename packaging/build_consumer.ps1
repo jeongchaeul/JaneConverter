@@ -269,7 +269,7 @@ if (-not (Test-Path -LiteralPath $tauriExecutable -PathType Leaf)) {
 }
 
 if ($EnableUpdater -and -not $UpdaterOnly -and -not $SkipPortable) {
-    $portableTarget = Join-Path $buildRoot "portable-tauri-target"
+    $portableTarget = $tauriTarget
     $portableConfigObject = $baseConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json
     $portableConfigObject.version = $Version
     $portableConfigObject.bundle.active = $false

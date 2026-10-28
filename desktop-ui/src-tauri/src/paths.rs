@@ -4,6 +4,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::OnceLock;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -11,29 +12,33 @@ use std::os::windows::process::CommandExt;
 pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub fn project_root() -> PathBuf {
-    if let Ok(executable) = std::env::current_exe() {
-        if let Some(directory) = executable.parent() {
-            let mut candidates = vec![
-                directory.to_path_buf(),
-                directory.join("resources").join("runtime"),
-                directory.join("runtime"),
-                directory.join("resources"),
-            ];
-            if let Some(runtime) = macos_bundle_runtime(directory) {
-                candidates.insert(0, runtime);
-            }
-            for candidate in candidates {
-                if is_runtime_root(&candidate) {
-                    return candidate;
+    static ROOT: OnceLock<PathBuf> = OnceLock::new();
+    ROOT.get_or_init(|| {
+        if let Ok(executable) = std::env::current_exe() {
+            if let Some(directory) = executable.parent() {
+                let mut candidates = vec![
+                    directory.to_path_buf(),
+                    directory.join("resources").join("runtime"),
+                    directory.join("runtime"),
+                    directory.join("resources"),
+                ];
+                if let Some(runtime) = macos_bundle_runtime(directory) {
+                    candidates.insert(0, runtime);
+                }
+                for candidate in candidates {
+                    if is_runtime_root(&candidate) {
+                        return candidate;
+                    }
                 }
             }
         }
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
+    })
+    .clone()
 }
 
 fn macos_bundle_runtime(executable_directory: &Path) -> Option<PathBuf> {
@@ -450,7 +455,14 @@ pub fn settings_get_internal() -> ConverterSettings {
         Some("Miscellaneous") => "Miscellaneous",
         _ => "Music",
     };
-    let (gpu_available, _) = detect_gpu();
+    let use_gpu = values
+        .get("use_gpu")
+        .and_then(|value| match value.as_str() {
+            "true" | "1" => Some(true),
+            "false" | "0" => Some(false),
+            _ => None,
+        })
+        .unwrap_or_else(|| detect_gpu().0);
     ConverterSettings {
         output_dir,
         fetched_dir,
@@ -472,7 +484,7 @@ pub fn settings_get_internal() -> ConverterSettings {
             .cloned()
             .unwrap_or_else(|| "original".into()),
         normalize: parse_bool(&values, "normalize", false),
-        use_gpu: parse_bool(&values, "use_gpu", gpu_available),
+        use_gpu,
         save_cover: parse_bool(&values, "save_cover", true),
         save_metadata: parse_bool(&values, "save_metadata", true),
         allow_png_fallback: parse_bool(&values, "allow_png_fallback", false),

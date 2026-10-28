@@ -438,14 +438,14 @@ function inspectPageMedia(sequence) {
     let quietTimer;
     let interval;
     let timeout;
-    const observer = new MutationObserver(remember);
+    let observer;
     const finish = function () {
       if (finished) return;
       finished = true;
       clearInterval(interval);
       clearTimeout(timeout);
       clearTimeout(quietTimer);
-      observer.disconnect();
+      if (observer) observer.disconnect();
       resolve(Array.from(found.values()));
     };
     const remember = function () {
@@ -460,6 +460,7 @@ function inspectPageMedia(sequence) {
       }
       if (found.size >= MAX_SEQUENCE_ITEMS) finish();
     };
+    observer = new MutationObserver(remember);
     observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "poster"] });
     interval = setInterval(remember, 1000);
     timeout = setTimeout(finish, MAX_SEQUENCE_MS);
@@ -973,19 +974,19 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index, d
         let partOffset = 0;
         while (partOffset < read.value.byteLength) {
           const nextOffset = Math.min(partOffset + MAX_CHUNK_BYTES, read.value.byteLength);
-          await sendChunk(read.value.slice(partOffset, nextOffset));
+          await sendChunk(read.value.subarray(partOffset, nextOffset));
           partOffset = nextOffset;
         }
       }
     } else if (pageFetched) {
-      const bytes = new Uint8Array(pageFetched.buffer);
+      const bytes = pageFetched.buffer instanceof Uint8Array ? pageFetched.buffer : new Uint8Array(pageFetched.buffer);
       for (let offsetInBuffer = 0; offsetInBuffer < bytes.byteLength; offsetInBuffer += MAX_CHUNK_BYTES) {
-        await sendChunk(bytes.slice(offsetInBuffer, Math.min(offsetInBuffer + MAX_CHUNK_BYTES, bytes.byteLength)));
+        await sendChunk(bytes.subarray(offsetInBuffer, Math.min(offsetInBuffer + MAX_CHUNK_BYTES, bytes.byteLength)));
       }
     } else {
-      const bytes = new Uint8Array(pageCapture.buffer);
+      const bytes = pageCapture.buffer instanceof Uint8Array ? pageCapture.buffer : new Uint8Array(pageCapture.buffer);
       for (let offsetInBuffer = 0; offsetInBuffer < bytes.byteLength; offsetInBuffer += MAX_CHUNK_BYTES) {
-        await sendChunk(bytes.slice(offsetInBuffer, Math.min(offsetInBuffer + MAX_CHUNK_BYTES, bytes.byteLength)));
+        await sendChunk(bytes.subarray(offsetInBuffer, Math.min(offsetInBuffer + MAX_CHUNK_BYTES, bytes.byteLength)));
       }
     }
     remaining();

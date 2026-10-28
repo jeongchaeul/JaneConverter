@@ -252,7 +252,7 @@ def query_archive_org_collections(
             head_resp = requests.head(stream_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT, allow_redirects=True)
             if head_resp.status_code in (200, 206, 302):
                 if not _is_safe_response_target(head_resp):
-                    return ArchivalStreamResult(found=False)
+                    return None
                 resolved_title = (
                     metadata.title
                     or doc.get("title")
@@ -321,6 +321,8 @@ def query_ghostarchive(
         # Verify accessibility
         head_resp = requests.head(stream_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT, allow_redirects=True)
         if head_resp.status_code in (200, 206, 302):
+            if not _is_safe_response_target(head_resp):
+                return None
             return ArchivalStreamResult(
                 found=True,
                 source_name="Ghostarchive",
@@ -366,7 +368,7 @@ def query_wayback_machine_stream(
                 head_resp = requests.head(stream_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT, allow_redirects=True)
                 if head_resp.status_code in (200, 206, 302):
                     if not _is_safe_response_target(head_resp):
-                        return ArchivalStreamResult(found=False)
+                        return None
                     return ArchivalStreamResult(
                         found=True,
                         source_name="Wayback Machine Playback",
