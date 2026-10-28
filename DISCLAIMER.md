@@ -55,10 +55,7 @@ The FL Studio project downgrading and inspection tools are independent implement
 
 ## 5. Privacy, Local Processing & Security
 
-- **100% Local Conversion:** All transcoding (FFmpeg, SoX, Pillow) and project patching execute locally on your machine.
-- **Zero Telemetry:** Transmits no usage analytics, tracking beacons, filenames, or conversion history.
-- **Ephemeral Session Security:** Session cookies are loaded into volatile process memory for active requests only, and are never written to disk. Passwords and credentials are never accessed.
-- **Hardened Loopback Bridge:** The companion Browser Bridge listens strictly on `127.0.0.1`, enforces origin validation, and accepts only media chunks explicitly pushed by the user.
+JaneConverter converts all media 100% locally on your machine with zero remote telemetry, tracking beacons, or persistent credentials. For full architectural specifications on volatile session security, non-locking handle duplication, and network boundaries, refer directly to [SECURITY.md](SECURITY.md) and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
 ---
 
