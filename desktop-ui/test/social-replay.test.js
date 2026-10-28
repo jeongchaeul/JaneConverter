@@ -4,16 +4,27 @@ import { JSDOM } from "jsdom";
 import { expect, test } from "vitest";
 
 const candidatePaths = [
+  resolve(process.cwd(), "src-tauri/scripts/social_photo_capture.js"),
+  resolve(process.cwd(), "desktop-ui/src-tauri/scripts/social_photo_capture.js"),
   resolve(process.cwd(), "src-tauri/src/social_photo_capture.rs"),
   resolve(process.cwd(), "desktop-ui/src-tauri/src/social_photo_capture.rs"),
 ];
-const rustPath = candidatePaths.find(existsSync) ?? candidatePaths[0];
-const rust = readFileSync(rustPath, "utf8");
-const start = rust.indexOf('r#"(() => {{');
-const script = rust.slice(start + 3, rust.indexOf('"#', start))
-  .replace("{nonce_json}", '"fixture"').replace("{platform_json}", '"twitter"')
-  .replace("{target_url_json}", '"https://x.com/jane/status/123"')
-  .replaceAll("{{", "{").replaceAll("}}", "}");
+const scriptPath = candidatePaths.find(existsSync) ?? candidatePaths[0];
+const rawContent = readFileSync(scriptPath, "utf8");
+let script;
+if (scriptPath.endsWith(".js")) {
+  script = rawContent
+    .replace("__NONCE_JSON__", '"fixture"')
+    .replace("__PLATFORM_JSON__", '"twitter"')
+    .replace("__TARGET_URL_JSON__", '"https://x.com/jane/status/123"');
+} else {
+  const start = rawContent.indexOf('r#"(() => {{');
+  script = rawContent.slice(start + 3, rawContent.indexOf('"#', start))
+    .replace("{nonce_json}", '"fixture"')
+    .replace("{platform_json}", '"twitter"')
+    .replace("{target_url_json}", '"https://x.com/jane/status/123"')
+    .replaceAll("{{", "{").replaceAll("}}", "}");
+}
 
 async function replay(expected, declaredUrl = "https://x.com/jane/status/123") {
   const metadata = expected === null ? "" : `<script type="application/ld+json">${JSON.stringify({ "@type": "SocialMediaPosting", url: declaredUrl, image: Array(expected).fill("https://pbs.twimg.com/media/a.jpg") })}</script>`;

@@ -1,6 +1,6 @@
 # JaneConverter User Manual
 
-A comprehensive, fool-proof guide to getting the most out of JaneConverter — the sovereign personal creator toolbox of Jane Cerys (`project//aspyr`).
+A comprehensive guide to getting the most out of JaneConverter — the sovereign personal creator toolbox of Jane Cerys (`project//aspyr`).
 
 ---
 
@@ -8,39 +8,38 @@ A comprehensive, fool-proof guide to getting the most out of JaneConverter — t
 
 1. [What is JaneConverter?](#1-what-is-janeconverter)
 2. [Quick Start: Convert in 3 Steps](#2-quick-start-convert-in-3-steps)
-3. [Music & Audio Ingestion (Spotify, Apple Music, YouTube, SoundCloud)](#3-music--audio-ingestion)
+3. [Music & Audio Ingestion](#3-music--audio-ingestion)
    - [Streaming Catalog Resolution (Spotify & Apple Music)](#streaming-catalog-resolution-spotify--apple-music)
    - [Playlists & Album Sets](#playlists--album-sets)
-   - [Audio Formats, DSP & EBU R128 Loudness Normalization](#audio-formats-dsp--ebu-r128-loudness-normalization)
+   - [Audio Formats, DSP & Loudness Normalization](#audio-formats-dsp--loudness-normalization)
 4. [Video Ingestion & Hardware Transcoding](#4-video-ingestion--hardware-transcoding)
    - [Supported Video Platforms](#supported-video-platforms)
    - [Zero-Loss Stream Copy Mode](#zero-loss-stream-copy-mode)
    - [Time Trimming & Offsets](#time-trimming--offsets)
-   - [Hardware Acceleration (GPU vs CPU Fallback)](#hardware-acceleration-gpu-vs-cpu-fallback)
+   - [Hardware Acceleration (GPU & CPU Fallback)](#hardware-acceleration-gpu--cpu-fallback)
    - [Archival Vault Recovery (Deleted & Hidden Videos)](#archival-vault-recovery-deleted--hidden-videos)
 5. [Photo, Asset & Gallery Ingestion](#5-photo-asset--gallery-ingestion)
    - [Pinterest Pins, Boards & Notification Hubs](#pinterest-pins-boards--notification-hubs)
    - [Instagram Multi-Photo Carousels](#instagram-multi-photo-carousels)
    - [Facebook Photo Albums & Multi-Image Posts](#facebook-photo-albums--multi-image-posts)
    - [Image Formats & Automatic Normalization](#image-formats--automatic-normalization)
-6. [The Story Capturer: Ephemeral Live Stories & Trays](#6-the-story-capturer-ephemeral-live-stories--trays)
-   - [What is the Story Capturer?](#what-is-the-story-capturer)
-   - [How to Snatch an Entire Story Tray or User Feed](#how-to-snatch-an-entire-story-tray-or-user-feed)
-   - [Story Highlights](#story-highlights)
-   - [Guest Sessions vs Authenticated Browser Cookies](#guest-sessions-vs-authenticated-browser-cookies)
-   - [The Activation Gate & Acceptable Use Policy](#the-activation-gate--acceptable-use-policy)
-7. [Browser Cookies & Zero-Extension Session Architecture](#7-browser-cookies--zero-extension-session-architecture)
-   - [Why are Cookies Needed?](#why-are-cookies-needed)
-   - [Direct Edge & Chrome Cookie Access (Chromium 127+ Fix)](#direct-edge--chrome-cookie-access-chromium-127-fix)
-   - [Non-Chromium Browsers (Firefox, Vivaldi, Brave)](#non-chromium-browsers-firefox-vivaldi-brave)
-   - [Volatile Memory Safety & Privacy Guarantee](#volatile-memory-safety--privacy-guarantee)
+6. [The Story Capturer: Ephemeral Live Stories](#6-the-story-capturer-ephemeral-live-stories)
+   - [Overview & Architecture](#overview--architecture)
+   - [Capturing Live Story Trays & Highlights](#capturing-live-story-trays--highlights)
+   - [Guest Sessions vs Authenticated Cookies](#guest-sessions-vs-authenticated-cookies)
+   - [Activation Gate & Terms of Usage](#activation-gate--terms-of-usage)
+7. [Browser Cookies & Session Architecture](#7-browser-cookies--session-architecture)
+   - [When Cookies Are Required](#when-cookies-are-required)
+   - [Direct Edge & Chrome Cookie Access (Chromium 127+)](#direct-edge--chrome-cookie-access-chromium-127)
+   - [Non-Chromium Browsers](#non-chromium-browsers)
+   - [Volatile Memory Safety & Privacy Guarantees](#volatile-memory-safety--privacy-guarantees)
 8. [FL Studio (.flp) Project Downgrader](#8-fl-studio-flp-project-downgrader)
-   - [The Problem: Collaboration Lockouts](#the-problem-collaboration-lockouts)
-   - [Step-by-Step Downgrading Instructions](#step-by-step-downgrading-instructions)
-   - [Supported Versions & Technical Details](#supported-versions--technical-details)
+   - [The Collaboration Lockout Problem](#the-collaboration-lockout-problem)
+   - [Downgrading Workflow](#downgrading-workflow)
+   - [Technical Details & Plugin Compatibility](#technical-details--plugin-compatibility)
 9. [Export Library & Storage Management](#9-export-library--storage-management)
 10. [Presets & Format Reference Cheat Sheet](#10-presets--format-reference-cheat-sheet)
-11. [Troubleshooting, Edge Cases & Pro Tips](#11-troubleshooting-edge-cases--pro-tips)
+11. [Troubleshooting & Pro Tips](#11-troubleshooting--pro-tips)
 
 ---
 
@@ -48,92 +47,78 @@ A comprehensive, fool-proof guide to getting the most out of JaneConverter — t
 
 JaneConverter is the sovereign, all-in-one personal creator toolbox engineered by and for **Jane Cerys** (`project//aspyr`). 
 
-It is explicitly **NOT a generic ad-bloated media downloader or narrow commercial SaaS utility**. It is a high-rigor, personal Swiss Army knife and creator workstation built to eliminate real-world friction across:
-- **Universal Media Ingestion**: Fetch high-definition video, lossy/lossless audio, full photo carousels, and ephemeral live stories from virtually every major platform without watermark corruption or rate-limit lockouts.
-- **Studio-Grade Audio Engineering**: EBU R128 (-14 LUFS) loudness normalization, dynamic true-peak limiting, harmonic excitement, and bit-perfect FLAC/WAV masters.
-- **Cross-Platform Catalog Matching**: Paste Spotify or Apple Music URLs to automatically identify songs, locate public audio masters, and embed authoritative ID3 tags and high-resolution cover artwork.
-- **DAW Binary Reverse Engineering**: Downgrade newer FL Studio (`.flp`) project files so producers on older FL Studio versions can collaborate seamlessly without blocking error screens.
-- **Adaptive Resilience Engine (Mahoraga)**: Multi-tiered fallback pipelines that adapt to layout shifts, signature changes, anti-bot screens, CDN token expirations, and GPU memory exhaustion.
-- **Archival Vault Indexing & Recovery**: Multi-stage scientific discovery ladder querying Filmot, the Wayback Machine (CDX), Ghostarchive, and Internet Archive collections (`archiveteam_youtube`) to index and recover deleted, unlisted, or private media.
+It is an engineering-first personal workstation built to eliminate friction across creative workflows:
+- **Universal Media Ingestion:** Download high-definition video, lossy/lossless audio, photo carousels, and ephemeral stories from major platforms and open web sources without watermarks or rate-limit lockouts.
+- **Studio-Grade Audio Engineering:** EBU R128 (-14 LUFS) loudness normalization, dynamic true-peak limiting (`-1.0 dBTP`), harmonic exciter, and bit-perfect FLAC/WAV masters.
+- **Cross-Platform Catalog Matching:** Resolve Spotify and Apple Music URLs to locate public audio masters, stamping files with authoritative ID3 tags and high-resolution cover art.
+- **DAW Binary Reverse Engineering:** Downgrade newer FL Studio (`.flp`) projects for older FL Studio installations to prevent collaboration lockouts.
+- **Adaptive Resilience Engine (Mahoraga):** Multi-tiered fallback architecture that handles layout changes, signature updates, bot challenges, CDN expirations, and GPU memory exhaustion.
+- **Archival Vault Recovery:** Scientific discovery pipeline querying Filmot, Wayback Machine (CDX), Ghostarchive, and Internet Archive collections (`archiveteam_youtube`) to index and recover deleted or unlisted media.
 
-JaneConverter is free, local-first, telemetry-free, and respects user sovereignty.
+JaneConverter is local-first, telemetry-free, and respects user sovereignty.
 
 ---
 
 ## 2. Quick Start: Convert in 3 Steps
 
-JaneConverter works immediately with zero configuration required.
+JaneConverter works immediately out of the box with zero setup:
 
-```
-+-----------------------------------------------------------------------------------------+
-|  [ 1. INPUT MEDIA ]          -->         [ 2. CHOOSE FORMAT ]        -->  [ 3. CONVERT ]|
-|  - Paste any URL                         - Quick Preset                      - Real-time|
-|  - Or Drag & Drop file/folder            - Or custom Bitrate/Resolution        progress |
-+-----------------------------------------------------------------------------------------+
-```
+**Step 1: Input Media** &rarr; **Step 2: Choose Format / Preset** &rarr; **Step 3: Convert & Monitor**
 
 ### Step 1: Input Your Media
-- **Online Links:** Paste any supported media link into the search bar at the top (e.g., YouTube video, Spotify playlist, Instagram carousel, Facebook album, TikTok, or Pinterest pin).
-- **Local Files or Folders:** Click **Choose File / Folder** or drag-and-drop any audio, video, or image file directly into the JaneConverter window. You can drop individual files or entire folders for batch conversion.
+- **Online Links:** Paste any supported media URL into the top search bar (YouTube, Spotify, Instagram, Facebook, TikTok, Pinterest, or open web URLs).
+- **Local Files or Folders:** Click **Choose File / Folder** or drag-and-drop media files/folders directly into the window for batch processing.
 
 ### Step 2: Choose Your Preset or Format
-- **Quick Presets (One-Click):**
-  - `Fast MP3`: Instant 320kbps audio rip at maximum processing speed.
-  - `Universal Music`: 320kbps MP3 normalized to -14 LUFS with genuine cover art and tags.
-  - `Lossless Audio`: Bit-perfect FLAC or WAV for music production and studio mastering.
-  - `Universal Video`: 1080p Full HD MP4 compatible with any phone, TV, browser, or editor.
-  - `4K Ultra HD`: Preserves up to 3840×2160 video at maximum source bitrate.
-  - `Lossless Image`: Pixel-perfect PNG preserving uncompressed original dimensions.
-- **Custom Configuration:** Click any format pill (`MP3`, `FLAC`, `WAV`, `MP4`, `MKV`, `WebM`, `PNG`, `JPG`, `WebP`) to fine-tune bitrates (128k–320k), video resolution (720p, 1080p, 1440p, 4K), frame rate, loudness normalization, or time trim offsets.
+- **One-Click Presets:**
+  - `Fast MP3`: Instant 320 kbps CBR audio rip.
+  - `Universal Music`: 320 kbps MP3 normalized to -14 LUFS with cover art and tags.
+  - `Lossless Audio`: Bit-perfect FLAC or WAV for studio mastering and sampling.
+  - `Universal Video`: 1080p Full HD MP4 (H.264/AAC) compatible across all devices.
+  - `4K Ultra HD`: Preserves up to 3840×2160 resolution at original source bitrate.
+  - `Lossless Image`: Pixel-perfect PNG preserving uncompressed dimensions.
+- **Custom Configuration:** Click any format pill (`MP3`, `FLAC`, `WAV`, `MP4`, `MKV`, `WebM`, `PNG`, `JPG`, `WebP`) to configure bitrate, resolution, framerate, loudness leveling, or trim offsets.
 
-### Step 3: Click Convert & Monitor
-- Click the prominent **Convert** button.
-- Real-time progress displays stream download, demuxing, and transcode stages.
-- When finished, your file is automatically staged, validated, and placed in your **Export Library**. Click **Open Folder** to reveal your file in Windows Explorer, or play it directly inside the app.
+### Step 3: Convert & Monitor
+- Click **Convert**. Real-time progress displays stream download, demuxing, and transcode stages.
+- When finished, click **Open Folder** to view your file in Windows Explorer or play it directly in the built-in mini-player.
 
 ---
 
 ## 3. Music & Audio Ingestion
 
-JaneConverter provides studio-grade audio extraction, playlist unrolling, catalog resolution, and DSP mastering.
-
 ### Streaming Catalog Resolution (Spotify & Apple Music)
+Spotify and Apple Music streams are DRM-protected. JaneConverter resolves them through a 5-step metadata and audio matching pipeline:
 
-Spotify and Apple Music utilize proprietary DRM-protected playback streams. JaneConverter solves this through an intelligent **Catalog Resolution Pipeline**:
-
-1. **Metadata Ingestion:** When you paste a Spotify or Apple Music track/album link, JaneConverter queries oEmbed, OpenGraph, and the Apple iTunes API to read the official title, primary artists, album name, release year, ISRC code, and uncompressed high-resolution cover artwork.
-2. **Intelligent Query Permutation:** The engine normalizes the track title by stripping redundant release tags (e.g. `(feat. ...)`, `(Remastered 2021)`, `[Club Mix]`) to generate prioritized candidate search strings.
-3. **Cross-Platform Master Probing:** Searches YouTube Music (`ytsearch5:`) and SoundCloud (`scsearch5:`) in parallel for matching public studio recordings.
-4. **Verification Algorithm (`choose_catalog_match`):**
-   - **Levenshtein String Distance:** Evaluates title similarity against candidate names.
-   - **Artist Token Matching:** Ensures the main performer is present.
-   - **Strict Duration Variance Filter:** Any candidate whose length deviates by more than 15 seconds from the official catalog duration is automatically discarded. This completely prevents accidental downloads of live recordings, acoustic covers, sped-up edits, or extended radio edits.
-5. **Authoritative Tagging:** The downloaded audio stream is re-encoded into your chosen format (MP3, FLAC, WAV, M4A) and stamped with the pristine catalog metadata, embedding the original 1400×1400+ cover art directly into the audio container tags. A separate high-res cover `.jpg` is also saved alongside the track.
+1. **Metadata Ingestion:** Extracts official title, artists, album name, release year, ISRC code, and uncompressed cover art via oEmbed, OpenGraph, and the iTunes API.
+2. **Query Permutation:** Normalizes titles by stripping release tags (e.g. `(feat. ...)`, `[Club Mix]`, `(Remastered 2021)`) to generate prioritized candidate queries.
+3. **Cross-Platform Probing:** Searches YouTube Music (`ytsearch5:`) and SoundCloud (`scsearch5:`) in parallel for matching studio recordings.
+4. **Verification (`choose_catalog_match`):**
+   - Calculates Levenshtein string distance against track titles.
+   - Verifies primary artist token presence.
+   - Enforces a **strict ±15-second duration variance filter** to discard live recordings, acoustic covers, sped-up edits, and radio edits.
+5. **Authoritative Tagging:** Encodes audio into your target format, embedding official metadata and square cover artwork directly into container tags, and saves a separate high-resolution cover `.jpg`.
 
 ### Playlists & Album Sets
+- **Supported Collections:** Spotify Playlists & Albums, YouTube Playlists & Channels, SoundCloud Sets, Apple Music Albums.
+- **Interactive Manifest Modal:** Pasting a playlist URL opens a modal with track count, estimated duration, individual titles, and thumbnails.
+- **Selective Ingestion:** Click **Select All** or toggle individual tracks. Items are processed sequentially with atomic staging into a dedicated album folder.
 
-- **Supported Playlists:** Spotify Playlists & Albums, YouTube Playlists & Channels, SoundCloud Sets, Apple Music Albums.
-- **The Playlist Dialog:** When you paste a playlist URL, JaneConverter fetches the complete track manifest without downloading streams yet. A modal pops up displaying:
-  - Album/Playlist title and creator.
-  - Track count and estimated total duration.
-  - Individual track titles, artists, durations, and thumbnails.
-- **Flexible Ingestion:** Click **Select All** to download the complete collection, or use checkboxes to cherry-pick specific tracks. The engine processes your selections sequentially with atomic staging, organizing the album into a dedicated folder.
-
-### Audio Formats, DSP & EBU R128 Loudness Normalization
+### Audio Formats, DSP & Loudness Normalization
 
 | Format | Extension | Bitrate / Specs | Ideal Use Case |
 | :--- | :--- | :--- | :--- |
-| **MP3** | `.mp3` | 128k, 192k, 256k, 320k CBR | Universal compatibility across car stereos, phones, and DJ software. |
-| **FLAC** | `.flac` | Lossless 16-bit / 24-bit | Archival listening, sampling, and music production. Zero compression artifacts. |
-| **WAV** | `.wav` | Uncompressed PCM | Direct import into FL Studio, Ableton Live, Pro Tools, and audio editors. |
+| **MP3** | `.mp3` | 128k–320k CBR | Universal compatibility across car stereos, mobile devices, and DJ setups. |
+| **FLAC** | `.flac` | Lossless 16-bit / 24-bit | Studio mastering, sampling, and archival listening. Zero compression loss. |
+| **WAV** | `.wav` | Uncompressed PCM | Direct import into DAWs (FL Studio, Ableton Live, Pro Tools). |
 | **AAC / M4A** | `.m4a` | High-efficiency AAC | Apple ecosystem, iTunes, and mobile playback. |
-| **OGG Vorbis** | `.ogg` | High-fidelity open container | Game development (Godot, Unity), Linux systems. |
-| **OPUS** | `.opus` | Modern low-latency codec | Superior fidelity at lower bitrates. |
+| **OGG Vorbis** | `.ogg` | High-fidelity open container | Game development (Godot, Unity) and Linux systems. |
+| **OPUS** | `.opus` | Low-latency modern codec | Superior fidelity at lower bitrates. |
 
-#### Studio DSP Enhancements:
-- **EBU R128 Loudness Normalization (-14 LUFS):** Automatically balances volume across all tracks to the international broadcast streaming standard (-14 LUFS). No more sudden volume spikes between quiet acoustic songs and loud EDM tracks.
-- **True-Peak Limiting:** When applying loudness leveling, JaneConverter uses a dynamic two-pass limiter (`loudnorm`) to ensure true-peak levels never exceed `-1.0 dBTP`, completely preventing inter-sample DAC clipping and distortion.
-- **Harmonic Exciter & Air:** Subtle high-frequency phase and harmonic restoration to restore presence to dull lossy web rips.
+#### Studio DSP Suite:
+- **EBU R128 Loudness Normalization (-14 LUFS):** Automatically balances volume across tracks to the international broadcast standard, eliminating volume jumps.
+- **Dynamic True-Peak Limiting:** Uses two-pass `loudnorm` limiting pegged to `-1.0 dBTP` to prevent inter-sample DAC clipping distortion.
+- **Harmonic Exciter & Air:** Subtle high-frequency phase and harmonic synthesis (7.5–20 kHz) to restore sparkle and presence to compressed streaming rips.
 
 ---
 
@@ -141,385 +126,200 @@ Spotify and Apple Music utilize proprietary DRM-protected playback streams. Jane
 
 ### Supported Video Platforms
 
-JaneConverter is powered by a high-rigor, universal ingestion architecture backed by `yt-dlp`'s 1,800+ extractors, a generic media stream sniffer, and the direct Browser Bridge.
-
-#### Tier 1: Officially Certified & Actively Verified Platforms
-The following mainstream platforms are rigorously hardened, regularly stress-tested against live CDN changes under Jane's strict Rule of 7, and verified across all releases:
-- **YouTube:** Standard videos, Shorts (`/shorts/`), live VODs, 4K HDR streams, and channel feeds (`/@handle`).
-- **TikTok:** Full 1080p watermark-free video downloads or direct audio extraction.
+#### Tier 1: Officially Verified & Actively Maintained
+Rigorously hardened and stress-tested against live CDN updates under the Rule of 7 across releases:
+- **YouTube:** Videos, Shorts (`/shorts/`), live VODs, 4K HDR streams, channel feeds (`/@handle`).
+- **TikTok:** Watermark-free 1080p video downloads and direct audio extraction.
 - **Instagram:** Reels (`/reels/`), feed videos, and IGTV.
 - **Facebook:** Public Watch videos, group videos, and Reels.
 - **Twitter / X:** Single videos, clips, and multi-media posts.
 - **Reddit:** Embedded video streams with automatic audio muxing.
-- **Vimeo, Dailymotion, Twitch clips, Bilibili, and SoundCloud.**
+- **Vimeo, Dailymotion, Twitch clips, Bilibili, SoundCloud.**
 
 #### Universal Open Web & Adult / 18+ Sites (Unrestricted Ingestion)
-JaneConverter is **NOT limited to the platforms listed above**. Its ingestion engine is inherently universal:
-- **Thousands of Unlisted & Niche Websites:** JaneConverter can ingest media from virtually any video-hosting website, news outlet, forum, or educational streaming archive across the open internet.
-- **Adult & 18+ Websites:** JaneConverter natively supports and downloads from adult platforms (e.g. Pornhub, XVideos, SpankBang, RedTube, Chaturbate recordings, and similar streaming sites) via its underlying media extraction engine.
-- **Operational Reality:** While adult websites and niche portals are **not officially certified, tested, or benchmarked in the primary verification suite**, the engine's generic stream decoders, HLS (`.m3u8`) segment assemblers, and DASH manifest parsers will process them seamlessly whenever valid media streams are detected.
-- **Browser Bridge Sniffing:** For platforms with complex anti-bot protection or proprietary web players, clicking **Send to JaneConverter** from the companion Browser Bridge extension directly captures the authenticated video/audio stream from your active browser tab.
+JaneConverter is **not limited to the platforms above**. Its ingestion engine is inherently universal:
+- **Thousands of Unlisted & Niche Websites:** Powered by `yt-dlp`'s 1,800+ extractors, a generic media stream sniffer, and HLS (`.m3u8`) / DASH segment assemblers. Niche video portals, forums, news archives, and educational sites work out of the box.
+- **Adult & 18+ Platforms:** Natively supports and downloads from adult platforms (Pornhub, XVideos, SpankBang, RedTube, Chaturbate recordings, etc.) via underlying stream extractors.
+- **Operational Reality:** Outside Tier 1 certified sites, open web and adult sites are expected to work via generic extraction without individual per-site certification.
+- **Browser Bridge Sniffing:** For sites with aggressive bot guards or custom web players, clicking **Send to JaneConverter** in the Browser Bridge extension pipes authenticated streams directly from your active browser tab.
 
 ### Zero-Loss Stream Copy Mode
-If you input a video (e.g. an MP4 or MKV from YouTube) and your target format matches the native stream codecs (e.g. H.264 video + AAC audio into an MP4 container) with no resizing or audio normalization requested:
-- JaneConverter automatically invokes **Stream Copy Mode** (`-c copy`).
-- The audio and video streams are remuxed at the container level without touching a single pixel or audio sample.
-- **Result:** Conversion completes in **under 2 seconds** with **100% bit-perfect original quality** and zero CPU/GPU workload.
+When input codecs match the requested output container (e.g. H.264 + AAC into an MP4 container) with no resizing or audio filters requested:
+- The engine executes **Stream Copy Mode** (`-c copy`).
+- Streams are remuxed at the container level without re-encoding.
+- Conversion finishes in **under 2 seconds** with **100% bit-perfect original quality** and zero CPU/GPU overhead.
 
 ### Time Trimming & Offsets
-Need only a specific section of a 2-hour podcast or concert?
-- In the format settings, specify **Start Offset** and **End Offset** (e.g., `00:01:30` to `00:03:45`, or exact seconds like `90` to `225`).
-- JaneConverter extracts and transcodes only the chosen time slice, saving disk space and processing time.
+Specify **Start Offset** and **End Offset** (e.g. `00:01:30` to `00:03:45`, or exact seconds like `90` to `225`) in format settings to extract and transcode only the desired segment.
 
-### Hardware Acceleration (GPU vs CPU Fallback)
-JaneConverter automatically detects and initializes dedicated GPU acceleration engines based on your system hardware:
+### Hardware Acceleration (GPU & CPU Fallback)
+Automatic GPU encoder initialization:
 - **NVIDIA:** NVENC (`h264_nvenc`, `hevc_nvenc`)
 - **AMD:** AMF (`h264_amf`, `hevc_amf`)
 - **Intel:** QuickSync Video / QSV (`h264_qsv`, `hevc_qsv`)
 - **Apple Silicon:** VideoToolbox (`h264_videotoolbox`, `hevc_videotoolbox`)
 
-#### The Self-Healing CPU Fallback Guarantee:
-If your GPU encounters VRAM exhaustion (e.g., you are playing a heavy game or running a 3D render in the background), or if a specific driver profile fails, JaneConverter's Adaptive Engine catches the error, purges the staging buffer, and seamlessly falls back to multi-threaded CPU software encoding (`libx264`, `libx265`, `svtav1`) without interrupting your conversion or failing the job.
+**Self-Healing CPU Fallback:** If GPU memory is exhausted (e.g. gaming or 3D rendering in the background) or a driver fails, the Adaptive Engine catches the failure, flushes the staging buffer, and falls back to multi-threaded CPU software encoding (`libx264`, `libx265`, `svtav1`) without failing the conversion.
 
 ### Archival Vault Recovery (Deleted & Hidden Videos)
+When videos are deleted or removed from YouTube, normal tools fail with `Video unavailable`. JaneConverter can resurrect lost media through a 4-stage discovery ladder:
 
-YouTube videos and online media frequently disappear due to creator deletions, account closures, privacy changes, or copyright flags. When downloading an unlisted link or an entire playlist, deleted entries normally fail immediately with errors like `Video unavailable` or `This video has been removed by the uploader`.
+| Stage | Source | Purpose |
+| :--- | :--- | :--- |
+| **Stage 1** | Filmot & Wayback Metadata Index | Recovers original title, channel name, upload date, description, and runtime. |
+| **Stage 2** | Archive.org Collections | Searches `archiveteam_youtube` and `youtube-archive` buckets for preserved HTTPS streams. |
+| **Stage 3** | Ghostarchive Mirrors | Probes `ghostarchive.org` mirrors for direct video copies. |
+| **Stage 4** | Wayback Machine CDX Streams | Searches historical direct `googlevideo.com/videoplayback` chunk captures. |
 
-JaneConverter features a scientific, multi-stage **Archival Vault Recovery Pipeline** engineered to resurrect lost media directly from world archival registries.
+Recovered streams are verified with `ffprobe`, transcoded to your target format, stamped with original metadata, and saved to your library.
 
-#### The Scientific 4-Stage Discovery Ladder:
-
-```
-[ Video Unavailable / Deleted ]
-               │
-               ▼
-   [ Stage 1: Filmot & Wayback Metadata Index ] ──► Uncovers original title, channel, description, duration
-               │
-               ▼
-   [ Stage 2: Archive.org Collections ] ─────────► Queries archiveteam_youtube & youtube-archive buckets
-               │
-               ▼
-   [ Stage 3: Ghostarchive Mirrors ] ────────────► Inspects direct web video archive mirrors
-               │
-               ▼
-   [ Stage 4: Wayback Machine CDX Streams ] ─────► Probes direct googlevideo captures & watch snapshots
-               │
-               ▼
-   [ FFprobe Stream Verification & Transcode ] ──► Validates media container and converts to requested format
-```
-
-1. **Stage 1 — Historical Metadata Resolution:**
-   - Probes the Filmot archive database and Wayback Machine CDX snapshots for the target video ID.
-   - Extracts the original video title, upload date, channel name, description, and running time so your converted file has its genuine title and tags instead of a cryptic ID or `[Deleted video]`.
-2. **Stage 2 — Archive.org Collections (`archiveteam_youtube`):**
-   - Queries the Internet Archive advanced search API for preserved items matching `youtube-<id>`, `archiveteam_youtube`, and `youtube-archive`.
-   - Inspects item metadata manifests and directly verifies public HTTPS video streams (`.mp4`, `.mkv`, `.webm`).
-3. **Stage 3 — Ghostarchive Mirrors:**
-   - Probes Ghostarchive (`ghostarchive.org/varchive/<id>`) for direct preserved video mirrors.
-4. **Stage 4 — Wayback Machine Stream Snapshots:**
-   - Probes the Internet Archive Wayback Machine CDX index for historical direct `googlevideo.com/videoplayback` captures and snapshot watch pages.
-5. **Validation & Transcoding:**
-   - The recovered stream is verified with `ffprobe` to ensure the container structure is intact, transcoded into your chosen target format (MP4, MKV, MP3, etc.), stamped with historical metadata, and saved into your Export Library.
-
-#### How to Enable Archival Vault Recovery:
-
-To maintain maximum conversion speed during ordinary day-to-day use, Archival Vault Recovery is **disabled by default**. You can enable it with a single click whenever you encounter dead links or missing playlist items:
-
-- **Desktop UI:**
-  1. On the main **Convert** screen, expand **Advanced settings**.
-  2. Toggle **Search archival vaults for unavailable media** to **ON**.
-  3. When enabled, any unavailable video is routed through the archival discovery ladder.
-- **CLI:**
-  - Pass the `--archival-fallback` flag:
-    ```bash
-    uv run janeconverter --source "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --archival-fallback
-    ```
-
-#### Playlist Preservation Mode:
-When archiving a large playlist that contains deleted or private items:
-- With archival fallback **disabled (default)**: Unavailable items are safely skipped to avoid halting playlist conversion.
-- With archival fallback **enabled**: JaneConverter intercepts unavailable items, resolves their historical titles, queries archival vaults in sequence, and downloads all preserved video streams directly into your playlist folder.
+#### Enabling Archival Recovery:
+- **Desktop UI:** Expand **Advanced settings** on the Convert screen and toggle **Search archival vaults for unavailable media** to **ON**.
+- **CLI:** Pass `--archival-fallback`:
+  ```bash
+  uv run janeconverter --source "https://www.youtube.com/watch?v=VIDEO_ID" --archival-fallback
+  ```
+- **Playlists:** With archival fallback ON, deleted playlist items are recovered in sequence rather than skipped.
 
 ---
 
 ## 5. Photo, Asset & Gallery Ingestion
 
-JaneConverter treats images with the same engineering rigor as audio and video. It does not scrape compressed web previews; it extracts pristine original masters.
-
 ### Pinterest Pins, Boards & Notification Hubs
-- **Single Pins (`pinterest.com/pin/...`):** Downloads the original full-resolution master photo, stripping preview scaling parameters (`236x`, `564x`, `736x`) to fetch the uncompressed `originals/` CDN file.
-- **Board Routes (`pinterest.com/username/boardname/`):** Recursively crawls public board pages, collecting all pins into an organized local gallery folder.
-- **Notification Collections (`news_hub`):** When following notification links from emails or mobile alerts, Pinterest often redirects guest users to notification hubs (`/news_hub/`). JaneConverter unpacks the notification collection structure and extracts all target photos without getting trapped on the landing feed.
-- **Shortlinks (`pin.it/...`):** Automatically expands shortlinks through HTTP 301/302 redirects to extract the underlying target pin.
+- **Single Pins (`/pin/...`):** Strips preview scaling parameters (`236x`, `564x`, `736x`) to download uncompressed `originals/` master photos.
+- **Board Routes (`/username/boardname/`):** Recursively crawls public boards into an organized gallery folder.
+- **Notification Hubs (`/news_hub/`):** Resolves notification links that redirect guests, extracting all collection images via internal API endpoints.
+- **Shortlinks (`pin.it/...`):** Automatically expands 301/302 redirects to extract underlying pins.
 
 ### Instagram Multi-Photo Carousels
-- Instagram posts often contain 2 to 10+ slides mixing photos and videos.
-- Paste a carousel URL (e.g., `https://www.instagram.com/p/ABC.../`).
-- JaneConverter parses all slides, extracts every photo at maximum available resolution (typically 1440×1440 or 1080×1350), downloads any interspersed video slides, and saves the complete set inside an album folder named after the post title and author.
+- Paste any carousel link (`/p/ABC.../`).
+- Extracts all slide photos at maximum resolution (1440×1440 or 1080×1350) and downloads interspersed video slides into an organized album folder.
 
 ### Facebook Photo Albums & Multi-Image Posts
-- **Album URLs (`facebook.com/media/set/?set=...`) and Shared Posts:**
-- Facebook uses dynamic React single-page architecture that hides photos behind login overlays and dynamic pagination.
-- **Autonomous Headless Traversal:** JaneConverter launches a sandboxed, isolated webview that:
-  1. Detects and dismisses login prompts and modal backdrops.
-  2. Fires a 5-stage synthetic pointer event sequence (`pointerdown` → `mousedown` → `pointerup` → `mouseup` → `click` + `ArrowRight`) to navigate carousels reliably.
-  3. Detects redirects and switches dynamically between carousel mode and album grid thumbnail expansion mode.
-  4. Automatically refreshes CDN security tokens if a photo link returns HTTP 403 Forbidden.
+- Facebook hides full albums behind dynamic single-page React pagination and login backdrops.
+- **Autonomous Headless Traversal:** Sandboxed webview dismisses login modals, executes a 5-stage pointer event sequence (`pointerdown` &rarr; `mousedown` &rarr; `pointerup` &rarr; `mouseup` &rarr; `click` + `ArrowRight`), switches to grid scraping if redirected, and refreshes CDN tokens on HTTP 403.
 
 ### Image Formats & Automatic Normalization
-Convert any image between **PNG**, **JPG**, **WebP**, **AVIF**, **BMP**, **GIF**, and **TIFF**.
-- **EXIF Auto-Rotation:** Transposes images automatically based on camera orientation tags (`ImageOps.exif_transpose`), ensuring phone photos never appear upside-down or sideways.
-- **Rare Format Extraction via FFmpeg:** When reading uncommon or proprietary containers (HEIF, AVIF, animated WebP, PSD, QOI), the engine utilizes FFmpeg to extract an uncompressed RGBA/RGB master frame into Pillow for perfect conversion.
-- **Color Profile Normalization:** Normalizes CMYK and palette-based images into standard sRGB for flawless web and desktop display.
+- Supports conversion between **PNG**, **JPG**, **WebP**, **AVIF**, **BMP**, **GIF**, and **TIFF**.
+- **EXIF Auto-Rotation:** Transposes images via `ImageOps.exif_transpose` so phone photos never appear sideways.
+- **FFmpeg Frame Extraction:** Uses FFmpeg to extract pristine RGBA master frames from rare formats (HEIF, AVIF, animated WebP, PSD, QOI) before Pillow processing.
+- **Color Profile Normalization:** Converts CMYK and palette images to standard sRGB.
 
 ---
 
-## 6. The Story Capturer: Ephemeral Live Stories & Trays
+## 6. The Story Capturer: Ephemeral Live Stories
 
 > [!WARNING]
 > **Borderline Feature / Grey-Line Capability**  
-> Ephemeral 24-hour stories on Instagram and Facebook are designed by social networks to be temporary and restricted. JaneConverter includes a specialized, high-rigor extraction engine capable of archiving live story feeds. Because of the personal and fleeting nature of this media, this feature operates under strict ethical and legal boundaries. It is **disabled by default** and requires explicit user activation.
+> Ephemeral 24-hour stories on Instagram and Facebook are designed to be temporary. JaneConverter includes a specialized extraction engine for archiving story feeds. This capability is **disabled by default** and requires explicit user activation.
 
-### What is the Story Capturer?
-Normally, saving Instagram or Facebook stories requires manual screen recording, third-party shady websites loaded with popups, or fragile browser extensions that steal session cookies.
+### Overview & Architecture
+Connects directly to platform story relay preloader endpoints (`xdt_api__v1__feed__reels_media`, `story_card_info`), bypassing web UI tracking to archive live story feeds in original master quality.
 
-JaneConverter's **Story Capturer** connects directly to platform story relay preloader endpoints (`xdt_api__v1__feed__reels_media`, `story_card_info`, `ScheduledServerJS`), allowing you to archive live story feeds in original master quality.
+### Capturing Live Story Trays & Highlights
+- **Full Tray Capture:** Paste an active story link or profile URL (`instagram.com/stories/username/` or `facebook.com/stories/...`). JaneConverter queries the active tray and downloads **every story card currently live** (whether 1 or 40+ slides) with pristine photos and full HD video.
+- **Story Highlights:** Paste any highlight link (`instagram.com/stories/highlights/...`) to download the complete highlight collection.
+- Stories are saved chronologically in your library, labeled with author handles and timestamps.
 
-### How to Snatch an Entire Story Tray or User Feed
+### Guest Sessions vs Authenticated Cookies
+- **Public Accounts:** Downloaded via anonymous guest requests without sending user credentials (no viewer list entry).
+- **Private / Friends-Only Stories:** Uses your active desktop browser session (see [Section 7](#7-browser-cookies--session-architecture)). If your browser can view it, JaneConverter can capture it.
 
-The standout power of JaneConverter's story engine is its ability to **snatch and capture the entire present live story feed of a user in a single action, no matter how many stories are present**:
-
-1. **Copy the Target Link:**
-   - **Instagram:** Copy the user's active story URL:
-     ```
-     https://www.instagram.com/stories/username/
-     ```
-     *(Or simply copy the user's profile URL: `https://www.instagram.com/username/`)*
-   - **Facebook:** Copy the user's story tray URL or story ID:
-     ```
-     https://www.facebook.com/stories/123456789012345/
-     ```
-2. **Paste into JaneConverter:**
-   - Paste the link into the URL input bar.
-3. **Automatic Tray Unrolling:**
-   - Instead of fetching only the currently visible story slide, JaneConverter queries the user's active story bucket/tray.
-   - **No matter how many story cards are currently live** (whether 1, 6, or 40+ slides), the engine extracts **every single story card** in the live feed.
-   - **Photo Stories:** Synthesized and exported as crisp, uncompressed original images (JPG/PNG).
-   - **Video Stories:** Downloaded with full HD video and pristine audio streams.
-   - All stories are placed in your Export Library organized chronologically with author handles and timestamps.
-
-### Story Highlights
-Want to archive permanent story highlights from an Instagram profile?
-- Paste any highlight URL:
-  ```
-  https://www.instagram.com/stories/highlights/17923456789012345/
-  ```
-- JaneConverter traverses the `xdt_api__v1__feed__reels_media__connection` preloader and downloads the complete highlight album at original quality.
-
-### Guest Sessions vs Authenticated Browser Cookies
-- **Public Accounts:** If an Instagram or Facebook account has public stories accessible without an active account, JaneConverter attempts extraction via guest session mode.
-- **Friends-Only & Logged-In Stories:** If the account is private, followers-only, or requires an active account to view, JaneConverter utilizes your active desktop browser session (see [Section 7](#7-browser-cookies--zero-extension-session-architecture)). If your desktop browser can see the story, JaneConverter can capture it.
-
-### The Activation Gate & Acceptable Use Policy
-
-Because ephemeral media capture touches privacy and copyright boundaries, JaneConverter gates this ability behind a mandatory safety lock:
-
-```
-[ Settings ] --> [ Browser & Sessions ] --> [ Ephemeral Stories Extraction: ON ]
-                                                        |
-                                                        v
-                                       [ Terms of Usage Modal ]
-                                       - Legal compliance check
-                                       - Consent & rights verification
-                                       - Accept to Unlock
-```
-
-#### How to Enable Story Extraction:
-1. Open **Settings** (gear icon in the sidebar).
-2. Click on the **Browser & Sessions** tab.
-3. Locate the **Ephemeral Stories Extraction** section.
-4. Toggle the switch to **ON**.
-5. The **Terms of Usage & Acceptable Use Policy** modal will appear.
-6. Read and acknowledge the policy:
-   - You confirm you have permission, authorization, or legal rights to archive the media.
-   - You agree not to use the tool for harassment, stalking, unauthorized redistribution, or infringing creators' privacy.
-7. Click **I Understand & Agree**. Story extraction is now unlocked for your session.
-8. *(CLI users: pass the `--allow-ephemeral-stories` flag when executing commands).*
+### Activation Gate & Terms of Usage
+To prevent inadvertent privacy violations, story extraction is gated behind an affirmative opt-in:
+1. Open **Settings &rarr; Browser & Sessions**.
+2. Toggle **Ephemeral Stories Extraction** to **ON**.
+3. In the **Terms of Usage** modal, confirm authorization and compliance with privacy laws.
+4. Click **I Understand & Agree** to unlock. *(CLI: pass `--allow-ephemeral-stories`).*
 
 ---
 
-## 7. Browser Cookies & Zero-Extension Session Architecture
+## 7. Browser Cookies & Session Architecture
 
-### Why are Cookies Needed?
-Over 90% of conversions (YouTube videos, public Instagram posts, Spotify matching, TikTok, Pinterest) work 100% anonymously in guest mode without ever touching your browser.
-
-However, certain situations strictly require authentication:
+### When Cookies Are Required
+Over 90% of conversions operate 100% anonymously in guest mode. Cookies are needed only for:
 - Age-gated YouTube videos (Error 152 / "Sign in to confirm you're not a bot").
-- Private or unlisted videos you have access to.
-- Friends-only Facebook posts, restricted photo albums, or private group media.
-- Instagram stories or followers-only accounts.
+- Private or unlisted videos accessible to your account.
+- Friends-only Facebook posts and private Instagram accounts.
+- Ephemeral stories from non-public profiles.
 
-### Direct Edge & Chrome Cookie Access (Chromium 127+ Fix)
+### Direct Edge & Chrome Cookie Access (Chromium 127+)
+Chromium 127+ introduced Windows App-Bound Encryption, blocking standard external cookie decryption:
+1. Open **Settings &rarr; Browser & Sessions**.
+2. Enable **Read Browser Cookies** and **Direct Edge & Chrome Cookie Access**.
+3. **Mechanism:** Configures user policy `ApplicationBoundEncryptionEnabled` to `0` in `HKCU\Software\Policies\Microsoft\Edge` and `Google\Chrome`, enabling standard Windows DPAPI decryption.
+4. **Benefit:** Enables cookie reading without third-party extensions or manual `.txt` cookie exports. Can be toggled off at any time.
 
-In mid-2024, Chromium version 127 introduced **App-Bound Encryption** on Windows. This security change locked standard DPAPI cookie extraction, causing third-party tools and downloaders to break unless users installed shady browser extensions or manually exported dangerous plaintext `.txt` cookie files.
+### Non-Chromium Browsers
+Firefox, Vivaldi, and Brave use standard encryption vaults. Select your browser in the **Preferred Browser** dropdown in Settings without requiring registry policies.
 
-**JaneConverter solves this natively without any extensions:**
-1. Open **Settings** -> **Browser & Sessions**.
-2. Turn on **Read Browser Cookies**.
-3. Enable **Direct Edge & Chrome Cookie Access**.
-4. **What this does:** JaneConverter configures the official user policy `ApplicationBoundEncryptionEnabled` to `0` in `HKCU\Software\Policies\Microsoft\Edge` and `HKCU\Software\Policies\Google\Chrome`. This instructs the browser to use standard Windows DPAPI encryption for local session cookies.
-5. **The Benefit:** JaneConverter can read your logged-in sessions directly from Edge and Chrome with **zero third-party browser extensions** and **zero manual file exports**.
-6. *Note on Security:* This adjusts Edge/Chrome encryption policy for your Windows user account. You can toggle it off at any time directly in Settings.
-
-### Non-Chromium Browsers (Firefox, Vivaldi, Brave)
-If your primary browser is **Mozilla Firefox**, **Vivaldi**, or **Brave**:
-- These browsers utilize standard encryption or dedicated master key vaults.
-- Simply select your browser in the **Preferred Browser** dropdown in Settings. No registry policy adjustments are required!
-
-### Volatile Memory Safety & Privacy Guarantee
-JaneConverter is architected with strict, zero-leak privacy principles:
-- **Shadow Copy Mirror:** When reading cookies, JaneConverter makes a non-locking, temporary snapshot of the browser's SQLite database into RAM. It never locks your active browser or causes browser crashes.
-- **Volatile Storage:** Decrypted session tokens are placed in an ephemeral in-memory `RequestsCookieJar`.
-- **Zero Disk Leakage:** Plaintext cookies, passwords, and tokens are **NEVER written to disk or logged to files**. Once the media extraction completes, the RAM buffer is immediately zeroed out.
-- **No Remote Telemetry:** No cookie data or browsing activity is ever transmitted to any remote server.
+### Volatile Memory Safety & Privacy Guarantees
+- **Non-Locking Shadow Snapshot:** Creates a temporary copy of the SQLite database in RAM to prevent browser file-locking collisions.
+- **Volatile Storage:** Decrypted cookies exist only in an ephemeral in-memory `RequestsCookieJar` during the active job.
+- **Zero Disk Writes:** Passwords, session cookies, and tokens are **never written to disk or logs**. Memory is immediately cleared upon job completion.
+- **Zero Telemetry:** No cookies or browsing history are ever transmitted to remote servers.
 
 ---
 
 ## 8. FL Studio (.flp) Project Downgrader
 
 > [!NOTE]
-> **DAW Tools Status:** The FL Studio (`.flp`) downgrader and Ableton Live (`.als`) migrator are **experimental creator studio utilities** engineered for Jane Cerys's personal audio workstation. All heuristics, version matrices, and patching algorithms are **Subject to Maintainer Decisions**. External critique, feature gatekeeping, or issue policing regarding these tools is categorically out of scope.
+> **DAW Tools Status:** The FL Studio (`.flp`) downgrader and Ableton Live (`.als`) migrator are **experimental creator studio utilities** engineered for Jane Cerys's personal workstation. All heuristics, version matrices, and patching algorithms are **Subject to Maintainer Decisions**. External critique or issue policing regarding these utilities is categorically out of scope.
 
-### The Problem: Collaboration Lockouts
-FL Studio project files (`.flp`) are binary chunk formats. When an artist saves a project in a newer version of FL Studio (e.g. FL Studio 21.2 or FL Studio 24) and sends it to a collaborator who is running an earlier release (e.g. FL Studio 20.8), FL Studio halts loading and displays a blocking modal:
+### The Collaboration Lockout Problem
+When an artist saves a project in a newer FL Studio release (e.g. FL 24 or 21.2) and shares it with a collaborator on an older release (e.g. FL 20.8), FL Studio halts loading with a blocking error: *"This project was saved in a newer version of FL Studio and cannot be opened."*
 
-> *"This project was saved in a newer version of FL Studio and cannot be opened."*
+### Downgrading Workflow
+1. Click **FL Studio Tools** in the left sidebar.
+2. Drag-and-drop your `.flp` file or click **Browse FLP**.
+3. **Inspect Metadata:** Displays project tempo (BPM), PPQ timebase, channel count, and original build version.
+4. **Select Target Version:** Choose `20.8.4` (FL 20), `21.0.3` (FL 21 early), or `21.2.3` (FL 21 late).
+5. **Click Downgrade Project:** Writes a safe copy (`<Original>_downgraded.flp`). **Your original project file is untouched.**
 
-This forces producers to either purchase costly upgrades mid-collaboration or manually bounce audio stems.
-
-### Step-by-Step Downgrading Instructions
-
-JaneConverter includes a built-in binary project patcher that edits the project header events, allowing older FL Studio engines to load the project:
-
-```
-[ FL Studio Tools ] --> [ Browse .flp ] --> [ Inspect Info ] --> [ Pick Target ] --> [ Downgrade ]
-                                              - Tempo / PPQ        - FL 20.8.4        - Safe Copy
-                                              - Channel Count      - FL 21.0.3          Created
-```
-
-1. Click **FL Studio Tools** in JaneConverter's left sidebar.
-2. Click **Browse FLP** or drag-and-drop your `.flp` file into the window.
-3. **Inspect Project Metadata:** JaneConverter immediately parses and displays:
-   - Project Tempo (BPM)
-   - Timebase resolution (PPQ - Pulses Per Quarter Note)
-   - Total channel / instrument count
-   - Original FL Studio build version
-4. **Choose Target Version:** In the dropdown, select the target version used by your collaborator:
-   - `20.8.4` (FL Studio 20 compatibility)
-   - `21.0.3` (FL Studio 21 early release)
-   - `21.2.3` (FL Studio 21 late release)
-5. **Click Downgrade Project:**
-   - The engine validates the binary chunks, updates the header version identifier, and writes a new file:
-     ```
-     <OriginalName>_downgraded.flp
-     ```
-   - **Your original project file is 100% untouched and safe.**
-
-### Supported Versions & Technical Details
-- **How it works:** Modifies header event tags and version registration bytes while preserving all pattern notes, automation clips, mixer tracks, plugin routings, and sample references.
-- **Plugin Caveat:** If the project utilizes native stock plugins or generators introduced exclusively in newer versions (e.g., *Kepler*, *LuxeVerb*, or *Hyper Chorus*), older FL Studio versions will load the rest of the project normally but report those specific missing plugins as unavailable. Third-party VSTs (Serum, Vital, FabFilter, Kontakt) load seamlessly across versions.
+### Technical Details & Plugin Compatibility
+- Modifies binary header events and version registration bytes while preserving pattern notes, automation clips, mixer routings, and sample links.
+- **Plugin Note:** Stock plugins exclusive to newer versions (e.g. *Kepler*, *LuxeVerb*) will be flagged as missing by older FL Studio engines, but all patterns and third-party VSTs (Serum, Vital, FabFilter, Kontakt) load seamlessly.
 
 ---
 
 ## 9. Export Library & Storage Management
 
-All converted files are placed in your structured **JaneConverter Export Library**:
+Converted files are organized automatically in your **Export Library**:
+- `Music/` &rarr; Audio masters, albums, and tagged tracks (`Artist - Title.mp3`).
+- `Video/` &rarr; MP4, MKV, WebM videos, Shorts, and Reels (`Channel - Title.mp4`).
+- `Images/` &rarr; Pins, Instagram albums, and carousels (`Album_Title/slide_01.png`).
 
-```
-JaneConverter Export Library/
-├── Music/                  <-- MP3, FLAC, WAV, M4A, Spotify/Apple Music downloads
-│   └── Artist - Title.mp3
-├── Video/                  <-- MP4, MKV, WebM, YouTube, TikTok, Reels
-│   └── Channel - Video Title.mp4
-└── Images/                 <-- PNG, JPG, Instagram Carousels, Facebook Albums, Pinterest
-    ├── Pin_123456789.png
-    └── Instagram_Album_username/
-        ├── slide_01.png
-        └── slide_02.png
-```
-
-### Changing Your Storage Location:
-1. Open **Settings** -> **System & Updates**.
-2. Under **Data Root Folder**, click **Change Folder**.
-3. Select any local folder or external drive (e.g. `D:\MediaLibrary\JaneConverter`).
-4. JaneConverter updates its paths instantly. All future conversions and album folders will be saved to your new location.
-
-### Managing Converted Media:
-- Click the **Converted** tab in the sidebar to review your history.
-- Click any media item to play audio/video directly in the built-in mini-player.
-- Click the **Folder** icon next to any file to highlight it directly in Windows Explorer.
-- Clear items from history individually or in batch without deleting files from disk.
+### Storage & Library Controls:
+- **Change Directory:** Open **Settings &rarr; System & Updates &rarr; Data Root Folder** to retarget your library to any local drive.
+- **Review History:** Click the **Converted** tab to view past jobs, play files in the mini-player, or click the folder icon to reveal files in Windows Explorer.
+- **Disk Space Guard:** Conversions require at least **256 MB** of free drive space before starting, protecting drives from running out of storage.
 
 ---
 
 ## 10. Presets & Format Reference Cheat Sheet
 
-| Preset Name | Container | Default Bitrate / Resolution | Processing Mode | Recommended Application |
+| Preset | Format | Bitrate / Resolution | Mode | Recommended Application |
 | :--- | :--- | :--- | :--- | :--- |
-| **Fast MP3** | `.mp3` | 320 kbps CBR | Fast Transcode | Everyday listening, sample ripping, quick audio tests. Bypasses volume leveling for maximum speed. |
-| **Universal Music** | `.mp3` | 320 kbps CBR | DSP Normalization | Archiving songs and playlists. Applies EBU R128 (-14 LUFS) normalization and embeds square cover art. |
-| **Lossless Audio** | `.flac` | 24-bit / 48kHz | Bit-Perfect | Studio masters, archiving vinyl/CD rips, DAW sampling. 0% compression loss. |
-| **Universal Video** | `.mp4` | 1080p Full HD (H.264/AAC) | Hardware Accelerated | YouTube videos, phone/tablet storage, Discord sharing, TV playback. Universal hardware compatibility. |
-| **4K Ultra HD** | `.mp4` / `.mkv` | Up to 3840×2160 | Hardware / Stream Copy | High-end displays, cinematography, preserving maximum source resolution. |
-| **Stream Copy** | Same as Source | Original Bitrate | Container Remux (`-c copy`) | Millisecond conversion when source and target formats match. Zero quality loss, zero CPU/GPU overhead. |
-| **Lossless Image** | `.png` | Original Dimensions | Uncompressed | Social carousels, wallpapers, artwork, Pinterest pins. Pixel-for-pixel fidelity. |
-| **Compact Image** | `.jpg` / `.webp`| High-Quality Web | Web Optimized | Quick photo sharing, web uploads, saving disk storage. |
+| **Fast MP3** | `.mp3` | 320 kbps CBR | Fast Transcode | Fast audio ripping; bypasses loudness leveling for maximum speed. |
+| **Universal Music** | `.mp3` | 320 kbps CBR | DSP Normalization | Standard music library; applies -14 LUFS leveling and embeds square cover art. |
+| **Lossless Audio** | `.flac` | 24-bit / 48kHz | Bit-Perfect | Archival listening, sampling, and studio production. Zero compression loss. |
+| **Universal Video** | `.mp4` | 1080p Full HD (H.264/AAC) | Hardware Accelerated | General video playback across mobile, desktop, TV, and Discord sharing. |
+| **4K Ultra HD** | `.mp4` / `.mkv` | Up to 3840×2160 | Hardware / Stream Copy | High-resolution displays and preserving original cinematography. |
+| **Stream Copy** | Same as Source | Original Bitrate | Container Remux (`-c copy`) | Instant conversion when codecs match. Zero quality loss, zero CPU/GPU overhead. |
+| **Lossless Image** | `.png` | Original Dimensions | Uncompressed | Social carousels, wallpapers, artwork, and Pinterest pins. |
+| **Compact Image** | `.jpg` / `.webp` | High-Quality Web | Web Optimized | Quick photo sharing and saving storage space. |
 
 ---
 
-## 11. Troubleshooting, Edge Cases & Pro Tips
+## 11. Troubleshooting & Pro Tips
 
-### Q: YouTube shows "Sign in to confirm you're not a bot" or Error 152.
-**Why it happens:** YouTube triggers bot-detection challenges when requests originate from datacenter ranges or when an account is flagged.  
-**How to fix:**
-1. Open **Settings** -> **Browser & Sessions**.
-2. Make sure **Read Browser Cookies** is enabled.
-3. If using Google Chrome or Microsoft Edge, turn on **Direct Edge & Chrome Cookie Access**.
-4. Ensure you are signed into YouTube in that browser. JaneConverter will use your active session automatically.
-
-### Q: A YouTube video or playlist item says "Video unavailable" or "This video has been removed". Can I recover it?
-**Why it happens:** The video has been deleted, set to private, or removed from YouTube.  
-**How to recover it:**
-1. On the **Convert** screen, expand **Advanced settings**.
-2. Toggle **Search archival vaults for unavailable media** to **ON** (or pass `--archival-fallback` in the CLI).
-3. Re-run the conversion. JaneConverter will systematically search Filmot, Archive.org collections, Ghostarchive, and the Wayback Machine to locate, verify, and download any preserved copies.
-
-### Q: An Instagram or Facebook story link fails with "Ephemeral story extraction is disabled".
-**Why it happens:** Ephemeral story extraction is gated by default to uphold privacy boundaries.  
-**How to fix:** Go to **Settings -> Browser & Sessions**, toggle **Ephemeral Stories Extraction** to ON, and accept the Terms of Usage modal.
-
-### Q: An Instagram carousel or Facebook album only downloaded some of the pictures.
-**Why it happens:** The post may contain mixed media, or the user's account may be restricted to friends.  
-**How to fix:**
-1. Ensure the link points directly to the album or post (e.g. `https://www.instagram.com/p/.../` or `https://www.facebook.com/media/set/?set=...`).
-2. Make sure your browser is signed into that social network and **Read Browser Cookies** is enabled.
-
-### Q: Why did Stream Copy mode re-encode my file instead of copying?
-**Why it happens:** Stream Copy (`-c copy`) is lightning-fast, but it can only execute when:
-1. The source and target container types are compatible.
-2. No audio filters (e.g. EBU R128 loudness leveling) are requested.
-3. No video resolution resizing is selected.
-4. No cover art muxing is required.  
-If any audio/video modifications are active, the engine intelligently switches to hardware transcoding to apply your settings accurately.
-
-### Q: Can I run multiple conversions at the same time?
-**Yes!** Drag and drop multiple files or a complete folder into the app. JaneConverter stages each conversion in an isolated temporary job directory (`temp/job_<id>/`), executing them smoothly in sequence.
-
-### Q: What is the minimum free disk space required?
-JaneConverter requires at least **256 MB** of free disk space on your target drive before initiating a conversion. This prevents unfinished, corrupted files from filling a nearly full drive.
-
-### Q: Where are application logs located if I encounter a bug?
-Click the **Console** icon in the sidebar to view the live debug stream. Click **Export Logs** to save the log file to your desktop for easy bug reporting or troubleshooting.
+- **YouTube Bot Verification (Error 152):** Enable **Read Browser Cookies** in Settings. For Chrome or Edge, turn on **Direct Edge & Chrome Cookie Access** and ensure you are logged into YouTube in that browser.
+- **Deleted / Unavailable YouTube Videos:** Expand **Advanced settings** on the Convert screen, toggle **Search archival vaults for unavailable media** to **ON**, and re-run. JaneConverter searches Filmot, Archive.org collections, Ghostarchive, and Wayback CDX streams.
+- **"Ephemeral story extraction is disabled":** Open **Settings &rarr; Browser & Sessions**, enable **Ephemeral Stories Extraction**, and accept the terms modal.
+- **Partial Carousel / Album Downloads:** Verify link points directly to the album post. For private accounts, ensure browser session cookies are enabled.
+- **Why Stream Copy Re-encoded:** Stream Copy (`-c copy`) automatically switches to transcoding if audio normalization, video resizing, or cover art embedding is requested.
+- **Batch Processing:** Drag and drop multiple files or entire folders into the window. Each file is staged in an isolated job directory (`temp/job_<id>/`) and processed in sequence.
+- **Viewing Logs:** Click the **Console** icon in the sidebar for live debug logs, or click **Export Logs** to save a diagnostic file.
 
 ---
 

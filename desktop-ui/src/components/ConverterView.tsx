@@ -53,6 +53,9 @@ import {
 import { PlaylistDialog } from "./PlaylistDialog";
 import { FlpConverterView } from "./FlpConverterView";
 import { StoryTermsModal } from "./StoryTermsModal";
+import { type QueueItem, createQueueItems } from "./converter/queueUtils";
+import { ConverterQueue } from "./converter/ConverterQueue";
+import { ActionBar } from "./converter/ActionBar";
 
 export function isEphemeralStoryUrl(value: string): boolean {
   try {
@@ -203,20 +206,7 @@ function normalizeDroppedPath(value: string): string {
   }
 }
 
-export interface QueueItem {
-  id: string;
-  source: string;
-  name: string;
-  category: Category;
-  status: "queued" | "converting" | "completed" | "failed";
-  progress: number;
-  outputPath?: string;
-  errorMessage?: string;
-  playlistIndexes?: string;
-  playlistCatalog?: PlaylistCatalog;
-  presetName?: string;
-  settingsSnapshot?: ConverterSettings;
-}
+export type { QueueItem };
 
 function SelectField({
   label,
@@ -866,14 +856,7 @@ export function ConverterView({
           return;
         }
         if (paths.length > 1) {
-          const newItems: QueueItem[] = paths.map((p, idx) => ({
-            id: `${Date.now()}-${idx}`,
-            source: p,
-            name: p.replace(/^.*[\\/]/, ""),
-            category: detectCategoryFromPath(p) || activeCategory,
-            status: "queued",
-            progress: 0,
-          }));
+          const newItems = createQueueItems(paths, activeCategory);
           setQueue((curr) => [...curr, ...newItems]);
           onStatus(`Added ${paths.length} items to conversion queue.`);
           return;
@@ -911,14 +894,7 @@ export function ConverterView({
     try {
       const paths = bridge.chooseFiles ? await bridge.chooseFiles() : [];
       if (!paths || paths.length === 0) return;
-      const newItems: QueueItem[] = paths.map((p, idx) => ({
-        id: `${Date.now()}-${idx}`,
-        source: p,
-        name: p.replace(/^.*[\\/]/, ""),
-        category: detectCategoryFromPath(p) || activeCategory,
-        status: "queued",
-        progress: 0,
-      }));
+      const newItems = createQueueItems(paths, activeCategory);
       setQueue((curr) => [...curr, ...newItems]);
       onStatus(`Added ${paths.length} items to conversion queue.`);
     } catch (error) {
@@ -977,17 +953,7 @@ export function ConverterView({
     if (acceptedPaths.length === 1) {
       handleSingleSource(acceptedPaths[0]);
     } else {
-      const newItems: QueueItem[] = acceptedPaths.map((p, idx) => {
-        const clean = p.trim();
-        return {
-          id: `${Date.now()}-${idx}`,
-          source: clean,
-          name: clean.replace(/^.*[\\/]/, "") || clean,
-          category: detectCategoryFromPath(clean) || activeCategory,
-          status: "queued",
-          progress: 0,
-        };
-      });
+      const newItems = createQueueItems(acceptedPaths, activeCategory);
       setQueue((curr) => [...curr, ...newItems]);
       onStatus(`Added ${acceptedPaths.length} items to conversion queue.`);
     }
@@ -1541,200 +1507,38 @@ export function ConverterView({
       </section>
 
       {/* Conversion Queue Section */}
-      {queue.length > 0 && (
-        <section className="panel p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <Files className="size-4 text-[#c52b68]" />
-              <div className="text-sm font-medium text-white">Conversion Queue</div>
-              <span className="rounded-full bg-white/[0.08] px-2 py-0.5 text-[10px] font-mono text-zinc-300">
-                {queue.filter((it) => it.status === "completed").length}/{queue.length} completed
-              </span>
-              {queueRunning && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-pink-500/30 bg-pink-500/10 px-2 py-0.5 text-[10px] text-pink-300 animate-pulse">
-                  <LoaderCircle className="size-2.5 animate-spin" /> Processing queue
-                </span>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {!queueRunning ? (
-                <button
-                  type="button"
-                  disabled={!queue.some((it) => it.status === "queued" || it.status === "converting")}
-                  onClick={() => {
-                    if (!running) {
-                      setQueue((curr) =>
-                        curr.map((it) => (it.status === "converting" ? { ...it, status: "queued", progress: 0 } : it))
-                      );
-                    }
-                    setQueueRunning(true);
-                  }}
-                  className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs text-pink-300 hover:text-pink-200 border-pink-500/25 bg-pink-500/[0.06] disabled:opacity-40"
-                >
-                  <Play className="size-3 fill-current" /> Start queue
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setQueueRunning(false)}
-                  className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs text-amber-300 hover:text-amber-200 border-amber-500/25 bg-amber-500/[0.06]"
-                >
-                  <Pause className="size-3" /> Pause queue
-                </button>
-              )}
-              {queue.some((it) => it.status === "completed") && (
-                <button
-                  type="button"
-                  onClick={() => setQueue((curr) => curr.filter((it) => it.status !== "completed"))}
-                  className="subtle-button px-2.5 py-1.5 text-xs text-zinc-400 hover:text-zinc-200"
-                >
-                  Clear completed
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  if (queueRunning) {
-                    setQueueRunning(false);
-                  }
-                  isStartingQueueRef.current = false;
-                  activeQueueItemIdRef.current = null;
-                  setQueue([]);
-                }}
-                className="subtle-button px-2.5 py-1.5 text-xs text-zinc-400 hover:text-rose-400"
-              >
-                Clear all
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-3 divide-y divide-white/[0.05] rounded-xl border border-white/[0.06] bg-black/20">
-            {queue.map((item, index) => {
-              const isUrl = /^https?:\/\//i.test(item.source);
-              const trackCount = item.playlistIndexes
-                ? item.playlistIndexes.split(",").length
-                : item.playlistCatalog
-                ? item.playlistCatalog.items.length
-                : null;
-
-              return (
-                <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 p-3.5 text-xs">
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <span className="font-mono text-[10px] text-zinc-600 w-4 text-right shrink-0">
-                      #{index + 1}
-                    </span>
-                    {item.category === "Image" ? (
-                      <FileImage className="size-4 text-sky-400 shrink-0" />
-                    ) : item.category === "Video" ? (
-                      <FileVideo className="size-4 text-[#c52b68] shrink-0" />
-                    ) : (
-                      <FileAudio className="size-4 text-emerald-400 shrink-0" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate font-medium text-zinc-200">{item.name}</span>
-                        {item.presetName && (
-                          <span className="rounded border border-white/[0.08] bg-white/[0.04] px-1.5 py-0.5 text-[9px] text-zinc-400 shrink-0">
-                            {item.presetName}
-                          </span>
-                        )}
-                        {trackCount !== null && (
-                          <span className="rounded border border-pink-500/25 bg-pink-500/10 px-1.5 py-0.5 text-[9px] text-pink-300 font-mono shrink-0">
-                            {trackCount} {trackCount === 1 ? "track" : "tracks"}
-                          </span>
-                        )}
-                      </div>
-                      <div className="truncate text-[10px] text-zinc-500">{item.source}</div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2.5 shrink-0">
-                    {item.status === "converting" && (
-                      <div className="flex items-center gap-2">
-                        <div className="w-20 h-1.5 overflow-hidden rounded-full bg-white/[0.06] ring-1 ring-white/10">
-                          <div
-                            className="h-full rounded-full bg-[#c52b68] transition-all duration-200"
-                            style={{ width: `${Math.round(item.progress * 100)}%` }}
-                          />
-                        </div>
-                        <span className="flex items-center gap-1 text-[11px] text-amber-300 font-mono font-medium">
-                          <LoaderCircle className="size-3 animate-spin" />
-                          {Math.round(item.progress * 100)}%
-                        </span>
-                      </div>
-                    )}
-
-                    {item.status === "completed" && (
-                      <div className="flex items-center gap-2">
-                        <span className="flex items-center gap-1 text-[11px] text-emerald-400">
-                          <CheckCircle2 className="size-3.5" /> Converted
-                        </span>
-                        {item.outputPath && (
-                          <button
-                            type="button"
-                            onClick={() => void bridge.openFile(item.outputPath!)}
-                            className="subtle-button px-2 py-0.5 text-[10px] text-emerald-300"
-                          >
-                            Open
-                          </button>
-                        )}
-                      </div>
-                    )}
-
-                    {item.status === "failed" && (
-                      <div className="flex items-center gap-2">
-                        <span className="flex items-center gap-1 text-[11px] text-rose-400" title={item.errorMessage}>
-                          <AlertCircle className="size-3.5" /> Failed
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setQueue((curr) =>
-                              curr.map((it) => (it.id === item.id ? { ...it, status: "queued", errorMessage: undefined } : it))
-                            );
-                            if (!queueRunning) setQueueRunning(true);
-                          }}
-                          className="subtle-button flex items-center gap-1 px-2 py-0.5 text-[10px] text-zinc-300 hover:text-white"
-                        >
-                          <RotateCcw className="size-2.5" /> Retry
-                        </button>
-                      </div>
-                    )}
-
-                    {item.status === "queued" && (
-                      <>
-                        <span className="text-[11px] text-zinc-500 font-mono">Queued</span>
-                        {isUrl && (
-                          <button
-                            type="button"
-                            onClick={() => void handleConfigureQueueItem(item)}
-                            className="subtle-button flex items-center gap-1 px-2 py-1 text-[11px] text-pink-300 hover:text-pink-200"
-                            title="Configure which tracks to include or exclude before conversion starts"
-                          >
-                            <ListMusic className="size-3" />
-                            {item.playlistIndexes ? "Edit tracks" : "Configure tracks"}
-                          </button>
-                        )}
-                      </>
-                    )}
-
-                    <button
-                      type="button"
-                      disabled={item.status === "converting"}
-                      onClick={() => setQueue((curr) => curr.filter((it) => it.id !== item.id))}
-                      className="p-1 text-zinc-500 hover:text-rose-400 disabled:opacity-30 transition-colors"
-                      title="Remove from queue"
-                      aria-label={`Remove ${item.name} from queue`}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+      <ConverterQueue
+        queue={queue}
+        queueRunning={queueRunning}
+        running={running}
+        onStartQueue={() => {
+          if (!running) {
+            setQueue((curr) =>
+              curr.map((it) => (it.status === "converting" ? { ...it, status: "queued", progress: 0 } : it))
+            );
+          }
+          setQueueRunning(true);
+        }}
+        onPauseQueue={() => setQueueRunning(false)}
+        onClearCompleted={() => setQueue((curr) => curr.filter((it) => it.status !== "completed"))}
+        onClearAll={() => {
+          if (queueRunning) {
+            setQueueRunning(false);
+          }
+          isStartingQueueRef.current = false;
+          activeQueueItemIdRef.current = null;
+          setQueue([]);
+        }}
+        onRetryItem={(id) => {
+          setQueue((curr) =>
+            curr.map((it) => (it.id === id ? { ...it, status: "queued", errorMessage: undefined } : it))
+          );
+          if (!queueRunning) setQueueRunning(true);
+        }}
+        onRemoveItem={(id) => setQueue((curr) => curr.filter((it) => it.id !== id))}
+        onConfigureItem={(item) => void handleConfigureQueueItem(item)}
+        onOpenFile={(path) => void bridge.openFile(path)}
+      />
 
       {/* Output & Presets Parameters */}
       <section className="panel p-4">
@@ -2044,118 +1848,27 @@ export function ConverterView({
       )}
 
       {/* Unified Export Destination & Convert Action Panel */}
-      <section className="panel overflow-hidden p-4">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-center">
-          {/* Left Column: Export Destination */}
-          <div className="lg:col-span-5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs font-medium text-zinc-200">
-                <FolderOpen className="size-3.5 text-zinc-400" /> Export folder
-              </div>
-              <span className="hidden sm:inline text-[10px] text-zinc-500 truncate">Default: project-local converted media</span>
-            </div>
-            <div className="mt-2 flex gap-2">
-              <input
-                aria-label="Export folder"
-                value={settings.outputDir}
-                onChange={(event) => update({ outputDir: event.target.value })}
-                className="field h-9 min-w-0 flex-1 px-3 text-xs"
-              />
-              <button type="button" onClick={() => void browseOutput()} className="subtle-button inline-flex h-9 min-w-[76px] items-center justify-center gap-1.5 px-3 text-xs whitespace-nowrap">
-                Browse
-              </button>
-              <button type="button" onClick={() => void bridge.openPath(settings.outputDir)} className="subtle-button inline-flex h-9 min-w-[76px] items-center justify-center gap-1.5 px-3 text-xs whitespace-nowrap">
-                <FolderOpen className="size-3.5" /> Open
-              </button>
-            </div>
-          </div>
-
-          {/* Right Column: Compact Convert Action & High-Visibility Progress Bar */}
-          <div className="flex flex-col justify-center border-t border-white/[0.06] pt-3 lg:col-span-7 lg:border-t-0 lg:border-l lg:pl-5 lg:pt-0">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                disabled={isOperationActive && !(!queueRunning && queue.some((it) => it.status === "queued"))}
-                onClick={() => void convert()}
-                className="primary-button inline-flex h-9.5 flex-1 min-w-[124px] items-center justify-center gap-2 px-3.5 text-xs font-semibold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap"
-              >
-                <Play className="size-3.5 fill-current shrink-0" />
-                {queue.length > 0 && !queueRunning && queue.some((it) => it.status === "queued")
-                  ? `Start queue (${queue.filter((it) => it.status === "queued").length} pending)`
-                  : "Convert media"}
-              </button>
-              {source.trim() && (
-                <button
-                  type="button"
-                  disabled={facebookCaptureBusy || socialCaptureBusy}
-                  onClick={() => addToQueue()}
-                  className="subtle-button inline-flex h-9.5 shrink-0 items-center gap-1.5 px-3 text-xs font-medium text-pink-300 hover:text-pink-200 border-pink-500/25 bg-pink-500/[0.06] disabled:opacity-40 whitespace-nowrap"
-                  title="Add current source to conversion queue"
-                >
-                  <ListPlus className="size-3.5 shrink-0" />
-                  Add to queue
-                </button>
-              )}
-              {isOperationActive && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void handlePauseToggle()}
-                    className="subtle-button inline-flex h-9.5 shrink-0 items-center gap-1.5 px-3 text-xs font-medium text-amber-300 hover:text-amber-200 whitespace-nowrap"
-                    aria-label={effectivePaused ? "Resume operation" : "Pause operation"}
-                  >
-                    {effectivePaused ? <Play className="size-3 fill-current shrink-0" /> : <Pause className="size-3 shrink-0" />}
-                    {effectivePaused ? "Resume" : "Pause"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleAbort()}
-                    className="danger-button inline-flex h-9.5 shrink-0 items-center gap-1.5 px-3 text-xs whitespace-nowrap"
-                    aria-label="Abort operation"
-                  >
-                    <Square className="size-3 shrink-0" /> Abort
-                  </button>
-                </>
-              )}
-            </div>
-
-            {/* High-visibility progress bar & percentage */}
-            <div className="mt-2">
-              <div className="flex items-center justify-between gap-2 text-[11px]">
-                <span className={`truncate ${isOperationActive ? "text-zinc-200 font-medium" : "text-zinc-500"}`}>
-                  {effectivePaused ? `Paused — ${status || "Operation paused"}` : status || "Ready to convert"}
-                </span>
-                <span
-                  className="shrink-0 font-mono font-bold text-xs"
-                  style={{ color: isOperationActive ? "var(--accent-color, #ec4899)" : "#71717a" }}
-                >
-                  {Math.round(progress * 100)}%
-                </span>
-              </div>
-              <div className="mt-1 h-2 overflow-hidden rounded-full bg-white/[0.06] p-[1px] ring-1 ring-white/10">
-                <motion.div
-                  className="h-full rounded-full"
-                  style={{
-                    background: "linear-gradient(to right, var(--accent-color, #c52b68), var(--accent-hover, #e0407b))",
-                    boxShadow: "0 0 8px var(--accent-glow, rgba(197,43,104,0.4))",
-                  }}
-                  animate={{ width: `${Math.round(progress * 100)}%` }}
-                  transition={{ ease: "easeOut", duration: 0.25 }}
-                />
-              </div>
-              {lastEvent && (
-                <div className="mt-1 flex items-center gap-1.5 text-[10px] text-zinc-500 truncate">
-                  <RefreshCw
-                    className={`size-2.5 shrink-0 ${isOperationActive && !effectivePaused ? "animate-spin" : ""}`}
-                    style={isOperationActive ? { color: "var(--accent-color, #ec4899)" } : undefined}
-                  />
-                  <span className="truncate">Engine: {lastEvent.message}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
+      <ActionBar
+        outputDir={settings.outputDir}
+        onOutputDirChange={(outputDir) => update({ outputDir })}
+        onBrowseOutput={() => void browseOutput()}
+        onOpenOutput={() => void bridge.openPath(settings.outputDir)}
+        isOperationActive={isOperationActive}
+        queueLength={queue.length}
+        queueRunning={queueRunning}
+        pendingQueueCount={queue.filter((it) => it.status === "queued").length}
+        onConvert={() => void convert()}
+        source={source}
+        facebookCaptureBusy={facebookCaptureBusy}
+        socialCaptureBusy={socialCaptureBusy}
+        onAddToQueue={() => addToQueue()}
+        effectivePaused={effectivePaused}
+        onPauseToggle={() => void handlePauseToggle()}
+        onAbort={() => void handleAbort()}
+        status={status}
+        progress={progress}
+        lastEvent={lastEvent}
+      />
         </>
       )}
 

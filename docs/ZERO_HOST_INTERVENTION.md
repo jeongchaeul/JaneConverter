@@ -6,38 +6,36 @@
 
 ## 1. The Core Principle
 
-JaneConverter is architected as a **fully autonomous, self-sufficient universal media downloader and converter**. 
+JaneConverter is architected as a **fully autonomous, self-sufficient universal media downloader and converter**.
 
-An application that asks its user to manually open web browsers, click extension icons, resolve redirection loops, or manually copy cookies has failed its fundamental duty. The host machine is the user's sanctuary; JaneConverter operates as a frictionless background utility that accepts any source link and produces pristine converted media without asking for human assistance.
+An application that asks users to manually open browsers, click extension icons, resolve redirects, or copy cookies has failed its fundamental purpose. JaneConverter operates as a frictionless background workstation that accepts any source link and produces pristine media without requesting human assistance.
 
 ---
 
-## 2. The Strict Prohibition: No Manual Browser Capture
+## 2. Zero-Intervention Rules
 
-**We are NEVER EVER relying on the Browser Capture extension or manual user intervention as a standard workflow or failure workaround.**
+**Never rely on manual user capture as a standard workflow or failure workaround.**
 
-1. **No Host Prompting**: The system must never tell the user:
+1. **No Host Prompting:** Never instruct the user to:
    - *"Open this link in your browser and use the Browser Capture extension"*
    - *"Please log in and retry"*
    - *"Click the extension icon to capture visible media"*
    - *"Copy cookies from your browser manually"*
-2. **Autonomous Platform Resolution**:
-   - If a link is a shortened URL (e.g., `pin.it`, `t.co`, `bit.ly`, `youtu.be`), JaneConverter unwraps and follows the redirect chain programmatically.
-   - If a link requires authenticated access (e.g., Pinterest collections, Instagram carousels, Facebook high-res albums, age-gated media), JaneConverter's backend engine silently and autonomously accesses the active desktop browser session (via DPAPI shadow-copying across Vivaldi, Firefox, Chrome, Edge, etc.) in RAM without locking browser databases or alerting the host.
-   - If an unauthenticated guest session gets blocked or redirected to a login wall, JaneConverter seamlessly rotates to authenticated internal API resolution without failing or aborting.
-   - If upstream extractors (like `yt-dlp`) fail with regex or endpoint mismatches (e.g., misidentifying custom routes as generic boards or users), JaneConverter's internal extractors intercept the request, query internal platform APIs directly, and construct complete media manifests automatically.
+2. **Autonomous Platform Resolution:**
+   - **Shortlink Unwrapping:** Programmatically expands `pin.it`, `t.co`, `bit.ly`, `youtu.be`, and redirects.
+   - **Silent Session Access:** For authenticated routes (Instagram carousels, Facebook albums, age-gated YouTube), silently accesses active desktop browser sessions (DPAPI shadow copies across Vivaldi, Firefox, Chrome, Edge) in RAM without locking databases or notifying the host.
+   - **Dynamic Failover:** Blocks or login walls trigger seamless failover to internal platform API endpoints.
+   - **Direct Extraction Interception:** If upstream extractors (`yt-dlp`) fail on custom routes, internal extractors query platform APIs directly to build media manifests.
 
 ---
 
-## 3. The Autonomous Resolution Architecture
+## 3. Autonomous Resolution Flow
 
-Every platform route supported by JaneConverter must implement a zero-intervention lifecycle:
-
-```
+```text
                   [ Source URL Ingestion ]
                              │
                              ▼
-             [ Programmatic Shortlink Expansion ]
+              [ Programmatic Shortlink Expansion ]
                (Resolves pin.it, redirects, etc.)
                              │
                              ▼
@@ -69,21 +67,12 @@ Every platform route supported by JaneConverter must implement a zero-interventi
 
 ## 4. Engineering Directives for Contributors & AI Agents
 
-Whenever you add or modify a feature, fix a bug, or encounter a media extraction failure:
-
-1. **Never ask the host to do anything**:
-   Do not instruct the host to open links, switch browsers, inspect devtools, or install extensions to solve a download issue.
-2. **Implement the fix in code**:
-   Trace the exact network requests, endpoints, and headers that the browser sends when logged in. Implement that exact flow directly inside JaneConverter's Python engine (`src/janeconverter/`) and native Tauri bridge (`desktop-ui/src-tauri/`).
-3. **Handle edge cases and route permutations**:
-   Ensure URL shorteners, subdomains, language prefixes (e.g. `ph.pinterest.com`), and dynamic parameters are recognized and handled transparently.
-4. **Always Live-Test the Failing Media & 7 Diverse Targets (Universal Rule of 7)**:
-   Never consider a bug fixed solely because a test suite passes or a mock returns 200 OK. Mocks do not prove that live platform APIs, CDN endpoints, and bot guards are functioning.
-   - This rule applies universally to **every single platform and media format** (Pinterest, Facebook, TikTok, Spotify, YouTube, Instagram, Twitter/X, SoundCloud, Apple Music, Reddit, etc.).
-   - **Why the Rule of 7 Exists:** It is not merely testing 7 different media files; it is testing **7 distinct situations and failure contexts** in which an error may be triggered. The system is not fragile—its foundation has already undergone full structural refactoring. Testing 7 real-world situations easily identifies specific failure modes to efficiently pinpoint areas for improvement and defeat the error in question. Furthermore, given that platforms like Facebook, Instagram, TikTok, and YouTube constantly refactor their code, shuffle endpoints, and alter delivery pipelines without notice, the Rule of 7 acts ahead of that volatility. We never know when an upstream patch will break what is working; this protocol allows us to act ahead and cover all operational bases immediately before regressions can reach the user.
-   - You MUST run the real engine against the exact URL that failed.
-   - You MUST find and test at least **7 diverse real-world links** of the same platform/format (e.g. single items, albums/carousels, reels/shorts, audio vs video, shortlinks, user handles) to proactively catch and fix edge-case crashes before marking the task complete.
-5. **Follow the Rebuild Contract (`packaging/REBUILD.md`)**:
-   Whenever backend engine or desktop UI changes are made, rebuild the corresponding frozen binaries (`JaneConverterEngine.exe`, `janeconverter-desktop.exe`) and deploy them locally as specified in `packaging/REBUILD.md`.
-6. **Commit and push every operation**:
-   Keep version control synchronized with all updates, maintaining clean history and documentation integrity.
+1. **Never Ask the Host to Intervene:** Do not ask the user to open links, switch browsers, inspect devtools, or install extensions to resolve conversion failures.
+2. **Implement Fixes in Code:** Trace the exact network requests and headers sent by active sessions. Implement that flow directly in the Python engine (`src/janeconverter/`) or Tauri bridge (`desktop-ui/src-tauri/`).
+3. **Handle Edge Cases & Route Permutations:** Transparently support subdomains, international prefixes (e.g. `ph.pinterest.com`), and dynamic parameters.
+4. **Mandatory Live Verification & The Universal Rule of 7:**
+   - Unit tests and mocks are necessary but never sufficient; they cannot detect live CDN throttling, API schema drift, or bot guards.
+   - Always live-test the exact URL that triggered the failure.
+   - **The Rule of 7:** Test extractions across at least **7 diverse real-world links** of the same platform/media category (single items, multi-slide carousels, reels/shorts, audio vs. video, shortlinks, user handles, guest vs. authenticated routes). Testing 7 distinct situations proactively detects latent failure modes and platform code reshuffling before regressions reach the host.
+5. **Adhere to Rebuild Protocols (`packaging/REBUILD.md`):** Whenever engine or UI modifications are made, compile and deploy the corresponding binaries (`JaneConverterEngine.exe`, `janeconverter-desktop.exe`) per documented contracts.
+6. **Continuous Pipeline Monitoring:** Never stop operations after pushing code or tags until all CI and packaging workflow jobs are 100% green and live packages are verified.

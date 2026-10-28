@@ -4,20 +4,31 @@ import { JSDOM } from "jsdom";
 import { afterEach, expect, test } from "vitest";
 
 const candidatePaths = [
+  resolve(process.cwd(), "src-tauri/scripts/facebook_capture.js"),
+  resolve(process.cwd(), "desktop-ui/src-tauri/scripts/facebook_capture.js"),
   resolve(process.cwd(), "src-tauri/src/facebook_capture.rs"),
   resolve(process.cwd(), "desktop-ui/src-tauri/src/facebook_capture.rs"),
 ];
-const rustPath = candidatePaths.find(existsSync) ?? candidatePaths[0];
-const rust = readFileSync(rustPath, "utf8");
-const start = rust.indexOf('r#"(() => {{');
-const end = rust.indexOf('"#', start);
-const captureScript = rust.slice(start + 3, end)
-  .replace("{nonce_json}", '"fixture"')
-  .replaceAll("{{", "{")
-  .replaceAll("}}", "}")
-  .replaceAll("location.replace(target.href);", "window.__JANE_NAVIGATE__(target.href);")
-  .replaceAll("location.replace(startPhoto.url);", "window.__JANE_NAVIGATE__(startPhoto.url);")
-  .replaceAll("location.replace(nextPhotoUrl);", "window.__JANE_NAVIGATE__(nextPhotoUrl);");
+const scriptPath = candidatePaths.find(existsSync) ?? candidatePaths[0];
+const rawContent = readFileSync(scriptPath, "utf8");
+let captureScript;
+if (scriptPath.endsWith(".js")) {
+  captureScript = rawContent
+    .replace("__NONCE_JSON__", '"fixture"')
+    .replaceAll("location.replace(target.href);", "window.__JANE_NAVIGATE__(target.href);")
+    .replaceAll("location.replace(startPhoto.url);", "window.__JANE_NAVIGATE__(startPhoto.url);")
+    .replaceAll("location.replace(nextPhotoUrl);", "window.__JANE_NAVIGATE__(nextPhotoUrl);");
+} else {
+  const start = rawContent.indexOf('r#"(() => {{');
+  const end = rawContent.indexOf('"#', start);
+  captureScript = rawContent.slice(start + 3, end)
+    .replace("{nonce_json}", '"fixture"')
+    .replaceAll("{{", "{")
+    .replaceAll("}}", "}")
+    .replaceAll("location.replace(target.href);", "window.__JANE_NAVIGATE__(target.href);")
+    .replaceAll("location.replace(startPhoto.url);", "window.__JANE_NAVIGATE__(startPhoto.url);")
+    .replaceAll("location.replace(nextPhotoUrl);", "window.__JANE_NAVIGATE__(nextPhotoUrl);");
+}
 const prefix = "__JANE_FACEBOOK_CAPTURE__fixture__";
 
 function replay(html, path, mode = "") {

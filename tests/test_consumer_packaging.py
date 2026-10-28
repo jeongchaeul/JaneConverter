@@ -189,8 +189,13 @@ def test_tauri_runtime_paths_support_frozen_windows_linux_and_macos_engines():
 
 
 def test_tauri_relaunch_starts_the_current_desktop_executable():
-    library = read("desktop-ui/src-tauri/src/lib.rs")
-    relaunch = library.split("fn relaunch", 1)[1].split("fn format_update_summary", 1)[0]
+    system_path = REPO_ROOT / "desktop-ui/src-tauri/src/commands/system.rs"
+    library = read("desktop-ui/src-tauri/src/commands/system.rs") if system_path.exists() else read("desktop-ui/src-tauri/src/lib.rs")
+    relaunch = library.split("fn relaunch", 1)[1]
+    if "fn format_update_summary" in relaunch:
+        relaunch = relaunch.split("fn format_update_summary", 1)[0]
+    elif "fn check_updates" in relaunch:
+        relaunch = relaunch.split("fn check_updates", 1)[0]
 
     assert "std::env::current_exe()" in relaunch
     assert "JaneConverter.exe" not in relaunch
