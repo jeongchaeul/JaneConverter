@@ -702,7 +702,7 @@ def _shortcode_to_pk(shortcode: str) -> int:
     """Convert an Instagram alphanumeric shortcode to its numeric media PK."""
     clean = shortcode.split("?")[0].split("#")[0].strip()
     if len(clean) > 28:
-        clean = clean[:-28]
+        clean = clean[:28]
     table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
     n = 0
     for char in clean:

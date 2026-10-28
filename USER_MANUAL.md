@@ -140,12 +140,25 @@ Spotify and Apple Music utilize proprietary DRM-protected playback streams. Jane
 ## 4. Video Ingestion & Hardware Transcoding
 
 ### Supported Video Platforms
-JaneConverter downloads from virtually any video platform on the modern web:
+
+JaneConverter is powered by a high-rigor, universal ingestion architecture backed by `yt-dlp`'s 1,800+ extractors, a generic media stream sniffer, and the direct Browser Bridge.
+
+#### Tier 1: Officially Certified & Actively Verified Platforms
+The following mainstream platforms are rigorously hardened, regularly stress-tested against live CDN changes under Jane's strict Rule of 7, and verified across all releases:
 - **YouTube:** Standard videos, Shorts (`/shorts/`), live VODs, 4K HDR streams, and channel feeds (`/@handle`).
 - **TikTok:** Full 1080p watermark-free video downloads or direct audio extraction.
 - **Instagram:** Reels (`/reels/`), feed videos, and IGTV.
 - **Facebook:** Public Watch videos, group videos, and Reels.
-- **Other Platforms:** Reddit, Vimeo, Twitter/X, Dailymotion, Twitch clips, and Bilibili.
+- **Twitter / X:** Single videos, clips, and multi-media posts.
+- **Reddit:** Embedded video streams with automatic audio muxing.
+- **Vimeo, Dailymotion, Twitch clips, Bilibili, and SoundCloud.**
+
+#### Universal Open Web & Adult / 18+ Sites (Unrestricted Ingestion)
+JaneConverter is **NOT limited to the platforms listed above**. Its ingestion engine is inherently universal:
+- **Thousands of Unlisted & Niche Websites:** JaneConverter can ingest media from virtually any video-hosting website, news outlet, forum, or educational streaming archive across the open internet.
+- **Adult & 18+ Websites:** JaneConverter natively supports and downloads from adult platforms (e.g. Pornhub, XVideos, SpankBang, RedTube, Chaturbate recordings, and similar streaming sites) via its underlying media extraction engine.
+- **Operational Reality:** While adult websites and niche portals are **not officially certified, tested, or benchmarked in the primary verification suite**, the engine's generic stream decoders, HLS (`.m3u8`) segment assemblers, and DASH manifest parsers will process them seamlessly whenever valid media streams are detected.
+- **Browser Bridge Sniffing:** For platforms with complex anti-bot protection or proprietary web players, clicking **Send to JaneConverter** from the companion Browser Bridge extension directly captures the authenticated video/audio stream from your active browser tab.
 
 ### Zero-Loss Stream Copy Mode
 If you input a video (e.g. an MP4 or MKV from YouTube) and your target format matches the native stream codecs (e.g. H.264 video + AAC audio into an MP4 container) with no resizing or audio normalization requested:
@@ -373,6 +386,9 @@ JaneConverter is architected with strict, zero-leak privacy principles:
 ---
 
 ## 8. FL Studio (.flp) Project Downgrader
+
+> [!NOTE]
+> **DAW Tools Status:** The FL Studio (`.flp`) downgrader and Ableton Live (`.als`) migrator are **experimental creator studio utilities** engineered for Jane Cerys's personal audio workstation. All heuristics, version matrices, and patching algorithms are **Subject to Maintainer Decisions**. External critique, feature gatekeeping, or issue policing regarding these tools is categorically out of scope.
 
 ### The Problem: Collaboration Lockouts
 FL Studio project files (`.flp`) are binary chunk formats. When an artist saves a project in a newer version of FL Studio (e.g. FL Studio 21.2 or FL Studio 24) and sends it to a collaborator who is running an earlier release (e.g. FL Studio 20.8), FL Studio halts loading and displays a blocking modal:

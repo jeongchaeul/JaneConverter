@@ -198,6 +198,7 @@ def measure_audio_loudness(
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     reconstruct_frequency_loss: bool = False,
+    abort_event: Optional[Any] = None,
 ) -> Optional[Dict[str, str]]:
     """
     Pass 1 measurement for EBU R128 loudness normalization.
@@ -239,14 +240,38 @@ def measure_audio_loudness(
     cmd.extend(["-f", "null", "-"])
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        res = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            creationflags=no_window,
-            timeout=300
-        )
-        stderr_text = res.stderr.decode("utf-8", errors="ignore")
+        if abort_event is not None:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=no_window,
+            )
+            start_t = time.time()
+            while True:
+                if abort_event.is_set():
+                    proc.kill()
+                    proc.wait()
+                    return None
+                ret = proc.poll()
+                if ret is not None:
+                    break
+                if time.time() - start_t > 300:
+                    proc.kill()
+                    proc.wait()
+                    return None
+                time.sleep(0.05)
+            _, stderr_bytes = proc.communicate()
+            stderr_text = stderr_bytes.decode("utf-8", errors="ignore")
+        else:
+            res = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=no_window,
+                timeout=300,
+            )
+            stderr_text = res.stderr.decode("utf-8", errors="ignore")
         json_match = re.search(r'\{[^{}]*"input_i"[^{}]*\}', stderr_text, re.DOTALL)
         if json_match:
             data = json.loads(json_match.group(0))
@@ -882,6 +907,10 @@ def _publish_staged_file(staged_path: str, output_dir: str, filename: str) -> st
                 # gives atomic no-clobber publication when supported.
                 try:
                     os.link(staged_path, candidate)
+                    try:
+                        os.unlink(staged_path)
+                    except OSError:
+                        pass
                 except OSError as err:
                     # Fallback for filesystems lacking hardlink support (e.g. FAT32/exFAT/NFS)
                     unsupported_codes = {errno.EPERM, errno.ENOSYS, errno.EXDEV}
@@ -2035,6 +2064,7 @@ def _convert_media_impl(
                 start_time=start_time,
                 end_time=end_time,
                 reconstruct_frequency_loss=reconstruct_frequency_loss,
+                abort_event=abort_event,
             )
 
         report(0.70, f"Transcoding media to {target_format.upper()}...")

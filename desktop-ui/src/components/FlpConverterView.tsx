@@ -128,6 +128,14 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const isMountedRef = useRef<boolean>(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   // Auto-detect installed FL Studio versions on user's rig on mount
   useEffect(() => {
     let active = true;
@@ -135,13 +143,13 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
       setDetectingFl(true);
       try {
         const detected = await bridge.flpDetectInstalled();
-        if (active && detected.length > 0) {
+        if (active && isMountedRef.current && detected.length > 0) {
           setInstalledFl(detected);
         }
       } catch (err) {
         console.warn("Could not query installed FL Studios:", err);
       } finally {
-        if (active) setDetectingFl(false);
+        if (active && isMountedRef.current) setDetectingFl(false);
       }
     }
     void detect();
@@ -175,6 +183,7 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
 
     try {
       const info = await bridge.flpInspect(clean);
+      if (!isMountedRef.current) return;
       setProjectInfo(info);
       onStatus(`Inspected FLP: ${info.title || info.fileName} (FL Studio ${info.version})`);
 
@@ -198,12 +207,15 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
         setTargetBuild("2963");
       }
     } catch (err) {
+      if (!isMountedRef.current) return;
       const msg = err instanceof Error ? err.message : String(err);
       setInspectError(msg);
       setProjectInfo(null);
       onStatus(`Failed to read project: ${msg}`);
     } finally {
-      setInspecting(false);
+      if (isMountedRef.current) {
+        setInspecting(false);
+      }
     }
   }
 
@@ -318,14 +330,18 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
         undefined,
         overwriteOriginal
       );
+      if (!isMountedRef.current) return;
       setConvertResult(result);
       onStatus(`Successfully processed project headers for ${result.targetLabel}!`);
     } catch (err) {
+      if (!isMountedRef.current) return;
       const msg = err instanceof Error ? err.message : String(err);
       setConvertError(msg);
       onStatus(`Downgrade error: ${msg}`);
     } finally {
-      setConverting(false);
+      if (isMountedRef.current) {
+        setConverting(false);
+      }
     }
   }
 
@@ -356,6 +372,22 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
 
   return (
     <div className="space-y-4 pb-6">
+      {/* Sovereign DAW Tools Disclaimer Banner */}
+      <div className="flex items-start gap-3 rounded-xl border border-violet-500/25 bg-violet-500/[0.06] p-3 text-xs text-violet-200/90">
+        <Zap size={16} className="mt-0.5 shrink-0 text-violet-400" />
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-violet-300">Creator Studio Utilities · Experimental &amp; Subject to Maintainer Decisions</span>
+            <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[9px] font-medium text-violet-300 border border-violet-500/30">
+              Sovereign Scope
+            </span>
+          </div>
+          <p className="text-[11px] leading-relaxed text-zinc-400">
+            DAW binary reverse engineering and project migration utilities are experimental tools engineered for Jane Cerys's personal audio workstation. All features, formats, and behaviors in this module are strictly subject to creator discretion.
+          </p>
+        </div>
+      </div>
+
       {/* Studio DAW Selection Tabs */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <button
@@ -384,7 +416,7 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
               </span>
             </div>
             <p className="mt-1 text-[11px] leading-tight text-zinc-400">
-              Binary header patcher & record aligner for cross-build FL Studio compatibility.
+              Binary header patcher & record aligner for cross-build FL Studio compatibility (Experimental).
             </p>
           </div>
         </button>

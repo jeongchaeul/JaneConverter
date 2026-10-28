@@ -93,6 +93,11 @@ def parse_flp(data: bytes) -> FLPProject:
                         raise FLPParseError(f"Truncated 4-byte event payload for event {ev_id}.")
                 else:
                     var_len = parse_varint(data_stream)
+                    remaining_chunk = chunk_len - data_stream.tell()
+                    if var_len > remaining_chunk:
+                        raise FLPParseError(
+                            f"Truncated variable-length payload for event {ev_id}: expected {var_len} bytes, but only {remaining_chunk} remain in chunk."
+                        )
                     ev_data = data_stream.read(var_len)
                     if len(ev_data) < var_len:
                         raise FLPParseError(

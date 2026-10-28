@@ -628,9 +628,25 @@ fn first_preview_source(path: &Path, depth: usize) -> Option<PathBuf> {
 
     let mut entries = fs::read_dir(path).ok()?.flatten().collect::<Vec<_>>();
     entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in &entries {
+        let entry_path = entry.path();
+        if let Ok(metadata) = entry.metadata() {
+            if metadata.is_file() && (media_extension(&entry_path) || image_extension(&entry_path))
+            {
+                return Some(entry_path);
+            }
+        }
+    }
+
     for entry in entries {
-        if let Some(candidate) = first_preview_source(&entry.path(), depth + 1) {
-            return Some(candidate);
+        let entry_path = entry.path();
+        if let Ok(metadata) = entry.metadata() {
+            if metadata.is_dir() {
+                if let Some(candidate) = first_preview_source(&entry_path, depth + 1) {
+                    return Some(candidate);
+                }
+            }
         }
     }
     None

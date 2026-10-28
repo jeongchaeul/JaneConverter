@@ -100,6 +100,9 @@ Social platforms update their web clients and CDNs frequently. If an extraction 
 | **X/Twitter** | Photos, Galleries, Videos | Direct Extractor / Guest Scraper | Verified on v2.3.3 (Oct 2026) |
 | **Reddit** | Videos, Audio, Galleries, Posts | Direct Stream Extractor + Guest Scraper | Verified on v2.3.3 (Oct 2026) |
 
+> [!NOTE]
+> **Universal Open Web & Adult Platform Ingestion**: The table above highlights the **Tier 1 officially verified and hardened platforms**. JaneConverter's underlying engine (powered by `yt-dlp`'s 1,800+ extractors, generic media stream parsers, and the Browser Bridge) operates across thousands of websites across the open internet—including niche video hosting sites, web archives, and **adult / 18+ platforms**—even though adult and niche sites are not officially certified in the primary verification suite.
+
 ---
 
 ## Supported Formats

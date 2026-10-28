@@ -613,7 +613,12 @@ def fetch_facebook_manifest(
         author_m = re.search(r'"(?:owning_profile|actors)"\s*:\s*(?:\[\s*)?\{[^{}]*?"name"\s*:\s*"([^"]+)"', b)
         if author_m:
             try:
-                author_name = sanitize_filename(author_m.group(1).encode().decode('unicode-escape'), max_length=50)
+                raw_author = author_m.group(1)
+                try:
+                    decoded_author = raw_author.encode().decode('unicode-escape')
+                except UnicodeDecodeError:
+                    decoded_author = raw_author
+                author_name = sanitize_filename(decoded_author, max_length=50)
                 if author_name and author_name not in title:
                     title = f"{title} - {author_name}" if title != "Facebook Post" else author_name
             except Exception:
@@ -863,7 +868,11 @@ def fetch_facebook_manifest(
                 context = html[max(0, m.start() - 500):min(len(html), m.end() + 1500)]
                 uri_m = re.search(r'"(?:viewer_image|image|photo_image)"\s*:\s*\{[^}]*?"uri"\s*:\s*"(https:[^"]*?(?:fbcdn\.net|fbsbx\.com)[^"]*?)"', context)
                 if uri_m:
-                    raw_uri = uri_m.group(1).encode().decode("unicode-escape").replace("\\/", "/")
+                    raw_val = uri_m.group(1)
+                    try:
+                        raw_uri = raw_val.encode().decode("unicode-escape").replace("\\/", "/")
+                    except UnicodeDecodeError:
+                        raw_uri = raw_val.replace("\\/", "/")
                     w_m = re.search(r'"width"\s*:\s*(\d+)', context)
                     w = int(w_m.group(1)) if w_m else 1080
                     _add_photo(target_fbid, raw_uri, w)

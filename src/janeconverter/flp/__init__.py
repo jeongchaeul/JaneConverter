@@ -1,6 +1,10 @@
 """
 FL Studio Project (.flp) parser, inspector, and version downgrader.
 Provides binary-level FLP parsing, metadata extraction, and safe cross-version downgrading.
+
+DAW UTILITIES STATUS: EXPERIMENTAL & SUBJECT TO MAINTAINER DECISIONS.
+These tools are personal creator studio utilities engineered for Jane Cerys's audio workstation.
+Their scope, format coverage, and internal heuristics are subject strictly to maintainer discretion.
 """
 
 from .models import FLPEvent, FLPProject, KNOWN_FL_VERSIONS, detect_installed_fl_studios

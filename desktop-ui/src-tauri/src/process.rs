@@ -874,8 +874,16 @@ pub fn bounded_output(
         });
         receiver
     }
-    let stdout = drain(child.stdout.take().expect("piped stdout"));
-    let stderr = drain(child.stderr.take().expect("piped stderr"));
+    let stdout_pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Could not capture process standard output pipe.".to_string())?;
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Could not capture process standard error pipe.".to_string())?;
+    let stdout = drain(stdout_pipe);
+    let stderr = drain(stderr_pipe);
     let started = Instant::now();
     let status =
         loop {

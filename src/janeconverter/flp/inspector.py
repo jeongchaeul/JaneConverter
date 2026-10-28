@@ -80,6 +80,15 @@ def inspect_flp(project: FLPProject, file_path: Optional[str] = None) -> Dict[st
                 else:
                     bpm = float(raw_tempo)
 
+        # Event 156 (0x9C): Fine Tempo (DWORD in milli-BPM, e.g. 140000 = 140.0 BPM)
+        elif ev.event_id == 156 and len(ev.data) >= 4:
+            try:
+                raw_fine = struct.unpack("<I", ev.data[:4])[0]
+                if 10000 <= raw_fine <= 1000000:
+                    bpm = round(raw_fine / 1000.0, 3)
+            except struct.error:
+                pass
+
         # Event 28 (0x1C): Registered flag (1 byte)
         elif ev.event_id == 28 and len(ev.data) >= 1:
             registered = ev.data[0] != 0

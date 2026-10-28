@@ -559,7 +559,7 @@ def set_chromium_direct_cookie_policy(enabled: bool) -> bool:
                         winreg.DeleteValue(key, "ApplicationBoundEncryptionEnabled")
                 except OSError:
                     pass
-        return enabled
+        return True
     except Exception:
         return False
 

@@ -969,7 +969,9 @@ async fn capture_facebook_album(
                     let _ = window.set_title(&format!("Found {count} public Facebook photos..."));
                     let ack_key =
                         serde_json::to_string(&format!("__JANE_FACEBOOK_ACK__{nonce_for_title}"))
-                            .expect("acknowledgment key is a string");
+                            .unwrap_or_else(|_| {
+                                format!("\"__JANE_FACEBOOK_ACK__{nonce_for_title}\"")
+                            });
                     let _ = window.eval(format!("window[{ack_key}] = {sequence};"));
                 }
                 "done" => {
@@ -1278,7 +1280,7 @@ async fn capture_social_post_photos(
                     let ack_key = serde_json::to_string(&format!(
                         "__JANE_SOCIAL_PHOTO_ACK__{nonce_for_title}"
                     ))
-                    .expect("acknowledgment key is a string");
+                    .unwrap_or_else(|_| format!("\"__JANE_SOCIAL_PHOTO_ACK__{nonce_for_title}\""));
                     let _ = window.eval(format!("window[{ack_key}] = {};", message.sequence));
                 }
                 "done" => {

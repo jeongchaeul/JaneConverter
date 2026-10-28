@@ -497,6 +497,8 @@ def download_archival_stream(
         if not _is_safe_public_url(stream_result.stream_url):
             raise ValueError("Archival stream URL failed public safety verification.")
         resp = requests.get(stream_result.stream_url, headers=ARCHIVE_HEADERS, stream=True, timeout=30)
+        if not _is_safe_response_target(resp):
+            raise ValueError("Archival stream URL redirected to an unsafe target.")
         if resp.status_code not in (200, 206):
             raise RuntimeError(f"Failed to download archival stream from {stream_result.source_name} (HTTP {resp.status_code})")
 
