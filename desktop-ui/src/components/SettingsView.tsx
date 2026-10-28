@@ -1441,6 +1441,31 @@ export function SettingsView({
                     </p>
                   </div>
                 </div>
+
+                {/* Universal Open Web & Adult / 18+ Ingestion Callout */}
+                <div className="rounded-xl border border-violet-500/30 bg-violet-500/[0.06] p-4 text-xs space-y-2.5">
+                  <div className="flex items-center gap-2 font-semibold text-violet-200">
+                    <Globe className="size-4 text-violet-400 shrink-0" />
+                    <span>Universal Open Web &amp; Adult / 18+ Sites (Unrestricted Ingestion)</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-zinc-300">
+                    JaneConverter is <strong>NOT limited to the platforms listed above</strong>. Its ingestion engine is inherently universal:
+                  </p>
+                  <ul className="space-y-1.5 text-[11px] leading-relaxed text-zinc-400 list-disc list-inside">
+                    <li>
+                      <strong className="text-zinc-200">Thousands of Unlisted &amp; Niche Websites:</strong> JaneConverter can ingest media from virtually any video-hosting website, news outlet, forum, or educational streaming archive across the open internet.
+                    </li>
+                    <li>
+                      <strong className="text-zinc-200">Adult &amp; 18+ Websites:</strong> JaneConverter natively supports and downloads from adult platforms (e.g. Pornhub, XVideos, SpankBang, RedTube, Chaturbate recordings, and similar streaming sites) via its underlying media extraction engine.
+                    </li>
+                    <li>
+                      <strong className="text-zinc-200">Operational Reality:</strong> While adult websites and niche portals are not officially certified, tested, or benchmarked in the primary verification suite, the engine's generic stream decoders, HLS (<code className="text-zinc-300">.m3u8</code>) segment assemblers, and DASH manifest parsers will process them seamlessly whenever valid media streams are detected.
+                    </li>
+                    <li>
+                      <strong className="text-zinc-200">Browser Bridge Sniffing:</strong> For platforms with complex anti-bot protection or proprietary web players, clicking <em>Send to JaneConverter</em> from the companion Browser Bridge extension directly captures the authenticated video/audio stream from your active browser tab.
+                    </li>
+                  </ul>
+                </div>
               </section>
 
               {/* Sub-page Footer */}
