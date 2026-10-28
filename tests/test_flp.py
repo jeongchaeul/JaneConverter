@@ -371,5 +371,24 @@ def test_downgrade_flp_bytes_rejects_truncated_fldt_and_preserves_embedded_9f():
     assert parsed.events[3].data == b"X" * 60
 
 
+def test_parse_flp_file_size_bounds_and_missing_file(tmp_path, monkeypatch):
+    from janeconverter.flp.parser import parse_flp_file, FLPParseError
+
+    # 1. Non-existent file raises FileNotFoundError
+    with pytest.raises(FileNotFoundError):
+        parse_flp_file(str(tmp_path / "nonexistent.flp"))
+
+    # 2. Oversized file exceeds MAX_FLP_FILE_SIZE
+    fake_flp = tmp_path / "oversized.flp"
+    fake_flp.write_bytes(b"FLhd\x06\x00\x00\x00" + (b"\x00" * 20))
+
+    import janeconverter.flp.parser as parser_module
+
+    monkeypatch.setattr(parser_module, "MAX_FLP_FILE_SIZE", 10)
+    with pytest.raises(FLPParseError, match="exceeds maximum safe parsing limit"):
+        parse_flp_file(str(fake_flp))
+
+
+
 
 

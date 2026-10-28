@@ -4,9 +4,12 @@ Parses FLhd header and FLdt event stream into structured objects.
 """
 
 import io
+import os
 import struct
 from typing import BinaryIO
 from .models import FLPEvent, FLPProject
+
+MAX_FLP_FILE_SIZE = 512 * 1024 * 1024  # 512 MB safety ceiling for project metadata
 
 
 class FLPParseError(ValueError):
@@ -117,7 +120,14 @@ def parse_flp(data: bytes) -> FLPProject:
 
 
 def parse_flp_file(path: str) -> FLPProject:
-    """Read and parse an FLP file from a local file path."""
+    """Read and parse an FLP file from a local file path with size boundary enforcement."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"FLP file does not exist: {path}")
+    file_size = os.path.getsize(path)
+    if file_size > MAX_FLP_FILE_SIZE:
+        raise FLPParseError(
+            f"FLP project file size ({file_size} bytes) exceeds maximum safe parsing limit ({MAX_FLP_FILE_SIZE} bytes)."
+        )
     with open(path, "rb") as f:
         data = f.read()
     return parse_flp(data)

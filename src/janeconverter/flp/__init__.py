@@ -8,7 +8,7 @@ Their scope, format coverage, and internal heuristics are subject strictly to ma
 """
 
 from .models import FLPEvent, FLPProject, KNOWN_FL_VERSIONS, detect_installed_fl_studios
-from .parser import parse_flp, parse_flp_file
+from .parser import parse_flp, parse_flp_file, MAX_FLP_FILE_SIZE
 from .inspector import inspect_flp, inspect_flp_file
 from .downgrade import (
     downgrade_flp,
@@ -26,6 +26,7 @@ __all__ = [
     "detect_installed_fl_studios",
     "parse_flp",
     "parse_flp_file",
+    "MAX_FLP_FILE_SIZE",
     "inspect_flp",
     "inspect_flp_file",
     "downgrade_flp",

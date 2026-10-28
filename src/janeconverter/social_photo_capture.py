@@ -313,27 +313,53 @@ def download_social_photo_manifest(
 
 
 def resolve_pinterest_shortlink(url: str, timeout: float = 8.0) -> str:
-    """Expand pin.it shortlinks to their full Pinterest destination URL."""
+    """Expand pin.it shortlinks to their full Pinterest destination URL safely hop-by-hop."""
     try:
         raw = str(url or "").strip()
         parsed = urllib.parse.urlparse(raw)
         if (parsed.hostname or "").lower() == "pin.it":
             from .extractor import _is_safe_public_url
-            if not _is_safe_public_url(raw):
-                return url
-            req = urllib.request.Request(
-                raw,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+            current_url = raw
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )
+            }
+            with requests.Session() as session:
+                for _ in range(MAX_REDIRECTS):
+                    if not _is_safe_public_url(current_url):
+                        return url
+                    resp = session.head(
+                        current_url,
+                        headers=headers,
+                        timeout=timeout,
+                        allow_redirects=False,
                     )
-                },
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                resolved = resp.geturl()
-                if _is_safe_public_url(resolved):
-                    return resolved
+                    try:
+                        if resp.status_code == 405:
+                            resp.close()
+                            resp = session.get(
+                                current_url,
+                                headers=headers,
+                                timeout=timeout,
+                                allow_redirects=False,
+                                stream=True,
+                            )
+                        if resp.status_code in REDIRECT_STATUSES:
+                            loc = resp.headers.get("Location")
+                            if not loc:
+                                break
+                            current_url = urllib.parse.urljoin(current_url, loc)
+                        else:
+                            if _is_safe_public_url(current_url):
+                                return current_url
+                            return url
+                    finally:
+                        resp.close()
+                if _is_safe_public_url(current_url):
+                    return current_url
     except Exception:
         pass
     return url

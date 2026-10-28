@@ -38,7 +38,7 @@ We welcome responsible security research and vulnerability disclosures. If you d
 
 ## 3. Scope & Threat Model
 
-JaneConverter is a desktop media processing utility running on local hardware.
+JaneConverter is a desktop media processing utility running on local hardware. For a detailed breakdown of intentional low-level capabilities, privacy controls, and defense mechanisms, consult [Architectural Threat Model](docs/THREAT_MODEL.md).
 
 ### In-Scope Vulnerabilities:
 - Remote Code Execution (RCE) via malformed media, metadata tags, or `.flp` files.

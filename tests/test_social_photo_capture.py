@@ -687,3 +687,41 @@ def test_fetch_instagram_manifest_handles_null_caption_and_single_photo(monkeypa
 
 
 
+
+
+def test_resolve_pinterest_shortlink_safe_and_unsafe_redirects(monkeypatch):
+    from janeconverter.social_photo_capture import resolve_pinterest_shortlink
+
+    # Non-pin.it link returned unchanged immediately
+    assert resolve_pinterest_shortlink("https://example.com/item") == "https://example.com/item"
+
+    class FakeResponse:
+        def __init__(self, status_code, headers):
+            self.status_code = status_code
+            self.headers = headers
+        def close(self):
+            pass
+
+    # Safe redirect
+    def fake_head(self, url, *args, **kwargs):
+        if url == "https://pin.it/safe123":
+            return FakeResponse(301, {"Location": "https://www.pinterest.com/pin/123456789/"})
+        elif url == "https://www.pinterest.com/pin/123456789/":
+            return FakeResponse(200, {})
+        raise ValueError(f"Unexpected url requested: {url}")
+
+    monkeypatch.setattr("requests.Session.head", fake_head)
+    monkeypatch.setattr("janeconverter.extractor._is_safe_public_url", lambda u: "127.0.0.1" not in u and "169.254" not in u)
+
+    resolved = resolve_pinterest_shortlink("https://pin.it/safe123")
+    assert resolved == "https://www.pinterest.com/pin/123456789/"
+
+    # Unsafe redirect to loopback: must be aborted before requesting the target
+    def fake_head_unsafe(self, url, *args, **kwargs):
+        if url == "https://pin.it/evil":
+            return FakeResponse(302, {"Location": "http://127.0.0.1:8080/admin"})
+        raise AssertionError(f"Head should not be called on unsafe target: {url}")
+
+    monkeypatch.setattr("requests.Session.head", fake_head_unsafe)
+    result = resolve_pinterest_shortlink("https://pin.it/evil")
+    assert result == "https://pin.it/evil"

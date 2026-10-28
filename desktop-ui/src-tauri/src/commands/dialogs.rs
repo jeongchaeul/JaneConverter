@@ -189,10 +189,38 @@ pub fn open_url(state: State<'_, AppState>, url: String) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
-        Command::new("rundll32")
-            .args(["url.dll,FileProtocolHandler", value])
-            .spawn()
-            .map_err(|error| error.to_string())?;
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+
+        #[link(name = "shell32")]
+        extern "system" {
+            fn ShellExecuteW(
+                hwnd: *mut std::ffi::c_void,
+                lpOperation: *const u16,
+                lpFile: *const u16,
+                lpParameters: *const u16,
+                lpDirectory: *const u16,
+                nShowCmd: i32,
+            ) -> isize;
+        }
+
+        let op: Vec<u16> = OsStr::new("open").encode_wide().chain(Some(0)).collect();
+        let file: Vec<u16> = OsStr::new(value).encode_wide().chain(Some(0)).collect();
+        let res = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                op.as_ptr(),
+                file.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                1,
+            )
+        };
+        if res <= 32 {
+            return Err(format!(
+                "Could not open URL with default browser (error code {res})."
+            ));
+        }
     }
     #[cfg(target_os = "macos")]
     {
