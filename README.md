@@ -88,20 +88,29 @@ Instead of aborting, JaneConverter treats runtime errors as deterministic signal
 
 Social platforms update their web clients and CDNs frequently. If an extraction route breaks, please open an issue with the link type and platform (without sharing private content).
 
+### Tier 1: Officially Verified & Actively Maintained Major Platforms
+The following common major platforms are explicitly certified, actively maintained, and verified across releases under strict live stress-testing:
+
 | Platform | Supported Media | Extraction Route | Status |
 | :--- | :--- | :--- | :--- |
-| **YouTube, SoundCloud** | Audio, Video, Playlists | yt-dlp + bundled Node.js runtime | Verified on v2.3.3 (Oct 2026) |
-| **Spotify, Apple Music** | Tracks, Albums, Playlists | Catalog Metadata + Public Stream Matching | Verified on v2.3.3 (Oct 2026) |
-| **Instagram** | Single/Multi Photos, Reels, Audio | Guest Scraper & Internal API + Video Handoff | Verified on v2.3.3 (Oct 2026) |
-| **Facebook** | Photos, Albums, Reels | Sandboxed Guest View + Grid Scraper | Verified on v2.3.3 (Oct 2026) |
-| **Stories (IG / FB)** | Ephemeral Stories, Photos, Video Segments | Signed-in session (Session Recovery, opt-in) | Verified on v2.3.3 (Oct 2026) |
-| **TikTok** | Photos, Slideshows, Videos, Audio | Direct Stream Extractor + yt-dlp fallback | Verified on v2.3.3 (Oct 2026) |
-| **Pinterest** | Pins, Collections (`news_hub`), Boards | Direct API / Candidate Probe + CDN Fallback | Verified on v2.3.3 (Oct 2026) |
-| **X/Twitter** | Photos, Galleries, Videos | Direct Extractor / Guest Scraper | Verified on v2.3.3 (Oct 2026) |
-| **Reddit** | Videos, Audio, Galleries, Posts | Direct Stream Extractor + Guest Scraper | Verified on v2.3.3 (Oct 2026) |
+| **YouTube, SoundCloud** | Audio, Video, Playlists | yt-dlp + bundled Node.js runtime | Verified on v2.3.4 (Oct 2026) |
+| **Spotify, Apple Music** | Tracks, Albums, Playlists | Catalog Metadata + Public Stream Matching | Verified on v2.3.4 (Oct 2026) |
+| **Instagram** | Single/Multi Photos, Reels, Audio | Guest Scraper & Internal API + Video Handoff | Verified on v2.3.4 (Oct 2026) |
+| **Facebook** | Photos, Albums, Reels | Sandboxed Guest View + Grid Scraper | Verified on v2.3.4 (Oct 2026) |
+| **Stories (IG / FB)** | Ephemeral Stories, Photos, Video Segments | Signed-in session (Session Recovery, opt-in) | Verified on v2.3.4 (Oct 2026) |
+| **TikTok** | Photos, Slideshows, Videos, Audio | Direct Stream Extractor + yt-dlp fallback | Verified on v2.3.4 (Oct 2026) |
+| **Pinterest** | Pins, Collections (`news_hub`), Boards | Direct API / Candidate Probe + CDN Fallback | Verified on v2.3.4 (Oct 2026) |
+| **X/Twitter** | Photos, Galleries, Videos | Direct Extractor / Guest Scraper | Verified on v2.3.4 (Oct 2026) |
+| **Reddit** | Videos, Audio, Galleries, Posts | Direct Stream Extractor + Guest Scraper | Verified on v2.3.4 (Oct 2026) |
 
-> [!NOTE]
-> **Universal Open Web & Adult Platform Ingestion**: The table above highlights the **Tier 1 officially verified and hardened platforms**. JaneConverter's underlying engine (powered by `yt-dlp`'s 1,800+ extractors, generic media stream parsers, and the Browser Bridge) operates across thousands of websites across the open internet—including niche video hosting sites, web archives, and **adult / 18+ platforms**—even though adult and niche sites are not officially certified in the primary verification suite.
+### Universal Open Web & Adult / 18+ Ingestion (Unrestricted)
+
+JaneConverter is **NOT restricted to the platforms listed above**. Its ingestion engine is inherently universal:
+
+- **Thousands of Unlisted & Niche Websites:** Powered by `yt-dlp`'s 1,800+ extractors, a generic media stream sniffer, and HLS (`.m3u8`) / DASH manifest segment assemblers. Niche video hosting sites, forum embeds, news streams, and web archives across the internet are expected to work out of the box.
+- **Adult & 18+ Websites:** JaneConverter natively supports and downloads from adult platforms (e.g. Pornhub, XVideos, SpankBang, RedTube, Chaturbate recordings, and similar streaming sites) via its underlying media extraction engine.
+- **Verification Scope & Operational Reality:** The table above represents the common major platforms verified on release builds. Outside of Tier 1 major sites, the thousands of niche and adult sites across the web are **expected to work out of the box via generic stream extraction, but are not specifically or individually verified** (testing thousands of individual sites across the web is neither necessary nor physically practical).
+- **Browser Bridge Sniffing:** For platforms with complex anti-bot protection or proprietary web players, clicking **Send to JaneConverter** from the companion Browser Bridge extension directly captures the authenticated video/audio stream from your active browser tab.
 
 ---
 
