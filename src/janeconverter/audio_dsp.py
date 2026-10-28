@@ -97,7 +97,7 @@ def measure_audio_loudness(
         and sample_rate
         and int(input_sample_rate) == int(sample_rate)
     )
-    if sample_rate and not source_rate_matches and has_soxr_support():
+    if sample_rate and not source_rate_matches and _active_has_soxr_support():
         filters.append("aresample=resampler=soxr:precision=28:cutoff=0.99:dither_method=triangular")
     if reconstruct_frequency_loss:
         filters.append("aexciter=freq=7500:ceil=20000:amount=2.5:drive=8.5:blend=0")
@@ -189,3 +189,13 @@ def has_soxr_support() -> bool:
             _soxr_supported = False
         return _soxr_supported
 
+
+
+def _active_has_soxr_support() -> bool:
+    import sys
+    conv = sys.modules.get("janeconverter.converter")
+    if conv and "has_soxr_support" in conv.__dict__:
+        fn = conv.__dict__["has_soxr_support"]
+        if fn is not _active_has_soxr_support and fn is not has_soxr_support:
+            return fn()
+    return has_soxr_support()
