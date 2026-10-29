@@ -2,7 +2,7 @@ use crate::library;
 use crate::AppState;
 use rfd::FileDialog;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::State;
 
@@ -58,6 +58,67 @@ pub fn export_log_file(
     }
 }
 
+fn spawn_system_open(target: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(target)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(target)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn spawn_file_manager_select(target: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut command = Command::new("explorer");
+        if target.is_file() {
+            command.raw_arg(format!("/select,\"{}\"", target.display()));
+        } else {
+            command.arg(target);
+        }
+        command.spawn().map_err(|error| error.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        if target.is_file() {
+            command.arg("-R");
+        }
+        command.arg(target);
+        command.spawn().map_err(|error| error.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let folder = if target.is_file() {
+            target.parent().unwrap_or(target)
+        } else {
+            target
+        };
+        Command::new("xdg-open")
+            .arg(folder)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn open_path(path: String) -> Result<(), String> {
     let resolved = library::resolve_existing_path(&path)
@@ -81,39 +142,7 @@ pub fn open_path(path: String) -> Result<(), String> {
     let target = PathBuf::from(library::clean_windows_path(
         &canonical.display().to_string(),
     ));
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        let mut command = Command::new("explorer");
-        if target.is_file() {
-            command.raw_arg(format!("/select,\"{}\"", target.display()));
-        } else {
-            command.arg(&target);
-        }
-        command.spawn().map_err(|error| error.to_string())?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let mut command = Command::new("open");
-        if target.is_file() {
-            command.arg("-R");
-        }
-        command.arg(&target);
-        command.spawn().map_err(|error| error.to_string())?;
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let folder = if target.is_file() {
-            target.parent().unwrap_or(&target)
-        } else {
-            &target
-        };
-        Command::new("xdg-open")
-            .arg(folder)
-            .spawn()
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
+    spawn_file_manager_select(&target)
 }
 
 #[tauri::command]
@@ -144,28 +173,7 @@ pub fn open_file(path: String) -> Result<(), String> {
     let clean_target = PathBuf::from(library::clean_windows_path(
         &canonical.display().to_string(),
     ));
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer")
-            .arg(&clean_target)
-            .spawn()
-            .map_err(|error| error.to_string())?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(&clean_target)
-            .spawn()
-            .map_err(|error| error.to_string())?;
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        Command::new("xdg-open")
-            .arg(&clean_target)
-            .spawn()
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
+    spawn_system_open(&clean_target)
 }
 
 #[tauri::command]
