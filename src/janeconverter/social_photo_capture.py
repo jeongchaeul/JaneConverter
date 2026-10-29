@@ -226,6 +226,9 @@ def download_social_photo_manifest(
 
     print(f"Target Directory: {target_dir}", flush=True)
     print(f"[*] Found {len(photos)} photos in '{title}'", flush=True)
+    for p_idx, p_obj in enumerate(photos.values(), start=1):
+        if isinstance(p_obj, dict) and p_obj.get("url"):
+            print(f"[*] Photo #{p_idx} Source: {p_obj['url']}", flush=True)
 
     session = requests.Session()
     session.headers.update({
@@ -283,6 +286,7 @@ def download_social_photo_manifest(
             os.replace(download_path, image_path)
             convert_image_format(image_path, target_format, quality)
             print(f"[+] Saved photo: {index}. {os.path.basename(image_path)}", flush=True)
+            print(f"[*] Photo #{index} Saved: {image_path}", flush=True)
             with lock:
                 completed_count += 1
                 report(0.05 + 0.9 * (completed_count / len(photos)), f"Downloading {platform} photo {completed_count} of {len(photos)}...")

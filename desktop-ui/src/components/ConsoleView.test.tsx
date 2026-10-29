@@ -277,4 +277,47 @@ describe("ConsoleView", () => {
     });
     container.remove();
   });
+
+  it("renders live source media thumbnails without batch cover cross-contamination", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const liveEvents: ConverterEvent[] = [
+      { jobId: "j3", kind: "started", message: "[*] Starting conversion batch..." },
+      { jobId: "j3", kind: "log", message: "[*] Track #1 Manifest: Donut's New Groove\tKotomi\thttps://cdn.example.com/donut.jpg" },
+      { jobId: "j3", kind: "log", message: "[*] Track #2 Manifest: Angel\tKotomi\thttps://cdn.example.com/angel.jpg" },
+      { jobId: "j3", kind: "log", message: "[*] Playlist Cover Art: C:\\Exports\\cover.jpg" },
+      { jobId: "j3", kind: "progress", message: "[1/2] Fetching #1: Donut's New Groove..." },
+    ];
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={liveEvents}
+          jobId="j3"
+          running={true}
+          initialMode="in_progress"
+          onClear={vi.fn()}
+          onStatus={vi.fn()}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain("Donut's New Groove");
+    expect(container.textContent).toContain("Angel");
+
+    // Images should point to their individual live thumbnails
+    const images = Array.from(container.querySelectorAll<HTMLImageElement>("img"));
+    const donutImg = images.find((img) => img.src === "https://cdn.example.com/donut.jpg");
+    const angelImg = images.find((img) => img.src === "https://cdn.example.com/angel.jpg");
+
+    expect(donutImg).toBeDefined();
+    expect(angelImg).toBeDefined();
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
 });

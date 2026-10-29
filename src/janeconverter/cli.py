@@ -27,7 +27,7 @@ for _stream in (sys.stdin, sys.stdout, sys.stderr):
 
 from .extractor import (
     is_url, sanitize_filename, clean_windows_path, fetch_media_stream,
-    is_playlist_url, fetch_playlist_entries, download_and_convert_thumbnail, format_duration,
+    is_playlist_url, fetch_playlist_entries, download_and_convert_thumbnail, format_duration, resolve_entry_thumbnail,
     identify_source_type, is_ephemeral_story_url,
 )
 from .converter import (
@@ -457,6 +457,9 @@ def process_conversion(
         year = stream_info.get("year", "")
         description = stream_info.get("description", "")
         cover_path = stream_info.get("thumbnail_path")
+        cover_url = stream_info.get("thumbnail_url")
+        if cover_url:
+            print(f"[*] Media Thumbnail URL: {cover_url}", flush=True)
 
         # Keep the export root tidy and make the origin obvious at a glance.
         organized_output_dir = media_library_folder(
@@ -677,6 +680,16 @@ def process_playlist_conversion(
     print(f"Hardware Acceleration: {active_gpu} [{gpu_desc}]")
     print(f"Cover Art: {save_cover_art} | Metadata: {save_metadata}")
     print("=" * 60)
+
+    # Emit live track manifest so In Progress View immediately displays real titles and live thumbnails
+    for entry in selected_entries:
+        e_idx = entry.get("index")
+        if e_idx is None:
+            continue
+        e_title = strip_playlist_track_prefix(entry.get("title", f"Track_{e_idx}"))
+        e_artist = entry.get("artist", "")
+        e_thumb = resolve_entry_thumbnail(entry, "")
+        print(f"[*] Track #{e_idx} Manifest: {e_title}\t{e_artist}\t{e_thumb}", flush=True)
 
     # Pre-fetch album / playlist cover art if available
     playlist_cover_dest = os.path.join(metadata_dir, "cover.jpg")

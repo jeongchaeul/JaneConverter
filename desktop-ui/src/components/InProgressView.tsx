@@ -66,9 +66,27 @@ const PLAYLIST_HEADER_RE = /(?:Playlist:\s*(.*)|\[\*\]\s*Found\s*(\d+)\s*tracks\
 const PHOTO_ALBUM_HEADER_RE = /Found\s*(\d+)\s*photos\s*in\s*['"]?(.*?)['"]?\.\s*Starting/i;
 const PHOTO_PROGRESS_RE = /Downloading\s*(?:Facebook|Instagram|Pinterest|social)?\s*photo\s*(\d+)\s*of\s*(\d+)/i;
 const PHOTO_COMPLETED_RE = /(?:Downloaded|Saved)\s*(?:all\s*)?(\d+)\s*(?:public\s*)?(?:Facebook|Instagram|Pinterest)?\s*photo/i;
-const COVER_ART_RE = /\[\*\]\s*(?:Playlist Cover Art|Media Thumbnail):\s*(.*)/i;
+const COVER_ART_RE = /\[\*\]\s*Playlist Cover Art:\s*(.*)/i;
+const TRACK_MANIFEST_RE = /\[\*\]\s*Track\s*#(\d+)\s*Manifest:\s*(.*?)(?:\t(.*?))?(?:\t(.*?))?$/i;
+const TRACK_THUMBNAIL_RE = /\[\*\]\s*Track\s*#(\d+)\s*(?:Thumbnail|Source):\s*(.*)/i;
 const TRACK_COVER_RE = /\[\*\]\s*Track\s*#(\d+)\s*Cover:\s*(.*)/i;
+const PHOTO_SOURCE_RE = /\[\*\]\s*Photo\s*#(\d+)\s*Source:\s*(.*)/i;
+const PHOTO_SAVED_RE = /\[\*\]\s*Photo\s*#(\d+)\s*Saved:\s*(.*)/i;
+const MEDIA_THUMBNAIL_RE = /\[\*\]\s*Media\s*Thumbnail(?:\s*URL)?:\s*(.*)/i;
 const TARGET_DIR_RE = /(?:Target Directory:\s*(.*)|Export Directory:\s*(.*)|DONE! Exported:\s*(.*))/i;
+
+export function extractYouTubeThumbnail(urlOrId?: string): string | undefined {
+  if (!urlOrId) return undefined;
+  const trimmed = urlOrId.trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
+    return `https://i.ytimg.com/vi/${trimmed}/hqdefault.jpg`;
+  }
+  const match = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/i);
+  if (match) {
+    return `https://i.ytimg.com/vi/${match[1]}/hqdefault.jpg`;
+  }
+  return undefined;
+}
 
 export function inferMediaKind(category?: Category, format?: string, filename?: string): MediaKind {
   const target = `${category || ""} ${format || ""} ${filename || ""}`.toLowerCase();
@@ -113,6 +131,7 @@ export function parseConversionEvents(
   // Single file fallback state
   let isSingleMedia = false;
   let singleTitle = initialSource || "Media file";
+  let singleThumbnail: string | undefined = extractYouTubeThumbnail(initialSource);
   let singleProgress = 0;
   let singleStatus: InProgressItemStatus = "downloading";
   let singleSpeed: string | undefined;
@@ -131,11 +150,100 @@ export function parseConversionEvents(
       detectedOutputDir = (dirMatch[1] || dirMatch[2] || dirMatch[3] || "").trim();
     }
 
-    // 2. Detect cover art paths
+    // 2. Detect cover art and manifest tags
     const coverMatch = COVER_ART_RE.exec(rawMsg);
     if (coverMatch) {
       detectedCoverArt = coverMatch[1].trim();
     }
+
+    const manifestMatch = TRACK_MANIFEST_RE.exec(rawMsg);
+    if (manifestMatch) {
+      const mIdx = parseInt(manifestMatch[1], 10);
+      const mTitle = (manifestMatch[2] || "").trim();
+      const mArtist = (manifestMatch[3] || "").trim();
+      const mThumb = (manifestMatch[4] || "").trim();
+      if (mIdx > detectedTotal) detectedTotal = mIdx;
+      let item = itemsMap.get(mIdx);
+      if (!item) {
+        item = {
+          id: `item-${mIdx}`,
+          index: mIdx,
+          total: detectedTotal || mIdx,
+          title: mTitle || `Track #${mIdx}`,
+          artist: mArtist || undefined,
+          mediaKind: inferMediaKind(defaultCategory, defaultFormat, mTitle),
+          status: "queued",
+          progress: 0,
+          thumbnail: mThumb || undefined,
+        };
+        itemsMap.set(mIdx, item);
+      } else {
+        if (mTitle) item.title = mTitle;
+        if (mArtist) item.artist = mArtist;
+        if (mThumb) item.thumbnail = mThumb;
+      }
+      continue;
+    }
+
+    const photoSrcMatch = PHOTO_SOURCE_RE.exec(rawMsg);
+    if (photoSrcMatch) {
+      const pIdx = parseInt(photoSrcMatch[1], 10);
+      const pUrl = photoSrcMatch[2].trim();
+      if (pIdx > detectedTotal) detectedTotal = pIdx;
+      detectedKind = "image";
+      let item = itemsMap.get(pIdx);
+      if (!item) {
+        item = {
+          id: `item-${pIdx}`,
+          index: pIdx,
+          total: detectedTotal || pIdx,
+          title: `Photo #${pIdx}`,
+          mediaKind: "image",
+          status: "queued",
+          progress: 0,
+          thumbnail: pUrl,
+        };
+        itemsMap.set(pIdx, item);
+      } else {
+        item.thumbnail = pUrl;
+      }
+      continue;
+    }
+
+    const photoSavedMatch = PHOTO_SAVED_RE.exec(rawMsg);
+    if (photoSavedMatch) {
+      const pIdx = parseInt(photoSavedMatch[1], 10);
+      const pPath = photoSavedMatch[2].trim();
+      let item = itemsMap.get(pIdx);
+      if (item) {
+        item.coverPath = pPath;
+        item.status = "ready";
+        item.progress = 1;
+      }
+      continue;
+    }
+
+    const trackThumbMatch = TRACK_THUMBNAIL_RE.exec(rawMsg);
+    if (trackThumbMatch) {
+      const tIdx = parseInt(trackThumbMatch[1], 10);
+      const tThumb = trackThumbMatch[2].trim();
+      let item = itemsMap.get(tIdx);
+      if (item) {
+        item.thumbnail = tThumb;
+      }
+      continue;
+    }
+
+    const mediaThumbMatch = MEDIA_THUMBNAIL_RE.exec(rawMsg);
+    if (mediaThumbMatch) {
+      const mThumb = mediaThumbMatch[1].trim();
+      if (mThumb) {
+        singleThumbnail = mThumb;
+        if (!detectedCoverArt) detectedCoverArt = mThumb;
+      }
+      continue;
+    }
+
     const trackCoverMatch = TRACK_COVER_RE.exec(rawMsg);
     if (trackCoverMatch) {
       const tIdx = parseInt(trackCoverMatch[1], 10);
@@ -144,6 +252,7 @@ export function parseConversionEvents(
       if (item) {
         item.coverPath = tPath;
       }
+      continue;
     }
 
     // 3. Detect playlist header: Playlist: <title> or Found <n> tracks in '<title>'
@@ -428,6 +537,8 @@ export function parseConversionEvents(
         speed: singleSpeed,
         eta: singleEta,
         detailMessage: singleDetail,
+        coverPath: detectedCoverArt,
+        thumbnail: singleThumbnail || extractYouTubeThumbnail(initialSource),
         errorMessage: singleError,
       },
     ];
@@ -527,25 +638,16 @@ export function InProgressView({
     const resolvedDir = summary.outputDir || outputDir;
     if (!resolvedDir) return;
 
-    // 1. Fetch batch / album cover art
-    if (!previews["batch_cover"]) {
-      const candidate = summary.coverArtPath || `${resolvedDir.replace(/[\\/]$/, "")}\\metadata\\cover.jpg`;
-      bridge.getThumbnail(resolvedDir, candidate)
+    // 1. Fetch batch / album cover art ONLY when explicitly emitted for this run
+    if (!previews["batch_cover"] && summary.coverArtPath) {
+      bridge.getThumbnail(resolvedDir, summary.coverArtPath)
         .then((thumb) => {
-          if (thumb) {
-            setPreviews((prev) => ({ ...prev, batch_cover: thumb }));
-          }
+          if (thumb) setPreviews((prev) => ({ ...prev, batch_cover: thumb }));
         })
-        .catch(() => {
-          bridge.getThumbnail(resolvedDir, resolvedDir)
-            .then((thumb) => {
-              if (thumb) setPreviews((prev) => ({ ...prev, batch_cover: thumb }));
-            })
-            .catch(() => {});
-        });
+        .catch(() => {});
     }
 
-    // 2. Fetch individual track or photo thumbnails
+    // 2. Fetch individual item cover art from disk ONLY if it has an explicit local coverPath
     for (const item of items) {
       const itemKey = `item-${item.index}`;
       if (previews[itemKey]) continue;
@@ -564,6 +666,7 @@ export function InProgressView({
               setPreviews((prev) => ({
                 ...prev,
                 [itemKey]: thumb,
+                [item.id]: thumb,
                 ...(item.outputPath ? { [item.outputPath]: thumb } : {}),
               }));
             }
@@ -797,8 +900,14 @@ export function InProgressView({
       {/* 2. Hero Batch Card with Master Progress */}
       <div className="rounded-2xl border border-white/[0.08] bg-[#0c0a1a]/85 p-5 shadow-[0_12px_36px_rgba(0,0,0,.35)] backdrop-blur-xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="truncate text-base font-semibold text-white tracking-tight">
+          <div className="flex items-center gap-4 min-w-0">
+            {previews["batch_cover"] && (
+              <div className="size-14 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-black/40 shadow-md">
+                <img src={previews["batch_cover"]} alt="" className="size-full object-cover" />
+              </div>
+            )}
+            <div className="min-w-0">
+              <h2 className="truncate text-base font-semibold text-white tracking-tight">
               {summary.title || "Converting Media"}
             </h2>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
@@ -826,8 +935,9 @@ export function InProgressView({
               )}
             </div>
           </div>
+        </div>
 
-          <div className="text-right">
+        <div className="text-right">
             <div className="font-mono text-xl font-bold text-white tracking-tight">
               {Math.round(effectiveProgress * 100)}%
             </div>
@@ -946,7 +1056,7 @@ export function InProgressView({
           <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {displayedItems.map((item) => {
               const itemKey = `item-${item.index}`;
-              const preview = previews[item.id] || previews[itemKey] || (item.outputPath && previews[item.outputPath]) || previews["batch_cover"];
+              const preview = previews[itemKey] || previews[item.id] || (item.outputPath && previews[item.outputPath]) || item.thumbnail;
               const isActive = item.status === "downloading" || item.status === "transcoding";
 
               return (
@@ -1049,7 +1159,7 @@ export function InProgressView({
           <div className="divide-y divide-white/[0.04] rounded-2xl border border-white/[0.07] bg-[#0c0a1a]/70 backdrop-blur-md">
             {displayedItems.map((item) => {
               const itemKey = `item-${item.index}`;
-              const preview = previews[item.id] || previews[itemKey] || (item.outputPath && previews[item.outputPath]) || previews["batch_cover"];
+              const preview = previews[itemKey] || previews[item.id] || (item.outputPath && previews[item.outputPath]) || item.thumbnail;
               const isActive = item.status === "downloading" || item.status === "transcoding";
 
               return (

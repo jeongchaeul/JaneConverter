@@ -178,6 +178,9 @@ def download_facebook_photo_manifest(
 
     print(f"Target Directory: {target_dir}", flush=True)
     print(f"[*] Found {len(photos)} photos in '{title}'", flush=True)
+    for p_idx, (p_id, p_obj) in enumerate(photos.items(), start=1):
+        if isinstance(p_obj, dict) and p_obj.get("url"):
+            print(f"[*] Photo #{p_idx} Source: {p_obj['url']}", flush=True)
 
     supported_formats = set(Image.registered_extensions().values())
     accept = "image/webp,image/png,image/jpeg,image/gif"
@@ -264,6 +267,7 @@ def download_facebook_photo_manifest(
                     os.replace(image_path, verified_path)
                     convert_image_format(verified_path, target_format, quality)
                     print(f"[+] Saved photo: {index}. {os.path.basename(verified_path)}", flush=True)
+                    print(f"[*] Photo #{index} Saved: {verified_path}", flush=True)
                     break
                 except (requests.RequestException, OSError, ValueError) as error:
                     last_error = error

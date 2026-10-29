@@ -333,6 +333,29 @@ def _is_safe_public_url(url: str) -> bool:
         return False
 
 
+def resolve_entry_thumbnail(entry: Dict[str, Any], fallback_cover: str = "") -> str:
+    """Resolve a live source thumbnail URL for a playlist or media entry."""
+    thumb = entry.get("thumbnail")
+    if isinstance(thumb, str) and (thumb.startswith("http://") or thumb.startswith("https://")):
+        return thumb
+    thumbnails = entry.get("thumbnails")
+    if isinstance(thumbnails, list) and thumbnails:
+        valid_urls = [
+            t.get("url") for t in thumbnails
+            if isinstance(t, dict) and isinstance(t.get("url"), str) and (t["url"].startswith("http://") or t["url"].startswith("https://"))
+        ]
+        if valid_urls:
+            return valid_urls[-1]
+    e_id = str(entry.get("id") or "").strip()
+    if not e_id and entry.get("url"):
+        m_yt = re.search(r'(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})', str(entry.get("url", "")))
+        if m_yt:
+            e_id = m_yt.group(1)
+    if e_id and len(e_id) == 11 and re.match(r'^[a-zA-Z0-9_-]{11}$', e_id):
+        return f"https://i.ytimg.com/vi/{e_id}/hqdefault.jpg"
+    return fallback_cover
+
+
 def download_and_convert_thumbnail(thumbnail_url: str, output_path: str) -> Optional[str]:
     """Downloads cover art or thumbnail from URL (or loads local image) and converts it to standard RGB JPEG.
 
@@ -1118,6 +1141,12 @@ def fetch_media_stream(
 
             # Thumbnail download and conversion to JPEG
             thumb_url = (catalog_meta.get("thumbnail") if catalog_meta and catalog_meta.get("thumbnail") else None) or info.get("thumbnail")
+            if not thumb_url:
+                v_id = str(info.get("id") or "").strip()
+                if v_id and len(v_id) == 11 and re.match(r'^[a-zA-Z0-9_-]{11}$', v_id):
+                    thumb_url = f"https://i.ytimg.com/vi/{v_id}/hqdefault.jpg"
+            if thumb_url and (thumb_url.startswith("http://") or thumb_url.startswith("https://")):
+                print(f"[*] Media Thumbnail URL: {thumb_url}", flush=True)
             thumbnail_local_path = None
             if thumb_url:
                 local_thumb_file = os.path.join(output_dir, "cover.jpg")
@@ -1381,7 +1410,7 @@ def fetch_playlist_entries(
                 t_dur_sec = int(e.get("duration") or 0)
                 e_url = e.get("url") or ""
                 e_id = e.get("id") or ""
-                e_thumb = e.get("thumbnail") or playlist_cover
+                e_thumb = resolve_entry_thumbnail(e, "")
                 e_desc = e.get("description") or ""
 
                 if not e_url or not is_url(e_url):
