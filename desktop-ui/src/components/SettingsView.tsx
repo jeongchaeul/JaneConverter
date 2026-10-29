@@ -51,6 +51,8 @@ export function SettingsView({
   onWallpaperMaskColorChange,
   onWallpaperMaskOpacityChange,
   onResetColors,
+  onResetAppearance,
+  onSaveAppearance,
   onStatus,
   initialTab = "browser",
   updateResult: propUpdateResult,
@@ -76,6 +78,8 @@ export function SettingsView({
   onWallpaperMaskColorChange?: (color: string) => void;
   onWallpaperMaskOpacityChange?: (opacity: number) => void;
   onResetColors?: () => void;
+  onResetAppearance?: () => void;
+  onSaveAppearance?: () => void;
   onStatus: (message: string) => void;
   initialTab?: SettingsTab;
   updateResult?: UpdateCheckResult | null;
@@ -359,6 +363,8 @@ export function SettingsView({
           onWallpaperMaskColorChange={onWallpaperMaskColorChange}
           onWallpaperMaskOpacityChange={onWallpaperMaskOpacityChange}
           onResetColors={onResetColors}
+          onResetAppearance={onResetAppearance}
+          onSaveAppearance={onSaveAppearance}
           onStatus={onStatus}
         />
       )}

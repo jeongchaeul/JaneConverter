@@ -12,6 +12,7 @@ import { FetchedMediaView } from "./components/FetchedMediaView";
 import { UpdatePromptHeader, isAppUpdateAvailable } from "./components/UpdatePromptHeader";
 import { UpdateChangesModal } from "./components/UpdateChangesModal";
 import { findPresetName, formatBytes, formatElapsedMs } from "./options";
+import { clearAppearanceStorage, loadAppearanceFromStorage, saveAppearanceToStorage, type AppearanceSettings } from "./utils/appearanceStorage";
 
 const defaultSettings: ConverterSettings = {
   outputDir: "converted",
@@ -268,6 +269,24 @@ export default function App() {
     }
   });
 
+  useEffect(() => {
+    let mounted = true;
+    void loadAppearanceFromStorage().then((saved) => {
+      if (!mounted || !saved) return;
+      if (saved.wallpaper) setWallpaper(saved.wallpaper);
+      if (saved.bgMode) setBgMode(saved.bgMode);
+      if (saved.wallpaperBlur !== undefined) setWallpaperBlur(saved.wallpaperBlur);
+      if (saved.wallpaperMaskColor) setWallpaperMaskColor(saved.wallpaperMaskColor);
+      if (saved.wallpaperMaskOpacity !== undefined) setWallpaperMaskOpacity(saved.wallpaperMaskOpacity);
+      if (saved.accentColor) setAccentColor(saved.accentColor);
+      if (saved.bgColor) setBgColor(saved.bgColor);
+      if (saved.theme) setTheme(saved.theme);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [updateDismissed, setUpdateDismissed] = useState(false);
@@ -336,16 +355,16 @@ export default function App() {
     root.style.setProperty("--accent-subtle", `rgba(${r}, ${g}, ${b}, 0.12)`);
     root.style.setProperty("--bg-color", bgColor);
 
-    try {
-      window.localStorage.setItem("janecoverter.theme", theme);
-      window.localStorage.setItem("janecoverter.accentColor", accentColor);
-      window.localStorage.setItem("janecoverter.bgColor", bgColor);
-      window.localStorage.setItem("janecoverter.bgMode", bgMode);
-      window.localStorage.setItem("janecoverter.wallpaper", wallpaper);
-      window.localStorage.setItem("janecoverter.wallpaperBlur", String(wallpaperBlur));
-      window.localStorage.setItem("janecoverter.wallpaperMaskColor", wallpaperMaskColor);
-      window.localStorage.setItem("janecoverter.wallpaperMaskOpacity", String(wallpaperMaskOpacity));
-    } catch {}
+    void saveAppearanceToStorage({
+      theme,
+      accentColor,
+      bgColor,
+      bgMode,
+      wallpaper,
+      wallpaperBlur,
+      wallpaperMaskColor,
+      wallpaperMaskOpacity,
+    });
   }, [theme, accentColor, bgColor, bgMode, wallpaper, wallpaperBlur, wallpaperMaskColor, wallpaperMaskOpacity]);
 
   const [historyError, setHistoryError] = useState("");
@@ -446,7 +465,7 @@ export default function App() {
     }
   }
 
-  function handleResetColors() {
+  function handleResetAppearance() {
     setTheme("dark");
     setAccentColor("#c52b68");
     setBgColor("#02000a");
@@ -455,13 +474,22 @@ export default function App() {
     setWallpaperBlur(20);
     setWallpaperMaskColor("#000000");
     setWallpaperMaskOpacity(50);
-    try {
-      window.localStorage.removeItem("janecoverter.wallpaper");
-      window.localStorage.setItem("janecoverter.bgMode", "color");
-      window.localStorage.setItem("janecoverter.wallpaperBlur", "20");
-      window.localStorage.setItem("janecoverter.wallpaperMaskColor", "#000000");
-      window.localStorage.setItem("janecoverter.wallpaperMaskOpacity", "50");
-    } catch {}
+    void clearAppearanceStorage();
+    statusMessage("Appearance settings reset to default.");
+  }
+
+  function handleSaveAppearance() {
+    void saveAppearanceToStorage({
+      theme,
+      accentColor,
+      bgColor,
+      bgMode,
+      wallpaper,
+      wallpaperBlur,
+      wallpaperMaskColor,
+      wallpaperMaskOpacity,
+    });
+    statusMessage("Appearance settings saved.");
   }
 
   useEffect(() => {
@@ -921,7 +949,9 @@ export default function App() {
             onWallpaperBlurChange={setWallpaperBlur}
             onWallpaperMaskColorChange={setWallpaperMaskColor}
             onWallpaperMaskOpacityChange={setWallpaperMaskOpacity}
-            onResetColors={handleResetColors}
+            onResetColors={handleResetAppearance}
+            onResetAppearance={handleResetAppearance}
+            onSaveAppearance={handleSaveAppearance}
             onStatus={statusMessage}
             updateResult={updateResult}
             onCheckUpdates={handleCheckUpdates}

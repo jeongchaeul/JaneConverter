@@ -1,10 +1,12 @@
 import { useRef, useState } from "react";
 import {
+  Check,
   Image as ImageIcon,
   Paintbrush,
   Palette,
   Pipette,
   RotateCcw,
+  Save,
   Sliders,
   Sparkles,
   Trash2,
@@ -184,6 +186,8 @@ export function SettingsThemeTab({
   onWallpaperMaskColorChange,
   onWallpaperMaskOpacityChange,
   onResetColors,
+  onResetAppearance,
+  onSaveAppearance,
   onStatus,
 }: {
   accentColor: string;
@@ -201,10 +205,22 @@ export function SettingsThemeTab({
   onWallpaperMaskColorChange?: (color: string) => void;
   onWallpaperMaskOpacityChange?: (opacity: number) => void;
   onResetColors?: () => void;
+  onResetAppearance?: () => void;
+  onSaveAppearance?: () => void;
   onStatus: (msg: string) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [savedRecently, setSavedRecently] = useState(false);
+
+  function handleSave() {
+    onSaveAppearance?.();
+    setSavedRecently(true);
+    onStatus("Appearance settings saved successfully.");
+    setTimeout(() => {
+      setSavedRecently(false);
+    }, 2000);
+  }
 
   function handleFileSelected(file: File) {
     if (!file.type.startsWith("image/")) {
@@ -267,7 +283,7 @@ export function SettingsThemeTab({
       </div>
 
       <section className="panel p-5 space-y-4">
-        {/* Top Header with Reset colors button */}
+        {/* Top Header with Save and Reset Appearance buttons */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
@@ -278,17 +294,36 @@ export function SettingsThemeTab({
               Personalize JaneConverter in real-time. Choose solid background palettes or load a custom wallpaper with adjustable blur and color mask.
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              onResetColors?.();
-              onStatus("Theme colors and appearance reset to default palette.");
-            }}
-            className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs text-zinc-400 hover:text-white"
-            title="Reset accent, background, wallpaper, and blur to default"
-          >
-            <RotateCcw className="size-3" /> Reset colors
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSave}
+              className="primary-button flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-all"
+              title="Save current appearance settings and wallpaper"
+            >
+              {savedRecently ? (
+                <>
+                  <Check className="size-3 text-emerald-300" /> Saved!
+                </>
+              ) : (
+                <>
+                  <Save className="size-3" /> Save Appearance
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const resetFn = onResetAppearance ?? onResetColors;
+                resetFn?.();
+                onStatus("Appearance settings reset to default.");
+              }}
+              className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs text-zinc-400 hover:text-white"
+              title="Reset accent, background, wallpaper, and blur to default"
+            >
+              <RotateCcw className="size-3" /> Reset Appearance
+            </button>
+          </div>
         </div>
 
         {/* Mode Selector: Solid Colors vs Wallpaper */}
@@ -333,33 +368,72 @@ export function SettingsThemeTab({
         {/* Content Matrix: Accent Color on Left, and Background/Wallpaper on Right */}
         <div className="grid gap-4 md:grid-cols-2 pt-2 border-t border-white/[0.06]">
           {/* Accent Color Customizer (always visible in both modes) */}
-          <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3.5 flex flex-col justify-between">
-            <div>
+          <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3.5 flex flex-col justify-start">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-medium text-zinc-200 flex items-center gap-1.5">
+                <Pipette className="size-3.5" style={{ color: "var(--accent-color, #c52b68)" }} />
+                Accent Color
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  aria-label="Accent color picker"
+                  value={accentColor}
+                  onChange={(event) => onAccentColorChange?.(event.target.value)}
+                  className="size-7 cursor-pointer rounded-lg border border-white/20 bg-transparent p-0.5"
+                />
+                <span className="font-mono text-xs uppercase text-zinc-400">{accentColor}</span>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              {ACCENT_PRESETS.map((swatch) => (
+                <button
+                  key={swatch.hex}
+                  type="button"
+                  onClick={() => onAccentColorChange?.(swatch.hex)}
+                  title={swatch.name}
+                  className={`size-6 rounded-lg transition-transform hover:scale-110 relative ${
+                    accentColor.toLowerCase() === swatch.hex.toLowerCase()
+                      ? "ring-2 ring-white ring-offset-2 ring-offset-black scale-105"
+                      : "border border-white/10"
+                  }`}
+                  style={{ backgroundColor: swatch.hex }}
+                />
+              ))}
+            </div>
+            <div className="mt-3 text-[11px] text-zinc-500">
+              Accent highlight applies to progress bars, interactive buttons, active tabs, and neon audio badges.
+            </div>
+          </div>
+
+          {/* Mode 1: Solid Colors Customizer */}
+          {bgMode === "color" ? (
+            <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3.5 flex flex-col justify-start">
               <div className="flex items-center justify-between gap-2">
                 <div className="text-xs font-medium text-zinc-200 flex items-center gap-1.5">
-                  <Pipette className="size-3.5" style={{ color: "var(--accent-color, #c52b68)" }} />
-                  Accent Color
+                  <Paintbrush className="size-3.5 text-zinc-400" />
+                  Solid Background Color
                 </div>
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
-                    aria-label="Accent color picker"
-                    value={accentColor}
-                    onChange={(event) => onAccentColorChange?.(event.target.value)}
+                    aria-label="Theme background color picker"
+                    value={bgColor}
+                    onChange={(event) => onBgColorChange?.(event.target.value)}
                     className="size-7 cursor-pointer rounded-lg border border-white/20 bg-transparent p-0.5"
                   />
-                  <span className="font-mono text-xs uppercase text-zinc-400">{accentColor}</span>
+                  <span className="font-mono text-xs uppercase text-zinc-400">{bgColor}</span>
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                {ACCENT_PRESETS.map((swatch) => (
+                {BG_PRESETS.map((swatch) => (
                   <button
                     key={swatch.hex}
                     type="button"
-                    onClick={() => onAccentColorChange?.(swatch.hex)}
+                    onClick={() => onBgColorChange?.(swatch.hex)}
                     title={swatch.name}
                     className={`size-6 rounded-lg transition-transform hover:scale-110 relative ${
-                      accentColor.toLowerCase() === swatch.hex.toLowerCase()
+                      bgColor.toLowerCase() === swatch.hex.toLowerCase()
                         ? "ring-2 ring-white ring-offset-2 ring-offset-black scale-105"
                         : "border border-white/10"
                     }`}
@@ -367,50 +441,7 @@ export function SettingsThemeTab({
                   />
                 ))}
               </div>
-            </div>
-            <div className="mt-4 text-[11px] text-zinc-500">
-              Accent highlight applies to progress bars, interactive buttons, active tabs, and neon audio badges.
-            </div>
-          </div>
-
-          {/* Mode 1: Solid Colors Customizer */}
-          {bgMode === "color" ? (
-            <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3.5 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-xs font-medium text-zinc-200 flex items-center gap-1.5">
-                    <Paintbrush className="size-3.5 text-zinc-400" />
-                    Solid Background Color
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      aria-label="Theme background color picker"
-                      value={bgColor}
-                      onChange={(event) => onBgColorChange?.(event.target.value)}
-                      className="size-7 cursor-pointer rounded-lg border border-white/20 bg-transparent p-0.5"
-                    />
-                    <span className="font-mono text-xs uppercase text-zinc-400">{bgColor}</span>
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                  {BG_PRESETS.map((swatch) => (
-                    <button
-                      key={swatch.hex}
-                      type="button"
-                      onClick={() => onBgColorChange?.(swatch.hex)}
-                      title={swatch.name}
-                      className={`size-6 rounded-lg transition-transform hover:scale-110 relative ${
-                        bgColor.toLowerCase() === swatch.hex.toLowerCase()
-                          ? "ring-2 ring-white ring-offset-2 ring-offset-black scale-105"
-                          : "border border-white/10"
-                      }`}
-                      style={{ backgroundColor: swatch.hex }}
-                    />
-                  ))}
-                </div>
-              </div>
-              <div className="mt-4 text-[11px] text-zinc-500">
+              <div className="mt-3 text-[11px] text-zinc-500">
                 Choose a dark or light foundation tone. Custom wallpaper mode can be enabled anytime above.
               </div>
             </div>

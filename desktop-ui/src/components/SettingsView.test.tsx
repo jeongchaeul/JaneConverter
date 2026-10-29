@@ -225,7 +225,10 @@ describe("Settings updates", () => {
     });
     expect(onAccentColorChange).toHaveBeenCalledWith("#06b6d4");
 
-    const resetButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Reset colors"));
+    const saveButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Save Appearance"));
+    expect(saveButton).toBeDefined();
+
+    const resetButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Reset Appearance"));
     expect(resetButton).toBeDefined();
     await act(async () => {
       resetButton?.click();
@@ -437,6 +440,8 @@ describe("Settings updates", () => {
     const onWallpaperBlurChange = vi.fn();
     const onWallpaperMaskColorChange = vi.fn();
     const onWallpaperMaskOpacityChange = vi.fn();
+    const onSaveAppearance = vi.fn();
+    const onResetAppearance = vi.fn();
     const onStatus = vi.fn();
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -458,6 +463,8 @@ describe("Settings updates", () => {
           onWallpaperBlurChange={onWallpaperBlurChange}
           onWallpaperMaskColorChange={onWallpaperMaskColorChange}
           onWallpaperMaskOpacityChange={onWallpaperMaskOpacityChange}
+          onSaveAppearance={onSaveAppearance}
+          onResetAppearance={onResetAppearance}
           onStatus={onStatus}
           initialTab="theme"
         />,
@@ -528,6 +535,28 @@ describe("Settings updates", () => {
     });
     expect(onWallpaperChange).toHaveBeenCalled();
     expect(onStatus).toHaveBeenCalledWith(expect.stringContaining('Applied preset wallpaper: Deep Nebula'));
+
+    // 7. Test Save Appearance button
+    const saveBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Save Appearance'));
+    expect(saveBtn).toBeDefined();
+    await act(async () => {
+      saveBtn?.click();
+      await Promise.resolve();
+    });
+    expect(onSaveAppearance).toHaveBeenCalled();
+    expect(onStatus).toHaveBeenCalledWith(expect.stringContaining('Appearance settings saved'));
+
+    // 8. Test Reset Appearance button
+    const resetBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Reset Appearance'));
+    expect(resetBtn).toBeDefined();
+    await act(async () => {
+      resetBtn?.click();
+      await Promise.resolve();
+    });
+    expect(onResetAppearance).toHaveBeenCalled();
+
+    // 9. Verify helper text is placed directly under accent swatches
+    expect(container.textContent).toContain('Accent highlight applies to progress bars');
 
     await act(async () => { root.unmount(); });
     container.remove();
