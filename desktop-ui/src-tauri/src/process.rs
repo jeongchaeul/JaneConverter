@@ -134,7 +134,8 @@ fn exported_path_from_line(line: &str) -> Option<String> {
     let trimmed = line.trim();
     let raw = trimmed
         .strip_prefix("DONE! Exported:")
-        .or_else(|| trimmed.strip_prefix("Export Directory:"))?
+        .or_else(|| trimmed.strip_prefix("Export Directory:"))
+        .or_else(|| trimmed.strip_prefix("Target Directory:"))?
         .trim();
     if raw.is_empty() {
         return None;
@@ -787,6 +788,11 @@ pub fn start_conversion(
                 None,
             )
         };
+        let output_payload = if cancelled {
+            exported_output.lock().ok().and_then(|value| value.clone())
+        } else {
+            resolved_output
+        };
         emit_event(
             &app_for_thread,
             ConverterEvent {
@@ -794,7 +800,7 @@ pub fn start_conversion(
                 kind: kind.into(),
                 message,
                 progress,
-                output: resolved_output,
+                output: output_payload,
             },
         );
     });

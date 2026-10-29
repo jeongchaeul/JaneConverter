@@ -444,9 +444,15 @@ pub fn recent(path: &str, limit: usize) -> Result<Vec<LibraryEntry>, String> {
 fn canonical_library_item(root: &str, path: &str) -> Result<(PathBuf, PathBuf), String> {
     let root = fs::canonicalize(root.trim())
         .map_err(|error| format!("The library root is unavailable: {error}"))?;
-    let target = fs::canonicalize(path.trim())
+    let target_path = Path::new(path.trim());
+    let candidate = if target_path.is_absolute() {
+        target_path.to_path_buf()
+    } else {
+        root.join(target_path)
+    };
+    let target = fs::canonicalize(&candidate)
         .map_err(|error| format!("That library item is unavailable: {error}"))?;
-    if target == root || !target.starts_with(&root) {
+    if !target.starts_with(&root) && target != root {
         return Err(
             "For safety, JaneConverter can only access items inside the active library.".into(),
         );
@@ -488,7 +494,10 @@ pub fn draggable_media_file(root: &str, path: &str) -> Result<PathBuf, String> {
 }
 
 pub fn delete_inside(root: &str, path: &str) -> Result<(), String> {
-    let (_root, target) = canonical_library_item(root, path)?;
+    let (root_canon, target) = canonical_library_item(root, path)?;
+    if target == root_canon {
+        return Err("Cannot delete the library root itself.".into());
+    }
     if target.is_dir() {
         fs::remove_dir_all(target).map_err(|error| format!("Could not delete the folder: {error}"))
     } else {

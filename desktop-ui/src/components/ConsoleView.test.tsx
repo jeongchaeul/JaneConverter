@@ -11,6 +11,9 @@ const exportLogMock = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock("../bridge", () => ({
   bridge: {
     exportLogFile: exportLogMock.run,
+    getThumbnail: vi.fn().mockResolvedValue(null),
+    openPath: vi.fn().mockResolvedValue(undefined),
+    openFile: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -218,6 +221,56 @@ describe("ConsoleView", () => {
     });
 
     expect(container.textContent).toContain("In Progress View.");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("calls onClear and renders photo album batches properly", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onClearMock = vi.fn();
+
+    const photoEvents: ConverterEvent[] = [
+      { jobId: "j2", kind: "started", message: "[*] Starting conversion batch..." },
+      { jobId: "j2", kind: "log", message: "Found 4 photos in 'Summer 2026 Trip'. Starting download..." },
+      { jobId: "j2", kind: "progress", message: "Downloading Facebook photo 1 of 4..." },
+      { jobId: "j2", kind: "log", message: "[+] Saved photo: 1. Summer 2026 Trip_001.jpg" },
+      { jobId: "j2", kind: "progress", message: "Downloading Facebook photo 2 of 4..." },
+      { jobId: "j2", kind: "finished", message: "DONE! Exported: C:\\Photos\\Summer 2026 Trip" },
+    ];
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={photoEvents}
+          jobId="j2"
+          running={false}
+          initialMode="in_progress"
+          onClear={onClearMock}
+          onStatus={vi.fn()}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain("Summer 2026 Trip");
+    expect(container.textContent).toContain("Photo #1");
+    expect(container.textContent).toContain("Photo #2");
+
+    // Click Clear button
+    const clearBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim().includes("Clear")
+    );
+    expect(clearBtn).toBeDefined();
+
+    await act(async () => {
+      clearBtn?.click();
+    });
+
+    expect(onClearMock).toHaveBeenCalled();
 
     await act(async () => {
       root.unmount();

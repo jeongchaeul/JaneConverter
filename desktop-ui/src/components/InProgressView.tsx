@@ -18,6 +18,7 @@ import {
   Search,
   Square,
   Terminal,
+  Trash2,
 } from "lucide-react";
 import { bridge, type Category, type ConverterEvent } from "../bridge";
 
@@ -37,6 +38,7 @@ export interface InProgressItem {
   eta?: string;
   detailMessage?: string;
   outputPath?: string;
+  coverPath?: string;
   thumbnail?: string;
   errorMessage?: string;
 }
@@ -52,6 +54,7 @@ export interface InProgressBatchSummary {
   mediaKind: MediaKind;
   format?: string;
   outputDir?: string;
+  coverArtPath?: string;
 }
 
 // Regex matchers for engine output streams
@@ -60,8 +63,12 @@ const CONVERTED_RE = /\[\+\]\s*(?:Adapted & )?(?:Converted|Saved photo):\s*(?:(\
 const READY_RE = /Ready:\s*(?:(\d+)\.\s*)?(.*)/i;
 const ERROR_RE = /\[\!\]\s*Error converting track\s*#(\d+)\s*'(.*?)':\s*(.*)/i;
 const PLAYLIST_HEADER_RE = /(?:Playlist:\s*(.*)|\[\*\]\s*Found\s*(\d+)\s*tracks\s*in\s*'(.*?)')/i;
+const PHOTO_ALBUM_HEADER_RE = /Found\s*(\d+)\s*photos\s*in\s*['"]?(.*?)['"]?\.\s*Starting/i;
+const PHOTO_PROGRESS_RE = /Downloading\s*(?:Facebook|Instagram|Pinterest|social)?\s*photo\s*(\d+)\s*of\s*(\d+)/i;
+const PHOTO_COMPLETED_RE = /(?:Downloaded|Saved)\s*(?:all\s*)?(\d+)\s*(?:public\s*)?(?:Facebook|Instagram|Pinterest)?\s*photo/i;
+const COVER_ART_RE = /\[\*\]\s*(?:Playlist Cover Art|Media Thumbnail):\s*(.*)/i;
+const TRACK_COVER_RE = /\[\*\]\s*Track\s*#(\d+)\s*Cover:\s*(.*)/i;
 const TARGET_DIR_RE = /(?:Target Directory:\s*(.*)|Export Directory:\s*(.*)|DONE! Exported:\s*(.*))/i;
-const PHOTO_BATCH_RE = /\[(\d+)\/(\d+)\]\s*Downloading photo:\s*(.*)/i;
 
 export function inferMediaKind(category?: Category, format?: string, filename?: string): MediaKind {
   const target = `${category || ""} ${format || ""} ${filename || ""}`.toLowerCase();
@@ -79,10 +86,27 @@ export function parseConversionEvents(
   defaultCategory?: Category,
   defaultFormat?: string,
   initialSource?: string,
+  targetJobId?: string,
 ): { items: InProgressItem[]; summary: InProgressBatchSummary; latestLogLine: string } {
+  // 1. Filter events by active job so multiple jobs never mix together
+  const jobEvents = events.filter((e) => e.jobId && e.jobId !== "ui" && e.jobId !== "browser-session");
+  let scopedEvents = jobEvents.length > 0 ? jobEvents : events;
+  if (targetJobId) {
+    const matched = scopedEvents.filter((e) => e.jobId === targetJobId);
+    if (matched.length > 0) scopedEvents = matched;
+  } else if (scopedEvents.length > 0) {
+    const lastJobId = scopedEvents[scopedEvents.length - 1].jobId;
+    if (lastJobId) {
+      const matched = scopedEvents.filter((e) => e.jobId === lastJobId);
+      if (matched.length > 0) scopedEvents = matched;
+    }
+  }
+
   let detectedTitle = initialSource || "";
   let detectedTotal = 0;
   let detectedOutputDir = "";
+  let detectedCoverArt: string | undefined;
+  let detectedKind: MediaKind = inferMediaKind(defaultCategory, defaultFormat, initialSource);
   const itemsMap = new Map<number, InProgressItem>();
   let latestLogLine = "";
 
@@ -96,18 +120,33 @@ export function parseConversionEvents(
   let singleDetail = "";
   let singleError: string | undefined;
 
-  for (const event of events) {
+  for (const event of scopedEvents) {
     const rawMsg = event.message.trim();
     if (!rawMsg) continue;
     latestLogLine = rawMsg;
 
-    // 1. Detect target output directory
+    // 1. Detect target directory: Target Directory: <path> or Export Directory: <path> or DONE! Exported: <path>
     const dirMatch = TARGET_DIR_RE.exec(rawMsg);
     if (dirMatch) {
       detectedOutputDir = (dirMatch[1] || dirMatch[2] || dirMatch[3] || "").trim();
     }
 
-    // 2. Detect playlist title & total
+    // 2. Detect cover art paths
+    const coverMatch = COVER_ART_RE.exec(rawMsg);
+    if (coverMatch) {
+      detectedCoverArt = coverMatch[1].trim();
+    }
+    const trackCoverMatch = TRACK_COVER_RE.exec(rawMsg);
+    if (trackCoverMatch) {
+      const tIdx = parseInt(trackCoverMatch[1], 10);
+      const tPath = trackCoverMatch[2].trim();
+      let item = itemsMap.get(tIdx);
+      if (item) {
+        item.coverPath = tPath;
+      }
+    }
+
+    // 3. Detect playlist header: Playlist: <title> or Found <n> tracks in '<title>'
     const headerMatch = PLAYLIST_HEADER_RE.exec(rawMsg);
     if (headerMatch) {
       if (headerMatch[1]) detectedTitle = headerMatch[1].trim();
@@ -117,10 +156,91 @@ export function parseConversionEvents(
       }
     }
 
-    // 3. Match playlist item log: e.g. [35/47] #35: Runaway with Peace (feat. Caylune) — Transcoding MP3: 70% (speed 90.3x)
+    // 4. Detect Facebook or Social Photo Album header: Found <n> photos in '<title>'. Starting download...
+    const photoHeaderMatch = PHOTO_ALBUM_HEADER_RE.exec(rawMsg);
+    if (photoHeaderMatch) {
+      detectedTotal = parseInt(photoHeaderMatch[1], 10);
+      if (photoHeaderMatch[2]) detectedTitle = photoHeaderMatch[2].trim();
+      detectedKind = "image";
+    }
+
+    // 5. Match Facebook/Social Photo progress: Downloading Facebook photo 1 of 12...
+    const photoProgMatch = PHOTO_PROGRESS_RE.exec(rawMsg);
+    if (photoProgMatch) {
+      const curPhoto = parseInt(photoProgMatch[1], 10);
+      const totPhoto = parseInt(photoProgMatch[2], 10);
+      if (totPhoto > detectedTotal) detectedTotal = totPhoto;
+      detectedKind = "image";
+
+      // Mark earlier photos as ready if they haven't failed
+      for (let p = 1; p < curPhoto; p++) {
+        let prevItem = itemsMap.get(p);
+        if (!prevItem) {
+          itemsMap.set(p, {
+            id: `item-${p}`,
+            index: p,
+            total: totPhoto,
+            title: `Photo #${p}`,
+            mediaKind: "image",
+            status: "ready",
+            progress: 1,
+          });
+        } else if (prevItem.status !== "failed") {
+          prevItem.status = "ready";
+          prevItem.progress = 1;
+        }
+      }
+
+      let curItem = itemsMap.get(curPhoto);
+      if (!curItem) {
+        curItem = {
+          id: `item-${curPhoto}`,
+          index: curPhoto,
+          total: totPhoto,
+          title: `Photo #${curPhoto}`,
+          mediaKind: "image",
+          status: "downloading",
+          progress: 0.5,
+          detailMessage: rawMsg,
+        };
+        itemsMap.set(curPhoto, curItem);
+      } else {
+        curItem.status = "downloading";
+        curItem.progress = 0.5;
+        curItem.detailMessage = rawMsg;
+      }
+      continue;
+    }
+
+    // 6. Match photo album completion: Downloaded all 12 public Facebook photos.
+    const photoDoneMatch = PHOTO_COMPLETED_RE.exec(rawMsg);
+    if (photoDoneMatch) {
+      const doneCount = parseInt(photoDoneMatch[1], 10);
+      if (doneCount > detectedTotal) detectedTotal = doneCount;
+      detectedKind = "image";
+      for (let p = 1; p <= doneCount; p++) {
+        let it = itemsMap.get(p);
+        if (!it) {
+          itemsMap.set(p, {
+            id: `item-${p}`,
+            index: p,
+            total: doneCount,
+            title: `Photo #${p}`,
+            mediaKind: "image",
+            status: "ready",
+            progress: 1,
+          });
+        } else if (it.status !== "failed") {
+          it.status = "ready";
+          it.progress = 1;
+        }
+      }
+      continue;
+    }
+
+    // 7. Match playlist track item log: e.g. [35/47] #35: Runaway with Peace (feat. Caylune) — Transcoding MP3: 70% (speed 90.3x)
     const pMatch = PLAYLIST_ITEM_RE.exec(rawMsg);
     if (pMatch) {
-      const currentIdx = parseInt(pMatch[1], 10);
       const totalIdx = parseInt(pMatch[2], 10);
       const trackIdx = parseInt(pMatch[3] || pMatch[4] || pMatch[1], 10);
       const rawTitle = (pMatch[5] || "").replace(/\.{3}$/, "").trim();
@@ -169,30 +289,7 @@ export function parseConversionEvents(
       continue;
     }
 
-    // 4. Match photo batch: e.g. [1/12] Downloading photo: ...
-    const photoMatch = PHOTO_BATCH_RE.exec(rawMsg);
-    if (photoMatch) {
-      const curPhoto = parseInt(photoMatch[1], 10);
-      const totPhoto = parseInt(photoMatch[2], 10);
-      if (totPhoto > detectedTotal) detectedTotal = totPhoto;
-
-      let item = itemsMap.get(curPhoto);
-      if (!item) {
-        item = {
-          id: `photo-${curPhoto}`,
-          index: curPhoto,
-          total: totPhoto,
-          title: `Photo ${curPhoto}`,
-          mediaKind: "image",
-          status: "downloading",
-          progress: 0.4,
-        };
-        itemsMap.set(curPhoto, item);
-      }
-      continue;
-    }
-
-    // 5. Match converted item: e.g. [+] Converted: 35. Runaway with Peace (feat. Caylune).mp3
+    // 8. Match converted item: e.g. [+] Converted: 35. Runaway with Peace (feat. Caylune).mp3
     const convMatch = CONVERTED_RE.exec(rawMsg);
     if (convMatch) {
       const idx = convMatch[1] ? parseInt(convMatch[1], 10) : undefined;
@@ -220,7 +317,6 @@ export function parseConversionEvents(
           }
         }
       } else {
-        // Single file converted
         isSingleMedia = true;
         singleTitle = filename.replace(/\.[a-zA-Z0-9]+$/, "");
         singleStatus = "ready";
@@ -229,7 +325,7 @@ export function parseConversionEvents(
       continue;
     }
 
-    // 6. Match Ready: e.g. Ready: 9. am.mp3
+    // 9. Match Ready: e.g. Ready: 9. am.mp3
     const readyMatch = READY_RE.exec(rawMsg);
     if (readyMatch) {
       const idx = readyMatch[1] ? parseInt(readyMatch[1], 10) : undefined;
@@ -243,7 +339,7 @@ export function parseConversionEvents(
       continue;
     }
 
-    // 7. Match error: e.g. [!] Error converting track #35 'Runaway with Peace': <error>
+    // 10. Match error: e.g. [!] Error converting track #35 'Runaway with Peace': <error>
     const errMatch = ERROR_RE.exec(rawMsg);
     if (errMatch) {
       const errIdx = parseInt(errMatch[1], 10);
@@ -269,7 +365,7 @@ export function parseConversionEvents(
       continue;
     }
 
-    // 8. Single file progress heuristics (when not in a playlist)
+    // 11. Single file progress heuristics (when not in a batch)
     if (itemsMap.size === 0) {
       if (rawMsg.includes("[download]") || rawMsg.includes("Downloading stream:")) {
         isSingleMedia = true;
@@ -301,7 +397,6 @@ export function parseConversionEvents(
   let items: InProgressItem[] = [];
 
   if (itemsMap.size > 0) {
-    // Fill in any gaps up to detectedTotal so the full queue is visible
     const maxIdx = Math.max(detectedTotal, ...Array.from(itemsMap.keys()));
     for (let i = 1; i <= maxIdx; i++) {
       const existing = itemsMap.get(i);
@@ -312,16 +407,15 @@ export function parseConversionEvents(
           id: `item-${i}`,
           index: i,
           total: maxIdx,
-          title: `Track #${i}`,
-          mediaKind: inferMediaKind(defaultCategory, defaultFormat),
+          title: detectedKind === "image" ? `Photo #${i}` : `Track #${i}`,
+          mediaKind: detectedKind,
           status: "queued",
           progress: 0,
         });
       }
     }
     items.sort((a, b) => a.index - b.index);
-  } else if (isSingleMedia || events.length > 0) {
-    // Single file card
+  } else if (isSingleMedia || scopedEvents.length > 0) {
     items = [
       {
         id: "single-item-1",
@@ -352,12 +446,12 @@ export function parseConversionEvents(
     overallProgress = Math.min(1, Math.max(0, sum / total));
   }
 
-  const primaryKind = items[0]?.mediaKind || inferMediaKind(defaultCategory, defaultFormat);
+  const primaryKind = items[0]?.mediaKind || detectedKind;
 
   return {
     items,
     summary: {
-      title: detectedTitle || (total > 1 ? "Batch Conversion" : "Media Conversion"),
+      title: detectedTitle || (total > 1 ? (primaryKind === "image" ? "Photo Album" : "Batch Conversion") : "Media Conversion"),
       total,
       completed,
       active,
@@ -367,6 +461,7 @@ export function parseConversionEvents(
       mediaKind: primaryKind,
       format: defaultFormat,
       outputDir: detectedOutputDir,
+      coverArtPath: detectedCoverArt,
     },
     latestLogLine,
   };
@@ -374,6 +469,7 @@ export function parseConversionEvents(
 
 export function InProgressView({
   events,
+  jobId,
   running = false,
   paused = false,
   progress = 0,
@@ -383,11 +479,13 @@ export function InProgressView({
   format,
   onPauseToggle,
   onAbort,
+  onClear,
   onOpenRawConsole,
   onStatus,
   onNavigateToConverter,
 }: {
   events: ConverterEvent[];
+  jobId?: string;
   running?: boolean;
   paused?: boolean;
   progress?: number;
@@ -397,6 +495,7 @@ export function InProgressView({
   format?: string;
   onPauseToggle?: () => Promise<void> | void;
   onAbort?: () => Promise<void> | void;
+  onClear?: () => void;
   onOpenRawConsole: () => void;
   onStatus: (message: string) => void;
   onNavigateToConverter?: () => void;
@@ -406,31 +505,73 @@ export function InProgressView({
   const [searchQuery, setSearchQuery] = useState("");
   const [previews, setPreviews] = useState<Record<string, string>>({});
 
-  // Parse events into structured items & batch summary
+  // Reset previews whenever the active job changes or events are cleared
+  useEffect(() => {
+    setPreviews({});
+  }, [jobId]);
+
+  useEffect(() => {
+    if (events.length === 0) {
+      setPreviews({});
+    }
+  }, [events.length]);
+
+  // Parse events into structured items & batch summary scoped to active job
   const { items, summary, latestLogLine } = useMemo(
-    () => parseConversionEvents(events, category, format, sourceTitle),
-    [events, category, format, sourceTitle]
+    () => parseConversionEvents(events, category, format, sourceTitle, jobId),
+    [events, category, format, sourceTitle, jobId]
   );
 
-  // Load thumbnails for ready items when outputDir is available
+  // Load thumbnails for ready items and album covers
   useEffect(() => {
-    const resolvedDir = outputDir || summary.outputDir;
+    const resolvedDir = summary.outputDir || outputDir;
     if (!resolvedDir) return;
 
+    // 1. Fetch batch / album cover art
+    if (!previews["batch_cover"]) {
+      const candidate = summary.coverArtPath || `${resolvedDir.replace(/[\\/]$/, "")}\\metadata\\cover.jpg`;
+      bridge.getThumbnail(resolvedDir, candidate)
+        .then((thumb) => {
+          if (thumb) {
+            setPreviews((prev) => ({ ...prev, batch_cover: thumb }));
+          }
+        })
+        .catch(() => {
+          bridge.getThumbnail(resolvedDir, resolvedDir)
+            .then((thumb) => {
+              if (thumb) setPreviews((prev) => ({ ...prev, batch_cover: thumb }));
+            })
+            .catch(() => {});
+        });
+    }
+
+    // 2. Fetch individual track or photo thumbnails
     for (const item of items) {
-      if (item.status === "ready" && item.outputPath && !previews[item.outputPath]) {
-        bridge.getThumbnail(resolvedDir, item.outputPath)
+      const itemKey = `item-${item.index}`;
+      if (previews[itemKey]) continue;
+
+      const targetPath = item.coverPath
+        || (item.outputPath
+          ? (item.outputPath.includes(":\\") || item.outputPath.startsWith("/")
+            ? item.outputPath
+            : `${resolvedDir.replace(/[\\/]$/, "")}\\${item.outputPath}`)
+          : null);
+
+      if (targetPath) {
+        bridge.getThumbnail(resolvedDir, targetPath)
           .then((thumb) => {
             if (thumb) {
-              setPreviews((prev) => ({ ...prev, [item.outputPath!]: thumb }));
+              setPreviews((prev) => ({
+                ...prev,
+                [itemKey]: thumb,
+                ...(item.outputPath ? { [item.outputPath]: thumb } : {}),
+              }));
             }
           })
-          .catch(() => {
-            // Silently fallback to placeholder icon
-          });
+          .catch(() => {});
       }
     }
-  }, [items, outputDir, summary.outputDir, previews]);
+  }, [items, outputDir, summary.outputDir, summary.coverArtPath, previews]);
 
   // Filter items for display
   const displayedItems = useMemo(() => {
@@ -451,7 +592,7 @@ export function InProgressView({
   }, [items, filterState, searchQuery]);
 
   async function openOutputFolder() {
-    const dir = outputDir || summary.outputDir;
+    const dir = summary.outputDir || outputDir;
     if (!dir) {
       onStatus("No output directory recorded yet.");
       return;
@@ -465,12 +606,12 @@ export function InProgressView({
   }
 
   async function openItemFile(item: InProgressItem) {
-    const dir = outputDir || summary.outputDir;
+    const dir = summary.outputDir || outputDir;
     if (!dir || !item.outputPath) return;
     try {
       const fullPath = item.outputPath.includes(":\\") || item.outputPath.startsWith("/")
         ? item.outputPath
-        : `${dir}\\${item.outputPath}`;
+        : `${dir.replace(/[\\/]$/, "")}\\${item.outputPath}`;
       await bridge.openFile(fullPath);
     } catch (err) {
       onStatus(`Could not open file: ${err instanceof Error ? err.message : String(err)}`);
@@ -548,7 +689,7 @@ export function InProgressView({
           </div>
           <h2 className="mt-4 text-base font-semibold text-white">No active conversions</h2>
           <p className="mt-1 max-w-sm text-xs leading-relaxed text-zinc-400">
-            Paste a YouTube URL, Soundcloud link, album playlist, or drop media into the Converter to see real-time artwork, download progress, and transcoding speed.
+            Paste a YouTube URL, Soundcloud link, album playlist, Facebook photo link, or drop media into the Converter to see real-time artwork, download progress, and transcoding speed.
           </p>
           {onNavigateToConverter && (
             <button
@@ -620,12 +761,23 @@ export function InProgressView({
             </>
           )}
 
-          {(outputDir || summary.outputDir) && (
+          {!running && events.length > 0 && onClear && (
+            <button
+              type="button"
+              onClick={onClear}
+              className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs text-zinc-300 hover:text-white"
+              title="Clear finished or aborted conversion list"
+            >
+              <Trash2 size={13} /> Clear
+            </button>
+          )}
+
+          {(summary.outputDir || outputDir) && (
             <button
               type="button"
               onClick={() => void openOutputFolder()}
               className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs text-zinc-300 hover:text-white"
-              title="Open output folder"
+              title="Open output destination folder"
             >
               <FolderOpen size={13} /> Output Folder
             </button>
@@ -753,7 +905,7 @@ export function InProgressView({
               <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
               <input
                 type="text"
-                placeholder="Search tracks..."
+                placeholder="Search items..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="h-7 w-36 rounded-lg border border-white/[0.08] bg-black/30 pl-7 pr-2 text-xs text-zinc-200 placeholder-zinc-500 focus:w-48 focus:border-white/20 focus:outline-none transition-all"
@@ -793,7 +945,8 @@ export function InProgressView({
         {layoutMode === "grid" ? (
           <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {displayedItems.map((item) => {
-              const preview = item.outputPath ? previews[item.outputPath] : undefined;
+              const itemKey = `item-${item.index}`;
+              const preview = previews[item.id] || previews[itemKey] || (item.outputPath && previews[item.outputPath]) || previews["batch_cover"];
               const isActive = item.status === "downloading" || item.status === "transcoding";
 
               return (
@@ -895,7 +1048,8 @@ export function InProgressView({
           /* List Mode Rack */
           <div className="divide-y divide-white/[0.04] rounded-2xl border border-white/[0.07] bg-[#0c0a1a]/70 backdrop-blur-md">
             {displayedItems.map((item) => {
-              const preview = item.outputPath ? previews[item.outputPath] : undefined;
+              const itemKey = `item-${item.index}`;
+              const preview = previews[item.id] || previews[itemKey] || (item.outputPath && previews[item.outputPath]) || previews["batch_cover"];
               const isActive = item.status === "downloading" || item.status === "transcoding";
 
               return (
@@ -907,15 +1061,15 @@ export function InProgressView({
                 >
                   <span className="w-6 text-center font-mono text-xs text-zinc-500">#{item.index}</span>
 
-                  <div className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg border border-white/[0.08] bg-black/30">
+                  <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-white/[0.08] bg-black/40 shadow-sm">
                     {preview ? (
-                      <img src={preview} alt="" className="size-full object-cover" />
+                      <img src={preview} alt="" className="size-full object-cover transition-transform duration-300 hover:scale-105" />
                     ) : item.mediaKind === "video" ? (
-                      <Film size={16} className="text-zinc-500" />
+                      <Film size={18} className="text-zinc-500" />
                     ) : item.mediaKind === "image" ? (
-                      <ImageIcon size={16} className="text-zinc-500" />
+                      <ImageIcon size={18} className="text-zinc-500" />
                     ) : (
-                      <FileAudio size={16} className="text-zinc-500" />
+                      <Music size={18} className="text-zinc-500" />
                     )}
                   </div>
 

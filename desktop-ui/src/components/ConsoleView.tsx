@@ -5,6 +5,7 @@ import { InProgressView } from "./InProgressView";
 
 export function ConsoleView({
   events,
+  jobId,
   running = false,
   paused = false,
   progress = 0,
@@ -22,6 +23,7 @@ export function ConsoleView({
   onNavigateToConverter,
 }: {
   events: ConverterEvent[];
+  jobId?: string;
   running?: boolean;
   paused?: boolean;
   progress?: number;
@@ -188,6 +190,7 @@ export function ConsoleView({
     return (
       <InProgressView
         events={events}
+        jobId={jobId}
         running={running}
         paused={paused}
         progress={progress}
@@ -197,6 +200,7 @@ export function ConsoleView({
         format={format}
         onPauseToggle={onPauseToggle}
         onAbort={onAbort}
+        onClear={onClear}
         onOpenRawConsole={() => handleSetMode("raw")}
         onStatus={onStatus}
         onNavigateToConverter={onNavigateToConverter}

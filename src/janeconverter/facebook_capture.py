@@ -176,6 +176,9 @@ def download_facebook_photo_manifest(
         target_dir = os.path.join(parent, f"{title} ({suffix})")
         suffix += 1
 
+    print(f"Target Directory: {target_dir}", flush=True)
+    print(f"[*] Found {len(photos)} photos in '{title}'", flush=True)
+
     supported_formats = set(Image.registered_extensions().values())
     accept = "image/webp,image/png,image/jpeg,image/gif"
     if "AVIF" in supported_formats:
@@ -260,6 +263,7 @@ def download_facebook_photo_manifest(
                     verified_path = os.path.splitext(image_path)[0] + extension
                     os.replace(image_path, verified_path)
                     convert_image_format(verified_path, target_format, quality)
+                    print(f"[+] Saved photo: {index}. {os.path.basename(verified_path)}", flush=True)
                     break
                 except (requests.RequestException, OSError, ValueError) as error:
                     last_error = error

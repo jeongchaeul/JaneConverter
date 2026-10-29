@@ -473,6 +473,7 @@ def process_conversion(
             try:
                 shutil.copy2(cover_path, standalone_cover)
                 print(f"[+] Saved cover art: {os.path.basename(standalone_cover)}")
+                print(f"[*] Media Thumbnail: {standalone_cover}", flush=True)
             except OSError as exc:
                 _warn_optional_output("Standalone cover art", exc)
 
@@ -686,6 +687,8 @@ def process_playlist_conversion(
                 download_and_convert_thumbnail(first_thumb, playlist_cover_dest)
             except Exception as exc:
                 _warn_optional_output("Playlist cover art", exc)
+    if os.path.exists(playlist_cover_dest):
+        print(f"[*] Playlist Cover Art: {playlist_cover_dest}", flush=True)
 
     converted_files = []
     failed_files = []
@@ -772,6 +775,8 @@ def process_playlist_conversion(
                         shutil.copy2(stream_info["thumbnail_path"], playlist_cover_dest)
                     except OSError as exc:
                         _warn_optional_output("Playlist cover art", exc)
+            if track_cover and os.path.exists(track_cover):
+                print(f"[*] Track #{idx} Cover: {track_cover}", flush=True)
 
             # Save per-track credits even when the provider has no description;
             # the file still records title, artist, source, and duration.

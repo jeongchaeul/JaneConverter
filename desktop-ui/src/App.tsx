@@ -61,7 +61,7 @@ function extensionFromPath(rawPath: string): string {
 }
 
 function extractExportedPathFromMessage(message: string): string | null {
-  for (const prefix of ["DONE! Exported:", "Export Directory:"]) {
+  for (const prefix of ["DONE! Exported:", "Export Directory:", "Target Directory:"]) {
     const idx = message.indexOf(prefix);
     if (idx >= 0) {
       const value = cleanDisplayPath(message.slice(idx + prefix.length));
@@ -696,6 +696,7 @@ export default function App() {
         logs: [],
         exportedPath: "",
       };
+      setEvents([]);
       const nextJob = await bridge.startConversion({ ...effectiveSettings, source, playlistIndexes, browserSession, browserCapturePath: !normalizedSource ? selectedCapture?.path : undefined, facebookCaptureId, socialCaptureId });
       activeJobRef.current = nextJob;
       setJobId(nextJob);
@@ -789,6 +790,7 @@ export default function App() {
       ? (
         <ConsoleView
           events={events}
+          jobId={jobId || undefined}
           running={Boolean(jobId) || captureBusy}
           paused={paused}
           progress={progress}

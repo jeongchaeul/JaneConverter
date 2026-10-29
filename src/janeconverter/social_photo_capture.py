@@ -224,6 +224,9 @@ def download_social_photo_manifest(
         target_dir = os.path.join(parent, f"{title} ({suffix})")
         suffix += 1
 
+    print(f"Target Directory: {target_dir}", flush=True)
+    print(f"[*] Found {len(photos)} photos in '{title}'", flush=True)
+
     session = requests.Session()
     session.headers.update({
         "User-Agent": (
@@ -279,6 +282,7 @@ def download_social_photo_manifest(
             image_path = os.path.join(staging_dir, f"{title}_{index:03d}{extension}")
             os.replace(download_path, image_path)
             convert_image_format(image_path, target_format, quality)
+            print(f"[+] Saved photo: {index}. {os.path.basename(image_path)}", flush=True)
             with lock:
                 completed_count += 1
                 report(0.05 + 0.9 * (completed_count / len(photos)), f"Downloading {platform} photo {completed_count} of {len(photos)}...")
