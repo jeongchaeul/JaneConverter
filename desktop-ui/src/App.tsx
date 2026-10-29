@@ -786,7 +786,24 @@ export default function App() {
     : activeView === "hardware"
       ? <HardwarePipelineView runtime={runtime} settings={settings} active={Boolean(jobId) || captureBusy} progress={progress} progressMessage={status} />
     : activeView === "console"
-      ? <ConsoleView events={events} running={Boolean(jobId) || captureBusy} paused={paused} onPauseToggle={pauseToggle} onAbort={cancel} onClear={() => setEvents([])} onStatus={statusMessage} />
+      ? (
+        <ConsoleView
+          events={events}
+          running={Boolean(jobId) || captureBusy}
+          paused={paused}
+          progress={progress}
+          sourceTitle={activeJobContextRef.current?.source || selectedCapture?.name || ""}
+          outputDir={activeJobContextRef.current?.exportedPath || settings.outputDir}
+          category={settings.category}
+          format={settings.format}
+          initialMode="in_progress"
+          onPauseToggle={pauseToggle}
+          onAbort={cancel}
+          onClear={() => setEvents([])}
+          onStatus={statusMessage}
+          onNavigateToConverter={() => setActiveView("converter")}
+        />
+      )
       : activeView === "settings"
         ? (
           <SettingsView

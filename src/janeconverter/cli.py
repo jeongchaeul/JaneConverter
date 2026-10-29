@@ -131,6 +131,20 @@ def _metadata_folder(parent: str, source: str, title: str) -> str:
     return os.path.join(parent, "metadata", f"{sanitize_filename(title, max_length=60)}_{token}")
 
 
+def strip_playlist_track_prefix(raw_title: str) -> str:
+    """Cleans preexisting numeric track prefixes (e.g. '01. Title', '1 - Title', '01_Title').
+
+    Requires an explicit delimiter (dot, hyphen, dash, underscore, colon, paren/bracket)
+    so legitimate song titles starting with numbers (e.g. '3 am', '24 hours', '7 rings')
+    are never stripped of their numbers.
+    """
+    sanitized = sanitize_filename(raw_title)
+    if not sanitized:
+        return "media_file"
+    cleaned = re.sub(r'^(?:\[\d{1,4}\]|\(\d{1,4}\)|\d{1,4}\s*[\.\-–—_:|)])\s*', '', sanitized).strip()
+    return cleaned if cleaned else sanitized
+
+
 def playlist_source_type(selected_entries: list) -> str:
     """Infer the source platform for a playlist batch from its first item."""
     for entry in selected_entries:
@@ -695,9 +709,7 @@ def process_playlist_conversion(
                 item_url = f"https://{e_id}"
 
         # Clean any preexisting numeric prefixes to guarantee clean '1. Song1' format
-        clean_title = re.sub(r'^\d+[\.\s\-_]+\s*', '', sanitize_filename(raw_title)).strip()
-        if not clean_title:
-            clean_title = sanitize_filename(raw_title)
+        clean_title = strip_playlist_track_prefix(raw_title)
 
         ordered_filename = f"{idx}. {clean_title}"
         base_pct = i / total_items

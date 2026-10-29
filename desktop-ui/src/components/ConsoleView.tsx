@@ -1,24 +1,51 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, Check, Clipboard, Download, Filter, Layers, Pause, Play, Search, Square, TerminalSquare, Trash2, X } from "lucide-react";
-import { bridge, type ConverterEvent } from "../bridge";
+import { bridge, type Category, type ConverterEvent } from "../bridge";
+import { InProgressView } from "./InProgressView";
 
 export function ConsoleView({
   events,
   running = false,
   paused = false,
+  progress = 0,
+  sourceTitle = "",
+  outputDir = "",
+  category,
+  format,
+  initialMode = "in_progress",
+  mode,
+  onModeChange,
   onPauseToggle,
   onAbort,
   onClear,
   onStatus,
+  onNavigateToConverter,
 }: {
   events: ConverterEvent[];
   running?: boolean;
   paused?: boolean;
+  progress?: number;
+  sourceTitle?: string;
+  outputDir?: string;
+  category?: Category;
+  format?: string;
+  initialMode?: "in_progress" | "raw";
+  mode?: "in_progress" | "raw";
+  onModeChange?: (mode: "in_progress" | "raw") => void;
   onPauseToggle?: () => Promise<void> | void;
   onAbort?: () => Promise<void> | void;
   onClear: () => void;
   onStatus: (message: string) => void;
+  onNavigateToConverter?: () => void;
 }) {
+  const [internalMode, setInternalMode] = useState<"in_progress" | "raw">(initialMode);
+  const activeMode = mode !== undefined ? mode : internalMode;
+
+  function handleSetMode(next: "in_progress" | "raw") {
+    setInternalMode(next);
+    onModeChange?.(next);
+  }
+
   const [filter, setFilter] = useState<"clean" | "all" | "failed" | "progress">("clean");
   const [searchQuery, setSearchQuery] = useState("");
   const [lineLimit, setLineLimit] = useState<number | null>(150);
@@ -157,18 +184,46 @@ export function ConsoleView({
     }
   }
 
+  if (activeMode === "in_progress") {
+    return (
+      <InProgressView
+        events={events}
+        running={running}
+        paused={paused}
+        progress={progress}
+        sourceTitle={sourceTitle}
+        outputDir={outputDir}
+        category={category}
+        format={format}
+        onPauseToggle={onPauseToggle}
+        onAbort={onAbort}
+        onOpenRawConsole={() => handleSetMode("raw")}
+        onStatus={onStatus}
+        onNavigateToConverter={onNavigateToConverter}
+      />
+    );
+  }
+
   return (
     <div className="mx-auto flex h-full w-full max-w-[1180px] flex-1 flex-col gap-4 min-h-0">
       {/* Header */}
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-4">
         <div>
           <div className="mono-label">Diagnostics</div>
-          <h1 className="mt-1 text-2xl font-semibold tracking-[-.04em] text-white">Live console.</h1>
+          <h1 className="mt-1 text-2xl font-semibold tracking-[-.04em] text-white">Raw console.</h1>
           <p className="mt-1 text-xs text-zinc-500">
             Real-time engine messages and conversion streams with smart progress collapsing.
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleSetMode("in_progress")}
+            className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs text-zinc-300 hover:text-white"
+            title="Switch back to visual In Progress View cards"
+          >
+            <Layers size={13} /> In Progress View
+          </button>
           {(running || paused) && (
             <>
               {onPauseToggle && (

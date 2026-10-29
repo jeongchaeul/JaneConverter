@@ -38,6 +38,7 @@ describe("ConsoleView", () => {
       root.render(
         <ConsoleView
           events={sampleEvents}
+          initialMode="raw"
           onClear={vi.fn()}
           onStatus={vi.fn()}
         />
@@ -76,6 +77,7 @@ describe("ConsoleView", () => {
       root.render(
         <ConsoleView
           events={sampleEvents}
+          initialMode="raw"
           onClear={vi.fn()}
           onStatus={onStatus}
         />
@@ -124,6 +126,7 @@ describe("ConsoleView", () => {
       root.render(
         <ConsoleView
           events={sampleEvents}
+          initialMode="raw"
           onClear={vi.fn()}
           onStatus={onStatus}
         />
@@ -142,6 +145,79 @@ describe("ConsoleView", () => {
 
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(onStatus).toHaveBeenCalledWith("Console copied to clipboard.");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("renders In Progress View by default and toggles between grid, list, and raw console", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const playlistEvents: ConverterEvent[] = [
+      { jobId: "j2", kind: "started", message: "[*] Found 3 tracks in 'Dariacore EP'. Converting 3..." },
+      { jobId: "j2", kind: "progress", message: "[1/3] #1: hyperpoop 2026 — Transcoding MP3: 90% (speed 85.0x)" },
+      { jobId: "j2", kind: "finished", message: "[+] Converted: 1. hyperpoop 2026.mp3" },
+      { jobId: "j2", kind: "progress", message: "[2/3] #2: runaway with peace — [download]  50.0% of 4.0MiB at 4.2MiB/s ETA 00:01" },
+    ];
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={playlistEvents}
+          initialMode="in_progress"
+          onClear={vi.fn()}
+          onStatus={vi.fn()}
+        />
+      );
+    });
+
+    // In Progress View should be active
+    expect(container.textContent).toContain("In Progress View.");
+    expect(container.textContent).toContain("Dariacore EP");
+    expect(container.textContent).toContain("hyperpoop 2026");
+    expect(container.textContent).toContain("runaway with peace");
+
+    // Toggle to List mode
+    const listBtn = container.querySelector<HTMLButtonElement>('button[aria-label="List layout"]');
+    expect(listBtn).not.toBeNull();
+    await act(async () => {
+      listBtn?.click();
+    });
+
+    // Check list view renders rows
+    expect(container.textContent).toContain("#1");
+    expect(container.textContent).toContain("#2");
+
+    // Click Raw Console switch button
+    const rawConsoleBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Raw Console")
+    );
+    expect(rawConsoleBtn).toBeDefined();
+
+    await act(async () => {
+      rawConsoleBtn?.click();
+    });
+
+    // Should now be on Raw Console
+    expect(container.textContent).toContain("Raw console.");
+    expect(container.textContent).toContain("Clean");
+    expect(container.textContent).toContain("Transcoding MP3: 90%");
+
+    // Click back to In Progress View
+    const backBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("In Progress View")
+    );
+    expect(backBtn).toBeDefined();
+
+    await act(async () => {
+      backBtn?.click();
+    });
+
+    expect(container.textContent).toContain("In Progress View.");
 
     await act(async () => {
       root.unmount();

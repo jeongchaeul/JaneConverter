@@ -8,7 +8,7 @@ import shutil
 import pytest
 
 from janeconverter.extractor import is_playlist_url, format_duration, fetch_playlist_entries, sanitize_filename
-from janeconverter.cli import process_playlist_conversion
+from janeconverter.cli import process_playlist_conversion, strip_playlist_track_prefix
 
 def test_is_playlist_url():
     # True cases
@@ -50,25 +50,42 @@ def test_ordered_playlist_naming_format():
         {"index": 2, "title": "02. Song Two"},
         {"index": 3, "title": "3 - Song Three"},
         {"index": 4, "title": "Track Four (Original Mix)"},
+        {"index": 9, "title": "3 am"},
     ]
 
     expected = [
         "1. Song One",
         "2. Song Two",
         "3. Song Three",
-        "4. Track Four (Original Mix)"
+        "4. Track Four (Original Mix)",
+        "9. 3 am",
     ]
 
     results = []
     for entry in entries:
         idx = entry["index"]
         raw_title = entry["title"]
-        clean_title = re.sub(r'^\d+[\.\s\-_]+\s*', '', sanitize_filename(raw_title)).strip()
-        if not clean_title:
-            clean_title = sanitize_filename(raw_title)
+        clean_title = strip_playlist_track_prefix(raw_title)
         results.append(f"{idx}. {clean_title}")
 
     assert results == expected
+
+
+def test_strip_playlist_track_prefix_preserves_numeric_song_titles():
+    # Song titles starting with numbers must NOT have their numbers stripped
+    assert strip_playlist_track_prefix("3 am") == "3 am"
+    assert strip_playlist_track_prefix("3 AM") == "3 AM"
+    assert strip_playlist_track_prefix("24 hours") == "24 hours"
+    assert strip_playlist_track_prefix("7 rings") == "7 rings"
+    assert strip_playlist_track_prefix("100 gecs") == "100 gecs"
+    assert strip_playlist_track_prefix("1979") == "1979"
+
+    # Preexisting track prefixes with explicit delimiters should be cleanly stripped
+    assert strip_playlist_track_prefix("09. 3 am") == "3 am"
+    assert strip_playlist_track_prefix("09 - 3 am") == "3 am"
+    assert strip_playlist_track_prefix("[09] 3 am") == "3 am"
+    assert strip_playlist_track_prefix("01_intro") == "intro"
+    assert strip_playlist_track_prefix("1) overture") == "overture"
 
 @pytest.mark.online
 def test_fetch_spotify_playlist_online():
