@@ -3,14 +3,22 @@
 All notable changes to JaneConverter are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [2.3.5] - 2026-10-29 - Verified Updater Milestone & Repository-Wide Hardening
+## [2.3.5] - 2026-10-30 - In-Progress Monitoring Rack, Wallpaper Glassmorphism Engine & Foundation Hardening
 
 ### Added
+- **Visual In-Progress Monitoring Rack (`InProgressView`)**: Added an interactive visual card and list view for live downloads and conversions, with real-time album cover art, progress tracking, per-track elapsed conversion timings, and session carousel navigation.
+- **Glassmorphism Wallpaper Engine (`SettingsThemeTab`)**: Added custom wallpaper background support with local image upload, drag & drop ingestion, and 5 built-in vector themes (*Cyber Studio*, *Deep Nebula*, *Sunset Horizon*, *Emerald Aurora*, *Obsidian Minimal*).
+- **Backdrop Blur Slider (0% to 100%)**: Added real-time adjustable depth-of-field diffusion for desktop wallpapers with automatic edge bleed scaling.
+- **Color Mask Overlay & Opacity Slider (0% to 100%)**: Added customizable color tinting with full hex picker, preset swatches (*Pure Black*, *Deep Obsidian*, *Deep Plum*, *Midnight Navy*, *Rose Noir*, *Forest Shadow*, *Frost White*), and live opacity blending.
+- **Direct App Drag & Drop**: Enabled dragging finished audio and video files directly from in-progress cards into DAWs (FL Studio, Ableton, Reaper) and chat apps via the native Windows shell bridge.
 - **First Stable Updater Release Milestone**: Certified v2.3.5 as the first release with end-to-end verified continuous update packaging, signed update manifests, and automated in-place app updating. This represents the definitive transition release—the final build consumers need to install fresh from standalone installers, after which all subsequent releases update automatically in-place.
 - **Probe Caching (`media_probe.py`)**: Added an LRU-cached media probe with filesystem `(mtime_ns, size)` invalidation and fast container duration parsing to eliminate redundant `ffprobe` subprocess executions.
 - **Cross-Platform Binary Resolution (`binaries.py`)**: Centralized deterministic, cached binary lookup paths with platform-specific executable extensions (`.exe` on Windows).
 
 ### Fixed
+- **In-Progress View Modularization**: Refactored monolithic component into clean, single-responsibility submodules (`ItemCard`, `ItemActionButtons`, `ItemStatusBadge`, `ItemContextMenu`, `SessionHistoryModal`, `InProgressHeader`, `parser`).
+- **Phantom Card Elimination**: Resolved phantom downloading card state when clearing completed jobs.
+- **Session Close Gating**: Gated session page close button when an operation is actively ongoing or when only a single page remains.
 - **Subprocess Deadlock Elimination (`audio_dsp.py`)**: Resolved pipe buffer deadlocks in EBU R128 loudness measurement when aborting early by draining output through `communicate(timeout=0.1)` instead of unbuffered polling.
 - **Bridge Session Slot Leak (`access.rs`)**: Resolved 24-slot session exhaustion where discarded media tokens failed to match existing relative paths, ensuring complete handle deallocation and disk cleanup.
 - **Cookie Unlocker Scan Optimization (`cookie_unlocker.py`)**: Optimized system handle scan complexity from $O(P \times H)$ to single-pass $O(H)$ using set-based PID lookups, drastically speeding up browser cookie unlocking.
