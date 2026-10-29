@@ -70,8 +70,9 @@ pub async fn drag_library_file(
 ) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        let root = settings_get_internal().output_dir;
-        let file = library::draggable_media_file(&root, &path)?;
+        let settings = settings_get_internal();
+        let file = library::draggable_media_file(&settings.output_dir, &path)
+            .or_else(|_| library::draggable_media_file(&settings.fetched_dir, &path))?;
         let (sender, receiver) = std::sync::mpsc::channel();
         app.run_on_main_thread(move || {
             let result = drag::start_drag(

@@ -320,4 +320,455 @@ describe("ConsoleView", () => {
     });
     container.remove();
   });
+
+  it("transitions single media conversion from transcoding to ready when operation finishes", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const singleEvents: ConverterEvent[] = [
+      { jobId: "j4", kind: "started", message: "[*] Starting conversion..." },
+      { jobId: "j4", kind: "progress", message: "Transcoding MP4: 50% (speed 14.7x)" },
+      { jobId: "j4", kind: "log", message: "Ready! File exported to: Japanese Food Review.mp4" },
+      { jobId: "j4", kind: "log", message: "DONE! Exported: D:\\Exports\\Japanese Food Review.mp4" },
+      { jobId: "j4", kind: "finished", message: "Conversion finished. Your media is ready.", output: "D:\\Exports\\Japanese Food Review.mp4" },
+    ];
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={singleEvents}
+          jobId="j4"
+          running={false}
+          initialMode="in_progress"
+          onClear={vi.fn()}
+          onStatus={vi.fn()}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain("Japanese Food Review");
+    expect(container.textContent).toContain("1 of 1 completed");
+    expect(container.textContent).toContain("Ready");
+    expect(container.textContent).not.toContain("Transcoding");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("shuffles through past and live conversion sessions via carousel controls", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const onNavigateToHistory = vi.fn();
+    const onClear = vi.fn();
+
+    const multiSessionEvents: ConverterEvent[] = [
+      // Session 1: Music playlist
+      { jobId: "session-1", kind: "started", message: "[*] Found 2 tracks in 'Hyperpop EP'. Converting 2..." },
+      { jobId: "session-1", kind: "progress", message: "[1/2] #1: Track One — Transcoding MP3: 100%" },
+      { jobId: "session-1", kind: "finished", message: "[+] Converted: 1. Track One.mp3" },
+      { jobId: "session-1", kind: "progress", message: "[2/2] #2: Track Two — Transcoding MP3: 100%" },
+      { jobId: "session-1", kind: "finished", message: "[+] Converted: 2. Track Two.mp3" },
+
+      // Session 2: Facebook photo album
+      { jobId: "session-2", kind: "started", message: "[*] Starting conversion batch..." },
+      { jobId: "session-2", kind: "log", message: "Found 2 photos in 'Summer Trip'. Starting download..." },
+      { jobId: "session-2", kind: "progress", message: "Downloading Facebook photo 1 of 2..." },
+      { jobId: "session-2", kind: "log", message: "[+] Saved photo: 1. Summer Trip_001.jpg" },
+      { jobId: "session-2", kind: "progress", message: "Downloading Facebook photo 2 of 2..." },
+    ];
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={multiSessionEvents}
+          jobId="session-2"
+          running={true}
+          initialMode="in_progress"
+          onClear={onClear}
+          onStatus={vi.fn()}
+          onNavigateToHistory={onNavigateToHistory}
+        />
+      );
+    });
+
+    // Default view is on active session-2 (Session 2 / 2, Live)
+    expect(container.textContent).toContain("Session 2 / 2");
+    expect(container.textContent).toContain("Live");
+    expect(container.textContent).toContain("Summer Trip");
+    expect(container.textContent).toContain("Photo #1");
+
+    // Click previous session button (<)
+    const prevBtn = container.querySelector<HTMLButtonElement>("button[aria-label='Previous session']");
+    expect(prevBtn).toBeDefined();
+
+    await act(async () => {
+      prevBtn?.click();
+    });
+
+    // Now viewing session-1 (Session 1 / 2, History)
+    expect(container.textContent).toContain("Session 1 / 2");
+    expect(container.textContent).toContain("History");
+    expect(container.textContent).toContain("Hyperpop EP");
+    expect(container.textContent).toContain("Track One");
+    expect(container.textContent).not.toContain("Summer Trip");
+
+    // Because session-2 is currently running in background, "Jump to Live" button appears
+    const jumpToLiveBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Jump to Live")
+    );
+    expect(jumpToLiveBtn).toBeDefined();
+
+    // Click Jump to Live
+    await act(async () => {
+      jumpToLiveBtn?.click();
+    });
+
+    // Returns to active live session
+    expect(container.textContent).toContain("Session 2 / 2");
+    expect(container.textContent).toContain("Live");
+    expect(container.textContent).toContain("Summer Trip");
+
+    // Click History button to open session history modal
+    const historyBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("History") && b.getAttribute("title")?.includes("conversion session history")
+    );
+    expect(historyBtn).toBeDefined();
+    await act(async () => {
+      historyBtn?.click();
+    });
+
+    // Modal is opened
+    expect(container.textContent).toContain("Conversion Sessions");
+    expect(container.textContent).toContain("Active Workspace Sessions (2)");
+
+    // Click on Session 1 in modal to switch rack
+    const session1Row = Array.from(container.querySelectorAll("div")).find(
+      (d) => d.textContent?.includes("Hyperpop EP") && d.textContent?.includes("View in Rack")
+    );
+    expect(session1Row).toBeDefined();
+    const viewBtn = session1Row?.querySelector("button");
+    await act(async () => {
+      viewBtn?.click();
+    });
+
+    // Switched to Session 1
+    expect(container.textContent).toContain("Session 1 / 2");
+    expect(container.textContent).toContain("Hyperpop EP");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("ensures a brand new conversion starts with a fresh blank page without leaking previous items", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const pastEvents: ConverterEvent[] = [
+      { jobId: "old-session", kind: "started", message: "[*] Found 40 tracks in 'Massive Album'..." },
+      { jobId: "old-session", kind: "finished", message: "[+] Converted: 1. Track.mp3" },
+    ];
+
+    // New conversion starts for a facebook album link
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={pastEvents}
+          jobId="new-facebook-session"
+          running={true}
+          sourceTitle="https://www.facebook.com/share/p/1KB8BpDr8r/"
+          initialMode="in_progress"
+          onClear={vi.fn()}
+          onStatus={vi.fn()}
+        />
+      );
+    });
+
+    // Content should show the new source and fresh blank/starting state, NOT the 40 tracks from old-session
+    expect(container.textContent).toContain("https://www.facebook.com/share/p/1KB8BpDr8r/");
+    expect(container.textContent).not.toContain("Massive Album");
+    expect(container.textContent).not.toContain("Track #1");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("renders carousel arrow buttons even on single session and keeps photo thumbnails alive upon finish", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const photoEvents: ConverterEvent[] = [
+      { jobId: "single-photo-batch", kind: "started", message: "[*] Starting conversion batch..." },
+      { jobId: "single-photo-batch", kind: "log", message: "Found 2 photos in 'AHYEON_BABYMONSTER'. Starting download..." },
+      { jobId: "single-photo-batch", kind: "log", message: "[*] Photo #1 Source: https://scontent.example.com/photo1.jpg" },
+      { jobId: "single-photo-batch", kind: "log", message: "[*] Photo #2 Source: https://scontent.example.com/photo2.jpg" },
+      { jobId: "single-photo-batch", kind: "progress", message: "Downloading Facebook photo 1 of 2..." },
+      { jobId: "single-photo-batch", kind: "log", message: "[*] Photo #1 Saved: D:\\Exports\\AHYEON_BABYMONSTER\\1. AHYEON_BABYMONSTER_001.png" },
+      { jobId: "single-photo-batch", kind: "log", message: "[+] Saved photo: 1. AHYEON_BABYMONSTER_001.png" },
+      { jobId: "single-photo-batch", kind: "progress", message: "Downloading Facebook photo 2 of 2..." },
+      { jobId: "single-photo-batch", kind: "log", message: "[*] Photo #2 Saved: D:\\Exports\\AHYEON_BABYMONSTER\\2. AHYEON_BABYMONSTER_002.png" },
+      { jobId: "single-photo-batch", kind: "log", message: "[+] Saved photo: 2. AHYEON_BABYMONSTER_002.png" },
+      { jobId: "single-photo-batch", kind: "finished", message: "DONE! Exported: D:\\Exports\\AHYEON_BABYMONSTER" },
+    ];
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={photoEvents}
+          jobId="single-photo-batch"
+          running={false}
+          initialMode="in_progress"
+          onClear={vi.fn()}
+          onStatus={vi.fn()}
+        />
+      );
+    });
+
+    // 1. Carousel arrow buttons (< and >) must be visible even for a single session
+    const prevBtn = container.querySelector<HTMLButtonElement>("button[aria-label='Previous session']");
+    const nextBtn = container.querySelector<HTMLButtonElement>("button[aria-label='Next session']");
+    expect(prevBtn).toBeDefined();
+    expect(nextBtn).toBeDefined();
+    expect(prevBtn?.disabled).toBe(true);
+    expect(nextBtn?.disabled).toBe(true);
+    expect(container.textContent).toContain("Session 1 / 1");
+
+    // 2. Photos must keep their live CDN thumbnails intact and NOT die or revert to placeholder icons
+    const images = Array.from(container.querySelectorAll<HTMLImageElement>("img"));
+    const photo1 = images.find((img) => img.src === "https://scontent.example.com/photo1.jpg");
+    const photo2 = images.find((img) => img.src === "https://scontent.example.com/photo2.jpg");
+    expect(photo1).toBeDefined();
+    expect(photo2).toBeDefined();
+
+    // Verify ready badges are active
+    expect(container.textContent).toContain("2 of 2 completed");
+    expect(container.textContent).toContain("Ready");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("shows clean empty state without ghost downloading card when events only have UI messages", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const onNavigateToConverter = vi.fn();
+    // Only UI status events remain after clearing conversion jobs
+    const uiOnlyEvents: ConverterEvent[] = [
+      { jobId: "ui", kind: "status", message: "Applied Fast MP3 preset: High-bitrate 320k MP3 without loudness normalization for faster conversion." },
+    ];
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={uiOnlyEvents}
+          jobId={undefined}
+          running={false}
+          initialMode="in_progress"
+          onClear={vi.fn()}
+          onStatus={vi.fn()}
+          onNavigateToConverter={onNavigateToConverter}
+        />
+      );
+    });
+
+    // Must show empty state, not a ghost "Downloading 0%" or "Media file" card
+    expect(container.textContent).toContain("No active conversions");
+    expect(container.textContent).not.toContain("Downloading 0%");
+
+    // Close Page button must be rendered in empty state header and disabled/blacked out when <= 1 page
+    const closePageBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Close Page")
+    );
+    expect(closePageBtn).toBeDefined();
+    expect(closePageBtn?.disabled).toBe(true);
+    expect(closePageBtn?.className).toContain("opacity-25");
+    expect(closePageBtn?.className).toContain("cursor-not-allowed");
+    await act(async () => {
+      closePageBtn?.click();
+    });
+    expect(onNavigateToConverter).not.toHaveBeenCalled();
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("renders Close Page button, card action buttons (drag, play, folder), and right click context menu", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const onNavigateToConverter = vi.fn();
+    const readyEvents: ConverterEvent[] = [
+      { jobId: "test-job-ready", kind: "started", message: "[*] Starting conversion..." },
+      { jobId: "test-job-ready", kind: "log", message: "[+] Converted: Summer Hit.mp3" },
+      { jobId: "test-job-ready", kind: "finished", message: "Conversion finished.", output: "D:\\Exports\\Summer Hit.mp3" },
+    ];
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={readyEvents}
+          jobId="test-job-ready"
+          running={false}
+          initialMode="in_progress"
+          outputDir="D:\\Exports"
+          conversionTimings={{ "d:/exports/summer hit.mp3": 2400 }}
+          onClear={vi.fn()}
+          onStatus={vi.fn()}
+          onNavigateToConverter={onNavigateToConverter}
+        />
+      );
+    });
+
+    // 1. Close Page button in active header is blacked out & disabled when only 1 session page exists
+    const closePageBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Close Page")
+    );
+    expect(closePageBtn).toBeDefined();
+    expect(closePageBtn?.disabled).toBe(true);
+    expect(closePageBtn?.className).toContain("opacity-25");
+    expect(closePageBtn?.className).toContain("cursor-not-allowed");
+
+    // 2. Conversion time badge on card
+    expect(container.textContent).toContain("2.4s");
+
+    // 3. Small icon action buttons: Drag, Play, Show in folder
+    const dragBtn = container.querySelector<HTMLButtonElement>("button[aria-label='Drag Summer Hit']");
+    const openBtn = container.querySelector<HTMLButtonElement>("button[aria-label='Open Summer Hit']");
+    const folderBtn = container.querySelector<HTMLButtonElement>("button[aria-label='Show in folder for Summer Hit']");
+    expect(dragBtn).toBeDefined();
+    expect(openBtn).toBeDefined();
+    expect(folderBtn).toBeDefined();
+
+    // 4. Right click context menu on the card
+    const card = container.querySelector(".group.relative.flex.flex-col");
+    expect(card).toBeDefined();
+
+    await act(async () => {
+      const event = new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 200,
+        clientY: 200,
+      });
+      card?.dispatchEvent(event);
+    });
+
+    // Context menu is visible with status, time, and action options
+    expect(container.textContent).toContain("Open / Play file");
+    expect(container.textContent).toContain("Show in File Explorer");
+    expect(container.textContent).toContain("Copy full path");
+    expect(container.textContent).toContain("Conversion time");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("handles Close Page enablement across multiple sessions and ongoing status, and tests drag file handler", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onClear = vi.fn();
+    const onStatus = vi.fn();
+
+    const multiSessionEvents: ConverterEvent[] = [
+      { jobId: "session-1", kind: "started", message: "[*] Starting session 1..." },
+      { jobId: "session-1", kind: "finished", message: "Finished session 1.", output: "D:\\Music\\Track1.mp3" },
+      { jobId: "session-2", kind: "started", message: "[*] Starting session 2..." },
+      { jobId: "session-2", kind: "finished", message: "Finished session 2.", output: "D:\\Music\\Track2.mp3" },
+    ];
+
+    // 1. With 2 finished sessions and running=false: Close Page MUST be enabled
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={multiSessionEvents}
+          jobId="session-2"
+          running={false}
+          initialMode="in_progress"
+          outputDir="D:\\Music"
+          onClear={onClear}
+          onStatus={onStatus}
+        />
+      );
+    });
+
+    let closePageBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Close Page")
+    );
+    expect(closePageBtn).toBeDefined();
+    expect(closePageBtn?.disabled).toBe(false);
+
+    // Clicking Close Page closes the session
+    await act(async () => {
+      closePageBtn?.click();
+    });
+    expect(onClear).toHaveBeenCalled();
+
+    // 2. When ongoing (running=true) even with 2 sessions: Close Page MUST be disabled & blacked out
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={multiSessionEvents}
+          jobId="session-2"
+          running={true}
+          initialMode="in_progress"
+          outputDir="D:\\Music"
+          onClear={onClear}
+          onStatus={onStatus}
+        />
+      );
+    });
+
+    closePageBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Close Page")
+    );
+    expect(closePageBtn?.disabled).toBe(true);
+    expect(closePageBtn?.className).toContain("opacity-25");
+
+    // 3. When paused=true: Close Page MUST also be disabled (ongoing unless aborted)
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={multiSessionEvents}
+          jobId="session-2"
+          running={false}
+          paused={true}
+          initialMode="in_progress"
+          outputDir="D:\\Music"
+          onClear={onClear}
+          onStatus={onStatus}
+        />
+      );
+    });
+
+    closePageBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Close Page")
+    );
+    expect(closePageBtn?.disabled).toBe(true);
+    expect(closePageBtn?.className).toContain("opacity-25");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
 });

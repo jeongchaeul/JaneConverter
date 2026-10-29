@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, Check, Clipboard, Download, Filter, Layers, Pause, Play, Search, Square, TerminalSquare, Trash2, X } from "lucide-react";
-import { bridge, type Category, type ConverterEvent } from "../bridge";
+import { bridge, type Category, type ConverterEvent, type ConversionHistoryItem } from "../bridge";
 import { InProgressView } from "./InProgressView";
 
 export function ConsoleView({
@@ -15,12 +15,17 @@ export function ConsoleView({
   format,
   initialMode = "in_progress",
   mode,
+  historyItems = [],
+  conversionTimings = {},
   onModeChange,
   onPauseToggle,
   onAbort,
   onClear,
   onStatus,
   onNavigateToConverter,
+  onNavigateToHistory,
+  onNavigateToLibrary,
+  onRestoreSession,
 }: {
   events: ConverterEvent[];
   jobId?: string;
@@ -33,12 +38,17 @@ export function ConsoleView({
   format?: string;
   initialMode?: "in_progress" | "raw";
   mode?: "in_progress" | "raw";
+  historyItems?: ConversionHistoryItem[];
+  conversionTimings?: Record<string, number>;
   onModeChange?: (mode: "in_progress" | "raw") => void;
   onPauseToggle?: () => Promise<void> | void;
   onAbort?: () => Promise<void> | void;
-  onClear: () => void;
+  onClear: (targetJobId?: string) => void;
   onStatus: (message: string) => void;
   onNavigateToConverter?: () => void;
+  onNavigateToHistory?: () => void;
+  onNavigateToLibrary?: () => void;
+  onRestoreSession?: (item: ConversionHistoryItem) => void;
 }) {
   const [internalMode, setInternalMode] = useState<"in_progress" | "raw">(initialMode);
   const activeMode = mode !== undefined ? mode : internalMode;
@@ -54,6 +64,30 @@ export function ConsoleView({
   const [autoScroll, setAutoScroll] = useState(true);
   const [userHasScrolledUp, setUserHasScrolledUp] = useState(false);
   const logContainerRef = useRef<HTMLDivElement>(null);
+
+  const distinctJobIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const evt of events) {
+      if (evt.jobId && evt.jobId !== "ui" && evt.jobId !== "browser-session" && !ids.includes(evt.jobId)) {
+        ids.push(evt.jobId);
+      }
+    }
+    return ids;
+  }, [events]);
+
+  const isOngoing = Boolean(running || paused);
+  const isSinglePage = distinctJobIds.length <= 1;
+  const isClosePageDisabled = isSinglePage || isOngoing;
+
+  function handleClosePage() {
+    if (isClosePageDisabled) return;
+    if (onClear) {
+      onClear();
+    }
+    if (onNavigateToConverter) {
+      onNavigateToConverter();
+    }
+  }
 
   // 1. Process and collapse repetitive progress frames when in "clean" mode
   const processedEvents = useMemo(() => {
@@ -203,7 +237,12 @@ export function ConsoleView({
         onClear={onClear}
         onOpenRawConsole={() => handleSetMode("raw")}
         onStatus={onStatus}
+        historyItems={historyItems}
+        conversionTimings={conversionTimings}
         onNavigateToConverter={onNavigateToConverter}
+        onNavigateToHistory={onNavigateToHistory}
+        onNavigateToLibrary={onNavigateToLibrary}
+        onRestoreSession={onRestoreSession}
       />
     );
   }
@@ -288,10 +327,31 @@ export function ConsoleView({
           </button>
           <button
             type="button"
-            onClick={onClear}
+            onClick={() => onClear()}
             className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
           >
             <Trash2 size={13} /> Clear
+          </button>
+          {/* Close Page button */}
+          <button
+            type="button"
+            onClick={handleClosePage}
+            disabled={isClosePageDisabled}
+            aria-disabled={isClosePageDisabled}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-xl border transition-all ${
+              isClosePageDisabled
+                ? "border-white/[0.04] bg-black/60 text-zinc-600 opacity-25 cursor-not-allowed pointer-events-none select-none shadow-none"
+                : "subtle-button text-zinc-300 hover:text-white"
+            }`}
+            title={
+              isOngoing
+                ? "Cannot close page while conversion is ongoing (abort first)"
+                : isSinglePage
+                  ? "Cannot close the only remaining conversion page"
+                  : "Close this page"
+            }
+          >
+            <X size={13} /> Close Page
           </button>
         </div>
       </div>

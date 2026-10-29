@@ -405,7 +405,7 @@ export default function App() {
     let cleanup: (() => void) | undefined;
     void bridge.subscribe((event) => {
       if (!mounted) return;
-      setEvents((current) => [...current.slice(-1499), event]);
+      setEvents((current) => [...current.slice(-9999), event]);
       if (event.kind === "started" && !activeJobRef.current) {
         activeJobRef.current = event.jobId;
         setJobId(event.jobId);
@@ -696,7 +696,6 @@ export default function App() {
         logs: [],
         exportedPath: "",
       };
-      setEvents([]);
       const nextJob = await bridge.startConversion({ ...effectiveSettings, source, playlistIndexes, browserSession, browserCapturePath: !normalizedSource ? selectedCapture?.path : undefined, facebookCaptureId, socialCaptureId });
       activeJobRef.current = nextJob;
       setJobId(nextJob);
@@ -799,11 +798,29 @@ export default function App() {
           category={settings.category}
           format={settings.format}
           initialMode="in_progress"
+          historyItems={history}
+          conversionTimings={conversionTimings}
           onPauseToggle={pauseToggle}
           onAbort={cancel}
-          onClear={() => setEvents([])}
+          onClear={(targetJobId?: string) => {
+            if (targetJobId) {
+              setEvents((prev) => prev.filter((e) => e.jobId !== targetJobId));
+            } else {
+              setEvents([]);
+            }
+          }}
           onStatus={statusMessage}
           onNavigateToConverter={() => setActiveView("converter")}
+          onNavigateToLibrary={() => setActiveView("library")}
+          onRestoreSession={(item) => {
+            const syntheticEvents: ConverterEvent[] = [
+              { jobId: item.id, kind: "started", message: `[*] Conversion: ${item.fileName || item.source}` },
+              { jobId: item.id, kind: "log", message: `Ready! File exported to: ${item.fileName || item.exportPath}` },
+              { jobId: item.id, kind: "log", message: `DONE! Exported: ${item.exportPath}` },
+              { jobId: item.id, kind: "finished", message: "Conversion finished. Your media is ready.", output: item.exportPath },
+            ];
+            setEvents((prev) => [...prev, ...syntheticEvents]);
+          }}
         />
       )
       : activeView === "settings"
