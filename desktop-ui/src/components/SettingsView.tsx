@@ -38,8 +38,18 @@ export function SettingsView({
   onSettings,
   accentColor = "#c52b68",
   bgColor = "#02000a",
+  bgMode = "color",
+  wallpaper = "",
+  wallpaperBlur = 20,
+  wallpaperMaskColor = "#000000",
+  wallpaperMaskOpacity = 50,
   onAccentColorChange,
   onBgColorChange,
+  onBgModeChange,
+  onWallpaperChange,
+  onWallpaperBlurChange,
+  onWallpaperMaskColorChange,
+  onWallpaperMaskOpacityChange,
   onResetColors,
   onStatus,
   initialTab = "browser",
@@ -53,8 +63,18 @@ export function SettingsView({
   onSettings?: (next: ConverterSettings) => void;
   accentColor?: string;
   bgColor?: string;
+  bgMode?: "color" | "wallpaper";
+  wallpaper?: string;
+  wallpaperBlur?: number;
+  wallpaperMaskColor?: string;
+  wallpaperMaskOpacity?: number;
   onAccentColorChange?: (color: string) => void;
   onBgColorChange?: (color: string) => void;
+  onBgModeChange?: (mode: "color" | "wallpaper") => void;
+  onWallpaperChange?: (url: string) => void;
+  onWallpaperBlurChange?: (blur: number) => void;
+  onWallpaperMaskColorChange?: (color: string) => void;
+  onWallpaperMaskOpacityChange?: (opacity: number) => void;
   onResetColors?: () => void;
   onStatus: (message: string) => void;
   initialTab?: SettingsTab;
@@ -326,8 +346,18 @@ export function SettingsView({
         <SettingsThemeTab
           accentColor={accentColor}
           bgColor={bgColor}
+          bgMode={bgMode}
+          wallpaper={wallpaper}
+          wallpaperBlur={wallpaperBlur}
+          wallpaperMaskColor={wallpaperMaskColor}
+          wallpaperMaskOpacity={wallpaperMaskOpacity}
           onAccentColorChange={onAccentColorChange}
           onBgColorChange={onBgColorChange}
+          onBgModeChange={onBgModeChange}
+          onWallpaperChange={onWallpaperChange}
+          onWallpaperBlurChange={onWallpaperBlurChange}
+          onWallpaperMaskColorChange={onWallpaperMaskColorChange}
+          onWallpaperMaskOpacityChange={onWallpaperMaskOpacityChange}
           onResetColors={onResetColors}
           onStatus={onStatus}
         />

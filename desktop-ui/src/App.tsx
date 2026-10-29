@@ -213,6 +213,61 @@ export default function App() {
     }
   });
 
+  const [bgMode, setBgMode] = useState<"color" | "wallpaper">(() => {
+    if (typeof window === "undefined") return "color";
+    try {
+      return (window.localStorage.getItem("janecoverter.bgMode") as "color" | "wallpaper") || "color";
+    } catch {
+      return "color";
+    }
+  });
+
+  const [wallpaper, setWallpaper] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      return window.localStorage.getItem("janecoverter.wallpaper") || "";
+    } catch {
+      return "";
+    }
+  });
+
+  const [wallpaperBlur, setWallpaperBlur] = useState<number>(() => {
+    if (typeof window === "undefined") return 20;
+    try {
+      const raw = window.localStorage.getItem("janecoverter.wallpaperBlur");
+      if (raw !== null) {
+        const val = parseInt(raw, 10);
+        return isNaN(val) ? 20 : Math.min(100, Math.max(0, val));
+      }
+      return 20;
+    } catch {
+      return 20;
+    }
+  });
+
+  const [wallpaperMaskColor, setWallpaperMaskColor] = useState<string>(() => {
+    if (typeof window === "undefined") return "#000000";
+    try {
+      return window.localStorage.getItem("janecoverter.wallpaperMaskColor") ?? "#000000";
+    } catch {
+      return "#000000";
+    }
+  });
+
+  const [wallpaperMaskOpacity, setWallpaperMaskOpacity] = useState<number>(() => {
+    if (typeof window === "undefined") return 50;
+    try {
+      const raw = window.localStorage.getItem("janecoverter.wallpaperMaskOpacity");
+      if (raw !== null) {
+        const val = parseInt(raw, 10);
+        return isNaN(val) ? 50 : Math.min(100, Math.max(0, val));
+      }
+      return 50;
+    } catch {
+      return 50;
+    }
+  });
+
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [updateDismissed, setUpdateDismissed] = useState(false);
@@ -285,8 +340,13 @@ export default function App() {
       window.localStorage.setItem("janecoverter.theme", theme);
       window.localStorage.setItem("janecoverter.accentColor", accentColor);
       window.localStorage.setItem("janecoverter.bgColor", bgColor);
+      window.localStorage.setItem("janecoverter.bgMode", bgMode);
+      window.localStorage.setItem("janecoverter.wallpaper", wallpaper);
+      window.localStorage.setItem("janecoverter.wallpaperBlur", String(wallpaperBlur));
+      window.localStorage.setItem("janecoverter.wallpaperMaskColor", wallpaperMaskColor);
+      window.localStorage.setItem("janecoverter.wallpaperMaskOpacity", String(wallpaperMaskOpacity));
     } catch {}
-  }, [theme, accentColor, bgColor]);
+  }, [theme, accentColor, bgColor, bgMode, wallpaper, wallpaperBlur, wallpaperMaskColor, wallpaperMaskOpacity]);
 
   const [historyError, setHistoryError] = useState("");
   const pendingHistoryWrites = useRef<Array<() => Promise<void>>>([]);
@@ -390,6 +450,18 @@ export default function App() {
     setTheme("dark");
     setAccentColor("#c52b68");
     setBgColor("#02000a");
+    setBgMode("color");
+    setWallpaper("");
+    setWallpaperBlur(20);
+    setWallpaperMaskColor("#000000");
+    setWallpaperMaskOpacity(50);
+    try {
+      window.localStorage.removeItem("janecoverter.wallpaper");
+      window.localStorage.setItem("janecoverter.bgMode", "color");
+      window.localStorage.setItem("janecoverter.wallpaperBlur", "20");
+      window.localStorage.setItem("janecoverter.wallpaperMaskColor", "#000000");
+      window.localStorage.setItem("janecoverter.wallpaperMaskOpacity", "50");
+    } catch {}
   }
 
   useEffect(() => {
@@ -837,8 +909,18 @@ export default function App() {
             onSettings={updateSettings}
             accentColor={accentColor}
             bgColor={bgColor}
+            bgMode={bgMode}
+            wallpaper={wallpaper}
+            wallpaperBlur={wallpaperBlur}
+            wallpaperMaskColor={wallpaperMaskColor}
+            wallpaperMaskOpacity={wallpaperMaskOpacity}
             onAccentColorChange={handleAccentChange}
             onBgColorChange={handleBgChange}
+            onBgModeChange={setBgMode}
+            onWallpaperChange={setWallpaper}
+            onWallpaperBlurChange={setWallpaperBlur}
+            onWallpaperMaskColorChange={setWallpaperMaskColor}
+            onWallpaperMaskOpacityChange={setWallpaperMaskOpacity}
             onResetColors={handleResetColors}
             onStatus={statusMessage}
             updateResult={updateResult}
@@ -855,10 +937,31 @@ export default function App() {
       onContextMenu={(event) => event.preventDefault()}
       className="app-shell relative flex h-screen max-h-screen w-screen overflow-hidden transition-colors duration-200"
       style={{
-        backgroundColor: "var(--bg-color, #02000a)",
+        backgroundColor: bgMode === "wallpaper" && wallpaper ? "transparent" : "var(--bg-color, #02000a)",
         color: theme === "light" ? "#1f1222" : "#ededed",
       }}
     >
+      {/* Dynamic Custom Wallpaper Background Layer */}
+      {bgMode === "wallpaper" && wallpaper && (
+        <div className="pointer-events-none absolute inset-0 overflow-hidden z-0">
+          <div
+            className="absolute inset-0 bg-cover bg-center transition-[filter,transform] duration-200"
+            style={{
+              backgroundImage: `url(${wallpaper})`,
+              filter: `blur(${Math.round((wallpaperBlur / 100) * 40)}px)`,
+              transform: wallpaperBlur > 0 ? "scale(1.08)" : "scale(1)",
+            }}
+          />
+          {/* Color Mask Overlay with custom color and adjustable opacity slider */}
+          <div
+            className="absolute inset-0 transition-all duration-200 pointer-events-none"
+            style={{
+              backgroundColor: wallpaperMaskColor,
+              opacity: wallpaperMaskOpacity / 100,
+            }}
+          />
+        </div>
+      )}
       <div
         className="pointer-events-none absolute -left-32 -top-24 size-[460px] rounded-full blur-3xl ambient-orb transition-colors duration-300"
         style={{ backgroundColor: "var(--accent-subtle, rgba(197, 43, 104, 0.06))" }}
