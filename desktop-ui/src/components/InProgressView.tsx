@@ -113,6 +113,7 @@ export function parseConversionEvents(
   defaultFormat?: string,
   initialSource?: string,
   targetJobId?: string,
+  isRunning = false,
 ): { items: InProgressItem[]; summary: InProgressBatchSummary; latestLogLine: string } {
   // 1. Filter events by active job so multiple jobs never mix together
   let scopedEvents: ConverterEvent[];
@@ -432,8 +433,10 @@ export function parseConversionEvents(
     // 8. Match converted item: e.g. [+] Converted: 35. Runaway with Peace (feat. Caylune).mp3
     const convMatch = CONVERTED_RE.exec(rawMsg);
     if (convMatch) {
+      const rawConverted = rawMsg.replace(/^\[\+\]\s*(?:Adapted & )?(?:Converted|Saved photo):\s*/i, "").trim();
       const idx = convMatch[1] ? parseInt(convMatch[1], 10) : undefined;
-      const filename = convMatch[2].trim();
+      const cleanTitle = convMatch[2].trim();
+      const actualFile = rawConverted || (idx !== undefined ? `${idx}. ${cleanTitle}` : cleanTitle);
       if (idx !== undefined) {
         let item = itemsMap.get(idx);
         if (!item) {
@@ -441,26 +444,29 @@ export function parseConversionEvents(
             id: `item-${idx}`,
             index: idx,
             total: detectedTotal || idx,
-            title: filename.replace(/\.[a-zA-Z0-9]+$/, ""),
-            mediaKind: inferMediaKind(defaultCategory, defaultFormat, filename),
+            title: cleanTitle.replace(/\.[a-zA-Z0-9]+$/, ""),
+            mediaKind: inferMediaKind(defaultCategory, defaultFormat, actualFile),
             status: "ready",
             progress: 1,
-            outputPath: filename,
+            outputPath: actualFile,
           };
           itemsMap.set(idx, item);
         } else {
           item.status = "ready";
           item.progress = 1;
-          item.outputPath = filename;
+          item.outputPath = actualFile;
           if (!item.title || item.title.startsWith("Track #")) {
-            item.title = filename.replace(/\.[a-zA-Z0-9]+$/, "");
+            item.title = cleanTitle.replace(/\.[a-zA-Z0-9]+$/, "");
           }
         }
       } else {
         isSingleMedia = true;
-        singleTitle = filename.replace(/\.[a-zA-Z0-9]+$/, "");
+        singleTitle = cleanTitle.replace(/\.[a-zA-Z0-9]+$/, "");
         singleStatus = "ready";
         singleProgress = 1;
+        if (!singleOutputPath) {
+          singleOutputPath = actualFile;
+        }
       }
       continue;
     }
@@ -468,16 +474,25 @@ export function parseConversionEvents(
     // 9. Match Ready: e.g. Ready: 9. am.mp3
     const readyMatch = READY_RE.exec(rawMsg);
     if (readyMatch) {
+      const rawReady = rawMsg.replace(/^Ready:\s*/i, "").trim();
       const idx = readyMatch[1] ? parseInt(readyMatch[1], 10) : undefined;
-      const filename = (readyMatch[2] || "").trim();
+      const cleanTitle = (readyMatch[2] || "").trim();
+      const actualFile = rawReady || (idx !== undefined ? `${idx}. ${cleanTitle}` : cleanTitle);
       if (idx !== undefined) {
         const item = itemsMap.get(idx);
         if (item) {
           item.status = "ready";
           item.progress = 1;
-          if (filename && !item.outputPath) {
-            item.outputPath = filename;
+          if (!item.outputPath) {
+            item.outputPath = actualFile;
           }
+        }
+      } else {
+        isSingleMedia = true;
+        singleStatus = "ready";
+        singleProgress = 1;
+        if (!singleOutputPath) {
+          singleOutputPath = actualFile;
         }
       }
       continue;
@@ -598,7 +613,7 @@ export function parseConversionEvents(
     items.sort((a, b) => a.index - b.index);
   } else if (
     isSingleMedia ||
-    (Boolean(initialSource) && Boolean(targetJobId) && targetJobId !== "ui" && targetJobId !== "browser-session")
+    (Boolean(initialSource) && Boolean(targetJobId) && targetJobId !== "ui" && targetJobId !== "browser-session" && isRunning)
   ) {
     items = [
       {
@@ -818,22 +833,23 @@ export function InProgressView({
 
   // Parse events into structured items & batch summary scoped to displayed job
   const { items, summary, latestLogLine } = useMemo(
-    () => parseConversionEvents(events, category, format, isViewingLive ? sourceTitle : undefined, currentJobId),
-    [events, category, format, sourceTitle, currentJobId, isViewingLive]
+    () => parseConversionEvents(events, category, format, isViewingLive ? sourceTitle : undefined, currentJobId, isViewingLive && running),
+    [events, category, format, sourceTitle, currentJobId, isViewingLive, running]
   );
 
   // Computed session summaries for all in-memory jobs
   const sessionSummaries = useMemo(() => {
     return distinctJobIds.map((id, index) => {
+      const isLive = Boolean(running && jobId && id === jobId);
+      const isCurrent = id === currentJobId;
       const { summary: sSummary } = parseConversionEvents(
         events,
         category,
         format,
         id === jobId ? sourceTitle : undefined,
-        id
+        id,
+        isLive
       );
-      const isLive = Boolean(running && jobId && id === jobId);
-      const isCurrent = id === currentJobId;
       return {
         id,
         sessionNumber: index + 1,
@@ -996,6 +1012,41 @@ export function InProgressView({
   }
 
   function getItemFullPath(item: InProgressItem): string | undefined {
+    // 1. If item.outputPath is already an absolute path, clean and return it
+    if (item.outputPath) {
+      const cleaned = cleanPath(item.outputPath);
+      if (cleaned.includes(":\\") || cleaned.startsWith("/") || cleaned.startsWith("\\\\")) {
+        return cleaned;
+      }
+    }
+
+    // 2. Check historyItems for exact disk exportPath
+    const itemFilename = item.outputPath
+      ? cleanPath(item.outputPath).split(/[\\/]/).pop()?.toLowerCase()
+      : undefined;
+    const itemTitle = item.title.toLowerCase();
+
+    for (const hist of historyItems) {
+      if (!hist.exportPath) continue;
+      const histExport = cleanPath(hist.exportPath);
+      const histLower = histExport.toLowerCase();
+      const histBase = histExport.split(/[\\/]/).pop()?.toLowerCase();
+
+      // Direct match on filename
+      if (itemFilename && (histBase === itemFilename || histLower.endsWith("\\" + itemFilename) || histLower.endsWith("/" + itemFilename))) {
+        return histExport;
+      }
+      // If history entry is a directory containing this item
+      if (itemFilename && !/\.[a-zA-Z0-9]{2,5}$/.test(histExport)) {
+        return `${histExport.replace(/[\\/]+$/, "")}\\${item.outputPath}`;
+      }
+      // Direct match on title if history is a file
+      if (hist.fileName && hist.fileName.toLowerCase() === itemTitle && /\.[a-zA-Z0-9]{2,5}$/.test(histExport)) {
+        return histExport;
+      }
+    }
+
+    // 3. Fallback to summary.outputDir or outputDir
     let dir = summary.outputDir || outputDir;
     if (dir) {
       dir = cleanPath(dir);
@@ -1005,7 +1056,7 @@ export function InProgressView({
       }
     }
     const raw = item.outputPath || (item.coverPath && !item.coverPath.startsWith("http") && !item.coverPath.startsWith("data:") ? item.coverPath : undefined);
-    if (!raw) return undefined;
+    if (!raw) return dir || undefined;
     const cleaned = cleanPath(raw);
     if (cleaned.includes(":\\") || cleaned.startsWith("/") || cleaned.startsWith("\\\\")) {
       return cleaned;
@@ -1021,7 +1072,7 @@ export function InProgressView({
       await bridge.openFile(fullPath);
       onStatus(`Opened: ${item.title}`);
     } catch (err) {
-      onStatus(`Could not open file: ${err instanceof Error ? err.message : String(err)}`);
+      onStatus(`Could not open file: ${err instanceof Error ? err.message : String(err)} (${fullPath})`);
     }
   }
 
@@ -1034,7 +1085,7 @@ export function InProgressView({
       await bridge.openPath(target);
       onStatus(`Opened location: ${target}`);
     } catch (err) {
-      onStatus(`Could not open location: ${err instanceof Error ? err.message : String(err)}`);
+      onStatus(`Could not open location: ${err instanceof Error ? err.message : String(err)} (${target})`);
     }
   }
 
@@ -2062,7 +2113,7 @@ export function InProgressView({
                             const target = getItemFullPath(item);
                             if (target) {
                               void bridge.dragLibraryFile(target).catch((err: unknown) => {
-                                onStatus(err instanceof Error ? err.message : String(err));
+                                onStatus(`Could not drag file: ${err instanceof Error ? err.message : String(err)} (${target})`);
                               });
                             } else {
                               onStatus("No file path available to drag.");
@@ -2207,7 +2258,7 @@ export function InProgressView({
                           const target = getItemFullPath(item);
                           if (target) {
                             void bridge.dragLibraryFile(target).catch((err: unknown) => {
-                              onStatus(err instanceof Error ? err.message : String(err));
+                              onStatus(`Could not drag file: ${err instanceof Error ? err.message : String(err)} (${target})`);
                             });
                           } else {
                             onStatus("No file path available to drag.");

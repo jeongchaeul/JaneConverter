@@ -805,8 +805,14 @@ export default function App() {
           onClear={(targetJobId?: string) => {
             if (targetJobId) {
               setEvents((prev) => prev.filter((e) => e.jobId !== targetJobId));
+              if (jobId === targetJobId) {
+                setJobId("");
+                setProgress(0);
+              }
             } else {
               setEvents([]);
+              setJobId("");
+              setProgress(0);
             }
           }}
           onStatus={statusMessage}

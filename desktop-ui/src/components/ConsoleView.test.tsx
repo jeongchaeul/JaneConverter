@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConsoleView } from "./ConsoleView";
-import type { ConverterEvent } from "../bridge";
+import { bridge, type ConverterEvent } from "../bridge";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,6 +14,7 @@ vi.mock("../bridge", () => ({
     getThumbnail: vi.fn().mockResolvedValue(null),
     openPath: vi.fn().mockResolvedValue(undefined),
     openFile: vi.fn().mockResolvedValue(undefined),
+    dragLibraryFile: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -765,6 +766,127 @@ describe("ConsoleView", () => {
     );
     expect(closePageBtn?.disabled).toBe(true);
     expect(closePageBtn?.className).toContain("opacity-25");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("triggers open file, show in folder, and drag with verified resolved path", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const openFileSpy = vi.spyOn(bridge, "openFile").mockResolvedValue();
+    const openPathSpy = vi.spyOn(bridge, "openPath").mockResolvedValue();
+    const dragSpy = vi.spyOn(bridge, "dragLibraryFile").mockResolvedValue();
+
+    const events: ConverterEvent[] = [
+      { jobId: "job-album-1", kind: "started", message: "[*] JANECONVERTER PLAYLIST BATCH PIPELINE" },
+      { jobId: "job-album-1", kind: "log", message: "Target Directory: I:\\Music\\Album" },
+      { jobId: "job-album-1", kind: "log", message: "[*] Track #1 Manifest: Donut's New Groove" },
+      { jobId: "job-album-1", kind: "log", message: "[+] Converted: 1. Donut's New Groove.mp3" },
+      { jobId: "job-album-1", kind: "finished", message: "DONE! Exported: I:\\Music\\Album", output: "I:\\Music\\Album" },
+    ];
+
+    const historyItems = [
+      {
+        id: "hist-1",
+        timestamp: "2026-10-30T00:00:00Z",
+        source: "https://youtube.com/playlist?list=xyz",
+        fileName: "Album",
+        exportPath: "I:\\Music\\Album",
+        presetName: "Studio Master",
+        formatLabel: "MP3",
+        qualityLabel: "320k",
+        elapsedMs: 2500,
+        status: "succeeded" as const,
+      },
+    ];
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={events}
+          jobId="job-album-1"
+          running={false}
+          initialMode="in_progress"
+          outputDir="I:\\Music\\Album"
+          historyItems={historyItems}
+          onClear={vi.fn()}
+          onStatus={vi.fn()}
+        />
+      );
+    });
+
+    // 1. Play button
+    const playBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.getAttribute("aria-label")?.includes("Open Donut's New Groove")
+    );
+    expect(playBtn).toBeDefined();
+    await act(async () => {
+      playBtn?.click();
+    });
+    expect(openFileSpy).toHaveBeenCalledWith("I:\\Music\\Album\\1. Donut's New Groove.mp3");
+
+    // 2. Folder button
+    const folderBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.getAttribute("aria-label")?.includes("Show in folder for Donut's New Groove")
+    );
+    expect(folderBtn).toBeDefined();
+    await act(async () => {
+      folderBtn?.click();
+    });
+    expect(openPathSpy).toHaveBeenCalledWith("I:\\Music\\Album\\1. Donut's New Groove.mp3");
+
+    // 3. Drag button
+    const dragBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.getAttribute("aria-label")?.includes("Drag Donut's New Groove")
+    );
+    expect(dragBtn).toBeDefined();
+    await act(async () => {
+      dragBtn?.dispatchEvent(new Event("dragstart", { bubbles: true, cancelable: true }));
+    });
+    expect(dragSpy).toHaveBeenCalledWith("I:\\Music\\Album\\1. Donut's New Groove.mp3");
+
+    openFileSpy.mockRestore();
+    openPathSpy.mockRestore();
+    dragSpy.mockRestore();
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("does not display a phantom downloading card when events are cleared and not running", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    // Only UI status events (no job events) and running=false
+    const events: ConverterEvent[] = [
+      { jobId: "ui", kind: "status", message: "Applied Fast MP3 preset: High-bitrate 320k MP3 without loudness normalization for faster conversion." },
+    ];
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={events}
+          running={false}
+          initialMode="in_progress"
+          sourceTitle="Media file"
+          onClear={vi.fn()}
+          onStatus={vi.fn()}
+        />
+      );
+    });
+
+    // Should display empty state ("No active conversions"), NOT "Downloading 0%" or "1 converting"
+    expect(container.textContent).toContain("No active conversions");
+    expect(container.textContent).not.toContain("Downloading 0%");
+    expect(container.textContent).not.toContain("1 converting");
 
     await act(async () => {
       root.unmount();

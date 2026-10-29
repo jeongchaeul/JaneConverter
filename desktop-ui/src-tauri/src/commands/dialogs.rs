@@ -60,7 +60,19 @@ pub fn export_log_file(
 
 #[tauri::command]
 pub fn open_path(path: String) -> Result<(), String> {
-    let raw_target = PathBuf::from(library::clean_windows_path(&path));
+    let resolved = library::resolve_existing_path(&path)
+        .unwrap_or_else(|| PathBuf::from(library::clean_windows_path(&path)));
+    let raw_target = if resolved.exists() {
+        resolved
+    } else if let Some(parent) = resolved.parent() {
+        if parent.exists() {
+            parent.to_path_buf()
+        } else {
+            resolved
+        }
+    } else {
+        resolved
+    };
     if !raw_target.exists() {
         return Err("That file or folder no longer exists.".into());
     }
@@ -106,11 +118,12 @@ pub fn open_path(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn open_file(path: String) -> Result<(), String> {
-    let initial = PathBuf::from(library::clean_windows_path(&path));
-    let target = if initial.is_dir() {
-        library::first_media_file_in_dir(&initial).unwrap_or(initial)
+    let resolved = library::resolve_existing_path(&path)
+        .unwrap_or_else(|| PathBuf::from(library::clean_windows_path(&path)));
+    let target = if resolved.is_dir() {
+        library::first_media_file_in_dir(&resolved).unwrap_or(resolved)
     } else {
-        initial
+        resolved
     };
     if !target.exists() {
         return Err("That media file no longer exists.".into());

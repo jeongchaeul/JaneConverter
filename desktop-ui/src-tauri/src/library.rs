@@ -467,18 +467,203 @@ pub fn is_library_path(root: &Path, candidate: &Path) -> bool {
     candidate == root || candidate.starts_with(root)
 }
 
+fn strip_paren_digits(val: &str) -> String {
+    let trimmed = val.trim_end();
+    if let Some(open_idx) = trimmed.rfind(" (") {
+        let inside = &trimmed[open_idx + 2..];
+        if let Some(digits) = inside.strip_suffix(')') {
+            if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+                return trimmed[..open_idx].to_string();
+            }
+        }
+    }
+    val.to_string()
+}
+
+fn strip_numbered_suffix(val: &str) -> String {
+    if let Some((stem, ext)) = val.rsplit_once('.') {
+        if ext.len() <= 5 && !stem.contains('/') && !stem.contains('\\') {
+            let stripped_stem = strip_paren_digits(stem);
+            return format!("{stripped_stem}.{ext}");
+        }
+    }
+    strip_paren_digits(val)
+}
+
+fn strip_track_prefix(filename: &str) -> &str {
+    let mut chars = filename.chars().peekable();
+    let mut has_digits = false;
+    let mut advance_count = 0;
+    while let Some(&c) = chars.peek() {
+        if c.is_ascii_digit() {
+            has_digits = true;
+            advance_count += c.len_utf8();
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    if has_digits {
+        let rest = &filename[advance_count..];
+        if let Some(after_dot) = rest.strip_prefix(". ") {
+            return after_dot;
+        }
+        if let Some(after_dash) = rest.strip_prefix(" - ") {
+            return after_dash;
+        }
+        if let Some(after_under) = rest.strip_prefix('_') {
+            return after_under;
+        }
+    }
+    filename
+}
+
+fn find_file_in_dir_recursive(
+    dir: &Path,
+    target_name: &str,
+    depth: usize,
+    max_depth: usize,
+) -> Option<PathBuf> {
+    if depth > max_depth {
+        return None;
+    }
+    let entries = fs::read_dir(dir).ok()?;
+    let mut subdirs = Vec::new();
+    let target_clean = target_name.trim();
+    let target_stripped = strip_track_prefix(target_clean);
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Ok(file_type) = entry.file_type() {
+            if file_type.is_file() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    let name_clean = name.trim();
+                    let name_stripped = strip_track_prefix(name_clean);
+                    if name_clean.eq_ignore_ascii_case(target_clean)
+                        || name_stripped.eq_ignore_ascii_case(target_stripped)
+                        || name_clean
+                            .to_ascii_lowercase()
+                            .ends_with(&format!(". {}", target_clean.to_ascii_lowercase()))
+                        || name_clean
+                            .to_ascii_lowercase()
+                            .ends_with(&format!("- {}", target_clean.to_ascii_lowercase()))
+                    {
+                        return Some(path);
+                    }
+                }
+            } else if file_type.is_dir() && !file_type.is_symlink() {
+                subdirs.push(path);
+            }
+        }
+    }
+    for subdir in subdirs {
+        if let Some(found) = find_file_in_dir_recursive(&subdir, target_name, depth + 1, max_depth)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+pub fn resolve_existing_path(path_str: &str) -> Option<PathBuf> {
+    let clean = clean_windows_path(path_str);
+    let trimmed = clean.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let initial = PathBuf::from(trimmed);
+    if initial.exists() {
+        return Some(initial);
+    }
+
+    // 2. Try stripping collision suffix e.g. " (1)", " (2)", " (5)"
+    if let Some(parent) = initial.parent() {
+        let parent_str = parent.display().to_string();
+        let stripped_parent = strip_numbered_suffix(&parent_str);
+        if let Some(file_name) = initial.file_name() {
+            if stripped_parent != parent_str {
+                let candidate = PathBuf::from(&stripped_parent).join(file_name);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    let stripped_self = strip_numbered_suffix(trimmed);
+    if stripped_self != trimmed {
+        let candidate = PathBuf::from(&stripped_self);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    // 3. Search in catalog history paths
+    let target_file_name = initial.file_name().and_then(|n| n.to_str());
+    let history_paths =
+        crate::catalog::load_history_paths(&crate::paths::data_root().join("catalog.json"));
+    if let Some(fname) = target_file_name {
+        let fname_clean = fname.trim();
+        let fname_stripped = strip_track_prefix(fname_clean);
+        for hist in &history_paths {
+            let hist_clean = clean_windows_path(hist);
+            let hist_path = PathBuf::from(&hist_clean);
+            if hist_path.exists() {
+                if hist_path.is_file() {
+                    if let Some(hname) = hist_path.file_name().and_then(|n| n.to_str()) {
+                        let h_clean = hname.trim();
+                        let h_stripped = strip_track_prefix(h_clean);
+                        if h_clean.eq_ignore_ascii_case(fname_clean)
+                            || h_stripped.eq_ignore_ascii_case(fname_stripped)
+                        {
+                            return Some(hist_path);
+                        }
+                    }
+                } else if hist_path.is_dir() {
+                    let candidate = hist_path.join(fname_clean);
+                    if candidate.exists() {
+                        return Some(candidate);
+                    }
+                    if let Some(found) = find_file_in_dir_recursive(&hist_path, fname_clean, 0, 3) {
+                        return Some(found);
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Recursive search inside settings.output_dir and settings.fetched_dir
+    let settings = crate::paths::settings_get_internal();
+    if let Some(fname) = target_file_name {
+        for root in [&settings.output_dir, &settings.fetched_dir] {
+            let root_clean = clean_windows_path(root);
+            let root_path = PathBuf::from(&root_clean);
+            if root_path.is_dir() {
+                if let Some(found) = find_file_in_dir_recursive(&root_path, fname, 0, 5) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 pub fn draggable_media_file(root: &str, path: &str) -> Result<PathBuf, String> {
-    let metadata = fs::symlink_metadata(path.trim())
+    let resolved =
+        resolve_existing_path(path).unwrap_or_else(|| PathBuf::from(clean_windows_path(path)));
+    let path_to_check = resolved.display().to_string();
+    let metadata = fs::symlink_metadata(resolved.as_path())
         .map_err(|error| format!("That library file is unavailable: {error}"))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err("Only regular media files can be dragged from the library.".into());
     }
-    let target = fs::canonicalize(path.trim())
+    let target = fs::canonicalize(&resolved)
         .map_err(|error| format!("That library item is unavailable: {error}"))?;
     if !media_extension(&target) && !image_extension(&target) {
         return Err("Only media files can be dragged from the library.".into());
     }
-    if let Ok((_root, library_target)) = canonical_library_item(root, path) {
+    if let Ok((_root, library_target)) = canonical_library_item(root, &path_to_check) {
         return Ok(library_target);
     }
     let history_paths =
@@ -486,6 +671,14 @@ pub fn draggable_media_file(root: &str, path: &str) -> Result<PathBuf, String> {
     for history_path in history_paths {
         if let Ok(canonical_history) = fs::canonicalize(history_path.trim()) {
             if canonical_history == target {
+                return Ok(target);
+            }
+        }
+    }
+    let settings = crate::paths::settings_get_internal();
+    for candidate_root in [&settings.output_dir, &settings.fetched_dir, root] {
+        if let Ok(canon_root) = fs::canonicalize(candidate_root.trim()) {
+            if target.starts_with(&canon_root) {
                 return Ok(target);
             }
         }
@@ -908,5 +1101,55 @@ mod tests {
         assert_eq!(path_total_bytes("D:\\non_existent_folder_xyz_12345"), 0);
 
         fs::remove_dir_all(root).expect("clean size test root");
+    }
+
+    #[test]
+    fn strip_numbered_suffix_and_track_prefix_clean_names() {
+        assert_eq!(strip_numbered_suffix("Discography (5)"), "Discography");
+        assert_eq!(strip_numbered_suffix("My Album (2).mp3"), "My Album.mp3");
+        assert_eq!(strip_numbered_suffix("Normal Song.mp3"), "Normal Song.mp3");
+
+        assert_eq!(
+            strip_track_prefix("1. Donut's New Groove.mp3"),
+            "Donut's New Groove.mp3"
+        );
+        assert_eq!(
+            strip_track_prefix("05. Summer Vibe.flac"),
+            "Summer Vibe.flac"
+        );
+        assert_eq!(strip_track_prefix("12 - Beat.wav"), "Beat.wav");
+        assert_eq!(strip_track_prefix("Single Track.mp3"), "Single Track.mp3");
+    }
+
+    #[test]
+    fn resolve_existing_path_resolves_nested_and_suffixed_files() {
+        let root =
+            std::env::temp_dir().join(format!("janec-resolve-{}", crate::paths::now_stamp()));
+        let album = root
+            .join("Audio")
+            .join("YouTube")
+            .join("Artist Discography");
+        fs::create_dir_all(&album).expect("create test album hierarchy");
+        let track = album.join("1. Test Track.mp3");
+        fs::write(&track, b"media content").expect("write test track");
+
+        // 1. Direct path
+        assert_eq!(
+            resolve_existing_path(track.to_str().unwrap()).unwrap(),
+            track
+        );
+
+        // 2. Collision suffix on folder
+        let suffixed_folder_track = root
+            .join("Audio")
+            .join("YouTube")
+            .join("Artist Discography (5)")
+            .join("1. Test Track.mp3");
+        assert_eq!(
+            resolve_existing_path(suffixed_folder_track.to_str().unwrap()).unwrap(),
+            track
+        );
+
+        fs::remove_dir_all(root).expect("clean resolve test root");
     }
 }
