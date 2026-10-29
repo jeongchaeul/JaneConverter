@@ -39,7 +39,11 @@ from .converter import (
     sanitize_time_offset,
     parse_time_offset_seconds,
 )
-from .updater import check_for_engine_updates, check_for_repo_updates
+from .updater import (
+    check_for_engine_updates,
+    check_for_ffmpeg_updates,
+    check_for_repo_updates,
+)
 from .version import __version__
 from .paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, initialize_app_data
 from .auth import normalize_browser_session
@@ -280,6 +284,12 @@ def process_conversion(
             print(
                 f"[Update] Extractor engine update available: "
                 f"v{engine_info.get('current_version')} -> v{engine_info.get('latest_version')}."
+            )
+        ffmpeg_info = check_for_ffmpeg_updates()
+        if ffmpeg_info.get("has_update"):
+            print(
+                f"[Update] FFmpeg transcoder update available: "
+                f"v{ffmpeg_info.get('current_version')} -> v{ffmpeg_info.get('latest_version')}."
             )
 
     if not output_dir:
@@ -592,6 +602,12 @@ def process_playlist_conversion(
             print(
                 f"[Update] Extractor engine update available: "
                 f"v{engine_info.get('current_version')} -> v{engine_info.get('latest_version')}."
+            )
+        ffmpeg_info = check_for_ffmpeg_updates()
+        if ffmpeg_info.get("has_update"):
+            print(
+                f"[Update] FFmpeg transcoder update available: "
+                f"v{ffmpeg_info.get('current_version')} -> v{ffmpeg_info.get('latest_version')}."
             )
 
     if not output_dir:
@@ -1138,6 +1154,7 @@ def main():
     parser.add_argument("--no-update", action="store_true", help="Skip the read-only yt-dlp update availability check on startup")
     parser.add_argument("--check-updates", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--check-engine-updates", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--check-ffmpeg-updates", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--hardware-snapshot-json", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--hardware-target-pid", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--validate-browser-capture", help=argparse.SUPPRESS)
@@ -1218,11 +1235,18 @@ def main():
         except (json.JSONDecodeError, OSError) as error:
             parser.error(f"Could not read the social photo manifest: {error}")
     if args.check_engine_updates:
-        print(json.dumps({"engine": check_for_engine_updates()}))
+        print(json.dumps({
+            "engine": check_for_engine_updates(),
+            "ffmpeg": check_for_ffmpeg_updates(),
+        }))
+        return
+    if args.check_ffmpeg_updates:
+        print(json.dumps({"ffmpeg": check_for_ffmpeg_updates()}))
         return
     if args.check_updates:
         print(json.dumps({
             "engine": check_for_engine_updates(),
+            "ffmpeg": check_for_ffmpeg_updates(),
             "repo": check_for_repo_updates(),
         }))
         return
@@ -1244,6 +1268,12 @@ def main():
             print(
                 f"[AutoUpdate] Extractor engine update available: "
                 f"v{engine_info.get('current_version')} -> v{engine_info.get('latest_version')}."
+            )
+        ffmpeg_info = check_for_ffmpeg_updates()
+        if ffmpeg_info.get("has_update"):
+            print(
+                f"[AutoUpdate] FFmpeg transcoder update available: "
+                f"v{ffmpeg_info.get('current_version')} -> v{ffmpeg_info.get('latest_version')}."
             )
 
     save_cover = not args.no_cover_art

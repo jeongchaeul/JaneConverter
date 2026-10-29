@@ -5,6 +5,7 @@ Update checks and explicitly requested update operations for JaneConverter.
 import os
 import re
 import sys
+import shutil
 import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -14,6 +15,7 @@ import json
 import requests
 import yt_dlp
 
+from .binaries import get_ffmpeg_binary
 from .version import __version__
 
 _source_root = Path(__file__).resolve().parents[2]
@@ -556,6 +558,120 @@ def check_for_engine_updates(timeout_seconds: float = 3.0) -> Dict[str, Any]:
         "online": False
     }
 
+def get_current_ffmpeg_version() -> str:
+    """Returns the parsed version or build identifier of the active FFmpeg binary."""
+    ffmpeg_bin = get_ffmpeg_binary()
+    if not ffmpeg_bin or (not shutil.which(ffmpeg_bin) and not os.path.isfile(ffmpeg_bin)):
+        return "not found"
+    try:
+        no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        res = subprocess.run(
+            [ffmpeg_bin, "-version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=3.0,
+            creationflags=no_window,
+        )
+        if res.returncode == 0 and res.stdout:
+            first_line = res.stdout.splitlines()[0]
+            match = re.search(r"ffmpeg version\s+([^\s]+)", first_line, re.IGNORECASE)
+            if match:
+                raw = match.group(1).strip()
+                sem = re.search(r"(\d+(?:\.\d+)+)", raw)
+                return sem.group(1) if sem else raw
+    except Exception:
+        pass
+    return "unknown"
+
+def _compare_ffmpeg_versions(latest: str, current: str) -> bool:
+    """Deterministically compares two FFmpeg versions."""
+    try:
+        from packaging import version
+        return version.parse(latest) > version.parse(current)
+    except Exception:
+        def parts(v: str) -> tuple:
+            return tuple(int(x) for x in re.findall(r"\d+", v))
+        p_latest, p_current = parts(latest), parts(current)
+        if p_latest and p_current:
+            return p_latest > p_current
+        return False
+
+def check_for_ffmpeg_updates(timeout_seconds: float = 3.0) -> Dict[str, Any]:
+    """
+    Checks if a newer FFmpeg build or release is available.
+    Fails gracefully if offline, rate-limited, or request times out.
+    """
+    current_ver = get_current_ffmpeg_version()
+    installed = current_ver not in ("not found", "unknown")
+    release_url = "https://www.gyan.dev/ffmpeg/builds/" if os.name == "nt" else "https://ffmpeg.org/download.html"
+
+    if not installed:
+        return {
+            "has_update": False,
+            "installed": False,
+            "online": True,
+            "current_version": current_ver,
+            "latest_version": None,
+            "release_url": release_url,
+            "error": "FFmpeg binary not detected on system or application path."
+        }
+
+    latest_ver = current_ver
+    online = False
+
+    try:
+        resp = requests.get(
+            "https://www.gyan.dev/ffmpeg/builds/release-version",
+            headers={"User-Agent": f"JaneConverter/{__version__}"},
+            timeout=max(1.0, float(timeout_seconds)),
+        )
+        if resp.status_code == 200:
+            val = resp.text.strip()
+            if re.match(r"^\d+(\.\d+)+$", val):
+                latest_ver = val
+                online = True
+    except (requests.RequestException, OSError):
+        pass
+
+    if not online:
+        try:
+            resp = requests.get(
+                "https://api.github.com/repos/FFmpeg/FFmpeg/tags?per_page=10",
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": f"JaneConverter/{__version__}",
+                },
+                timeout=max(1.0, float(timeout_seconds)),
+            )
+            if resp.status_code == 200:
+                tags = resp.json()
+                if isinstance(tags, list):
+                    for tag_obj in tags:
+                        name = str(tag_obj.get("name", "")).lstrip("n").lstrip("v")
+                        if re.match(r"^\d+(\.\d+)+$", name):
+                            latest_ver = name
+                            online = True
+                            break
+        except (requests.RequestException, ValueError, OSError):
+            pass
+
+    has_update = False
+    if online and latest_ver != current_ver:
+        has_update = _compare_ffmpeg_versions(latest_ver, current_ver)
+
+    return {
+        "has_update": has_update,
+        "installed": True,
+        "online": online,
+        "current_version": current_ver,
+        "latest_version": latest_ver,
+        "release_url": release_url,
+        "error": None,
+    }
+
 def update_engine(status_callback: Optional[Callable[[str], None]] = None,
                   info: Optional[Dict[str, Any]] = None,
                   allow_install: bool = False) -> bool:
@@ -640,6 +756,7 @@ def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]]
     repo_updated = False
     engine_updated = False
     engine_info: Optional[Dict[str, Any]] = None
+    ffmpeg_info: Optional[Dict[str, Any]] = None
     errors = []
 
     # 1. Extractor Engine check & update (single network check, reused below)
@@ -657,7 +774,20 @@ def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]]
     except Exception as e:
         errors.append(f"Engine update check failed: {e}")
 
-    # 2. Repo check & update
+    # 2. FFmpeg Transcoder check
+    log("Checking FFmpeg transcoder...")
+    try:
+        ffmpeg_info = check_for_ffmpeg_updates()
+        if ffmpeg_info.get("has_update"):
+            log(f"FFmpeg transcoder update available: v{ffmpeg_info['current_version']} -> v{ffmpeg_info['latest_version']}.")
+        elif ffmpeg_info.get("installed"):
+            log(f"FFmpeg transcoder is up to date (v{ffmpeg_info.get('current_version')}).")
+        else:
+            log("FFmpeg transcoder binary not detected.")
+    except Exception as e:
+        errors.append(f"FFmpeg update check failed: {e}")
+
+    # 3. Repo check & update
     log("Checking JaneConverter repository...")
     repo_info = check_for_repo_updates()
     if repo_info.get("has_update") and auto_apply:
@@ -679,6 +809,7 @@ def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]]
         not repo_updated and not engine_updated and len(errors) == 0
         and not repo_info.get("has_update")
         and not (engine_info and engine_info.get("has_update"))
+        and not (ffmpeg_info and ffmpeg_info.get("has_update"))
     )
 
     return {
@@ -687,8 +818,10 @@ def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]]
         "already_up_to_date": already_up_to_date,
         "repo_update_available": repo_info.get("has_update", False),
         "engine_update_available": bool(engine_info and engine_info.get("has_update")),
+        "ffmpeg_update_available": bool(ffmpeg_info and ffmpeg_info.get("has_update")),
         "commits_behind": repo_info.get("commits_behind", 0),
         "current_commit": repo_info.get("current_commit", get_current_repo_commit()),
         "current_engine_version": get_current_engine_version(),
+        "current_ffmpeg_version": get_current_ffmpeg_version(),
         "error": "; ".join(errors) if errors else None,
     }

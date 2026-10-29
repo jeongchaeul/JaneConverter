@@ -198,6 +198,16 @@ mod tests {
     }
 
     #[test]
+    fn update_summary_includes_ffmpeg_status() {
+        let summary = format_update_summary(
+            r#"{"engine":{"has_update":false,"current_version":"2026.10.26","latest_version":"2026.10.26","online":true},"ffmpeg":{"has_update":true,"installed":true,"current_version":"8.1","latest_version":"9.0.2","online":true},"repo":{"has_update":false,"is_git":false,"current_version":"2.3.5","latest_version":"2.3.5"}}"#,
+        );
+        assert!(summary.contains("Extractor engine is up to date"));
+        assert!(summary.contains("FFmpeg update available: v8.1 -> v9.0.2"));
+        assert!(summary.contains("JaneConverter is up to date (v2.3.5)"));
+    }
+
+    #[test]
     fn packaged_snapshot_reports_published_release() {
         let summary = format_update_summary(
             r#"{"engine":{"has_update":false,"current_version":"2026.08.30","latest_version":"2026.08.19","online":true},"repo":{"has_update":true,"is_git":false,"current_version":"1.2.0","latest_version":"1.3.0","installer_available":true,"error":null}}"#,

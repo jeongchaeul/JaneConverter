@@ -66,6 +66,16 @@ export interface UpdateCheckResult {
     online?: boolean;
     current_version?: string;
     latest_version?: string;
+    error?: string | null;
+  };
+  ffmpeg?: {
+    has_update?: boolean;
+    installed?: boolean;
+    online?: boolean;
+    current_version?: string;
+    latest_version?: string;
+    release_url?: string;
+    error?: string | null;
   };
   repo?: {
     has_update?: boolean;
@@ -78,6 +88,7 @@ export interface UpdateCheckResult {
     commits_behind?: number;
     commits?: string[];
     notes?: string;
+    error?: string | null;
   };
 }
 

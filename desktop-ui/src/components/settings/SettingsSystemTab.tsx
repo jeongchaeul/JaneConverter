@@ -77,7 +77,7 @@ export function SettingsSystemTab({
           <div>
             <div className="text-sm font-medium text-zinc-200">Check for Updates</div>
             <div className="mt-1 text-xs text-zinc-500">
-              Checks for the latest JaneConverter repository build and extractor service updates.
+              Checks for JaneConverter application, yt-dlp extractor, and FFmpeg transcoder updates.
             </div>
           </div>
           <button
@@ -221,6 +221,58 @@ export function SettingsSystemTab({
             </div>
           );
         })()}
+
+        {effectiveUpdateResult && (
+          <div className="grid gap-2 pt-1 sm:grid-cols-3">
+            <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2 text-xs">
+              <div className="text-zinc-400 font-medium flex items-center justify-between">
+                <span>JaneConverter</span>
+                {effectiveUpdateResult.repo?.has_update ? (
+                  <span className="text-[10px] text-amber-400 font-normal">Update available</span>
+                ) : (
+                  <span className="text-[10px] text-emerald-400 font-normal">Up to date</span>
+                )}
+              </div>
+              <div className="mt-1 font-mono text-[11px] text-zinc-300 truncate">
+                {effectiveUpdateResult.repo?.latest_commit
+                  ? `build ${effectiveUpdateResult.repo.latest_commit.slice(0, 7)}`
+                  : effectiveUpdateResult.repo?.current_version
+                    ? `v${effectiveUpdateResult.repo.current_version}`
+                    : "Current"}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2 text-xs">
+              <div className="text-zinc-400 font-medium flex items-center justify-between">
+                <span>yt-dlp Extractor</span>
+                {effectiveUpdateResult.engine?.has_update ? (
+                  <span className="text-[10px] text-amber-400 font-normal">Update available</span>
+                ) : (
+                  <span className="text-[10px] text-emerald-400 font-normal">Up to date</span>
+                )}
+              </div>
+              <div className="mt-1 font-mono text-[11px] text-zinc-300 truncate">
+                v{effectiveUpdateResult.engine?.current_version || "bundled"}
+                {effectiveUpdateResult.engine?.has_update && ` → v${effectiveUpdateResult.engine?.latest_version}`}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2 text-xs">
+              <div className="text-zinc-400 font-medium flex items-center justify-between">
+                <span>FFmpeg Transcoder</span>
+                {effectiveUpdateResult.ffmpeg?.has_update ? (
+                  <span className="text-[10px] text-amber-400 font-normal">Update available</span>
+                ) : (
+                  <span className="text-[10px] text-emerald-400 font-normal">Up to date</span>
+                )}
+              </div>
+              <div className="mt-1 font-mono text-[11px] text-zinc-300 truncate">
+                v{effectiveUpdateResult.ffmpeg?.current_version || (runtime?.ffmpegReady ? "ready" : "not detected")}
+                {effectiveUpdateResult.ffmpeg?.has_update && ` → v${effectiveUpdateResult.ffmpeg?.latest_version}`}
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Personal Sovereign Creator Toolbox */}

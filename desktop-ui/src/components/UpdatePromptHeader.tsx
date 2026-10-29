@@ -41,6 +41,7 @@ export function UpdatePromptHeader({
 
   const repo = updateResult.repo;
   const engine = updateResult.engine;
+  const ffmpeg = updateResult.ffmpeg;
   const hasAppUpdate = isAppUpdateAvailable(repo);
 
   if (!hasAppUpdate) return null;
@@ -94,6 +95,11 @@ export function UpdatePromptHeader({
           {engine?.has_update && (
             <span className="hidden md:inline rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-300 border border-emerald-500/20">
               Extractor engine upgrade
+            </span>
+          )}
+          {ffmpeg?.has_update && (
+            <span className="hidden md:inline rounded bg-cyan-500/10 px-1.5 py-0.5 text-[11px] text-cyan-300 border border-cyan-500/20">
+              FFmpeg upgrade available
             </span>
           )}
         </div>

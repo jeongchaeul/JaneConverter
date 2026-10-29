@@ -37,6 +37,7 @@ export function UpdateChangesModal({
 
   const repo = updateResult?.repo;
   const engine = updateResult?.engine;
+  const ffmpeg = updateResult?.ffmpeg;
   const isAppUpdate = isAppUpdateAvailable(repo);
 
   const rawCommits = repo?.commits ?? [];
@@ -229,6 +230,30 @@ export function UpdateChangesModal({
             <span>
               Extractor engine upgrade ready: <strong>v{engine.current_version}</strong> → <strong>v{engine.latest_version}</strong>
             </span>
+          </div>
+        )}
+
+        {/* FFmpeg transcoder update notice if FFmpeg has an update */}
+        {ffmpeg?.has_update && (
+          <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs text-cyan-200">
+            <div className="flex items-center gap-2">
+              <Sparkles className="size-3.5 shrink-0 text-cyan-400" />
+              <span>
+                FFmpeg transcoder update available: <strong>v{ffmpeg.current_version}</strong> → <strong>v{ffmpeg.latest_version}</strong>
+              </span>
+            </div>
+            {ffmpeg.release_url ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (ffmpeg?.release_url) void bridge.openUrl(ffmpeg.release_url);
+                }}
+                className="inline-flex items-center gap-1 text-[11px] text-cyan-300 hover:text-white underline underline-offset-2"
+              >
+                <span>Release</span>
+                <ExternalLink className="size-3" />
+              </button>
+            ) : null}
           </div>
         )}
 

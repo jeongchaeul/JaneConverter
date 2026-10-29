@@ -17,6 +17,8 @@ from janeconverter.converter import (
 from janeconverter.updater import (
     get_current_engine_version,
     check_for_engine_updates,
+    get_current_ffmpeg_version,
+    check_for_ffmpeg_updates,
     is_git_repo,
     get_current_repo_commit,
     check_for_repo_updates,
@@ -283,6 +285,17 @@ def test_engine_updater_version_check():
     assert isinstance(info, dict)
     assert "current_version" in info
     assert "online" in info
+
+@pytest.mark.online
+def test_ffmpeg_updater_version_check():
+    ver = get_current_ffmpeg_version()
+    assert ver != ""
+    assert isinstance(ver, str)
+    info = check_for_ffmpeg_updates()
+    assert isinstance(info, dict)
+    assert "current_version" in info
+    assert "online" in info
+    assert "installed" in info
 
 def test_repo_updater_git_check():
     assert is_git_repo() is True

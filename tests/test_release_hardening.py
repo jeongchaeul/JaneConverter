@@ -67,6 +67,9 @@ def test_updates_are_read_only_by_default(monkeypatch):
     monkeypatch.setattr("janeconverter.updater.check_for_engine_updates", lambda: {
         "has_update": False, "online": True, "current_version": "1", "latest_version": "1"
     })
+    monkeypatch.setattr("janeconverter.updater.check_for_ffmpeg_updates", lambda: {
+        "has_update": False, "installed": True, "online": True, "current_version": "8.1", "latest_version": "8.1"
+    })
     monkeypatch.setattr("janeconverter.updater.check_for_repo_updates", lambda: {
         "has_update": False, "is_git": False, "current_commit": "unknown", "commits_behind": 0
     })
@@ -78,17 +81,19 @@ def test_updates_are_read_only_by_default(monkeypatch):
 
 def test_packaged_update_check_can_skip_the_repository_release_api(monkeypatch, capsys):
     engine_info = {"has_update": False, "online": True, "current_version": "1", "latest_version": "1"}
+    ffmpeg_info = {"has_update": False, "installed": True, "online": True, "current_version": "8.1", "latest_version": "8.1"}
 
     def fail_if_called():
         raise AssertionError("the updater-enabled app must use its signed commit feed for app updates")
 
     monkeypatch.setattr(cli, "check_for_engine_updates", lambda: engine_info)
+    monkeypatch.setattr(cli, "check_for_ffmpeg_updates", lambda: ffmpeg_info)
     monkeypatch.setattr(cli, "check_for_repo_updates", fail_if_called)
     monkeypatch.setattr(sys, "argv", ["janeconverter", "--check-engine-updates"])
 
     cli.main()
 
-    assert json.loads(capsys.readouterr().out) == {"engine": engine_info}
+    assert json.loads(capsys.readouterr().out) == {"engine": engine_info, "ffmpeg": ffmpeg_info}
 
 
 def test_engine_install_requires_explicit_permission(monkeypatch):

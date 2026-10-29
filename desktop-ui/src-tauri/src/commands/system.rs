@@ -104,6 +104,38 @@ pub fn format_update_summary(stdout: &str) -> String {
         }
     }
 
+    if let Some(ffmpeg) = payload.get("ffmpeg") {
+        if ffmpeg
+            .get("has_update")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            let current = ffmpeg
+                .get("current_version")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("installed");
+            let latest = ffmpeg
+                .get("latest_version")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("latest");
+            messages.push(format!("FFmpeg update available: v{current} -> v{latest}."));
+        } else if !ffmpeg
+            .get("installed")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true)
+        {
+            messages.push("FFmpeg binary not detected.".to_owned());
+        } else if !ffmpeg
+            .get("online")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true)
+        {
+            messages.push("FFmpeg check unavailable.".to_owned());
+        } else {
+            messages.push("FFmpeg is up to date.".to_owned());
+        }
+    }
+
     if let Some(repo) = payload.get("repo") {
         let current_commit = repo
             .get("current_commit")
@@ -419,7 +451,8 @@ pub async fn check_updates(
         Ok(output) if is_commit_sha(BUILD_COMMIT) => {
             let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
             serde_json::json!({
-                "engine": { "has_update": false, "online": false, "error": detail }
+                "engine": { "has_update": false, "online": false, "error": detail.clone() },
+                "ffmpeg": { "has_update": false, "online": false, "error": detail }
             })
         }
         Ok(output) => {
@@ -428,7 +461,8 @@ pub async fn check_updates(
             return Err(if stderr.is_empty() { stdout } else { stderr });
         }
         Err(error) if is_commit_sha(BUILD_COMMIT) => serde_json::json!({
-            "engine": { "has_update": false, "online": false, "error": error }
+            "engine": { "has_update": false, "online": false, "error": error.clone() },
+            "ffmpeg": { "has_update": false, "online": false, "error": error }
         }),
         Err(error) => return Err(format!("Could not start update check: {error}")),
     };
