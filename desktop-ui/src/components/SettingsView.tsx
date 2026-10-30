@@ -43,6 +43,8 @@ export function SettingsView({
   wallpaperBlur = 20,
   wallpaperMaskColor = "#000000",
   wallpaperMaskOpacity = 50,
+  sidebarColor = "#05040d",
+  sidebarOpacity = 45,
   onAccentColorChange,
   onBgColorChange,
   onBgModeChange,
@@ -50,6 +52,8 @@ export function SettingsView({
   onWallpaperBlurChange,
   onWallpaperMaskColorChange,
   onWallpaperMaskOpacityChange,
+  onSidebarColorChange,
+  onSidebarOpacityChange,
   onResetColors,
   onResetAppearance,
   onSaveAppearance,
@@ -70,6 +74,8 @@ export function SettingsView({
   wallpaperBlur?: number;
   wallpaperMaskColor?: string;
   wallpaperMaskOpacity?: number;
+  sidebarColor?: string;
+  sidebarOpacity?: number;
   onAccentColorChange?: (color: string) => void;
   onBgColorChange?: (color: string) => void;
   onBgModeChange?: (mode: "color" | "wallpaper") => void;
@@ -77,6 +83,8 @@ export function SettingsView({
   onWallpaperBlurChange?: (blur: number) => void;
   onWallpaperMaskColorChange?: (color: string) => void;
   onWallpaperMaskOpacityChange?: (opacity: number) => void;
+  onSidebarColorChange?: (color: string) => void;
+  onSidebarOpacityChange?: (opacity: number) => void;
   onResetColors?: () => void;
   onResetAppearance?: () => void;
   onSaveAppearance?: () => void;
@@ -355,6 +363,8 @@ export function SettingsView({
           wallpaperBlur={wallpaperBlur}
           wallpaperMaskColor={wallpaperMaskColor}
           wallpaperMaskOpacity={wallpaperMaskOpacity}
+          sidebarColor={sidebarColor}
+          sidebarOpacity={sidebarOpacity}
           onAccentColorChange={onAccentColorChange}
           onBgColorChange={onBgColorChange}
           onBgModeChange={onBgModeChange}
@@ -362,6 +372,8 @@ export function SettingsView({
           onWallpaperBlurChange={onWallpaperBlurChange}
           onWallpaperMaskColorChange={onWallpaperMaskColorChange}
           onWallpaperMaskOpacityChange={onWallpaperMaskOpacityChange}
+          onSidebarColorChange={onSidebarColorChange}
+          onSidebarOpacityChange={onSidebarOpacityChange}
           onResetColors={onResetColors}
           onResetAppearance={onResetAppearance}
           onSaveAppearance={onSaveAppearance}

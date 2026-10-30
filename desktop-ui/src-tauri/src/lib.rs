@@ -147,6 +147,11 @@ pub fn run() {
             get_chromium_cookie_policy,
             set_chromium_cookie_policy,
             path_size,
+            window_minimize,
+            window_start_dragging,
+            window_toggle_maximize,
+            window_close,
+            window_is_maximized,
         ])
         .run(tauri::generate_context!())
         .expect("error while running JaneConverter Desktop");

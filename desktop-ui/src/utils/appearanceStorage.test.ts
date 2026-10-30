@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import {
   clearAppearanceStorage,
+  hexToRgba,
   loadAppearanceFromStorage,
   saveAppearanceToStorage,
   type AppearanceSettings,
@@ -21,6 +22,8 @@ describe("appearanceStorage", () => {
       wallpaperBlur: 45,
       wallpaperMaskColor: "#12071a",
       wallpaperMaskOpacity: 75,
+      sidebarColor: "#110b1a",
+      sidebarOpacity: 40,
     };
 
     await saveAppearanceToStorage(mockSettings);
@@ -33,6 +36,8 @@ describe("appearanceStorage", () => {
     expect(loaded?.wallpaperBlur).toBe(45);
     expect(loaded?.wallpaperMaskColor).toBe("#12071a");
     expect(loaded?.wallpaperMaskOpacity).toBe(75);
+    expect(loaded?.sidebarColor).toBe("#110b1a");
+    expect(loaded?.sidebarOpacity).toBe(40);
   });
 
   it("handles clearing appearance storage back to defaults", async () => {
@@ -54,5 +59,12 @@ describe("appearanceStorage", () => {
     // After clearing, wallpaper should be empty and bgMode back to color
     expect(loaded?.wallpaper).toBe("");
     expect(loaded?.bgMode).toBe("color");
+  });
+
+  it("converts hex colors to rgba strings with alpha", () => {
+    expect(hexToRgba("#000000", 0.5)).toBe("rgba(0, 0, 0, 0.5)");
+    expect(hexToRgba("#05040d", 0.45)).toBe("rgba(5, 4, 13, 0.45)");
+    expect(hexToRgba("#fff", 1)).toBe("rgba(255, 255, 255, 1)");
+    expect(hexToRgba("invalid", 0.5)).toBe("rgba(5, 4, 13, 0.5)");
   });
 });

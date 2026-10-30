@@ -73,7 +73,7 @@ export function InProgressHeader({
       <div className="flex flex-wrap items-center gap-2">
         {/* Session carousel shuffle controls */}
         {(distinctJobCount > 0 || running) && (
-          <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/40 p-1 shadow-inner backdrop-blur-md">
+          <div className="flex items-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.025] p-1">
             <button
               type="button"
               onClick={() => onNavigateSession(-1)}
@@ -177,7 +177,7 @@ export function InProgressHeader({
           aria-disabled={isClosePageDisabled}
           className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-xl border transition-all ${
             isClosePageDisabled
-              ? "border-white/[0.04] bg-black/60 text-zinc-600 opacity-25 cursor-not-allowed pointer-events-none select-none shadow-none"
+              ? "border-white/[0.04] bg-white/[0.01] text-zinc-600 opacity-25 cursor-not-allowed pointer-events-none select-none shadow-none"
               : "subtle-button text-zinc-300 hover:text-white"
           }`}
           title={

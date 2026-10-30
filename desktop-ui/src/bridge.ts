@@ -292,6 +292,11 @@ export interface JaneBridge {
   getChromiumCookiePolicy(): Promise<boolean>;
   setChromiumCookiePolicy(enabled: boolean): Promise<boolean>;
   pathSize(path: string): Promise<number>;
+  windowMinimize(): Promise<void>;
+  windowStartDragging(): Promise<void>;
+  windowToggleMaximize(): Promise<boolean>;
+  windowClose(): Promise<void>;
+  windowIsMaximized(): Promise<boolean>;
 }
 
 const demoSettings: ConverterSettings = {
@@ -434,6 +439,11 @@ const demoBridge: JaneBridge = {
   async getChromiumCookiePolicy() { return false; },
   async setChromiumCookiePolicy(enabled: boolean) { return enabled; },
   async pathSize() { return 0; },
+  async windowMinimize() {},
+  async windowStartDragging() {},
+  async windowToggleMaximize() { return false; },
+  async windowClose() {},
+  async windowIsMaximized() { return false; },
 };
 
 const isTauriRuntime = () => "__TAURI_INTERNALS__" in window;
@@ -504,6 +514,11 @@ const tauriBridge: JaneBridge = {
   getChromiumCookiePolicy: () => invoke<boolean>("get_chromium_cookie_policy"),
   setChromiumCookiePolicy: (enabled: boolean) => invoke<boolean>("set_chromium_cookie_policy", { enabled }),
   pathSize: (path: string) => invoke<number>("path_size", { path }),
+  windowMinimize: () => invoke<void>("window_minimize"),
+  windowStartDragging: () => invoke<void>("window_start_dragging"),
+  windowToggleMaximize: () => invoke<boolean>("window_toggle_maximize"),
+  windowClose: () => invoke<void>("window_close"),
+  windowIsMaximized: () => invoke<boolean>("window_is_maximized"),
 };
 
 export const bridge: JaneBridge = isTauriRuntime() ? tauriBridge : demoBridge;

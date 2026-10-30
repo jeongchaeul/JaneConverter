@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { AlertCircle, CheckCircle2, Clock, FolderOpen, GripVertical, HardDrive, Play, RotateCcw, X } from "lucide-react";
 import { bridge, type AccessStatus, type ConversionHistoryItem, type ConverterEvent, type ConverterSettings, type FetchedMedia, type RuntimeInfo, type UpdateCheckResult } from "./bridge";
 import { Sidebar, type ViewKey } from "./components/Sidebar";
+import { Topbar } from "./components/Topbar";
 import { ConverterView } from "./components/ConverterView";
 import { LibraryView } from "./components/LibraryView";
 import { ConsoleView } from "./components/ConsoleView";
@@ -269,6 +270,29 @@ export default function App() {
     }
   });
 
+  const [sidebarColor, setSidebarColor] = useState<string>(() => {
+    if (typeof window === "undefined") return "#05040d";
+    try {
+      return window.localStorage.getItem("janecoverter.sidebarColor") || "#05040d";
+    } catch {
+      return "#05040d";
+    }
+  });
+
+  const [sidebarOpacity, setSidebarOpacity] = useState<number>(() => {
+    if (typeof window === "undefined") return 45;
+    try {
+      const raw = window.localStorage.getItem("janecoverter.sidebarOpacity");
+      if (raw !== null) {
+        const val = parseInt(raw, 10);
+        return isNaN(val) ? 45 : Math.min(100, Math.max(0, val));
+      }
+      return 45;
+    } catch {
+      return 45;
+    }
+  });
+
   useEffect(() => {
     let mounted = true;
     void loadAppearanceFromStorage().then((saved) => {
@@ -278,6 +302,8 @@ export default function App() {
       if (saved.wallpaperBlur !== undefined) setWallpaperBlur(saved.wallpaperBlur);
       if (saved.wallpaperMaskColor) setWallpaperMaskColor(saved.wallpaperMaskColor);
       if (saved.wallpaperMaskOpacity !== undefined) setWallpaperMaskOpacity(saved.wallpaperMaskOpacity);
+      if (saved.sidebarColor) setSidebarColor(saved.sidebarColor);
+      if (saved.sidebarOpacity !== undefined) setSidebarOpacity(saved.sidebarOpacity);
       if (saved.accentColor) setAccentColor(saved.accentColor);
       if (saved.bgColor) setBgColor(saved.bgColor);
       if (saved.theme) setTheme(saved.theme);
@@ -364,8 +390,10 @@ export default function App() {
       wallpaperBlur,
       wallpaperMaskColor,
       wallpaperMaskOpacity,
+      sidebarColor,
+      sidebarOpacity,
     });
-  }, [theme, accentColor, bgColor, bgMode, wallpaper, wallpaperBlur, wallpaperMaskColor, wallpaperMaskOpacity]);
+  }, [theme, accentColor, bgColor, bgMode, wallpaper, wallpaperBlur, wallpaperMaskColor, wallpaperMaskOpacity, sidebarColor, sidebarOpacity]);
 
   const [historyError, setHistoryError] = useState("");
   const pendingHistoryWrites = useRef<Array<() => Promise<void>>>([]);
@@ -474,6 +502,8 @@ export default function App() {
     setWallpaperBlur(20);
     setWallpaperMaskColor("#000000");
     setWallpaperMaskOpacity(50);
+    setSidebarColor("#05040d");
+    setSidebarOpacity(45);
     void clearAppearanceStorage();
     statusMessage("Appearance settings reset to default.");
   }
@@ -488,6 +518,8 @@ export default function App() {
       wallpaperBlur,
       wallpaperMaskColor,
       wallpaperMaskOpacity,
+      sidebarColor,
+      sidebarOpacity,
     });
     statusMessage("Appearance settings saved.");
   }
@@ -942,6 +974,8 @@ export default function App() {
             wallpaperBlur={wallpaperBlur}
             wallpaperMaskColor={wallpaperMaskColor}
             wallpaperMaskOpacity={wallpaperMaskOpacity}
+            sidebarColor={sidebarColor}
+            sidebarOpacity={sidebarOpacity}
             onAccentColorChange={handleAccentChange}
             onBgColorChange={handleBgChange}
             onBgModeChange={setBgMode}
@@ -949,6 +983,8 @@ export default function App() {
             onWallpaperBlurChange={setWallpaperBlur}
             onWallpaperMaskColorChange={setWallpaperMaskColor}
             onWallpaperMaskOpacityChange={setWallpaperMaskOpacity}
+            onSidebarColorChange={setSidebarColor}
+            onSidebarOpacityChange={setSidebarOpacity}
             onResetColors={handleResetAppearance}
             onResetAppearance={handleResetAppearance}
             onSaveAppearance={handleSaveAppearance}
@@ -965,7 +1001,7 @@ export default function App() {
     <div
       data-theme={theme}
       onContextMenu={(event) => event.preventDefault()}
-      className="app-shell relative flex h-screen max-h-screen w-screen overflow-hidden transition-colors duration-200"
+      className="app-shell relative flex flex-col h-screen max-h-screen w-screen overflow-hidden transition-colors duration-200"
       style={{
         backgroundColor: bgMode === "wallpaper" && wallpaper ? "transparent" : "var(--bg-color, #02000a)",
         color: theme === "light" ? "#1f1222" : "#ededed",
@@ -998,8 +1034,19 @@ export default function App() {
       />
       <div className="pointer-events-none absolute -right-28 -top-36 h-[390px] w-[700px] rounded-full top-right-glow ambient-orb" style={{ animationDelay: "-6s" }} />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,.018),transparent_35%)]" />
-      <Sidebar activeView={activeView} onChange={setActiveView} />
-      <div className="relative flex min-w-0 flex-1 flex-col h-full overflow-hidden">
+
+      {/* Custom Window Header & Controls */}
+      <Topbar runtime={runtime} />
+
+      {/* Main Workspace Frame */}
+      <div className="relative flex min-h-0 flex-1 w-full overflow-hidden">
+        <Sidebar
+          activeView={activeView}
+          onChange={setActiveView}
+          sidebarColor={sidebarColor}
+          sidebarOpacity={sidebarOpacity}
+        />
+        <div className="relative flex min-w-0 flex-1 flex-col h-full overflow-hidden">
         <UpdatePromptHeader
           updateResult={updateResult}
           dismissed={updateDismissed}
@@ -1038,17 +1085,15 @@ export default function App() {
             />
           </div>
           {activeView !== "converter" && (
-            <motion.div
+            <div
               key={activeView}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
-              className={activeView === "console" ? "flex flex-col flex-1 min-h-0 h-full" : ""}
+              className={activeView === "console" ? "flex flex-col flex-1 min-h-0 h-full" : "h-full"}
             >
               {secondaryContent}
-            </motion.div>
+            </div>
           )}
         </main>
+      </div>
       </div>
       {historyError && <div role="alert" className="fixed bottom-4 left-4 right-4 z-[60] rounded-lg bg-amber-950 p-3 text-sm text-amber-100">
         {historyError} <button className="underline" onClick={() => {

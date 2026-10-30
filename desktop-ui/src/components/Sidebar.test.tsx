@@ -19,7 +19,14 @@ describe("Sidebar layout", () => {
     expect(nav?.nextElementSibling?.textContent).toContain("Project-local workspace");
     expect(nav?.nextElementSibling?.className).toContain("mt-4");
     expect(nav?.nextElementSibling?.className).not.toContain("mt-auto");
-    expect(nav?.querySelectorAll("button").item(nav.querySelectorAll("button").length - 1)?.getAttribute("aria-label")).toBe("Collapse sidebar");
+
+    // The compressed utility dock contains Hardware, Settings, and Collapse sidebar
+    const toolbar = container.querySelector('[role="toolbar"]');
+    expect(toolbar).not.toBeNull();
+    const toolbarButtons = toolbar?.querySelectorAll("button");
+    expect(toolbarButtons?.item(0)?.getAttribute("aria-label")).toBe("Hardware & Pipeline");
+    expect(toolbarButtons?.item(1)?.getAttribute("aria-label")).toBe("Settings");
+    expect(toolbarButtons?.item(2)?.getAttribute("aria-label")).toBe("Collapse sidebar");
 
     await act(async () => { root.unmount(); });
     container.remove();
@@ -53,6 +60,40 @@ describe("Sidebar layout", () => {
 
     await act(async () => { root.unmount(); });
     window.localStorage.removeItem("janecoverter.sidebar.collapsed");
+    container.remove();
+  });
+
+  it("handles clicking compressed utility buttons and applies glass styling", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const handleChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <Sidebar
+          activeView="hardware"
+          onChange={handleChange}
+          sidebarColor="#12071a"
+          sidebarOpacity={50}
+        />
+      );
+    });
+
+    const aside = container.querySelector("aside");
+    expect(aside?.getAttribute("style")).toContain("rgba(18, 7, 26, 0.5)");
+
+    const hardwareBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Hardware & Pipeline"]');
+    const settingsBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Settings"]');
+    expect(hardwareBtn?.getAttribute("aria-current")).toBe("page");
+    expect(settingsBtn?.getAttribute("aria-current")).toBeNull();
+
+    await act(async () => {
+      settingsBtn?.click();
+    });
+    expect(handleChange).toHaveBeenCalledWith("settings");
+
+    await act(async () => { root.unmount(); });
     container.remove();
   });
 });

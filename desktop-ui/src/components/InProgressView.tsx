@@ -515,8 +515,8 @@ export function InProgressView({
       <div className="mx-auto flex h-full w-full max-w-[1180px] flex-1 flex-col justify-between gap-6 min-h-0">
         <InProgressHeader {...headerProps} />
 
-        <div className="flex flex-1 flex-col items-center justify-center rounded-3xl border border-white/[0.07] bg-white/[0.02] p-8 text-center backdrop-blur-md">
-          <div className="grid size-16 place-items-center rounded-2xl border border-white/10 bg-black/30 shadow-[0_8px_32px_rgba(0,0,0,.4)]">
+        <div className="panel flex flex-1 flex-col items-center justify-center p-8 text-center">
+          <div className="grid size-16 place-items-center rounded-2xl border border-white/10 bg-white/[0.03]">
             <Music size={26} className="text-zinc-500" />
           </div>
           <h2 className="mt-4 text-base font-semibold text-white">No active conversions</h2>
@@ -536,7 +536,7 @@ export function InProgressView({
 
         {/* Bottom Ticker */}
         {latestLogLine && (
-          <div className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-black/40 px-3.5 py-2 text-xs text-zinc-400 backdrop-blur-sm">
+          <div className="panel flex items-center justify-between px-3.5 py-2 text-xs text-zinc-400">
             <div className="flex items-center gap-2 min-w-0 truncate font-mono text-[11px] text-zinc-300">
               <span className="text-zinc-500">&gt;</span>
               <span className="truncate">{latestLogLine}</span>
@@ -587,11 +587,11 @@ export function InProgressView({
       <InProgressHeader {...headerProps} />
 
       {/* 2. Hero Batch Card with Master Progress */}
-      <div className="rounded-2xl border border-white/[0.08] bg-[#0c0a1a]/85 p-5 shadow-[0_12px_36px_rgba(0,0,0,.35)] backdrop-blur-xl">
+      <div className="panel p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-4 min-w-0">
             {batchCover && (
-              <div className="size-14 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-black/40 shadow-md">
+              <div className="size-14 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]">
                 <img
                   src={batchCover}
                   alt=""
@@ -713,12 +713,12 @@ export function InProgressView({
                 placeholder="Search items..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-7 w-36 rounded-lg border border-white/[0.08] bg-black/30 pl-7 pr-2 text-xs text-zinc-200 placeholder-zinc-500 focus:w-48 focus:border-white/20 focus:outline-none transition-all"
+                className="h-7 w-36 rounded-lg border border-white/[0.08] bg-white/[0.025] pl-7 pr-2 text-xs text-zinc-200 placeholder-zinc-500 focus:w-48 focus:border-white/20 focus:outline-none transition-all"
               />
             </div>
           )}
 
-          <div className="flex items-center rounded-lg border border-white/[0.08] bg-black/30 p-0.5">
+          <div className="flex items-center rounded-lg border border-white/[0.08] bg-white/[0.025] p-0.5">
             <button
               type="button"
               onClick={() => setLayoutMode("grid")}
@@ -766,7 +766,7 @@ export function InProgressView({
             ))}
           </div>
         ) : (
-          <div className="divide-y divide-white/[0.04] rounded-2xl border border-white/[0.07] bg-[#0c0a1a]/70 backdrop-blur-md">
+          <div className="panel divide-y divide-white/[0.04]">
             {displayedItems.map((item) => (
               <ItemCard
                 key={item.id}
@@ -788,7 +788,7 @@ export function InProgressView({
 
       {/* 5. Bottom Live Ticker Dock */}
       {latestLogLine && (
-        <div className="flex shrink-0 items-center justify-between rounded-xl border border-white/[0.06] bg-black/40 px-3.5 py-2 text-xs text-zinc-400 backdrop-blur-sm">
+        <div className="panel flex shrink-0 items-center justify-between px-3.5 py-2 text-xs text-zinc-400">
           <div className="flex items-center gap-2 min-w-0 truncate font-mono text-[11px] text-zinc-300">
             <span className="text-zinc-500">&gt;</span>
             <span className="truncate">{latestLogLine}</span>

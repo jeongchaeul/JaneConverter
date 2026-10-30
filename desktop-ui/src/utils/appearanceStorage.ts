@@ -7,6 +7,26 @@ export interface AppearanceSettings {
   wallpaperBlur: number;
   wallpaperMaskColor: string;
   wallpaperMaskOpacity: number;
+  sidebarColor?: string;
+  sidebarOpacity?: number;
+}
+
+export function hexToRgba(hex: string, alpha: number): string {
+  if (!hex) return `rgba(5, 4, 13, ${alpha})`;
+  let clean = hex.replace("#", "").trim();
+  if (clean.length === 3) {
+    clean = clean.split("").map((c) => c + c).join("");
+  }
+  if (clean.length !== 6) {
+    return `rgba(5, 4, 13, ${alpha})`;
+  }
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) {
+    return `rgba(5, 4, 13, ${alpha})`;
+  }
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 const DB_NAME = "janeconverter_appearance_db";
@@ -49,6 +69,8 @@ export async function saveAppearanceToStorage(settings: AppearanceSettings): Pro
     try { window.localStorage.setItem("janecoverter.wallpaperBlur", String(settings.wallpaperBlur)); } catch {}
     try { window.localStorage.setItem("janecoverter.wallpaperMaskColor", settings.wallpaperMaskColor); } catch {}
     try { window.localStorage.setItem("janecoverter.wallpaperMaskOpacity", String(settings.wallpaperMaskOpacity)); } catch {}
+    try { window.localStorage.setItem("janecoverter.sidebarColor", settings.sidebarColor ?? "#05040d"); } catch {}
+    try { window.localStorage.setItem("janecoverter.sidebarOpacity", String(settings.sidebarOpacity ?? 45)); } catch {}
 
     // Only save wallpaper to localStorage if it fits; if it exceeds quota, IndexedDB will maintain it
     try {
@@ -112,6 +134,9 @@ export async function loadAppearanceFromStorage(): Promise<Partial<AppearanceSet
       const wallpaperMaskColor = window.localStorage.getItem("janecoverter.wallpaperMaskColor") || undefined;
       const rawOpacity = window.localStorage.getItem("janecoverter.wallpaperMaskOpacity");
       const wallpaperMaskOpacity = rawOpacity !== null ? parseInt(rawOpacity, 10) : undefined;
+      const sidebarColor = window.localStorage.getItem("janecoverter.sidebarColor") || undefined;
+      const rawSidebarOpacity = window.localStorage.getItem("janecoverter.sidebarOpacity");
+      const sidebarOpacity = rawSidebarOpacity !== null ? parseInt(rawSidebarOpacity, 10) : undefined;
 
       return {
         theme,
@@ -122,6 +147,8 @@ export async function loadAppearanceFromStorage(): Promise<Partial<AppearanceSet
         wallpaperBlur: wallpaperBlur !== undefined && !isNaN(wallpaperBlur) ? wallpaperBlur : undefined,
         wallpaperMaskColor,
         wallpaperMaskOpacity: wallpaperMaskOpacity !== undefined && !isNaN(wallpaperMaskOpacity) ? wallpaperMaskOpacity : undefined,
+        sidebarColor,
+        sidebarOpacity: sidebarOpacity !== undefined && !isNaN(sidebarOpacity) ? sidebarOpacity : undefined,
       };
     } catch {
       return null;
@@ -142,6 +169,8 @@ export async function clearAppearanceStorage(): Promise<void> {
       window.localStorage.setItem("janecoverter.wallpaperBlur", "20");
       window.localStorage.setItem("janecoverter.wallpaperMaskColor", "#000000");
       window.localStorage.setItem("janecoverter.wallpaperMaskOpacity", "50");
+      window.localStorage.setItem("janecoverter.sidebarColor", "#05040d");
+      window.localStorage.setItem("janecoverter.sidebarOpacity", "45");
     } catch {}
   }
 

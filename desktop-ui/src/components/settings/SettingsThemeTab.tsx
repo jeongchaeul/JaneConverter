@@ -45,6 +45,17 @@ export const MASK_PRESETS = [
   { name: "Frost White", hex: "#ffffff" },
 ];
 
+export const SIDEBAR_PRESETS = [
+  { name: "Studio Obsidian (Default)", hex: "#05040d" },
+  { name: "Void Black", hex: "#000000" },
+  { name: "Deep Navy", hex: "#070b19" },
+  { name: "Deep Plum", hex: "#12071a" },
+  { name: "Rose Noir", hex: "#200614" },
+  { name: "Forest Shadow", hex: "#04140d" },
+  { name: "Slate Glass", hex: "#0f172a" },
+  { name: "Frost White", hex: "#ffffff" },
+];
+
 function svgDataUrl(svg: string) {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg.trim())}`;
 }
@@ -178,6 +189,8 @@ export function SettingsThemeTab({
   wallpaperBlur = 20,
   wallpaperMaskColor = "#000000",
   wallpaperMaskOpacity = 50,
+  sidebarColor = "#05040d",
+  sidebarOpacity = 45,
   onAccentColorChange,
   onBgColorChange,
   onBgModeChange,
@@ -185,6 +198,8 @@ export function SettingsThemeTab({
   onWallpaperBlurChange,
   onWallpaperMaskColorChange,
   onWallpaperMaskOpacityChange,
+  onSidebarColorChange,
+  onSidebarOpacityChange,
   onResetColors,
   onResetAppearance,
   onSaveAppearance,
@@ -197,6 +212,8 @@ export function SettingsThemeTab({
   wallpaperBlur?: number;
   wallpaperMaskColor?: string;
   wallpaperMaskOpacity?: number;
+  sidebarColor?: string;
+  sidebarOpacity?: number;
   onAccentColorChange?: (color: string) => void;
   onBgColorChange?: (color: string) => void;
   onBgModeChange?: (mode: "color" | "wallpaper") => void;
@@ -204,6 +221,8 @@ export function SettingsThemeTab({
   onWallpaperBlurChange?: (blur: number) => void;
   onWallpaperMaskColorChange?: (color: string) => void;
   onWallpaperMaskOpacityChange?: (opacity: number) => void;
+  onSidebarColorChange?: (color: string) => void;
+  onSidebarOpacityChange?: (opacity: number) => void;
   onResetColors?: () => void;
   onResetAppearance?: () => void;
   onSaveAppearance?: () => void;
@@ -365,7 +384,7 @@ export function SettingsThemeTab({
           </button>
         </div>
 
-        {/* Content Matrix: Accent Color on Left, and Background/Wallpaper on Right */}
+        {/* Content Matrix: Accent Color on Left, and Sidebar Glass Pane on Right */}
         <div className="grid gap-4 md:grid-cols-2 pt-2 border-t border-white/[0.06]">
           {/* Accent Color Customizer (always visible in both modes) */}
           <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3.5 flex flex-col justify-start">
@@ -406,6 +425,78 @@ export function SettingsThemeTab({
             </div>
           </div>
 
+          {/* Sidebar Glass Pane Customizer */}
+          <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3.5 flex flex-col justify-start space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-medium text-zinc-200 flex items-center gap-1.5">
+                <Pipette className="size-3.5 text-zinc-400" />
+                Sidebar Glass Tint
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  aria-label="Sidebar glass color picker"
+                  value={sidebarColor}
+                  onChange={(event) => onSidebarColorChange?.(event.target.value)}
+                  className="size-7 cursor-pointer rounded-lg border border-white/20 bg-transparent p-0.5"
+                />
+                <span className="font-mono text-xs uppercase text-zinc-400">{sidebarColor}</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {SIDEBAR_PRESETS.map((swatch) => (
+                <button
+                  key={swatch.hex}
+                  type="button"
+                  onClick={() => onSidebarColorChange?.(swatch.hex)}
+                  title={swatch.name}
+                  className={`size-6 rounded-lg transition-transform hover:scale-110 relative ${
+                    sidebarColor.toLowerCase() === swatch.hex.toLowerCase()
+                      ? "ring-2 ring-white ring-offset-2 ring-offset-black scale-105"
+                      : "border border-white/10"
+                  }`}
+                  style={{ backgroundColor: swatch.hex }}
+                />
+              ))}
+            </div>
+
+            {/* Sidebar Opacity Slider (0% to 100%) */}
+            <div className="space-y-2 pt-2 border-t border-white/[0.06]">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-300">
+                  <Sliders className="size-3" style={{ color: "var(--accent-color, #c52b68)" }} />
+                  Sidebar Opacity
+                </div>
+                <span className="font-mono text-xs font-bold text-zinc-200 rounded bg-white/[0.08] px-2 py-0.5 border border-white/10">
+                  {sidebarOpacity}%
+                </span>
+              </div>
+
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={sidebarOpacity}
+                onChange={(e) => onSidebarOpacityChange?.(Number(e.target.value))}
+                aria-label="Sidebar opacity slider"
+                className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-white/[0.1] accent-[var(--accent-color,#c52b68)]"
+              />
+
+              <div className="flex justify-between text-[10px] text-zinc-500 font-mono">
+                <span>0% (Transparent)</span>
+                <span>45% (Balanced Glass)</span>
+                <span>100% (Solid)</span>
+              </div>
+            </div>
+            <div className="text-[11px] text-zinc-500">
+              Frosted glass veil on the left navigation sidebar. Lower opacity allows wallpaper and ambient lighting to softly diffuse through.
+            </div>
+          </div>
+        </div>
+
+        {/* Background Style: Solid Color or Wallpaper */}
+        <div className="pt-2 border-t border-white/[0.06]">
           {/* Mode 1: Solid Colors Customizer */}
           {bgMode === "color" ? (
             <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3.5 flex flex-col justify-start">

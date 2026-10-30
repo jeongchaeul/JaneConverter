@@ -35,7 +35,7 @@ export function ItemCard({
     return (
       <div
         onContextMenu={(e) => onContextMenu(e, item)}
-        className={`group relative flex flex-col justify-between overflow-hidden rounded-2xl border bg-[#0b0916]/80 p-3.5 transition-all select-none ${
+        className={`group relative flex flex-col justify-between overflow-hidden rounded-2xl border bg-white/[0.025] hover:bg-white/[0.04] p-3.5 transition-all select-none ${
           isActive
             ? "border-fuchsia-500/40 shadow-[0_0_24px_rgba(197,43,104,.18)]"
             : item.status === "ready"
@@ -45,7 +45,7 @@ export function ItemCard({
       >
         {/* Thumbnail Container */}
         <div
-          className={`relative mb-3 overflow-hidden rounded-xl border border-white/[0.07] bg-black/40 ${
+          className={`relative mb-3 overflow-hidden rounded-xl border border-white/[0.07] bg-white/[0.03] ${
             item.mediaKind === "video" ? "aspect-video" : "aspect-square"
           }`}
         >
@@ -146,7 +146,7 @@ export function ItemCard({
     >
       <span className="w-6 text-center font-mono text-xs text-zinc-500">#{item.index}</span>
 
-      <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-white/[0.08] bg-black/40 shadow-sm">
+      <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.03] shadow-sm">
         {preview ? (
           <img
             src={preview}

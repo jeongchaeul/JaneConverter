@@ -30,4 +30,23 @@ describe("Topbar help", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("renders custom window control buttons with drag region", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<Topbar runtime={null} />);
+    });
+
+    const header = container.querySelector("header");
+    expect(header?.hasAttribute("data-tauri-drag-region")).toBe(true);
+    expect(container.querySelector('button[aria-label="Minimize"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Maximize"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Close"]')).not.toBeNull();
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });
