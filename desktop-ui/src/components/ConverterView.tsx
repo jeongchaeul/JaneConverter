@@ -367,8 +367,12 @@ export function ConverterView({
       return started !== false;
     }
     if (isFacebookPostLink(trimmedSource)) {
-      if (access.active || settings.readBrowserCookies === true) {
-        onStatus("Reading Facebook post using your active browser session...");
+      if (trimmedSource.toLowerCase().includes("/media/set") || access.active || settings.readBrowserCookies === true) {
+        if (access.active || settings.readBrowserCookies === true) {
+          onStatus("Reading Facebook post using your active browser session...");
+        } else {
+          onStatus("Reading Facebook album / post...");
+        }
         const started = await invokeStart(trimmedSource, indexesToConvert);
         return started !== false;
       }

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import json
 import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 import urllib.parse
 from typing import Any, Callable, Optional
@@ -21,9 +23,9 @@ from .extractor import clean_windows_path, sanitize_filename
 from .image_format import convert_image_format
 
 
-MAX_PHOTOS = 500
+MAX_PHOTOS = 10000
 MAX_IMAGE_BYTES = 100 * 1024 * 1024
-MAX_ALBUM_BYTES = 2 * 1024 * 1024 * 1024
+MAX_ALBUM_BYTES = 25 * 1024 * 1024 * 1024
 PHOTO_ID_RE = re.compile(r"^[0-9]{5,30}$")
 IMAGE_EXTENSIONS = {
     "JPEG": ".jpg",
@@ -36,9 +38,10 @@ IMAGE_EXTENSIONS = {
     "TIFF": ".tif",
 }
 MAX_RENDITIONS = 4
-MAX_RENDITION_REFRESHES = 8
+MAX_RENDITION_REFRESHES = 100
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 MAX_REDIRECTS = 5
+MAX_PAGINATION_PAGES = 500
 
 
 def _public_photo_url(value: Any) -> str:
@@ -126,6 +129,7 @@ def download_facebook_photo_manifest(
     target_format: Optional[str] = None,
     quality: str = "best",
     refresh_candidates: Optional[Callable[[str], list[str]]] = None,
+    max_workers: Optional[int] = None,
 ) -> dict[str, Any]:
     """Download every unique, guest-visible photo in a validated browser manifest."""
     if not isinstance(manifest, dict):
@@ -187,6 +191,13 @@ def download_facebook_photo_manifest(
     if "AVIF" in supported_formats:
         accept = "image/avif," + accept
     session = requests.Session()
+    if hasattr(session, "mount"):
+        try:
+            adapter = requests.adapters.HTTPAdapter(pool_connections=16, pool_maxsize=16)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+        except Exception:
+            pass
     session.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -196,24 +207,35 @@ def download_facebook_photo_manifest(
     })
     staging_dir = tempfile.mkdtemp(prefix=".facebook-album-", dir=parent)
     total_bytes = 0
+    completed_count = 0
     remaining_refreshes = MAX_RENDITION_REFRESHES
     refreshed_photo_ids: set[str] = set()
+    lock = threading.Lock()
+    stop_event = threading.Event()
 
     def report(progress: float, message: str) -> None:
         if progress_callback:
             progress_callback(progress, message)
 
-    try:
-        for index, (photo_id, photo) in enumerate(photos.items(), start=1):
-            if abort_event and abort_event.is_set():
+    pad_width = max(3, len(str(len(photos))))
+
+    def download_and_process(item: tuple[int, str, dict[str, Any]]) -> None:
+        nonlocal total_bytes, completed_count, remaining_refreshes
+        index, photo_id, photo = item
+        if stop_event.is_set() or (abort_event and abort_event.is_set()):
+            raise KeyboardInterrupt("Facebook photo download aborted by user.")
+
+        candidates = list(dict.fromkeys([photo["url"], *photo["alternates"]]))[:MAX_RENDITIONS]
+        attempted: set[str] = set()
+        last_error: Optional[BaseException] = None
+        while True:
+            if stop_event.is_set() or (abort_event and abort_event.is_set()):
                 raise KeyboardInterrupt("Facebook photo download aborted by user.")
-            report(0.05 + 0.9 * ((index - 1) / len(photos)), f"Downloading Facebook photo {index} of {len(photos)}...")
-            candidates = list(dict.fromkeys([photo["url"], *photo["alternates"]]))[:MAX_RENDITIONS]
-            attempted: set[str] = set()
-            last_error: Optional[BaseException] = None
-            while True:
-                candidate = next((url for url in candidates if url not in attempted), None)
-                if candidate is None:
+
+            candidate = next((url for url in candidates if url not in attempted), None)
+            if candidate is None:
+                can_refresh = False
+                with lock:
                     if (
                         refresh_candidates is not None
                         and remaining_refreshes > 0
@@ -221,58 +243,91 @@ def download_facebook_photo_manifest(
                     ):
                         remaining_refreshes -= 1
                         refreshed_photo_ids.add(photo_id)
-                        refreshed = refresh_candidates(photo_id)
-                        if not isinstance(refreshed, list):
-                            raise RuntimeError("Facebook returned an invalid rendition refresh response.")
-                        fresh_urls = []
-                        for url in refreshed[:MAX_RENDITIONS]:
-                            try:
-                                fresh_urls.append(_public_photo_url(url))
-                            except (TypeError, ValueError):
+                        can_refresh = True
+                if can_refresh:
+                    refreshed = refresh_candidates(photo_id)
+                    if not isinstance(refreshed, list):
+                        raise RuntimeError("Facebook returned an invalid rendition refresh response.")
+                    fresh_urls = []
+                    for url in refreshed[:MAX_RENDITIONS]:
+                        try:
+                            fresh_urls.append(_public_photo_url(url))
+                        except (TypeError, ValueError):
+                            continue
+                    candidates.extend(url for url in fresh_urls if url not in candidates)
+                    continue
+                raise RuntimeError(
+                    f"Facebook photo {index} could not be downloaded or decoded from its available renditions. No partial album was saved."
+                ) from last_error
+
+            attempted.add(candidate)
+            image_path = os.path.join(staging_dir, f"{title}_{index:0{pad_width}d}.download")
+            try:
+                with _get_public_photo(session, candidate) as response:
+                    response.raise_for_status()
+                    _public_photo_url(response.url)
+                    length = response.headers.get("Content-Length")
+                    if length and int(length) > MAX_IMAGE_BYTES:
+                        raise RuntimeError(f"Facebook photo {index} is larger than the 100 MB per-image limit.")
+                    image_bytes = 0
+                    with open(image_path, "wb") as image_file:
+                        for chunk in response.iter_content(chunk_size=256 * 1024):
+                            if stop_event.is_set() or (abort_event and abort_event.is_set()):
+                                raise KeyboardInterrupt("Facebook photo download aborted by user.")
+                            if not chunk:
                                 continue
-                        candidates.extend(url for url in fresh_urls if url not in candidates)
-                        continue
-                    raise RuntimeError(
-                        f"Facebook photo {index} could not be downloaded or decoded from its available renditions. No partial album was saved."
-                    ) from last_error
-                attempted.add(candidate)
-                image_path = os.path.join(staging_dir, f"{title}_{index:03d}.download")
-                try:
-                    with _get_public_photo(session, candidate) as response:
-                        response.raise_for_status()
-                        _public_photo_url(response.url)
-                        length = response.headers.get("Content-Length")
-                        if length and int(length) > MAX_IMAGE_BYTES:
-                            raise RuntimeError(f"Facebook photo {index} is larger than the 100 MB per-image limit.")
-                        image_bytes = 0
-                        with open(image_path, "wb") as image_file:
-                            for chunk in response.iter_content(chunk_size=256 * 1024):
-                                if abort_event and abort_event.is_set():
-                                    raise KeyboardInterrupt("Facebook photo download aborted by user.")
-                                if not chunk:
-                                    continue
-                                image_bytes += len(chunk)
+                            image_bytes += len(chunk)
+                            with lock:
                                 total_bytes += len(chunk)
-                                if image_bytes > MAX_IMAGE_BYTES:
-                                    raise RuntimeError(f"Facebook photo {index} is larger than the 100 MB per-image limit.")
                                 if total_bytes > MAX_ALBUM_BYTES:
-                                    raise RuntimeError("The Facebook album exceeds the 2 GB total download limit.")
-                                image_file.write(chunk)
-                    with Image.open(image_path) as image:
-                        extension = IMAGE_EXTENSIONS.get(image.format or "")
-                        if not extension or image.width < 1 or image.height < 1 or image.width * image.height > 100_000_000:
-                            raise ValueError("unsupported image format")
-                        image.verify()
-                    verified_path = os.path.splitext(image_path)[0] + extension
-                    os.replace(image_path, verified_path)
-                    convert_image_format(verified_path, target_format, quality)
-                    print(f"[+] Saved photo: {index}. {os.path.basename(verified_path)}", flush=True)
-                    print(f"[*] Photo #{index} Saved: {verified_path}", flush=True)
-                    break
-                except (requests.RequestException, OSError, ValueError) as error:
-                    last_error = error
-                    if os.path.exists(image_path):
+                                    raise RuntimeError("The Facebook album exceeds the 25 GB total download limit.")
+                            if image_bytes > MAX_IMAGE_BYTES:
+                                raise RuntimeError(f"Facebook photo {index} is larger than the 100 MB per-image limit.")
+                            image_file.write(chunk)
+                with Image.open(image_path) as image:
+                    extension = IMAGE_EXTENSIONS.get(image.format or "")
+                    if not extension or image.width < 1 or image.height < 1 or image.width * image.height > 100_000_000:
+                        raise ValueError("unsupported image format")
+                    image.verify()
+                verified_path = os.path.splitext(image_path)[0] + extension
+                os.replace(image_path, verified_path)
+                convert_image_format(verified_path, target_format, quality)
+                print(f"[+] Saved photo: {index}. {os.path.basename(verified_path)}", flush=True)
+                print(f"[*] Photo #{index} Saved: {verified_path}", flush=True)
+
+                with lock:
+                    completed_count += 1
+                    report(
+                        0.05 + 0.9 * (completed_count / len(photos)),
+                        f"Downloading Facebook photo {completed_count} of {len(photos)}...",
+                    )
+                break
+            except (requests.RequestException, OSError, ValueError) as error:
+                last_error = error
+                if os.path.exists(image_path):
+                    try:
                         os.remove(image_path)
+                    except OSError:
+                        pass
+
+    items = [(index, photo_id, photo) for index, (photo_id, photo) in enumerate(photos.items(), start=1)]
+    effective_workers = max_workers if max_workers is not None else min(8, len(photos))
+
+    try:
+        if effective_workers <= 1:
+            for item in items:
+                download_and_process(item)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=effective_workers) as executor:
+                futures = [executor.submit(download_and_process, item) for item in items]
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception:
+                        stop_event.set()
+                        for f in futures:
+                            f.cancel()
+                        raise
 
         _promote_staging_dir(staging_dir, target_dir)
     except requests.RequestException as error:
@@ -362,14 +417,20 @@ def _resolve_facebook_pagination_query(html: str, session: requests.Session) -> 
     Adapts automatically when Facebook rotates frontend Relay query hashes or changes query names.
     Returns (query_name, doc_id).
     """
-    cached = _CACHED_FB_PAGINATION.get("resolved")
+    preferred_query = (
+        "ProfileCometLegacyAlbumGridViewPaginationQuery"
+        if ("grid_media" in html or "ProfileCometLegacyAlbumGrid" in html)
+        else "CometAlbumPhotoCollagePaginationQuery"
+    )
+
+    cached = _CACHED_FB_PAGINATION.get(preferred_query)
     if cached:
         return cached
 
-    # 1. Direct match in HTML if rendered inline
     candidate_queries = (
-        "CometAlbumPhotoCollagePaginationQuery",
+        preferred_query,
         "ProfileCometLegacyAlbumGridViewPaginationQuery",
+        "CometAlbumPhotoCollagePaginationQuery",
         "ProfileCometLegacyAlbumFeedViewPaginationQuery",
     )
     for q_name in candidate_queries:
@@ -378,45 +439,54 @@ def _resolve_facebook_pagination_query(html: str, session: requests.Session) -> 
             html,
         )
         if m:
-            _CACHED_FB_PAGINATION["resolved"] = (q_name, m.group(1))
+            _CACHED_FB_PAGINATION[preferred_query] = (q_name, m.group(1))
             return q_name, m.group(1)
 
-    # 2. Inspect referenced JS bundles for the Relay operation export
+    # Inspect referenced JS bundles for the Relay operation export
+    script_urls = re.findall(r'<script\s+[^>]*?src=["\'](https:[^"\']+)["\'][^>]*>', html)
     bundle_matches = re.findall(
-        r'"url"\s*:\s*"(https:[^"]+)"\s*,\s*"refs"\s*:\s*\[[^\]]*CometPhotoAlbumQueryRelayPreloader[^\]]*\]',
+        r'"url"\s*:\s*"(https:[^"]+)"\s*,\s*"refs"\s*:\s*\[[^\]]*(?:CometPhotoAlbumQueryRelayPreloader|ProfileCometLegacyAlbumViewRootQueryRelayPreloader)[^\]]*\]',
         html,
     ) + re.findall(
-        r'"refs"\s*:\s*\[[^\]]*CometPhotoAlbumQueryRelayPreloader[^\]]*\]\s*,\s*"url"\s*:\s*"(https:[^"]+)"',
+        r'"refs"\s*:\s*\[[^\]]*(?:CometPhotoAlbumQueryRelayPreloader|ProfileCometLegacyAlbumViewRootQueryRelayPreloader)[^\]]*\]\s*,\s*"url"\s*:\s*"(https:[^"]+)"',
         html,
     )
-    for raw_url in bundle_matches:
-        bundle_url = raw_url.replace(r"\/", "/")
-        if not (".js" in bundle_url):
-            continue
+    all_candidate_urls = list(dict.fromkeys(
+        [u.replace(r"\/", "/") for u in bundle_matches if ".js" in u] +
+        [u for u in script_urls if ".js" in u]
+    ))
+    for bundle_url in all_candidate_urls:
         try:
-            resp = session.get(bundle_url, timeout=(5, 10))
+            resp = session.get(bundle_url, timeout=(4, 8))
             if resp.status_code == 200:
                 for q_name in candidate_queries:
                     m = re.search(
-                        rf'{re.escape(q_name)}_facebookRelayOperation[^{{]*?\{{a\.exports="(\d{{15,}})"\}}',
+                        rf'{re.escape(q_name)}_facebookRelayOperation[^{{]*?\{{[^}}]*?"(\d{{15,}})"\}}',
                         resp.text,
                     )
                     if m:
-                        _CACHED_FB_PAGINATION["resolved"] = (q_name, m.group(1))
+                        _CACHED_FB_PAGINATION[preferred_query] = (q_name, m.group(1))
                         return q_name, m.group(1)
         except Exception:
             continue
 
-    # 3. Fallback to resilient default
-    return "CometAlbumPhotoCollagePaginationQuery", "28559589567041913"
+    defaults = {
+        "ProfileCometLegacyAlbumGridViewPaginationQuery": "34407011978913359",
+        "CometAlbumPhotoCollagePaginationQuery": "28559589567041913",
+        "ProfileCometLegacyAlbumFeedViewPaginationQuery": "28958132177175951",
+    }
+    fallback = (preferred_query, defaults.get(preferred_query, "34407011978913359"))
+    _CACHED_FB_PAGINATION[preferred_query] = fallback
+    return fallback
 
 
 def fetch_facebook_manifest(
     url: str,
     browser: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
+    abort_event: Optional[Any] = None,
 ) -> Optional[dict[str, Any]]:
-    """Extract photo metadata from a Facebook post using local browser session cookies."""
+    """Extract photo metadata from a Facebook post using local browser session cookies or guest requests."""
     patch_yt_dlp_cookie_database_reader()
     import yt_dlp
 
@@ -425,45 +495,47 @@ def fetch_facebook_manifest(
             progress_callback(pct, msg)
 
     raw_browser = str(browser or "").strip().lower()
-    if raw_browser in ("none", "disabled", "off", "false", "public", "public only"):
+    if raw_browser in ("none", "disabled", "off", "false"):
         return None
-
-    report(0.04, "Searching desktop browsers for an active Facebook session...")
-    running = detect_running_browsers()
-    candidates = get_ordered_browser_candidates(preferred=raw_browser)
+    is_explicit_guest = raw_browser in ("guest", "public", "public only")
 
     scored_candidates = []
     app_bound_noted = False
     now = time.time()
 
-    for b in candidates:
-        try:
-            ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
-            cand_jar = ydl.cookiejar
-            fb_cookies = [c for c in cand_jar if "facebook.com" in getattr(c, "domain", "")]
-            auth_cookies = [c for c in fb_cookies if getattr(c, "name", None) in ("c_user", "xs")]
-            has_auth = len(auth_cookies) >= 2
-            unexpired_auth = [c for c in auth_cookies if getattr(c, "expires", None) is None or c.expires > now]
+    if not is_explicit_guest:
+        report(0.04, "Searching desktop browsers for an active Facebook session...")
+        running = detect_running_browsers()
+        candidates = get_ordered_browser_candidates(preferred=raw_browser)
 
-            score = 0
-            if has_auth and len(unexpired_auth) >= 2:
-                score += 1000
-            elif has_auth:
-                score += 500
-            elif fb_cookies:
-                score += 50
+        for b in candidates:
+            try:
+                ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
+                cand_jar = ydl.cookiejar
+                fb_cookies = [c for c in cand_jar if "facebook.com" in getattr(c, "domain", "")]
+                auth_cookies = [c for c in fb_cookies if getattr(c, "name", None) in ("c_user", "xs")]
+                has_auth = len(auth_cookies) >= 2
+                unexpired_auth = [c for c in auth_cookies if getattr(c, "expires", None) is None or c.expires > now]
 
-            if fb_cookies and b in running:
-                score += 200
+                score = 0
+                if has_auth and len(unexpired_auth) >= 2:
+                    score += 1000
+                elif has_auth:
+                    score += 500
+                elif fb_cookies:
+                    score += 50
 
-            if score > 0:
-                scored_candidates.append((score, b, cand_jar))
-            elif b in running and b in ("edge", "chrome", "brave"):
-                if not app_bound_noted:
-                    report(0.05, f"{b.title()} is active, but its session database is protected by Windows App-Bound Encryption.")
-                    app_bound_noted = True
-        except Exception:
-            continue
+                if fb_cookies and b in running:
+                    score += 200
+
+                if score > 0:
+                    scored_candidates.append((score, b, cand_jar))
+                elif b in running and b in ("edge", "chrome", "brave"):
+                    if not app_bound_noted:
+                        report(0.05, f"{b.title()} is active, but its session database is protected by Windows App-Bound Encryption.")
+                        app_bound_noted = True
+            except Exception:
+                continue
 
     jar = None
     found_browser = None
@@ -471,16 +543,14 @@ def fetch_facebook_manifest(
         scored_candidates.sort(key=lambda x: x[0], reverse=True)
         _, found_browser, jar = scored_candidates[0]
 
-    if not jar or not found_browser:
-        report(0.06, "No logged-in Facebook session found in desktop browsers.")
-        return None
-
-    report(0.06, f"Connected to Facebook session via {found_browser.title()}. Loading post...")
-
     session = requests.Session()
-    for c in jar:
-        if "facebook.com" in getattr(c, "domain", ""):
-            session.cookies.set(c.name, c.value, domain=c.domain, path=c.path)
+    if jar and found_browser:
+        report(0.06, f"Connected to Facebook session via {found_browser.title()}. Loading post...")
+        for c in jar:
+            if "facebook.com" in getattr(c, "domain", ""):
+                session.cookies.set(c.name, c.value, domain=c.domain, path=c.path)
+    else:
+        report(0.06, "Connecting to Facebook via guest session...")
 
     session.headers.update({
         "User-Agent": (
@@ -507,7 +577,10 @@ def fetch_facebook_manifest(
 
     final_url = response.url
     if "/login" in final_url.lower():
-        report(0.08, f"Facebook redirected to login despite {found_browser.title()} session.")
+        if found_browser:
+            report(0.08, f"Facebook redirected to login despite {found_browser.title()} session.")
+        else:
+            report(0.08, "Facebook redirected to login. This post or album requires a logged-in browser session.")
         return None
 
     html = response.text
@@ -672,8 +745,21 @@ def fetch_facebook_manifest(
             except Exception:
                 pass
         if album_html:
-            edges_match = re.search(r'"media"\s*:\s*\{"edges"\s*:\s*(\[)', album_html)
+            edges_match = (
+                re.search(r'"grid_media"\s*:\s*\{"edges"\s*:\s*(\[)', album_html)
+                or re.search(r'"media"\s*:\s*\{"edges"\s*:\s*(\[)', album_html)
+            )
             if edges_match:
+                # Refine album title from JSON if page title was generic
+                if not title or title in ("media_file", "Facebook", "Facebook Post"):
+                    album_title_m = (
+                        re.search(r'"__isMediaSet"\s*:\s*"Album"[^}]*?"title"\s*:\s*\{"text"\s*:\s*"([^"]+)"', album_html)
+                        or re.search(r'"title"\s*:\s*\{"text"\s*:\s*"([^"]+)"', album_html)
+                        or re.search(r'"album_title"\s*:\s*"([^"]+)"', album_html)
+                    )
+                    if album_title_m:
+                        title = sanitize_filename(album_title_m.group(1), max_length=60)
+
                 start_pos = edges_match.start(1)
                 arr_str = _extract_balanced_json(album_html[start_pos:], "[", "]")
                 if arr_str:
@@ -684,10 +770,11 @@ def fetch_facebook_manifest(
                             if node.get("is_playable") or node.get("__typename") == "Video":
                                 has_video = True
                             p_id = str(node.get("id") or "").strip()
-                            img = node.get("image") or {}
-                            raw_uri = img.get("uri") or ""
-                            w = int(img.get("width") or 0)
-                            h = int(img.get("height") or 0)
+                            viewer_img = node.get("viewer_image") or {}
+                            img = node.get("image") or node.get("photo_image") or {}
+                            raw_uri = viewer_img.get("uri") or img.get("uri") or ""
+                            w = int(viewer_img.get("width") or img.get("width") or 0)
+                            h = int(viewer_img.get("height") or img.get("height") or 0)
                             _add_photo(p_id, raw_uri, w, h)
                     except Exception:
                         pass
@@ -695,7 +782,7 @@ def fetch_facebook_manifest(
                     # Paginate remaining album photos via Comet GraphQL
                     try:
                         end_of_arr = start_pos + len(arr_str)
-                        trailing_chunk = album_html[end_of_arr : end_of_arr + 1000]
+                        trailing_chunk = album_html[end_of_arr : end_of_arr + 2000]
                         page_info_match = re.search(r'"page_info"\s*:\s*\{([^}]+)\}', trailing_chunk)
                         cursor = None
                         has_next = False
@@ -707,7 +794,11 @@ def fetch_facebook_manifest(
                         id_m = re.search(r'"id"\s*:\s*"([^"]+)"', trailing_chunk)
                         album_node_id = id_m.group(1) if id_m else None
                         if not album_node_id and valid_mediaset:
-                            album_node_id = base64.b64encode(f"mediaset:{valid_mediaset}".encode()).decode()
+                            digits_m = re.search(r'\d{5,30}', valid_mediaset)
+                            if digits_m:
+                                album_node_id = digits_m.group(0)
+                            else:
+                                album_node_id = base64.b64encode(f"mediaset:{valid_mediaset}".encode()).decode()
 
                         dtsg_m = (
                             re.search(r'"DTSGInitialData"[^>]*?\{"token"\s*:\s*"([^"]+)"', album_html)
@@ -735,9 +826,21 @@ def fetch_facebook_manifest(
                         hsi_val = hsi_m.group(1) if hsi_m else None
 
                         page = 1
-                        while has_next and cursor and album_node_id and fb_dtsg and len(photos) < MAX_PHOTOS and page <= 50:
+                        while has_next and cursor and album_node_id and fb_dtsg and len(photos) < MAX_PHOTOS and page <= MAX_PAGINATION_PAGES:
+                            if abort_event and abort_event.is_set():
+                                break
                             page += 1
                             report(0.07, f"Loading Facebook album photos (found {len(photos)} so far)...")
+                            variables_dict = {
+                                "count": 50,
+                                "cursor": cursor,
+                                "id": album_node_id,
+                                "scale": 1,
+                            }
+                            if query_name == "CometAlbumPhotoCollagePaginationQuery":
+                                variables_dict["renderLocation"] = "permalink"
+                                variables_dict["__relay_internal__pv__GHLShouldChangeSponsoredDataFieldNamerelayprovider"] = True
+
                             payload = {
                                 "av": user_id,
                                 "__user": user_id,
@@ -752,14 +855,7 @@ def fetch_facebook_manifest(
                                 "jazoest": jazoest,
                                 "fb_api_caller_class": "RelayModern",
                                 "fb_api_req_friendly_name": query_name,
-                                "variables": json.dumps({
-                                    "count": 50,
-                                    "cursor": cursor,
-                                    "id": album_node_id,
-                                    "renderLocation": "permalink",
-                                    "scale": 1,
-                                    "__relay_internal__pv__GHLShouldChangeSponsoredDataFieldNamerelayprovider": True,
-                                }),
+                                "variables": json.dumps(variables_dict),
                                 "doc_id": doc_id,
                             }
                             if hsi_val:
@@ -781,7 +877,7 @@ def fetch_facebook_manifest(
                                 break
                             res_data = graphql_resp.json()
                             node = res_data.get("data", {}).get("node", {}) if isinstance(res_data, dict) else {}
-                            media = node.get("media", {}) if isinstance(node, dict) else {}
+                            media = (node.get("grid_media") or node.get("media") or {}) if isinstance(node, dict) else {}
                             edges = media.get("edges", []) if isinstance(media, dict) else []
                             if not edges:
                                 # Invalidate cache if query was rejected
@@ -794,10 +890,11 @@ def fetch_facebook_manifest(
                                 if edge_node.get("is_playable") or edge_node.get("__typename") == "Video":
                                     has_video = True
                                 p_id = str(edge_node.get("id") or "").strip()
-                                img = edge_node.get("image") or {}
-                                raw_uri = img.get("uri") or ""
-                                w = int(img.get("width") or 0)
-                                h = int(img.get("height") or 0)
+                                viewer_img = edge_node.get("viewer_image") or {}
+                                img = edge_node.get("image") or edge_node.get("photo_image") or {}
+                                raw_uri = viewer_img.get("uri") or img.get("uri") or ""
+                                w = int(viewer_img.get("width") or img.get("width") or 0)
+                                h = int(viewer_img.get("height") or img.get("height") or 0)
                                 if p_id and p_id not in photos:
                                     new_count += 1
                                 _add_photo(p_id, raw_uri, w, h)

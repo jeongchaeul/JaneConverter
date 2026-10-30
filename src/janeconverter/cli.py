@@ -341,11 +341,12 @@ def process_conversion(
 
     if facebook_photo_manifest is None and is_facebook_post_url(source):
         try:
-            report(0.02, "Reading Facebook post via browser session...")
+            report(0.02, "Reading Facebook album / post...")
             fb_manifest = fetch_facebook_manifest(
                 source,
                 browser=auth_browser,
                 progress_callback=report,
+                abort_event=abort_event,
             )
             if fb_manifest and fb_manifest.get("photos"):
                 facebook_photo_manifest = fb_manifest

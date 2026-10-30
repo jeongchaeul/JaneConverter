@@ -188,10 +188,10 @@ def test_expired_rendition_uses_observed_alternate_in_same_album(tmp_path, monke
     result = facebook_capture.download_facebook_photo_manifest(manifest, str(tmp_path))
 
     assert result["photo_count"] == 2
-    assert session.requested[:2] == [
-        "https://scontent-1.xx.fbcdn.net/high.jpg",
-        "https://scontent-1.xx.fbcdn.net/low.jpg",
-    ]
+    high_idx = session.requested.index("https://scontent-1.xx.fbcdn.net/high.jpg")
+    low_idx = session.requested.index("https://scontent-1.xx.fbcdn.net/low.jpg")
+    assert high_idx < low_idx
+    assert "https://scontent-2.xx.fbcdn.net/second.jpg" in session.requested
 
 
 def test_expired_renditions_refresh_once_from_the_active_capture(tmp_path, monkeypatch):
@@ -218,11 +218,11 @@ def test_expired_renditions_refresh_once_from_the_active_capture(tmp_path, monke
 
     assert result["photo_count"] == 2
     assert refresh_requests == ["123456"]
-    assert session.requested[:3] == [
-        "https://scontent-1.xx.fbcdn.net/high.jpg",
-        "https://scontent-1.xx.fbcdn.net/low.jpg",
-        "https://scontent-1.xx.fbcdn.net/123456-refreshed.jpg",
-    ]
+    high_idx = session.requested.index("https://scontent-1.xx.fbcdn.net/high.jpg")
+    low_idx = session.requested.index("https://scontent-1.xx.fbcdn.net/low.jpg")
+    refresh_idx = session.requested.index("https://scontent-1.xx.fbcdn.net/123456-refreshed.jpg")
+    assert high_idx < low_idx < refresh_idx
+    assert "https://scontent-2.xx.fbcdn.net/second.jpg" in session.requested
 
 
 def test_rendition_refresh_ignores_urls_outside_facebook_cdn(tmp_path, monkeypatch):
@@ -579,6 +579,119 @@ def test_fetch_facebook_manifest_album_graphql_pagination(monkeypatch):
     assert "api/graphql" in gql_url
     assert gql_payload["doc_id"] == "28559589567041913"
     assert "cursor_batch_1" in gql_payload["variables"]
+
+
+def test_fetch_facebook_manifest_grid_album_graphql_pagination_guest(monkeypatch):
+    class _EmptyYDL:
+        def __init__(self, *args, **kwargs):
+            self.cookiejar = []
+
+    import yt_dlp
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _EmptyYDL)
+
+    grid_album_html = (
+        '<html><head><title>Ketecc Idol Album - Facebook</title></head><body>'
+        '<script>'
+        '{"DTSGInitialData":{"token":"dtsg_grid_secret_token"}}'
+        '</script>'
+        '<script>'
+        '{"grid_media":{"edges":['
+        '{"node":{"__typename":"Photo","id":"501","viewer_image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/photo501.jpg","width":2048,"height":2048}}},'
+        '{"node":{"__typename":"Photo","id":"502","viewer_image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/photo502.jpg","width":2048,"height":2048}}}'
+        '],"page_info":{"end_cursor":"grid_cursor_page_1","has_next_page":true}},"id":"480509343424848"}'
+        '</script></body></html>'
+    )
+
+    graphql_grid_page_2 = {
+        "data": {
+            "node": {
+                "grid_media": {
+                    "edges": [
+                        {"node": {"__typename": "Photo", "id": "503", "viewer_image": {"uri": "https://scontent.xx.fbcdn.net/photo503.jpg", "width": 2048, "height": 2048}}},
+                        {"node": {"__typename": "Photo", "id": "504", "viewer_image": {"uri": "https://scontent.xx.fbcdn.net/photo504.jpg", "width": 2048, "height": 2048}}},
+                    ],
+                    "page_info": {
+                        "end_cursor": "grid_cursor_page_2",
+                        "has_next_page": False,
+                    },
+                }
+            }
+        }
+    }
+
+    class _MockGridSession:
+        def __init__(self):
+            self.cookies = type("MockCookies", (), {"set": lambda *args, **kwargs: None})()
+            self.headers = {}
+            self.graphql_calls = []
+
+        def get(self, url, **kwargs):
+            class _Resp:
+                def __init__(self, text, resp_url):
+                    self.status_code = 200
+                    self.text = text
+                    self.url = resp_url
+            return _Resp(grid_album_html, url)
+
+        def post(self, url, **kwargs):
+            self.graphql_calls.append((url, kwargs.get("data", {})))
+            class _GqlResp:
+                status_code = 200
+                def json(self):
+                    return graphql_grid_page_2
+            return _GqlResp()
+
+    grid_session_inst = _MockGridSession()
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: grid_session_inst)
+
+    # Calling with guest browser or no logged-in cookies
+    manifest = facebook_capture.fetch_facebook_manifest(
+        "https://www.facebook.com/media/set/?set=a.480509343424848&type=3",
+        browser="guest",
+    )
+    assert manifest is not None
+    assert manifest["title"] == "Ketecc Idol Album"
+    assert len(manifest["photos"]) == 4
+    assert [p["id"] for p in manifest["photos"]] == ["501", "502", "503", "504"]
+    assert all(p["width"] == 2048 for p in manifest["photos"])
+    assert len(grid_session_inst.graphql_calls) == 1
+    gql_url, gql_payload = grid_session_inst.graphql_calls[0]
+    assert "api/graphql" in gql_url
+    assert gql_payload["doc_id"] == "34407011978913359"
+    assert gql_payload["fb_api_req_friendly_name"] == "ProfileCometLegacyAlbumGridViewPaginationQuery"
+    assert "grid_cursor_page_1" in gql_payload["variables"]
+    assert "480509343424848" in gql_payload["variables"]
+
+
+def test_manifest_concurrent_downloads_preserves_order_and_naming(tmp_path, monkeypatch):
+    session = _Session()
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session)
+
+    photos_list = [
+        {"id": str(100000 + i), "url": f"https://scontent.xx.fbcdn.net/photo_{i:03d}.jpg", "width": 1080}
+        for i in range(1, 13)
+    ]
+    manifest = {
+        "title": "Concurrent Album",
+        "photos": photos_list,
+    }
+
+    result = facebook_capture.download_facebook_photo_manifest(
+        manifest,
+        str(tmp_path),
+        max_workers=4,
+    )
+
+    album_dir = tmp_path / "Concurrent Album"
+    assert result["photo_count"] == 12
+    saved = sorted(album_dir.glob("*.jpg"))
+    assert len(saved) == 12
+    for i, path in enumerate(saved, start=1):
+        assert path.name == f"Concurrent Album_{i:03d}.jpg"
+        with Image.open(path) as img:
+            assert img.size == (8, 8)
+
+
 
 
 

@@ -195,7 +195,7 @@ pub fn validate_completion(message: &PageMessage, received_count: usize) -> Resu
     };
     if expected_count != message.count
         || received_count != message.count
-        || !(1..=500).contains(&message.count)
+        || !(1..=10000).contains(&message.count)
     {
         return Err(format!(
             "Facebook reported {} photos, expected {}, and delivered {}. No partial album was saved.",

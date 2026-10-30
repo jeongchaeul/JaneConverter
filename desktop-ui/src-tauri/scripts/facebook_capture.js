@@ -12,7 +12,7 @@
   const attemptsKey = "janeFacebookCaptureAttempts";
   const startedAtKey = "janeFacebookCaptureStartedAt";
   const viewerImageKey = "janeFacebookViewerImageUrl";
-  const MAX_PHOTOS = 500;
+  const MAX_PHOTOS = 10000;
   const MAX_ATTEMPTS = 1800;
   const MAX_CAPTURE_MS = 180000;
   const VIEWER_POLL_MS = 250;
@@ -91,13 +91,13 @@
   const photoCountFromText = (value, includeUnqualifiedCounts) => {
     let total = 0;
     if (includeUnqualifiedCounts) {
-      for (const match of value.matchAll(/\b(\d{1,3})\s+(?:photos?|images?|pictures?)\b/gi)) {
-        const count = Number(match[1]);
+      for (const match of value.matchAll(/\b([\d,]{1,6})\s+(?:photos?|images?|pictures?)\b/gi)) {
+        const count = Number(match[1].replace(/,/g, ""));
         if (count >= 2 && count <= MAX_PHOTOS) total = Math.max(total, count);
       }
     }
-    for (const match of value.matchAll(/\b(?:photos?|images?|pictures?)\s+\d{1,4}\s+(?:of|\/)\s*(\d{1,3})\b/gi)) {
-      const count = Number(match[1]);
+    for (const match of value.matchAll(/\b(?:photos?|images?|pictures?)\s+[\d,]{1,6}\s+(?:of|\/)\s*([\d,]{1,6})\b/gi)) {
+      const count = Number(match[1].replace(/,/g, ""));
       if (count >= 2 && count <= MAX_PHOTOS) total = Math.max(total, count);
     }
     return total;
@@ -634,7 +634,7 @@
     }
     if (scanned.size > MAX_PHOTOS) {
       finished = true;
-      send({kind:"error",error:"Facebook exposed more than the 500-photo capture limit. No partial album was saved."});
+      send({kind:"error",error:`Facebook exposed more than the ${MAX_PHOTOS}-photo capture limit. No partial album was saved.`});
       return;
     }
     if (location.pathname.toLowerCase().includes("/login")) {
