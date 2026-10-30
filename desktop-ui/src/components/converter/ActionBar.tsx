@@ -14,6 +14,9 @@ interface ActionBarProps {
   onOutputDirChange: (dir: string) => void;
   onBrowseOutput: () => void;
   onOpenOutput: () => void;
+  tempDir?: string;
+  onTempDirChange?: (dir: string) => void;
+  onBrowseTempDir?: () => void;
   isOperationActive: boolean;
   queueLength: number;
   queueRunning: boolean;
@@ -36,6 +39,9 @@ export function ActionBar({
   onOutputDirChange,
   onBrowseOutput,
   onOpenOutput,
+  tempDir,
+  onTempDirChange,
+  onBrowseTempDir,
   isOperationActive,
   queueLength,
   queueRunning,
@@ -84,6 +90,32 @@ export function ActionBar({
             >
               <FolderOpen className="size-3.5" /> Open
             </button>
+          </div>
+
+          {/* Temporary scratch folder */}
+          <div className="mt-2.5 pt-2 border-t border-white/[0.04]">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-400">
+                <span>Temporary scratch folder</span>
+              </div>
+              <span className="hidden sm:inline text-[10px] text-zinc-500 truncate">Default: project-local temp</span>
+            </div>
+            <div className="mt-1 flex gap-2">
+              <input
+                aria-label="Temporary scratch folder"
+                placeholder="Default: Project-local temp folder"
+                value={tempDir || ""}
+                onChange={(event) => onTempDirChange?.(event.target.value)}
+                className="field h-8 min-w-0 flex-1 px-2.5 text-[11px]"
+              />
+              <button
+                type="button"
+                onClick={onBrowseTempDir}
+                className="subtle-button inline-flex h-8 items-center justify-center px-2.5 text-[11px] whitespace-nowrap"
+              >
+                Browse
+              </button>
+            </div>
           </div>
         </div>
 

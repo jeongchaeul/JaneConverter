@@ -7,33 +7,47 @@ use std::process::Command;
 use tauri::State;
 
 #[tauri::command]
-pub fn choose_file() -> Option<String> {
-    FileDialog::new()
-        .set_title("Choose media file")
-        .pick_file()
-        .map(|path| path.display().to_string())
+pub async fn choose_file() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        FileDialog::new()
+            .set_title("Choose media file")
+            .pick_file()
+            .map(|path| path.display().to_string())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 #[tauri::command]
-pub fn choose_files() -> Vec<String> {
-    FileDialog::new()
-        .set_title("Choose media files")
-        .pick_files()
-        .map(|paths| {
-            paths
-                .into_iter()
-                .map(|path| path.display().to_string())
-                .collect()
-        })
-        .unwrap_or_default()
+pub async fn choose_files() -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        FileDialog::new()
+            .set_title("Choose media files")
+            .pick_files()
+            .map(|paths| {
+                paths
+                    .into_iter()
+                    .map(|path| path.display().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]
-pub fn choose_folder() -> Option<String> {
-    FileDialog::new()
-        .set_title("Choose export folder")
-        .pick_folder()
-        .map(|path| path.display().to_string())
+pub async fn choose_folder() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        FileDialog::new()
+            .set_title("Choose export folder")
+            .pick_folder()
+            .map(|path| path.display().to_string())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 #[tauri::command]

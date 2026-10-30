@@ -877,6 +877,17 @@ export function ConverterView({
     }
   }
 
+  async function browseTempDir() {
+    if (isBrowsingRef.current) return;
+    isBrowsingRef.current = true;
+    try {
+      const path = await bridge.chooseFolder();
+      if (path) update({ tempDir: path });
+    } finally {
+      isBrowsingRef.current = false;
+    }
+  }
+
   async function loadPlaylist() {
     if (!source.trim()) {
       onStatus("Paste a playlist, album, or story URL first.");
@@ -1436,6 +1447,9 @@ export function ConverterView({
         onOutputDirChange={(outputDir) => update({ outputDir })}
         onBrowseOutput={() => void browseOutput()}
         onOpenOutput={() => void bridge.openPath(settings.outputDir)}
+        tempDir={settings.tempDir}
+        onTempDirChange={(tempDir) => update({ tempDir })}
+        onBrowseTempDir={() => void browseTempDir()}
         isOperationActive={isOperationActive}
         queueLength={queue.length}
         queueRunning={queueRunning}

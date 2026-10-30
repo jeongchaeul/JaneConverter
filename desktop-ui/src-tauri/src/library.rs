@@ -577,6 +577,21 @@ pub fn resolve_existing_path(path_str: &str) -> Option<PathBuf> {
         return Some(initial);
     }
 
+    // 1b. Check same parent directory with alternate image/media extensions
+    if let (Some(parent), Some(stem)) = (initial.parent(), initial.file_stem()) {
+        if parent.is_dir() {
+            let stem_str = stem.to_string_lossy();
+            for ext in [
+                "png", "jpg", "jpeg", "webp", "avif", "mp4", "mkv", "mp3", "wav", "flac",
+            ] {
+                let candidate = parent.join(format!("{stem_str}.{ext}"));
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+
     // 2. Try stripping collision suffix e.g. " (1)", " (2)", " (5)"
     if let Some(parent) = initial.parent() {
         let parent_str = parent.display().to_string();
@@ -633,14 +648,18 @@ pub fn resolve_existing_path(path_str: &str) -> Option<PathBuf> {
     }
 
     // 4. Recursive search inside settings.output_dir and settings.fetched_dir
-    let settings = crate::paths::settings_get_internal();
-    if let Some(fname) = target_file_name {
-        for root in [&settings.output_dir, &settings.fetched_dir] {
-            let root_clean = clean_windows_path(root);
-            let root_path = PathBuf::from(&root_clean);
-            if root_path.is_dir() {
-                if let Some(found) = find_file_in_dir_recursive(&root_path, fname, 0, 5) {
-                    return Some(found);
+    // Avoid crawling entire library trees if the item is already scoped to a valid parent directory
+    let parent_is_valid_dir = initial.parent().map(|p| p.is_dir()).unwrap_or(false);
+    if !parent_is_valid_dir {
+        let settings = crate::paths::settings_get_internal();
+        if let Some(fname) = target_file_name {
+            for root in [&settings.output_dir, &settings.fetched_dir] {
+                let root_clean = clean_windows_path(root);
+                let root_path = PathBuf::from(&root_clean);
+                if root_path.is_dir() {
+                    if let Some(found) = find_file_in_dir_recursive(&root_path, fname, 0, 5) {
+                        return Some(found);
+                    }
                 }
             }
         }
@@ -916,7 +935,7 @@ fn render_preview_at(path: &Path, seek_sec: Option<&str>) -> Option<Vec<u8>> {
     }
 }
 
-fn render_preview(path: &Path) -> Option<Vec<u8>> {
+fn render_preview(path: &Path) -> Option<(Vec<u8>, &'static str)> {
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
@@ -925,11 +944,34 @@ fn render_preview(path: &Path) -> Option<Vec<u8>> {
     let is_video = matches!(extension.as_str(), "mp4" | "mkv" | "webm" | "mov" | "gif");
     if is_video {
         if let Some(bytes) = render_preview_at(path, Some("1")) {
-            return Some(bytes);
+            return Some((bytes, "image/jpeg"));
         }
-        return render_preview_at(path, Some("0"));
+        return render_preview_at(path, Some("0")).map(|bytes| (bytes, "image/jpeg"));
     }
-    render_preview_at(path, None)
+
+    // Direct read for still image files under 25MB to bypass FFmpeg process spawns
+    if matches!(
+        extension.as_str(),
+        "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" | "avif"
+    ) {
+        if let Ok(metadata) = fs::metadata(path) {
+            if metadata.is_file() && metadata.len() > 0 && metadata.len() <= 25 * 1024 * 1024 {
+                if let Ok(bytes) = fs::read(path) {
+                    let mime = match extension.as_str() {
+                        "png" => "image/png",
+                        "webp" => "image/webp",
+                        "gif" => "image/gif",
+                        "bmp" => "image/bmp",
+                        "avif" => "image/avif",
+                        _ => "image/jpeg",
+                    };
+                    return Some((bytes, mime));
+                }
+            }
+        }
+    }
+
+    render_preview_at(path, None).map(|bytes| (bytes, "image/jpeg"))
 }
 
 pub fn thumbnail(root: &str, path: &str) -> Result<Option<String>, String> {
@@ -937,11 +979,11 @@ pub fn thumbnail(root: &str, path: &str) -> Result<Option<String>, String> {
     let Some(source) = first_preview_source(&target, 0) else {
         return Ok(None);
     };
-    let Some(bytes) = render_preview(&source) else {
+    let Some((bytes, mime)) = render_preview(&source) else {
         return Ok(None);
     };
     let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-    Ok(Some(format!("data:image/jpeg;base64,{encoded}")))
+    Ok(Some(format!("data:{mime};base64,{encoded}")))
 }
 
 #[cfg(test)]

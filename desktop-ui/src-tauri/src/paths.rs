@@ -220,8 +220,13 @@ pub fn set_data_root(path: &Path) -> io::Result<PathBuf> {
             "The data root must be a folder.",
         ));
     }
+    let current_settings = settings_path();
     let cleaned = crate::library::clean_windows_path(&canonical.display().to_string());
     let target = PathBuf::from(&cleaned);
+    let target_settings = target.join("native.settings");
+    if current_settings.is_file() && !target_settings.exists() {
+        let _ = fs::copy(&current_settings, &target_settings);
+    }
     if let Some(parent) = data_root_override_path().parent() {
         fs::create_dir_all(parent)?;
     }
@@ -239,6 +244,10 @@ pub fn default_output_dir() -> PathBuf {
 
 pub fn default_fetched_dir() -> PathBuf {
     data_root().join("fetched")
+}
+
+pub fn default_temp_dir() -> PathBuf {
+    data_root().join("temp")
 }
 
 pub fn now_stamp() -> u128 {
@@ -263,6 +272,14 @@ pub fn prepare_command(command: &mut Command) {
         }
     }
     command.env("JANECONVERTER_DATA_DIR", data_root());
+    let settings = settings_get_internal();
+    let active_temp = if !settings.temp_dir.trim().is_empty() {
+        PathBuf::from(settings.temp_dir.trim())
+    } else {
+        default_temp_dir()
+    };
+    let _ = std::fs::create_dir_all(&active_temp);
+    command.env("JANECONVERTER_TEMP_DIR", &active_temp);
     command.env("PYTHONUTF8", "1");
     command.env("PYTHONIOENCODING", "utf-8");
     #[cfg(target_os = "windows")]
@@ -449,6 +466,10 @@ pub fn settings_get_internal() -> ConverterSettings {
         .unwrap_or_else(|| {
             crate::library::clean_windows_path(&default_fetched_dir().display().to_string())
         });
+    let temp_dir = values
+        .get("temp_dir")
+        .map(|value| crate::library::clean_windows_path(value))
+        .unwrap_or_default();
     let category = match values.get("category").map(String::as_str) {
         Some("Video") => "Video",
         Some("Image") => "Image",
@@ -466,6 +487,7 @@ pub fn settings_get_internal() -> ConverterSettings {
     ConverterSettings {
         output_dir,
         fetched_dir,
+        temp_dir,
         category: category.into(),
         format: values
             .get("format")
@@ -510,6 +532,7 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
     let clean = |v: &str| v.replace(['\r', '\n'], "");
     let output_dir = clean(&crate::library::clean_windows_path(&settings.output_dir));
     let fetched_dir = clean(&crate::library::clean_windows_path(&settings.fetched_dir));
+    let temp_dir = clean(&crate::library::clean_windows_path(&settings.temp_dir));
     let category = clean(&settings.category);
     let format = clean(&settings.format);
     let bitrate = clean(&settings.bitrate);
@@ -527,6 +550,7 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
     let body = [
         ("output_dir", output_dir.as_str()),
         ("fetched_dir", fetched_dir.as_str()),
+        ("temp_dir", temp_dir.as_str()),
         ("category", category.as_str()),
         ("format", format.as_str()),
         ("bitrate", bitrate.as_str()),

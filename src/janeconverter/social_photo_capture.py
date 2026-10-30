@@ -20,6 +20,7 @@ from PIL import Image
 from .cookie_unlocker import patch_yt_dlp_cookie_database_reader
 from .extractor import clean_windows_path, sanitize_filename
 from .image_format import convert_image_format
+from .paths import get_temp_dir
 
 
 MAX_PHOTOS = 500
@@ -231,6 +232,13 @@ def download_social_photo_manifest(
             print(f"[*] Photo #{p_idx} Source: {p_obj['url']}", flush=True)
 
     session = requests.Session()
+    if hasattr(session, "mount"):
+        try:
+            adapter = requests.adapters.HTTPAdapter(pool_connections=16, pool_maxsize=16)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+        except Exception:
+            pass
     session.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -238,10 +246,14 @@ def download_social_photo_manifest(
         ),
         "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
     })
-    staging_dir = tempfile.mkdtemp(prefix=f".{platform_key}-photos-", dir=parent)
+    os.makedirs(target_dir, exist_ok=True)
+    staging_base = os.path.join(get_temp_dir(), "staging")
+    os.makedirs(staging_base, exist_ok=True)
+    staging_dir = tempfile.mkdtemp(prefix=f".{platform_key}-photos-", dir=staging_base)
     total_bytes = 0
     completed_count = 0
     lock = threading.Lock()
+    disk_write_lock = threading.Lock()
 
     def report(progress: float, message: str) -> None:
         if progress_callback:
@@ -284,9 +296,13 @@ def download_social_photo_manifest(
                 raise RuntimeError(f"{platform} returned a non-image response for photo {index}.") from error
             image_path = os.path.join(staging_dir, f"{title}_{index:03d}{extension}")
             os.replace(download_path, image_path)
-            convert_image_format(image_path, target_format, quality)
-            print(f"[+] Saved photo: {index}. {os.path.basename(image_path)}", flush=True)
-            print(f"[*] Photo #{index} Saved: {image_path}", flush=True)
+            final_path = convert_image_format(image_path, target_format, quality)
+            final_filename = os.path.basename(final_path)
+            final_target_path = os.path.join(target_dir, final_filename)
+            with disk_write_lock:
+                shutil.move(final_path, final_target_path)
+            print(f"[+] Saved photo: {index}. {final_filename}", flush=True)
+            print(f"[*] Photo #{index} Saved: {final_target_path}", flush=True)
             with lock:
                 completed_count += 1
                 report(0.05 + 0.9 * (completed_count / len(photos)), f"Downloading {platform} photo {completed_count} of {len(photos)}...")
@@ -301,15 +317,32 @@ def download_social_photo_manifest(
                 futures = [executor.submit(download_and_process, item) for item in enumerate(photos.values(), start=1)]
                 for future in concurrent.futures.as_completed(futures):
                     future.result()
-        _promote_staging_dir(staging_dir, target_dir)
+    except KeyboardInterrupt:
+        if completed_count > 0:
+            print(f"[*] Partial album saved with {completed_count} photos: {target_dir}", flush=True)
+        raise
     except requests.RequestException as error:
+        if os.path.isdir(target_dir):
+            shutil.rmtree(target_dir, ignore_errors=True)
         raise RuntimeError(f"Could not download a {platform} photo. The post may have changed or the link may have expired.") from error
     except (OSError, ValueError) as error:
+        if os.path.isdir(target_dir):
+            shutil.rmtree(target_dir, ignore_errors=True)
         raise RuntimeError(f"Could not save or validate one of the {platform} photos.") from error
+    except Exception:
+        if os.path.isdir(target_dir):
+            shutil.rmtree(target_dir, ignore_errors=True)
+        raise
     finally:
         session.close()
         if os.path.isdir(staging_dir):
             shutil.rmtree(staging_dir, ignore_errors=True)
+        if completed_count == 0 and os.path.isdir(target_dir):
+            try:
+                if not os.listdir(target_dir):
+                    os.rmdir(target_dir)
+            except OSError:
+                pass
 
     report(1.0, f"Saved all {len(photos)} {platform} photos.")
     return {

@@ -7,6 +7,7 @@ import {
   Zap,
 } from "lucide-react";
 import type { ConverterSettings, RuntimeInfo } from "../../bridge";
+import { bridge } from "../../bridge";
 
 export function SettingsHardwareTab({
   settings,
@@ -144,6 +145,70 @@ export function SettingsHardwareTab({
             <FolderOpen className={"size-3.5 " + (changingDataRoot ? "animate-pulse" : "")} />
             {changingDataRoot ? "Applying..." : "Apply and relaunch"}
           </button>
+        </div>
+      </section>
+
+      {/* Temporary Scratch Folder */}
+      <section className="panel p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm text-zinc-200">
+            <FolderOpen size={16} className="text-zinc-500" /> Temporary Scratch Folder
+          </div>
+          <span className="text-[10px] text-zinc-500">Staging buffer before external drive write</span>
+        </div>
+        <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
+          Choose a fast directory (such as a local SSD/NVMe drive) for staging bulk downloads and photo processing before sequentially transferring them to your primary library folder. Eliminates severe bottlenecks when downloading directly to external USB drives.
+        </p>
+        <div className="mt-3 flex gap-2">
+          <input
+            aria-label="Temporary scratch folder"
+            placeholder="Default: Project-local temp folder"
+            value={settings?.tempDir || ""}
+            onChange={(event) => {
+              if (settings && onSettings) {
+                onSettings({ ...settings, tempDir: event.target.value });
+              }
+            }}
+            className="field min-w-0 flex-1 px-3 py-2 text-xs"
+          />
+          <button
+            type="button"
+            className="subtle-button px-3 text-xs"
+            onClick={async () => {
+              const path = await bridge.chooseFolder();
+              if (path && settings && onSettings) {
+                onSettings({ ...settings, tempDir: path });
+              }
+            }}
+          >
+            Browse
+          </button>
+          {settings?.tempDir ? (
+            <button
+              type="button"
+              className="subtle-button px-3 text-xs text-zinc-400 hover:text-zinc-200"
+              onClick={() => {
+                if (settings && onSettings) {
+                  onSettings({ ...settings, tempDir: "" });
+                }
+              }}
+            >
+              Reset
+            </button>
+          ) : null}
+          {settings?.tempDir ? (
+            <button
+              type="button"
+              className="subtle-button px-3 text-xs"
+              onClick={() => {
+                if (settings?.tempDir) {
+                  void bridge.openPath(settings.tempDir);
+                }
+              }}
+            >
+              Open
+            </button>
+          ) : null}
         </div>
       </section>
 

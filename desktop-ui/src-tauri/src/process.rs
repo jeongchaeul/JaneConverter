@@ -643,6 +643,13 @@ pub fn start_conversion(
         command.process_group(0);
     }
     prepare_command(&mut command);
+    if let Some(req_temp) = &request.temp_dir {
+        if !req_temp.trim().is_empty() {
+            let p = std::path::PathBuf::from(req_temp.trim());
+            let _ = std::fs::create_dir_all(&p);
+            command.env("JANECONVERTER_TEMP_DIR", p);
+        }
+    }
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not start the Python engine: {error}"))?;
@@ -1081,6 +1088,7 @@ mod tests {
         let mut request = ConversionRequest {
             source: "https://example.com/private-media".into(),
             output_dir: "out".into(),
+            temp_dir: None,
             category: "Video".into(),
             format: "mp4".into(),
             bitrate: "original".into(),
@@ -1124,6 +1132,7 @@ mod tests {
         let request = ConversionRequest {
             source: "https://www.facebook.com/groups/42/permalink/123456/".into(),
             output_dir: "out".into(),
+            temp_dir: None,
             category: "Image".into(),
             format: "source".into(),
             bitrate: "original".into(),
@@ -1167,6 +1176,7 @@ mod tests {
         let request = ConversionRequest {
             source: "".into(),
             output_dir: "out".into(),
+            temp_dir: None,
             category: "Video".into(),
             format: "mp4".into(),
             bitrate: "original".into(),
@@ -1207,6 +1217,7 @@ mod tests {
         let request = ConversionRequest {
             source: "https://soundcloud.com/example/track".into(),
             output_dir: "out".into(),
+            temp_dir: None,
             category: "Music".into(),
             format: "mp3".into(),
             bitrate: "320k".into(),
@@ -1241,6 +1252,7 @@ mod tests {
         let request = ConversionRequest {
             source: "https://example.com/stream.mp4".into(),
             output_dir: "out".into(),
+            temp_dir: None,
             category: "Video".into(),
             format: "mp4".into(),
             bitrate: "balanced".into(),
@@ -1282,6 +1294,7 @@ mod tests {
         let request = ConversionRequest {
             source: "https://www.facebook.com/reel/123456789".into(),
             output_dir: "out".into(),
+            temp_dir: None,
             category: "Video".into(),
             format: "mp4".into(),
             bitrate: "original".into(),
@@ -1324,6 +1337,7 @@ mod tests {
         let mut request = ConversionRequest {
             source: "https://example.com/track.mp3".into(),
             output_dir: "out".into(),
+            temp_dir: None,
             category: "Music".into(),
             format: "wav".into(),
             bitrate: "32-bit".into(),
@@ -1360,6 +1374,7 @@ mod tests {
         let mut request = ConversionRequest {
             source: "https://www.instagram.com/stories/test/123/".into(),
             output_dir: "out".into(),
+            temp_dir: None,
             category: "Video".into(),
             format: "mp4".into(),
             bitrate: "original".into(),
@@ -1396,6 +1411,7 @@ mod tests {
         let mut request = ConversionRequest {
             source: "https://www.youtube.com/watch?v=dQw4w9WgXcQ".into(),
             output_dir: "out".into(),
+            temp_dir: None,
             category: "Video".into(),
             format: "mp4".into(),
             bitrate: "original".into(),

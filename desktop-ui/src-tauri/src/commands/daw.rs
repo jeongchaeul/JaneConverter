@@ -4,21 +4,31 @@ use rfd::FileDialog;
 use std::process::Command;
 
 #[tauri::command]
-pub fn choose_flp_file() -> Option<String> {
-    FileDialog::new()
-        .set_title("Choose FL Studio Project (.flp)")
-        .add_filter("FL Studio Project (*.flp)", &["flp"])
-        .pick_file()
-        .map(|path| path.display().to_string())
+pub async fn choose_flp_file() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        FileDialog::new()
+            .set_title("Choose FL Studio Project (.flp)")
+            .add_filter("FL Studio Project (*.flp)", &["flp"])
+            .pick_file()
+            .map(|path| path.display().to_string())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 #[tauri::command]
-pub fn choose_als_file() -> Option<String> {
-    FileDialog::new()
-        .set_title("Choose Ableton Live Project (.als)")
-        .add_filter("Ableton Live Project (*.als)", &["als"])
-        .pick_file()
-        .map(|path| path.display().to_string())
+pub async fn choose_als_file() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        FileDialog::new()
+            .set_title("Choose Ableton Live Project (.als)")
+            .add_filter("Ableton Live Project (*.als)", &["als"])
+            .pick_file()
+            .map(|path| path.display().to_string())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 #[tauri::command]

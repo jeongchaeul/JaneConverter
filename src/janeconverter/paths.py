@@ -200,6 +200,20 @@ def get_app_data_dir() -> str:
     return os.path.join(tempfile.gettempdir(), "JaneConverter")
 
 
+def get_temp_dir() -> str:
+    """Return the active temporary scratch directory for staging operations."""
+    configured = os.environ.get("JANECONVERTER_TEMP_DIR", "").strip()
+    if configured:
+        try:
+            os.makedirs(configured, exist_ok=True)
+            return os.path.abspath(configured)
+        except OSError:
+            pass
+    fallback = os.path.join(APP_DATA_DIR, "temp")
+    os.makedirs(fallback, exist_ok=True)
+    return fallback
+
+
 def initialize_app_data() -> None:
     """Validate the selected store and migrate legacy data during CLI startup."""
     if not _writable_directory(APP_DATA_DIR):
@@ -212,6 +226,6 @@ def initialize_app_data() -> None:
 
 APP_DATA_DIR = get_app_data_dir()
 DEFAULT_CONVERTED_DIR = os.path.join(APP_DATA_DIR, "converted")
-DEFAULT_TEMP_DIR = os.path.join(APP_DATA_DIR, "temp")
+DEFAULT_TEMP_DIR = get_temp_dir()
 LOG_DIR = os.path.join(APP_DATA_DIR, "logs")
 CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")

@@ -38,6 +38,7 @@ export interface HardwareSnapshot {
 export interface ConverterSettings {
   outputDir: string;
   fetchedDir: string;
+  tempDir?: string;
   category: Category;
   format: string;
   bitrate: string;
@@ -302,6 +303,7 @@ export interface JaneBridge {
 const demoSettings: ConverterSettings = {
   outputDir: "Project-local/converted",
   fetchedDir: "Project-local/fetched",
+  tempDir: "",
   category: "Music",
   format: "mp3",
   bitrate: "320k",

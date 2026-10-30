@@ -276,6 +276,7 @@ mod tests {
         let request = ConversionRequest {
             source: " ".into(),
             output_dir: "out".into(),
+            temp_dir: None,
             category: "Music".into(),
             format: "mp3".into(),
             bitrate: "320k".into(),

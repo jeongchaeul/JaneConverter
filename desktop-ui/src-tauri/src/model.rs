@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct ConverterSettings {
     pub output_dir: String,
     pub fetched_dir: String,
+    #[serde(default)]
+    pub temp_dir: String,
     pub category: String,
     pub format: String,
     pub bitrate: String,
@@ -38,6 +40,8 @@ pub struct ConverterSettings {
 pub struct ConversionRequest {
     pub source: String,
     pub output_dir: String,
+    #[serde(default)]
+    pub temp_dir: Option<String>,
     pub category: String,
     pub format: String,
     pub bitrate: String,

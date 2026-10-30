@@ -18,6 +18,7 @@ import { clearAppearanceStorage, loadAppearanceFromStorage, saveAppearanceToStor
 const defaultSettings: ConverterSettings = {
   outputDir: "converted",
   fetchedDir: "fetched",
+  tempDir: "",
   category: "Music",
   format: "mp3",
   bitrate: "320k",

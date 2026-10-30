@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ChevronLeft,
   ChevronRight,
   LayoutGrid,
   List,
@@ -119,6 +120,9 @@ export function InProgressView({
   }, [events, jobId]);
 
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const requestedThumbnailsRef = useRef<Set<string>>(new Set());
+  const inFlightThumbnailsRef = useRef<Set<string>>(new Set());
 
   // Automatically follow live active job when running or when a new job starts
   useEffect(() => {
@@ -291,50 +295,6 @@ export function InProgressView({
     return undefined;
   }
 
-  // Load thumbnails for ready items and album covers
-  useEffect(() => {
-    const resolvedDir = summary.outputDir || outputDir;
-    if (!resolvedDir) return;
-
-    const jobKey = currentJobId || "default";
-    const batchCoverKey = `${jobKey}:batch_cover`;
-
-    if (!previews[batchCoverKey] && summary.coverArtPath) {
-      bridge.getThumbnail(resolvedDir, summary.coverArtPath)
-        .then((thumb) => {
-          if (thumb) setPreviews((prev) => ({ ...prev, [batchCoverKey]: thumb }));
-        })
-        .catch(() => {});
-    }
-
-    for (const item of items) {
-      const itemKey = `${jobKey}:item-${item.index}`;
-      if (previews[itemKey]) continue;
-
-      const targetPath = item.coverPath
-        || (item.outputPath
-          ? (item.outputPath.includes(":\\") || item.outputPath.startsWith("/")
-            ? item.outputPath
-            : `${resolvedDir.replace(/[\\/]$/, "")}\\${item.outputPath}`)
-          : null);
-
-      if (targetPath) {
-        bridge.getThumbnail(resolvedDir, targetPath)
-          .then((thumb) => {
-            if (thumb) {
-              setPreviews((prev) => ({
-                ...prev,
-                [itemKey]: thumb,
-                [`${jobKey}:${item.id}`]: thumb,
-                ...(item.outputPath ? { [`${jobKey}:${item.outputPath}`]: thumb } : {}),
-              }));
-            }
-          })
-          .catch(() => {});
-      }
-    }
-  }, [items, outputDir, summary.outputDir, summary.coverArtPath, previews, currentJobId]);
-
   // Filter items for display
   const displayedItems = useMemo(() => {
     let list = items;
@@ -352,6 +312,91 @@ export function InProgressView({
     }
     return list;
   }, [items, filterState, searchQuery]);
+
+  // Reset pagination on session, filter, or search change
+  useEffect(() => {
+    setPage(1);
+  }, [currentJobId, filterState, searchQuery]);
+
+  const ITEMS_PER_PAGE = 32;
+  const totalPages = Math.max(1, Math.ceil(displayedItems.length / ITEMS_PER_PAGE));
+  const currentPage = Math.min(Math.max(1, page), totalPages);
+  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+  const paginatedItems = useMemo(() => {
+    return displayedItems.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [displayedItems, startIndex]);
+
+  const activeItemIndex = useMemo(() => {
+    return displayedItems.findIndex((it) => it.status === "downloading" || it.status === "transcoding");
+  }, [displayedItems]);
+  const activeItemPage = activeItemIndex >= 0 ? Math.floor(activeItemIndex / ITEMS_PER_PAGE) + 1 : null;
+
+  // Load thumbnails ONLY for visible items on the active page (with deduplication & in-flight tracking)
+  useEffect(() => {
+    const resolvedDir = summary.outputDir || outputDir;
+    if (!resolvedDir) return;
+
+    const jobKey = currentJobId || "default";
+    const batchCoverKey = `${jobKey}:batch_cover`;
+
+    if (!previews[batchCoverKey] && summary.coverArtPath && !requestedThumbnailsRef.current.has(batchCoverKey)) {
+      requestedThumbnailsRef.current.add(batchCoverKey);
+      bridge.getThumbnail(resolvedDir, summary.coverArtPath)
+        .then((thumb) => {
+          if (thumb) setPreviews((prev) => ({ ...prev, [batchCoverKey]: thumb }));
+        })
+        .catch(() => {});
+    }
+
+    const MAX_CONCURRENT_THUMBS = 2;
+    const processNext = () => {
+      if (inFlightThumbnailsRef.current.size >= MAX_CONCURRENT_THUMBS) return;
+
+      for (const item of paginatedItems) {
+        if (inFlightThumbnailsRef.current.size >= MAX_CONCURRENT_THUMBS) break;
+        const itemKey = `${jobKey}:item-${item.index}`;
+        if (
+          previews[itemKey] ||
+          requestedThumbnailsRef.current.has(itemKey) ||
+          inFlightThumbnailsRef.current.has(itemKey)
+        ) {
+          continue;
+        }
+
+        const targetPath = item.coverPath
+          || (item.outputPath
+            ? (item.outputPath.includes(":\\") || item.outputPath.startsWith("/")
+              ? item.outputPath
+              : `${resolvedDir.replace(/[\\/]$/, "")}\\${item.outputPath}`)
+            : null);
+
+        if (targetPath) {
+          inFlightThumbnailsRef.current.add(itemKey);
+          bridge.getThumbnail(resolvedDir, targetPath)
+            .then((thumb) => {
+              requestedThumbnailsRef.current.add(itemKey);
+              inFlightThumbnailsRef.current.delete(itemKey);
+              if (thumb) {
+                setPreviews((prev) => ({
+                  ...prev,
+                  [itemKey]: thumb,
+                  [`${jobKey}:${item.id}`]: thumb,
+                  ...(item.outputPath ? { [`${jobKey}:${item.outputPath}`]: thumb } : {}),
+                }));
+              }
+              processNext();
+            })
+            .catch(() => {
+              requestedThumbnailsRef.current.add(itemKey);
+              inFlightThumbnailsRef.current.delete(itemKey);
+              processNext();
+            });
+        }
+      }
+    };
+
+    processNext();
+  }, [paginatedItems, outputDir, summary.outputDir, summary.coverArtPath, currentJobId]);
 
   async function openOutputFolder() {
     const dir = summary.outputDir || outputDir;
@@ -749,7 +794,7 @@ export function InProgressView({
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         {layoutMode === "grid" ? (
           <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-            {displayedItems.map((item) => (
+            {paginatedItems.map((item) => (
               <ItemCard
                 key={item.id}
                 item={item}
@@ -767,7 +812,7 @@ export function InProgressView({
           </div>
         ) : (
           <div className="panel divide-y divide-white/[0.04]">
-            {displayedItems.map((item) => (
+            {paginatedItems.map((item) => (
               <ItemCard
                 key={item.id}
                 item={item}
@@ -785,6 +830,54 @@ export function InProgressView({
           </div>
         )}
       </div>
+
+      {/* Pagination Bar for Large Sessions */}
+      {totalPages > 1 && (
+        <div className="panel flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-2.5 text-xs text-zinc-400">
+          <div className="flex items-center gap-2">
+            <span>
+              Showing <span className="font-medium text-white">{startIndex + 1}</span>–
+              <span className="font-medium text-white">{Math.min(startIndex + ITEMS_PER_PAGE, displayedItems.length)}</span> of{" "}
+              <span className="font-medium text-white">{displayedItems.length}</span> items
+            </span>
+            {activeItemPage && activeItemPage !== currentPage && (
+              <button
+                type="button"
+                onClick={() => setPage(activeItemPage)}
+                className="ml-2 inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 transition-colors cursor-pointer"
+                title={`Jump to active item on page ${activeItemPage}`}
+              >
+                <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Jump to active (Page {activeItemPage})
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={currentPage <= 1}
+              onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+              className="subtle-button flex items-center gap-1 px-2.5 py-1 text-xs disabled:pointer-events-none disabled:opacity-30"
+              aria-label="Previous page"
+            >
+              <ChevronLeft size={13} /> Previous
+            </button>
+            <span className="px-2 font-mono text-[11px] text-zinc-300">
+              {currentPage} / {totalPages}
+            </span>
+            <button
+              type="button"
+              disabled={currentPage >= totalPages}
+              onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+              className="subtle-button flex items-center gap-1 px-2.5 py-1 text-xs disabled:pointer-events-none disabled:opacity-30"
+              aria-label="Next page"
+            >
+              Next <ChevronRight size={13} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 5. Bottom Live Ticker Dock */}
       {latestLogLine && (
