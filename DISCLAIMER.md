@@ -56,11 +56,14 @@ Operators assume sole and exclusive legal liability under the Digital Millennium
 
 ---
 
-## 3. Platform Terms, Guest Routing & Browser Session Access
+## 3. Guest-First Architecture & Host Footprint Delegation
 
-1. **Guest vs. Authenticated Access:** When using guest extraction, JaneConverter interacts only with publicly broadcast resources. When opt-in browser session extraction is enabled, JaneConverter duplicates local, ephemeral browser cookies solely to retrieve content your existing personal account is already granted authorization to view.
-2. **Contractual Terms of Service:** Many online platforms (including YouTube, Meta, TikTok, Instagram, X/Twitter, and Pinterest) maintain Terms of Service that restrict automated scraping or programmatic retrieval. 
-3. **Operator Assumption of Risk:** The operator is solely responsible for evaluating platform contractual terms. The maintainers of JaneConverter accept zero responsibility for account suspensions, IP rate limits, API bans, or legal claims resulting from platform policy enforcement.
+JaneConverter adheres to a strict dual-mode network routing model:
+
+1. **Default Guest-First Public Routing:** JaneConverter operates as an unauthenticated, anonymous guest by default. It extracts solely from publicly broadcast endpoints, public CDNs, and open media manifests without requesting, requiring, or utilizing user accounts whenever content is publicly reachable.
+2. **The Host Footprint Delegation Doctrine (Opt-In Browser Cookies):** Enabling browser session extraction in Settings constitutes an explicit, voluntary, and conscious authorization by the host. By enabling this setting, **the host expressly authorizes JaneConverter to utilize the host's OWN personal browser footprint, session credentials, and cookies as the authenticated navigator** on the host's behalf to retrieve media that unauthenticated guest mode cannot reach.
+3. **Agency & Direct Personal Attribution:** When executing with opt-in browser cookies, JaneConverter acts strictly as a local client-side proxy executing the host's explicit commands. Every network request issued under an authenticated browser session is legally, technically, and contractually an action performed directly by the host through their own personal platform account. The developers and maintainers of JaneConverter have zero access to, possession of, or liability for what the host's authenticated session accesses.
+4. **Contractual Terms of Service & Operator Risk:** Online platforms may restrict automated or script-assisted access in their user agreements. The host assumes 100% full legal, contractual, and technical risk regarding platform Terms of Service, including any account limitations, IP rate limits, or sanctions imposed by platforms on the host's account.
 
 ---
 
