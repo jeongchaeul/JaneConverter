@@ -272,12 +272,13 @@ pub fn prepare_command(command: &mut Command) {
         }
     }
     command.env("JANECONVERTER_DATA_DIR", data_root());
-    let settings = settings_get_internal();
-    let active_temp = if !settings.temp_dir.trim().is_empty() {
-        PathBuf::from(settings.temp_dir.trim())
-    } else {
-        default_temp_dir()
-    };
+    let kv = read_kv();
+    let active_temp = kv
+        .get("temp_dir")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(default_temp_dir);
     let _ = std::fs::create_dir_all(&active_temp);
     command.env("JANECONVERTER_TEMP_DIR", &active_temp);
     command.env("PYTHONUTF8", "1");
