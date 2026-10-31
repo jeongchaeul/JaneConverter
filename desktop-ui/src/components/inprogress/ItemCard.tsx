@@ -15,6 +15,7 @@ interface ItemCardProps {
   onStatus: (message: string) => void;
   onOpen: (item: InProgressItem) => void;
   onShowInFolder: (item: InProgressItem) => void;
+  onDelete?: (item: InProgressItem) => void;
 }
 
 export function ItemCard({
@@ -28,6 +29,7 @@ export function ItemCard({
   onStatus,
   onOpen,
   onShowInFolder,
+  onDelete,
 }: ItemCardProps) {
   const isActive = item.status === "downloading" || item.status === "transcoding";
 
@@ -130,6 +132,7 @@ export function ItemCard({
             onStatus={onStatus}
             onOpen={onOpen}
             onShowInFolder={onShowInFolder}
+            onDelete={onDelete}
           />
         </div>
       </div>
@@ -216,6 +219,7 @@ export function ItemCard({
         onStatus={onStatus}
         onOpen={onOpen}
         onShowInFolder={onShowInFolder}
+        onDelete={onDelete}
       />
     </div>
   );

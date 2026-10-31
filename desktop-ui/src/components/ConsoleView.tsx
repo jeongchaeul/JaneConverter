@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, Check, Clipboard, Download, Filter, Layers, Pause, Play, Search, Square, TerminalSquare, Trash2, X } from "lucide-react";
-import { bridge, type Category, type ConverterEvent, type ConversionHistoryItem } from "../bridge";
+import { bridge, type Category, type ConverterEvent, type ConversionHistoryItem, type ConverterSettings } from "../bridge";
 import { InProgressView } from "./InProgressView";
 
 export function ConsoleView({
@@ -13,6 +13,7 @@ export function ConsoleView({
   outputDir = "",
   category,
   format,
+  settings,
   initialMode = "in_progress",
   mode,
   historyItems = [],
@@ -36,6 +37,7 @@ export function ConsoleView({
   outputDir?: string;
   category?: Category;
   format?: string;
+  settings?: ConverterSettings;
   initialMode?: "in_progress" | "raw";
   mode?: "in_progress" | "raw";
   historyItems?: ConversionHistoryItem[];
@@ -232,6 +234,7 @@ export function ConsoleView({
         outputDir={outputDir}
         category={category}
         format={format}
+        settings={settings}
         onPauseToggle={onPauseToggle}
         onAbort={onAbort}
         onClear={onClear}

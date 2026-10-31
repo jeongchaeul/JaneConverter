@@ -32,6 +32,7 @@ import {
   Square,
   Trash2,
   Wand2,
+  X,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { AccessStatus, Category, ConverterEvent, ConverterSettings, FetchedMedia, PlaylistCatalog, RuntimeInfo } from "../bridge";
@@ -1436,6 +1437,15 @@ export function ConverterView({
                   Use as source
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => setCompletedItem(null)}
+                className="flex size-7 items-center justify-center rounded-lg border border-red-500/20 bg-red-500/10 text-red-400 transition-colors hover:border-red-500/40 hover:bg-red-500/20 hover:text-red-300"
+                title="Close completion prompt"
+                aria-label="Close completion prompt"
+              >
+                <X className="size-3.5" />
+              </button>
             </div>
           </div>
         </motion.div>

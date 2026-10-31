@@ -7,7 +7,8 @@ import {
   Music,
   Search,
 } from "lucide-react";
-import { bridge, type Category, type ConverterEvent, type ConversionHistoryItem } from "../bridge";
+import { bridge, type Category, type ConverterEvent, type ConversionHistoryItem, type ConverterSettings } from "../bridge";
+import { findPresetName } from "../options";
 import { InProgressHeader } from "./inprogress/InProgressHeader";
 import { ItemCard } from "./inprogress/ItemCard";
 import { ItemContextMenu } from "./inprogress/ItemContextMenu";
@@ -48,6 +49,7 @@ export function InProgressView({
   outputDir = "",
   category,
   format,
+  settings,
   historyItems = [],
   conversionTimings = {},
   onPauseToggle,
@@ -68,6 +70,7 @@ export function InProgressView({
   outputDir?: string;
   category?: Category;
   format?: string;
+  settings?: ConverterSettings;
   historyItems?: ConversionHistoryItem[];
   conversionTimings?: Record<string, number>;
   onPauseToggle?: () => Promise<void> | void;
@@ -87,6 +90,7 @@ export function InProgressView({
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
   const [showSessionModal, setShowSessionModal] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: InProgressItem } | null>(null);
+  const [deletedItemIds, setDeletedItemIds] = useState<Set<string>>(new Set());
 
   // Close context menu on outside click or Escape
   useEffect(() => {
@@ -197,6 +201,7 @@ export function InProgressView({
       setPreviews({});
       setFailedImages({});
       setSelectedJobId(null);
+      setDeletedItemIds(new Set());
     }
   }, [events.length]);
 
@@ -295,9 +300,65 @@ export function InProgressView({
     return undefined;
   }
 
+  // Remaining active items excluding deleted ones
+  const remainingItems = useMemo(
+    () => items.filter((it) => !deletedItemIds.has(it.id)),
+    [items, deletedItemIds]
+  );
+  const totalCount = remainingItems.length;
+  const doneCount = useMemo(
+    () => remainingItems.filter((it) => it.status === "ready").length,
+    [remainingItems]
+  );
+  const activeCount = useMemo(
+    () => remainingItems.filter((it) => it.status === "downloading" || it.status === "transcoding").length,
+    [remainingItems]
+  );
+  const failedCount = useMemo(
+    () => remainingItems.filter((it) => it.status === "failed").length,
+    [remainingItems]
+  );
+
+  // Conversion Settings & Presets
+  const currentHistoryItem = useMemo(() => {
+    if (!currentJobId) return undefined;
+    return historyItems.find((h) => h.id === currentJobId);
+  }, [currentJobId, historyItems]);
+
+  const presetBadge = useMemo(() => {
+    if (currentHistoryItem?.presetName) return currentHistoryItem.presetName;
+    if (settings) return findPresetName(settings);
+    return undefined;
+  }, [currentHistoryItem, settings]);
+
+  const formatBadge = useMemo(() => {
+    if (currentHistoryItem?.formatLabel) return currentHistoryItem.formatLabel;
+    if (summary.format) return summary.format.toUpperCase();
+    if (settings?.format) return settings.format.toUpperCase();
+    if (format) return format.toUpperCase();
+    return undefined;
+  }, [currentHistoryItem, summary.format, settings?.format, format]);
+
+  const qualityBadge = useMemo(() => {
+    if (currentHistoryItem?.qualityLabel) return currentHistoryItem.qualityLabel;
+    if (settings) {
+      if (settings.category === "Video") {
+        const res = settings.resolution === "original" ? "Original Res" : settings.resolution.toUpperCase();
+        return `${settings.bitrate.toUpperCase()} • ${res}`;
+      }
+      if (settings.category === "Image") {
+        return settings.format === "png" ? "Lossless" : `${settings.bitrate.toUpperCase()} Quality`;
+      }
+      const bitrateStr = settings.bitrate.endsWith("k") ? `${settings.bitrate.slice(0, -1)} kbps` : settings.bitrate;
+      const khz = `${(settings.sampleRate / 1000).toFixed(1).replace(/\.0$/, "")}kHz`;
+      return `${bitrateStr} • ${khz}`;
+    }
+    return undefined;
+  }, [currentHistoryItem, settings]);
+
   // Filter items for display
   const displayedItems = useMemo(() => {
-    let list = items;
+    let list = remainingItems;
     if (filterState === "active") {
       list = list.filter((it) => it.status === "downloading" || it.status === "transcoding");
     } else if (filterState === "done") {
@@ -311,7 +372,7 @@ export function InProgressView({
       list = list.filter((it) => it.title.toLowerCase().includes(q) || (it.artist && it.artist.toLowerCase().includes(q)));
     }
     return list;
-  }, [items, filterState, searchQuery]);
+  }, [remainingItems, filterState, searchQuery]);
 
   // Reset pagination on session, filter, or search change
   useEffect(() => {
@@ -494,6 +555,24 @@ export function InProgressView({
     }
   }
 
+  async function deleteItemFile(item: InProgressItem) {
+    const fullPath = getItemFullPath(item);
+    const root = settings?.outputDir || outputDir || summary.outputDir;
+    if (!fullPath) {
+      onStatus("No file path available to delete.");
+      return;
+    }
+    try {
+      if (root) {
+        await bridge.deleteLibraryEntry(root, fullPath);
+      }
+      setDeletedItemIds((prev) => new Set(prev).add(item.id));
+      onStatus(`Deleted: ${item.title}`);
+    } catch (err) {
+      onStatus(`Could not delete file: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   function getItemElapsedMs(item: InProgressItem): number | undefined {
     if (item.elapsedMs !== undefined) return item.elapsedMs;
     const full = getItemFullPath(item);
@@ -652,24 +731,45 @@ export function InProgressView({
               </h2>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
                 <span className="font-mono text-zinc-300">
-                  {summary.completed} of {summary.total} completed
+                  {doneCount} of {totalCount} completed
                 </span>
-                <span className="text-zinc-600">•</span>
-                {summary.active > 0 && (
-                  <span className="text-fuchsia-400 font-medium">
-                    {summary.active} converting
-                  </span>
-                )}
-                {summary.queued > 0 && (
-                  <span className="text-zinc-500">
-                    {summary.queued} queued
-                  </span>
-                )}
-                {summary.format && (
+                {activeCount > 0 && (
                   <>
                     <span className="text-zinc-600">•</span>
-                    <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-mono text-zinc-300">
-                      {summary.format.toUpperCase()}
+                    <span className="text-fuchsia-400 font-medium">
+                      {activeCount} converting
+                    </span>
+                  </>
+                )}
+                {summary.queued > 0 && (
+                  <>
+                    <span className="text-zinc-600">•</span>
+                    <span className="text-zinc-500">
+                      {summary.queued} queued
+                    </span>
+                  </>
+                )}
+                {formatBadge && (
+                  <>
+                    <span className="text-zinc-600">•</span>
+                    <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-mono uppercase text-zinc-200 border border-white/5">
+                      {formatBadge}
+                    </span>
+                  </>
+                )}
+                {qualityBadge && (
+                  <>
+                    <span className="text-zinc-600">•</span>
+                    <span className="font-mono text-[11px] text-zinc-400">
+                      {qualityBadge}
+                    </span>
+                  </>
+                )}
+                {presetBadge && (
+                  <>
+                    <span className="text-zinc-600">•</span>
+                    <span className="inline-flex items-center gap-1 rounded bg-[var(--accent-subtle)] border border-[var(--accent-glow)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent-color)]">
+                      Preset: {presetBadge}
                     </span>
                   </>
                 )}
@@ -710,7 +810,7 @@ export function InProgressView({
                 : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
             }`}
           >
-            All ({summary.total})
+            All ({totalCount})
           </button>
           <button
             type="button"
@@ -721,7 +821,7 @@ export function InProgressView({
                 : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
             }`}
           >
-            Active ({summary.active})
+            Active ({activeCount})
           </button>
           <button
             type="button"
@@ -732,9 +832,9 @@ export function InProgressView({
                 : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
             }`}
           >
-            Done ({summary.completed})
+            Done ({doneCount})
           </button>
-          {summary.failed > 0 && (
+          {failedCount > 0 && (
             <button
               type="button"
               onClick={() => setFilterState("failed")}
@@ -744,7 +844,7 @@ export function InProgressView({
                   : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
               }`}
             >
-              Failed ({summary.failed})
+              Failed ({failedCount})
             </button>
           )}
         </div>
@@ -807,6 +907,7 @@ export function InProgressView({
                 onStatus={onStatus}
                 onOpen={openItemFile}
                 onShowInFolder={showItemInFolder}
+                onDelete={deleteItemFile}
               />
             ))}
           </div>
@@ -825,6 +926,7 @@ export function InProgressView({
                 onStatus={onStatus}
                 onOpen={openItemFile}
                 onShowInFolder={showItemInFolder}
+                onDelete={deleteItemFile}
               />
             ))}
           </div>
@@ -917,6 +1019,7 @@ export function InProgressView({
         elapsedMs={contextMenu ? getItemElapsedMs(contextMenu.item) : undefined}
         openItemFile={openItemFile}
         showItemInFolder={showItemInFolder}
+        onDeleteItem={deleteItemFile}
         openOutputFolder={openOutputFolder}
         onOpenRawConsole={onOpenRawConsole}
         onStatus={onStatus}

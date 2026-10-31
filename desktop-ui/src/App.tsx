@@ -930,6 +930,7 @@ export default function App() {
           outputDir={activeJobContextRef.current?.exportedPath || settings.outputDir}
           category={settings.category}
           format={settings.format}
+          settings={activeJobContextRef.current?.effectiveSettings || settings}
           initialMode="in_progress"
           historyItems={history}
           conversionTimings={conversionTimings}

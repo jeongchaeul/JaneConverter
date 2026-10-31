@@ -15,6 +15,7 @@ vi.mock("../bridge", () => ({
     openPath: vi.fn().mockResolvedValue(undefined),
     openFile: vi.fn().mockResolvedValue(undefined),
     dragLibraryFile: vi.fn().mockResolvedValue(undefined),
+    deleteLibraryEntry: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -887,6 +888,100 @@ describe("ConsoleView", () => {
     expect(container.textContent).toContain("No active conversions");
     expect(container.textContent).not.toContain("Downloading 0%");
     expect(container.textContent).not.toContain("1 converting");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("renders the 4 action buttons in order (Drag - Delete - Open - Open File path), deletes item when clicked, and displays conversion settings preset", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const deleteSpy = vi.spyOn(bridge, "deleteLibraryEntry").mockResolvedValue();
+
+    const events: ConverterEvent[] = [
+      { jobId: "job-album-1", kind: "started", message: "[*] JANECONVERTER PLAYLIST BATCH PIPELINE" },
+      { jobId: "job-album-1", kind: "log", message: "Target Directory: I:\\Music\\Album" },
+      { jobId: "job-album-1", kind: "log", message: "[*] Track #1 Manifest: Donut's New Groove" },
+      { jobId: "job-album-1", kind: "log", message: "[+] Converted: 1. Donut's New Groove.mp3" },
+      { jobId: "job-album-1", kind: "finished", message: "DONE! Exported: I:\\Music\\Album", output: "I:\\Music\\Album" },
+    ];
+
+    const settings = {
+      outputDir: "I:\\Music\\Album",
+      fetchedDir: "fetched",
+      tempDir: "",
+      category: "Music" as const,
+      format: "mp3",
+      bitrate: "320k",
+      sampleRate: 48000,
+      resolution: "original",
+      normalize: false,
+      useGpu: false,
+      saveCover: true,
+      saveMetadata: true,
+      allowPngFallback: false,
+      reconstructFrequencyLoss: false,
+      retries: 2,
+      startTime: "",
+    };
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={events}
+          jobId="job-album-1"
+          running={false}
+          initialMode="in_progress"
+          outputDir="I:\\Music\\Album"
+          settings={settings}
+          onClear={vi.fn()}
+          onStatus={vi.fn()}
+        />
+      );
+    });
+
+    // Verify preset and conversion settings in hero batch summary
+    expect(container.textContent).toContain("MP3");
+    expect(container.textContent).toContain("320 kbps • 48kHz");
+    expect(container.textContent).toContain("Preset: Fast MP3");
+    expect(container.textContent).toContain("1 of 1 completed");
+
+    // Verify the 4 action buttons order: Drag - Delete - Open - Open File path
+    const dragBtn = container.querySelector('button[aria-label="Drag Donut\'s New Groove"]');
+    const deleteBtn = container.querySelector('button[aria-label="Delete Donut\'s New Groove"]');
+    const playBtn = container.querySelector('button[aria-label="Open Donut\'s New Groove"]');
+    const folderBtn = container.querySelector('button[aria-label="Show in folder for Donut\'s New Groove"]');
+
+    expect(dragBtn).not.toBeNull();
+    expect(deleteBtn).not.toBeNull();
+    expect(playBtn).not.toBeNull();
+    expect(folderBtn).not.toBeNull();
+
+    const buttonContainer = dragBtn!.parentElement!;
+    const buttons = Array.from(buttonContainer.querySelectorAll("button"));
+    expect(buttons).toHaveLength(4);
+    expect(buttons[0]).toBe(dragBtn);
+    expect(buttons[1]).toBe(deleteBtn);
+    expect(buttons[2]).toBe(playBtn);
+    expect(buttons[3]).toBe(folderBtn);
+
+    // Click delete
+    await act(async () => {
+      deleteBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(deleteSpy).toHaveBeenCalledWith("I:\\Music\\Album", "I:\\Music\\Album\\1. Donut's New Groove.mp3");
+
+    // Item card is removed from view and count is 0 of 0
+    expect(container.querySelector('button[aria-label="Delete Donut\'s New Groove"]')).toBeNull();
+    expect(container.textContent).toContain("0 of 0 completed");
+
+    deleteSpy.mockRestore();
 
     await act(async () => {
       root.unmount();

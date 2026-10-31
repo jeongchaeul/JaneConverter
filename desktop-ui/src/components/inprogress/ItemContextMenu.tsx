@@ -1,4 +1,4 @@
-import { Clock, Copy, FolderOpen, Play, Terminal } from "lucide-react";
+import { Clock, Copy, FolderOpen, Play, Terminal, Trash2 } from "lucide-react";
 import { formatElapsedMs } from "../../options";
 import { ItemStatusBadge } from "./ItemStatusBadge";
 import type { InProgressItem } from "./types";
@@ -10,6 +10,7 @@ interface ItemContextMenuProps {
   elapsedMs?: number;
   openItemFile: (item: InProgressItem) => void;
   showItemInFolder: (item: InProgressItem) => void;
+  onDeleteItem?: (item: InProgressItem) => void;
   openOutputFolder?: () => void;
   onOpenRawConsole: () => void;
   onStatus: (message: string) => void;
@@ -23,6 +24,7 @@ export function ItemContextMenu({
   elapsedMs,
   openItemFile,
   showItemInFolder,
+  onDeleteItem,
   openOutputFolder,
   onOpenRawConsole,
   onStatus,
@@ -131,6 +133,18 @@ export function ItemContextMenu({
             >
               <Copy size={13} className="text-zinc-400" /> Copy full path
             </button>
+            {onDeleteItem && (
+              <button
+                type="button"
+                onClick={() => {
+                  onDeleteItem(item);
+                  onClose();
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-rose-300 transition-colors hover:bg-rose-500/10 hover:text-rose-200"
+              >
+                <Trash2 size={13} className="text-rose-400" /> Delete file
+              </button>
+            )}
           </>
         )}
 

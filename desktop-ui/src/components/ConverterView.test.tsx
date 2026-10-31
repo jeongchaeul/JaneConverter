@@ -915,4 +915,41 @@ it("groupIndexesByPreset groups selected items by their distinct presets", () =>
       ])
     );
   });
+
+  it("renders completion prompt with dismiss close button next to use as source and closes when clicked", async () => {
+    const view = renderView();
+    await act(async () => {
+      view.updateProps({
+        events: [
+          {
+            jobId: "job-1",
+            kind: "finished",
+            message: "Conversion complete: song.mp3",
+            output: "C:/output/song.mp3",
+          },
+        ],
+      });
+    });
+
+    expect(view.container.textContent).toContain("song.mp3");
+    expect(view.container.textContent).toContain("Conversion finished and verified via ffprobe.");
+
+    const useAsSourceBtn = Array.from(view.container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Use as source")
+    );
+    expect(useAsSourceBtn).toBeDefined();
+
+    const closeBtn = view.container.querySelector('button[aria-label="Close completion prompt"]') as HTMLButtonElement | null;
+    expect(closeBtn).not.toBeNull();
+
+    await act(async () => {
+      closeBtn?.click();
+      await Promise.resolve();
+    });
+
+    expect(view.container.textContent).not.toContain("Conversion finished and verified via ffprobe.");
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
 });

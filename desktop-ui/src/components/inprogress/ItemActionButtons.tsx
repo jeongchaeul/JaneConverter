@@ -1,4 +1,4 @@
-import { FolderOpen, GripVertical, Play } from "lucide-react";
+import { FolderOpen, GripVertical, Play, Trash2 } from "lucide-react";
 import { bridge } from "../../bridge";
 import type { InProgressItem } from "./types";
 
@@ -8,6 +8,7 @@ interface ItemActionButtonsProps {
   onStatus: (message: string) => void;
   onOpen: (item: InProgressItem) => void;
   onShowInFolder: (item: InProgressItem) => void;
+  onDelete?: (item: InProgressItem) => void;
 }
 
 export function ItemActionButtons({
@@ -16,6 +17,7 @@ export function ItemActionButtons({
   onStatus,
   onOpen,
   onShowInFolder,
+  onDelete,
 }: ItemActionButtonsProps) {
   if (item.status !== "ready" || !fullPath) {
     return null;
@@ -47,6 +49,21 @@ export function ItemActionButtons({
       >
         <GripVertical size={12} style={{ color: "var(--accent-color)" }} />
       </button>
+
+      {onDelete && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(item);
+          }}
+          className="flex size-6 items-center justify-center rounded-lg border border-white/5 bg-white/[0.03] text-zinc-400 transition-colors hover:border-red-400/20 hover:bg-red-400/10 hover:text-red-400"
+          title="Delete file"
+          aria-label={"Delete " + item.title}
+        >
+          <Trash2 size={12} />
+        </button>
+      )}
 
       <button
         type="button"
