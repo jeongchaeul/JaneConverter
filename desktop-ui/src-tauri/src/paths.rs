@@ -514,7 +514,7 @@ pub fn settings_get_internal() -> ConverterSettings {
         open_in_browser: parse_bool(&values, "open_in_browser", false),
         read_browser_cookies: parse_bool(&values, "read_browser_cookies", true),
         allow_story_extraction: parse_bool(&values, "allow_story_extraction", false),
-        archival_fallback: parse_bool(&values, "archival_fallback", false),
+        archival_fallback: parse_bool(&values, "archival_fallback", true),
         retries: values
             .get("retries")
             .and_then(|value| value.parse().ok())

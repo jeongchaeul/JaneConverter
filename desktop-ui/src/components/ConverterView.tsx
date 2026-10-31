@@ -1083,6 +1083,7 @@ export function ConverterView({
           resolution: previous.resolution,
           normalize: previous.normalize,
           useGpu: previous.useGpu,
+          archivalFallback: previous.archivalFallback,
         });
       }
       presetBaselineRef.current = null;
@@ -1101,6 +1102,7 @@ export function ConverterView({
         normalize: false,
         useGpu: settings.useGpu,
         bitrate: qualitiesFor(preset.format)[0],
+        archivalFallback: preset.archivalFallback ?? true,
       });
       setSelectedPresetId(preset.id);
       onStatus(`Applied ${preset.name} preset: ${preset.description}.`);
@@ -1115,6 +1117,7 @@ export function ConverterView({
       resolution: preset.resolution,
       normalize: preset.normalize,
       useGpu: settings.useGpu || preset.useGpu,
+      archivalFallback: preset.archivalFallback ?? true,
     });
     setSelectedPresetId(preset.id);
     onStatus(`Applied ${preset.name} preset: ${preset.description}.`);

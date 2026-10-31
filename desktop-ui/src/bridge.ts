@@ -320,7 +320,7 @@ const demoSettings: ConverterSettings = {
   startTime: "",
   endTime: "",
   allowStoryExtraction: false,
-  archivalFallback: false,
+  archivalFallback: true,
 };
 
 const demoBridge: JaneBridge = {

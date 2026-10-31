@@ -244,6 +244,50 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
+  it("activates archival fallback by default on presets, while allowing manual disable", async () => {
+    const view = renderView();
+    const presetButton = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Studio Master");
+    expect(presetButton).toBeDefined();
+
+    // 1. Selecting preset enables archivalFallback by default
+    await act(async () => { presetButton?.click(); await Promise.resolve(); });
+    expect(view.onSettings).toHaveBeenLastCalledWith(expect.objectContaining({ format: "wav", archivalFallback: true }));
+
+    // 2. User can expand Advanced settings and disable archival fallback
+    const advanced = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.includes("Advanced settings"));
+    await act(async () => { advanced?.click(); await Promise.resolve(); });
+    const archival = Array.from(view.container.querySelectorAll("label")).find((item) => item.textContent?.includes("Search archival vaults"));
+    expect(archival).toBeDefined();
+    // Re-render with archivalFallback true to test toggle off
+    await act(async () => {
+      view.root.render(
+        <ConverterView
+          settings={{ ...settings, archivalFallback: true }}
+          runtime={null}
+          events={[]}
+          access={{ active: false, link: "", browser: "", bridgeConnected: false }}
+          selectedCapture={null}
+          running={false}
+          progress={0}
+          status="Ready"
+          onSettings={view.onSettings}
+          onStart={vi.fn()}
+          onCancel={vi.fn()}
+          onCreateAccess={vi.fn()}
+          onClearAccess={vi.fn()}
+          onStatus={view.onStatus}
+          onError={view.onError}
+        />
+      );
+    });
+    const archivalChecked = Array.from(view.container.querySelectorAll("label")).find((item) => item.textContent?.includes("Search archival vaults"));
+    await act(async () => { archivalChecked?.querySelector("input")?.click(); await Promise.resolve(); });
+    expect(view.onSettings).toHaveBeenLastCalledWith(expect.objectContaining({ archivalFallback: false }));
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
   it("restores video settings and keeps relevant advanced controls available", async () => {
     const view = renderView(undefined, undefined, undefined, null, vi.fn(), { category: "Video", format: "mkv", bitrate: "best" });
     const presetButton = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Universal Video");

@@ -92,6 +92,7 @@ export interface IntentPreset {
   normalize: boolean;
   useGpu: boolean;
   preserveQuality?: boolean;
+  archivalFallback?: boolean;
 }
 
 export const intentPresets: IntentPreset[] = [
@@ -108,6 +109,7 @@ export const intentPresets: IntentPreset[] = [
     normalize: false,
     useGpu: false,
     preserveQuality: true,
+    archivalFallback: true,
   },
   {
     id: "studio-master",
@@ -121,6 +123,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: false,
     useGpu: false,
+    archivalFallback: true,
   },
   {
     id: "universal-music",
@@ -134,6 +137,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: true,
     useGpu: false,
+    archivalFallback: true,
   },
   {
     id: "fast-music",
@@ -147,6 +151,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: false,
     useGpu: false,
+    archivalFallback: true,
   },
   {
     id: "lossless-flac",
@@ -160,6 +165,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: false,
     useGpu: false,
+    archivalFallback: true,
   },
   {
     id: "universal-video",
@@ -173,6 +179,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "1080p",
     normalize: false,
     useGpu: true,
+    archivalFallback: true,
   },
   {
     id: "studio-cinematic",
@@ -186,6 +193,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: false,
     useGpu: false,
+    archivalFallback: true,
   },
   {
     id: "av1-archive",
@@ -199,6 +207,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: false,
     useGpu: true,
+    archivalFallback: true,
   },
   {
     id: "lossless-image",
@@ -212,6 +221,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: false,
     useGpu: false,
+    archivalFallback: true,
   },
 ];
 
