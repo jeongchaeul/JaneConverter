@@ -379,6 +379,10 @@ def get_ordered_browser_candidates(
         if b not in candidates:
             candidates.append(b)
 
+    for b in ("vivaldi", "firefox", "chrome", "edge", "brave", "opera"):
+        if b not in candidates:
+            candidates.append(b)
+
     return candidates
 
 
