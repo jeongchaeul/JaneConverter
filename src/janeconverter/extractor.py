@@ -15,6 +15,7 @@ from typing import Optional, Dict, Any, Callable
 import ipaddress
 import socket
 import json
+import html
 import requests
 import yt_dlp
 from .catalog_match import choose_catalog_match, match_score
@@ -117,6 +118,7 @@ def sanitize_filename(name: str, max_length: int = 100) -> str:
     """Cleans illegal Windows filesystem characters, control characters, and reserved device names."""
     if not name:
         return "media_file"
+    name = html.unescape(str(name))
     name = "".join(
         character for character in str(name) if not 0xD800 <= ord(character) <= 0xDFFF
     )

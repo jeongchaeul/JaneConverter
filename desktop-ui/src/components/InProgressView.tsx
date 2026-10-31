@@ -241,8 +241,19 @@ export function InProgressView({
         id,
         isLive
       );
-      const hist = historyItems.find((h) => h.id === id || h.id.startsWith(id + "-"));
+      const hist = historyItems.find(
+        (h) => h.id === id || h.id.startsWith(id + "-") || (sSummary.title && (h.fileName === sSummary.title || h.source === sSummary.title))
+      );
       let elapsedMs = hist?.elapsedMs;
+      if (elapsedMs === undefined && sSummary.title) {
+        const titleLower = sSummary.title.toLowerCase();
+        for (const [k, v] of Object.entries(conversionTimings)) {
+          if (k.toLowerCase().includes(titleLower) && typeof v === "number" && v > 0) {
+            elapsedMs = v;
+            break;
+          }
+        }
+      }
       if (elapsedMs === undefined) {
         const itemElapsed = items
           .map((it) => getItemElapsedMs(it))

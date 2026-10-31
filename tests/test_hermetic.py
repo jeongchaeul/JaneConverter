@@ -293,6 +293,11 @@ def test_sanitize_filename_preserves_cjk_and_emoji_but_removes_unpaired_surrogat
     assert sanitize_filename(title) == "\u8c22\u695a\u73b2 \U0001f4f7"
 
 
+def test_sanitize_filename_unescapes_html_entities():
+    raw = "source_&#064;Emma_x_20240421 &amp; friends &quot;cool&quot;"
+    assert sanitize_filename(raw) == "source_@Emma_x_20240421 & friends _cool_"
+
+
 # ---------------------------------------------------------------------------
 # CLI argument validation
 # ---------------------------------------------------------------------------
