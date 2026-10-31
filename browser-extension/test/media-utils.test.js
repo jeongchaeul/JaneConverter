@@ -153,7 +153,7 @@ test("requires the browser response to be actual media of the requested kind", (
   assert.equal(isExpectedMediaResponse("audio", "video/mp4"), false);
 });
 
-test("accepts allowlisted network media and rejects adaptive manifests", () => {
+test("accepts network media, adaptive stream manifests, and 3D models", () => {
   assert.deepEqual(
     networkMediaCandidate(
       "https://scontent.fhan2-4.fna.fbcdn.net/video.mp4?token=temporary",
@@ -162,13 +162,21 @@ test("accepts allowlisted network media and rejects adaptive manifests", () => {
     ),
     { accepted: true, mediaKind: "video", contentType: "video/mp4" }
   );
-  assert.equal(
+  assert.deepEqual(
     networkMediaCandidate(
       "https://scontent.fhan2-4.fna.fbcdn.net/story.m3u8",
       "application/vnd.apple.mpegurl",
       "Media"
-    ).accepted,
-    false
+    ),
+    { accepted: true, mediaKind: "stream", contentType: "application/vnd.apple.mpegurl" }
+  );
+  assert.deepEqual(
+    networkMediaCandidate(
+      "https://cdn.example.com/asset/character.glb",
+      "model/gltf-binary",
+      "Fetch"
+    ),
+    { accepted: true, mediaKind: "model", contentType: "model/gltf-binary" }
   );
 });
 

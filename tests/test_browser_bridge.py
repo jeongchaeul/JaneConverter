@@ -86,3 +86,41 @@ def test_capture_store_rejects_out_of_order_chunks(tmp_path):
         store.append(capture_id, 1, b"def")
 
     store.close()
+
+
+def test_capture_metadata_accepts_stream_and_model():
+    stream_meta = parse_capture_metadata(
+        json.dumps(_metadata(
+            fileName="live-stream.m3u8",
+            mediaKind="stream",
+            mimeType="application/vnd.apple.mpegurl",
+        )),
+        "https://www.facebook.com/reel/123",
+    )
+    assert stream_meta.media_kind == "stream"
+    assert stream_meta.mime_type == "application/vnd.apple.mpegurl"
+
+    model_meta = parse_capture_metadata(
+        json.dumps(_metadata(
+            fileName="avatar.glb",
+            mediaKind="model",
+            mimeType="model/gltf-binary",
+        )),
+        "https://www.facebook.com/reel/123",
+    )
+    assert model_meta.media_kind == "model"
+    assert model_meta.mime_type == "model/gltf-binary"
+
+
+def test_validate_capture_stream_and_model(tmp_path):
+    from janeconverter.capture_validation import validate_capture
+
+    m3u8_file = tmp_path / "stream.m3u8"
+    m3u8_file.write_text("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n", encoding="utf-8")
+    stream_res = validate_capture(str(m3u8_file), "stream")
+    assert "mpegurl" in stream_res["mimeType"]
+
+    glb_file = tmp_path / "model.glb"
+    glb_file.write_bytes(b"glTF\x02\x00\x00\x00\x20\x00\x00\x00")
+    model_res = validate_capture(str(glb_file), "model")
+    assert model_res["mimeType"] == "model/gltf-binary"

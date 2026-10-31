@@ -58,6 +58,13 @@ fn capture_extension(mime: &str) -> Result<&'static str, String> {
         "video/asf" => Ok("wmv"),
         "audio/caf" => Ok("caf"),
         "audio/au" => Ok("au"),
+        "application/vnd.apple.mpegurl" | "application/x-mpegurl" | "audio/x-mpegurl" => Ok("m3u8"),
+        "application/dash+xml" => Ok("mpd"),
+        "model/gltf-binary" => Ok("glb"),
+        "model/gltf+json" => Ok("gltf"),
+        "model/obj" => Ok("obj"),
+        "application/x-gaussian-splat" => Ok("splat"),
+        "application/x-ply" => Ok("ply"),
         _ => Err("The captured container is readable but unsupported by the local library.".into()),
     }
 }
@@ -166,6 +173,14 @@ fn media_descriptor(path: &Path) -> Option<(&'static str, &'static str)> {
         "ppm" => Some(("image", "image/x-portable-pixmap")),
         "pgm" => Some(("image", "image/x-portable-graymap")),
         "pbm" => Some(("image", "image/x-portable-bitmap")),
+        "m3u8" => Some(("stream", "application/vnd.apple.mpegurl")),
+        "mpd" => Some(("stream", "application/dash+xml")),
+        "glb" => Some(("model", "model/gltf-binary")),
+        "gltf" => Some(("model", "model/gltf+json")),
+        "obj" => Some(("model", "model/obj")),
+        "splat" => Some(("model", "application/x-gaussian-splat")),
+        "ply" => Some(("model", "application/x-ply")),
+        "fbx" => Some(("model", "application/octet-stream")),
         _ => None,
     }
 }
@@ -1581,12 +1596,13 @@ fn validate_capture_metadata(body: &[u8], source: Option<&str>) -> Result<Captur
     {
         return Err("The browser capture returned an unsafe file name.".into());
     }
-    if !matches!(metadata.media_kind.as_str(), "video" | "audio" | "image")
-        || !matches!(
-            metadata.capture_mode.as_str(),
-            "current" | "sequence" | "network" | "collect"
-        )
-        || !metadata.mime_type.contains('/')
+    if !matches!(
+        metadata.media_kind.as_str(),
+        "video" | "audio" | "image" | "stream" | "model"
+    ) || !matches!(
+        metadata.capture_mode.as_str(),
+        "current" | "sequence" | "network" | "collect"
+    ) || !metadata.mime_type.contains('/')
         || metadata.title.is_empty()
     {
         return Err("The browser capture metadata was invalid.".into());
@@ -1891,6 +1907,11 @@ mod tests {
     fn capture_suffix_follows_decoded_container_not_the_page_filename() {
         assert_eq!(capture_extension("image/png").unwrap(), "png");
         assert_eq!(capture_extension("audio/mp4").unwrap(), "m4a");
+        assert_eq!(
+            capture_extension("application/vnd.apple.mpegurl").unwrap(),
+            "m3u8"
+        );
+        assert_eq!(capture_extension("model/gltf-binary").unwrap(), "glb");
         assert!(capture_extension("text/html").is_err());
     }
 }

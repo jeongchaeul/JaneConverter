@@ -20,7 +20,7 @@ from PIL import Image
 from .cookie_unlocker import patch_yt_dlp_cookie_database_reader
 from .extractor import clean_windows_path, sanitize_filename
 from .image_format import convert_image_format
-from .paths import get_temp_dir
+from .paths import get_temp_dir, promote_staging_dir
 
 
 MAX_PHOTOS = 500
@@ -56,18 +56,7 @@ PLATFORM_LABELS = {
 }
 
 
-def _promote_staging_dir(staging_dir: str, target_dir: str, max_attempts: int = 5) -> None:
-    """Atomically promote staging_dir to target_dir with exponential retry on Windows file locks."""
-    for attempt in range(max_attempts):
-        try:
-            os.replace(staging_dir, target_dir)
-            return
-        except (PermissionError, FileExistsError, OSError) as error:
-            winerr = getattr(error, "winerror", None)
-            if attempt < max_attempts - 1 and (os.name != "nt" or winerr in (5, 32, 33, 183)):
-                time.sleep(0.1 * (2 ** attempt))
-                continue
-            raise
+_promote_staging_dir = promote_staging_dir
 
 
 def _media_url(value: Any, platform: str) -> str:

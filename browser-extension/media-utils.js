@@ -8,6 +8,7 @@
 }(typeof globalThis === "object" ? globalThis : this, function () {
   const DIRECT_EXTENSIONS = /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac|weba|mp4|m4v|webm|mov|mkv|avi|flv|3gp|jpe?g|png|gif|webp|avif|heic)(?:[?#]|$)/i;
   const STREAM_EXTENSIONS = /\.(m3u8|mpd)(?:[?#]|$)/i;
+  const MODEL_EXTENSIONS = /\.(glb|gltf|obj|splat|ply|fbx)(?:[?#]|$)/i;
   const RANGE_PARAMS = ["bytestart", "byteend", "range", "rn", "rbuf"];
   // Explicit site and CDN registry for privileged browser-session fetches.
   // Page-provided URLs are never treated as unrestricted fetch targets.
@@ -91,11 +92,25 @@
     }));
   }
 
+  function isAllowedNetworkMediaUrl(pageUrl, mediaUrl) {
+    const parsed = parsedHttpsUrl(mediaUrl);
+    if (!parsed) return false;
+    const platform = sessionPlatformForPage(pageUrl);
+    if (platform) {
+      return platform.media.some(function (host) {
+        return hostMatches(parsed.hostname, host);
+      });
+    }
+    return true;
+  }
+
   function isExpectedMediaResponse(mediaKind, contentType) {
     const type = String(contentType || "").split(";", 1)[0].trim().toLowerCase();
     return (mediaKind === "video" && type.startsWith("video/"))
       || (mediaKind === "audio" && type.startsWith("audio/"))
-      || (mediaKind === "image" && type.startsWith("image/"));
+      || (mediaKind === "image" && type.startsWith("image/"))
+      || (mediaKind === "stream" && (type.includes("mpegurl") || type.includes("dash+xml") || type === "application/octet-stream"))
+      || (mediaKind === "model" && (type.startsWith("model/") || type.includes("gltf") || type.includes("splat") || type === "application/octet-stream"));
   }
 
   function networkMediaCandidate(url, contentType, resourceType) {
@@ -103,18 +118,23 @@
     const type = String(contentType || "").split(";", 1)[0].trim().toLowerCase();
     let mediaKind = classify(value, type);
     if (mediaKind === "stream") {
-      return { accepted: false, reason: "adaptive stream manifest" };
+      return { accepted: true, mediaKind: "stream", contentType: type || "application/vnd.apple.mpegurl" };
+    }
+    if (mediaKind === "model") {
+      return { accepted: true, mediaKind: "model", contentType: type || "model/gltf-binary" };
     }
     if (!mediaKind && String(resourceType || "").toLowerCase() === "media" && isStreamSegment(value, type)) {
       mediaKind = "video";
     }
-    if (!mediaKind || !["video", "audio", "image"].includes(mediaKind)) {
+    if (!mediaKind || !["video", "audio", "image", "stream", "model"].includes(mediaKind)) {
       return { accepted: false, reason: "not a media response" };
     }
     return { accepted: true, mediaKind: mediaKind, contentType: type || "application/octet-stream" };
   }
 
   function networkMinimumBytes(mediaKind) {
+    if (mediaKind === "stream") return 32;
+    if (mediaKind === "model") return 256;
     if (mediaKind === "image") return 8 * 1024;
     return 32 * 1024;
   }
@@ -133,10 +153,14 @@
     if (STREAM_EXTENSIONS.test(value) || type.includes("mpegurl") || type.includes("dash+xml")) {
       return "stream";
     }
+    if (MODEL_EXTENSIONS.test(value) || type.startsWith("model/") || type.includes("gltf") || type.includes("splat")) {
+      return "model";
+    }
     if (type.startsWith("video/")) return "video";
     if (type.startsWith("audio/")) return "audio";
     if (type.startsWith("image/")) return "image";
     const extension = /\.([a-z0-9]{2,5})(?:[?#]|$)/i.exec(value);
+    if (extension && MODEL_EXTENSIONS.test(value)) return "model";
     if (!extension || !DIRECT_EXTENSIONS.test(value)) return null;
     if (/^(jpe?g|png|gif|webp|avif|heic)$/i.test(extension[1])) return "image";
     if (/^(mp3|m4a|aac|ogg|oga|opus|wav|flac|weba)$/i.test(extension[1])) return "audio";
@@ -306,6 +330,7 @@
     isSocialMediaImage,
     isStreamSegment,
     isAllowedSessionMediaUrl,
+    isAllowedNetworkMediaUrl,
     isExpectedMediaResponse,
     networkCaptureDisposition,
     networkMediaCandidate,

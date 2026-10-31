@@ -142,21 +142,41 @@
 
   async function captureImage(candidate) {
     const element = candidate.element;
+    const isCanvas = candidate.tag === "canvas" || element.tagName.toLowerCase() === "canvas";
     const width = element.naturalWidth || element.videoWidth || element.width;
     const height = element.naturalHeight || element.videoHeight || element.height;
     if (!width || !height) throw new Error("The story image has not finished loading.");
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
     let blob;
-    try {
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("The browser could not create a rendered image surface.");
-      context.drawImage(element, 0, 0, width, height);
-      blob = await new Promise(function (resolve) { canvas.toBlob(resolve, "image/png"); });
-    } catch (_) {}
+    if (isCanvas) {
+      try {
+        blob = await new Promise(function (resolve) {
+          requestAnimationFrame(function () {
+            try {
+              element.toBlob(resolve, "image/png");
+            } catch (_) {
+              resolve(null);
+            }
+          });
+        });
+      } catch (_) {}
+    }
+    if (!blob) {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      try {
+        const context = canvas.getContext("2d");
+        if (context) {
+          context.drawImage(element, 0, 0, width, height);
+          blob = await new Promise(function (resolve) { canvas.toBlob(resolve, "image/png"); });
+        }
+      } catch (_) {}
+    }
     if (blob) {
-      return { payload: await encodeBlob(blob, "browser-collect-" + Date.now() + ".png"), visualHash: visualHashForElement(canvas) };
+      return {
+        payload: await encodeBlob(blob, "browser-collect-" + Date.now() + ".png", isCanvas ? "canvas-render" : "rendered"),
+        visualHash: visualHashForElement(element)
+      };
     }
     const source = currentUrl(element);
     if (!source || !/^https?:/i.test(source)) throw new Error("The browser protected the rendered story image.");

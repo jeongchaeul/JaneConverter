@@ -75,7 +75,7 @@ async function uploadCollectedMedia(payload, senderTab) {
   if (!bytes.byteLength || bytes.byteLength > 64 * 1024 * 1024) {
     throw new Error("The rendered capture is empty or larger than 64 MB.");
   }
-  const mediaKind = payload.mediaKind === "audio" ? "audio" : payload.mediaKind === "image" ? "image" : "video";
+  const mediaKind = ["audio", "image", "stream", "model"].includes(payload.mediaKind) ? payload.mediaKind : "video";
   const fallbackMime = mediaKind + "/" + (mediaKind === "image" ? "png" : mediaKind === "audio" ? "webm" : "webm");
   const mimeType = String(payload.contentType || fallbackMime).split(";")[0].toLowerCase();
   const senderPageUrl = (senderTab && typeof senderTab.url === "string" && senderTab.url) || "";
@@ -139,7 +139,7 @@ function requireSessionFetchPayload(payload) {
   if (!globalThis.JaneMediaUtils.isAllowedSessionMediaUrl(pageUrl, mediaUrl)) {
     throw new Error("The selected media host is not approved for this browser session.");
   }
-  if (!["video", "audio", "image"].includes(mediaKind)) {
+  if (!["video", "audio", "image", "stream", "model"].includes(mediaKind)) {
     throw new Error("The selected item is not supported media.");
   }
   return {

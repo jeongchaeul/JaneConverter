@@ -50,9 +50,12 @@ def probe_media_duration(input_path: str) -> Optional[float]:
                         pass
     try:
         no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        probe_cmd = [get_ffprobe_binary(), "-v", "error"]
+        if input_path.lower().endswith((".m3u8", ".mpd")) or input_path.startswith(("http://", "https://")):
+            probe_cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+        probe_cmd.extend(["-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", input_path])
         res = subprocess.run(
-            [get_ffprobe_binary(), "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", input_path],
+            probe_cmd,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             text=True, encoding="utf-8", errors="replace", timeout=15.0, creationflags=no_window
         )
@@ -82,15 +85,20 @@ def probe_media_streams(input_path: str) -> Optional[Dict[str, Any]]:
 
     try:
         no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        info_cmd = [
+            get_ffprobe_binary(),
+            "-v", "error",
+        ]
+        if input_path.lower().endswith((".m3u8", ".mpd")) or input_path.startswith(("http://", "https://")):
+            info_cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+        info_cmd.extend([
+            "-show_format",
+            "-show_streams",
+            "-of", "json",
+            input_path,
+        ])
         res = subprocess.run(
-            [
-                get_ffprobe_binary(),
-                "-v", "error",
-                "-show_format",
-                "-show_streams",
-                "-of", "json",
-                input_path,
-            ],
+            info_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,

@@ -186,7 +186,7 @@ export interface AccessStatus {
   source?: string | null;
   bridgeConnected: boolean;
   captureCount?: number;
-  capturedMediaKind?: "video" | "audio" | "image";
+  capturedMediaKind?: "video" | "audio" | "image" | "stream" | "model";
 }
 
 export interface FetchedMedia {
@@ -195,7 +195,7 @@ export interface FetchedMedia {
   capturedAt?: number;
   path: string;
   name: string;
-  mediaKind: "video" | "audio" | "image";
+  mediaKind: "video" | "audio" | "image" | "stream" | "model";
   mimeType: string;
   captureMode: "current" | "sequence" | "collect" | "network" | "saved";
   title: string;

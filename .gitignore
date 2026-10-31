@@ -47,3 +47,4 @@ recovery-evidence.json
 quarantine/
 tasks/
 .kilo/
+tests/tmp_live_verify/

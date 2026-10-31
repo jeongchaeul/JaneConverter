@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, AlertTriangle, ArrowRight, Check, CheckCircle2, Copy, ExternalLink, FileAudio, FileImage, FileVideo, FolderOpen, HelpCircle, Inbox, Info, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, ArrowRight, Box, Check, CheckCircle2, Copy, ExternalLink, FileAudio, FileImage, FileVideo, FolderOpen, HelpCircle, Inbox, Info, LoaderCircle, LockKeyhole, Radio, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import type { AccessStatus, ConverterSettings, FetchedMedia } from "../bridge";
 import { bridge } from "../bridge";
 
@@ -13,6 +13,8 @@ function formatBytes(size: number) {
 function MediaIcon({ kind }: { kind: FetchedMedia["mediaKind"] }) {
   if (kind === "image") return <FileImage className="size-5 text-sky-300" />;
   if (kind === "audio") return <FileAudio className="size-5 text-emerald-300" />;
+  if (kind === "stream") return <Radio className="size-5 text-amber-300" />;
+  if (kind === "model") return <Box className="size-5 text-purple-300" />;
   return <FileVideo className="size-5 text-[#d75b88]" />;
 }
 
@@ -379,12 +381,12 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm text-zinc-200">{item.title || item.name || ("Capture " + (index + 1))}</div>
                 {item.captureMethod && <div className="text-xs text-zinc-500">{item.captureMethod === "rendered" ? "Captured from playback; original quality is not guaranteed." : `Source capture: ${item.captureMethod}`}</div>}
-                <div className="mt-1 truncate text-xs text-zinc-600">{item.name} · {item.mediaKind} · {formatBytes(item.size)} · {item.captureMode === "sequence" ? "Story sequence" : item.captureMode === "collect" ? "Collect mode" : item.captureMode === "network" ? "Network compatibility" : "Saved file"}</div>
+                <div className="mt-1 truncate text-xs text-zinc-600">{item.name} · {item.mediaKind === "stream" ? "Stream Manifest" : item.mediaKind === "model" ? "3D Model Asset" : item.mediaKind} · {formatBytes(item.size)} · {item.captureMode === "sequence" ? "Story sequence" : item.captureMode === "collect" ? "Collect mode" : item.captureMode === "network" ? "Network compatibility" : "Saved file"}</div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <button type="button" className="subtle-button px-3 py-2 text-xs" onClick={() => void bridge.openFile(item.path)}>Open file</button>
+                <button type="button" className="subtle-button px-3 py-2 text-xs" onClick={() => void bridge.openFile(item.path)}>{item.mediaKind === "model" ? "Open 3D model" : "Open file"}</button>
                 <button type="button" className="subtle-button flex items-center gap-2 px-3 py-2 text-xs" onClick={() => void bridge.openPath(item.path)}><FolderOpen className="size-3.5" /> Open path</button>
-                <button type="button" className="primary-button flex items-center gap-2 px-3 py-2 text-xs" onClick={() => onSelect(item)}>Use for conversion <ArrowRight className="size-3.5" /></button>
+                <button type="button" className="primary-button flex items-center gap-2 px-3 py-2 text-xs" onClick={() => onSelect(item)}>{item.mediaKind === "stream" ? "Remux to MP4" : "Use for conversion"} <ArrowRight className="size-3.5" /></button>
                 <button type="button" className="subtle-button px-3 py-2 text-xs text-rose-300" aria-label={"Discard " + item.name} disabled={discarding === item.path} onClick={() => void discard(item)}>
                   <Trash2 className="size-3.5" />
                 </button>

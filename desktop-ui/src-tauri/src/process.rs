@@ -956,7 +956,15 @@ pub fn validate_capture(
     report
         .get("mimeType")
         .and_then(|value| value.as_str())
-        .filter(|value| value.starts_with(&format!("{kind}/")))
+        .filter(|value| {
+            if kind == "stream" {
+                value.contains("mpegurl") || value.contains("dash")
+            } else if kind == "model" {
+                value.starts_with("model/") || value.starts_with("application/")
+            } else {
+                value.starts_with(&format!("{kind}/"))
+            }
+        })
         .map(str::to_owned)
         .ok_or_else(|| "The capture does not contain the requested media kind.".into())
 }

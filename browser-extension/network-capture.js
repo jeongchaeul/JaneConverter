@@ -33,20 +33,17 @@
     const mediaUrl = String(response && response.url || "");
     const contentType = String(response && response.mimeType || "").split(";", 1)[0].trim().toLowerCase();
     const resourceType = String(response && response.resourceType || "").toLowerCase();
-    if (!globalThis.JaneMediaUtils || !globalThis.JaneMediaUtils.isAllowedSessionMediaUrl(pageUrl, mediaUrl)) {
+    if (!globalThis.JaneMediaUtils || !globalThis.JaneMediaUtils.isAllowedNetworkMediaUrl(pageUrl, mediaUrl)) {
       return { accepted: false, reason: "media host not approved" };
     }
     if (response.status < 200 || response.status >= 400) {
       return { accepted: false, reason: "response was not successful" };
     }
     let mediaKind = globalThis.JaneMediaUtils.classify(mediaUrl, contentType);
-    if (mediaKind === "stream") {
-      return { accepted: false, reason: "adaptive stream manifest" };
-    }
     if (!mediaKind && resourceType === "media" && globalThis.JaneMediaUtils.isStreamSegment(mediaUrl, contentType)) {
       mediaKind = "video";
     }
-    if (!mediaKind || !["video", "audio", "image"].includes(mediaKind)) {
+    if (!mediaKind || !["video", "audio", "image", "stream", "model"].includes(mediaKind)) {
       return { accepted: false, reason: "not a media response" };
     }
     const encodedBytes = Number(response.encodedDataLength || 0);
@@ -77,7 +74,14 @@
   function fileNameFor(item) {
     const name = globalThis.JaneMediaUtils.filenameFromUrl(item.mediaUrl, item.mediaKind, 0);
     if (/\.[a-z0-9]{2,5}$/i.test(name)) return name.slice(-180);
-    const extension = item.mediaKind === "image" ? "jpg" : item.mediaKind === "audio" ? "mp3" : "mp4";
+    let extension = "mp4";
+    if (item.mediaKind === "image") extension = "jpg";
+    else if (item.mediaKind === "audio") extension = "mp3";
+    else if (item.mediaKind === "stream") extension = item.mediaUrl.includes(".mpd") ? "mpd" : "m3u8";
+    else if (item.mediaKind === "model") {
+      const match = item.mediaUrl.match(/\.(glb|gltf|obj|splat|ply|fbx)(?:[?#]|$)/i);
+      extension = match ? match[1].toLowerCase() : "glb";
+    }
     return name.slice(-170) + "." + extension;
   }
 
@@ -257,8 +261,7 @@
   }
 
   async function attachNetworkMode(tabId, pageUrl) {
-    const platform = pagePlatform(pageUrl);
-    if (!platform) throw new Error("Network Compatibility Mode is available only on an approved media site.");
+    const platform = pagePlatform(pageUrl) || { id: "universal", name: safeHost(pageUrl) };
     const bridge = await findConfirmedAccess();
     if (bridge.challenge.sourceUrl && !sameSite(safeHost(bridge.challenge.sourceUrl), safeHost(pageUrl))) {
       throw new Error("The confirmed JaneConverter session belongs to a different site.");

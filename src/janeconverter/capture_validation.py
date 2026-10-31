@@ -11,7 +11,7 @@ from .converter import get_ffmpeg_binary, get_ffprobe_binary
 
 
 def validate_capture(path: str, kind: str) -> dict:
-    if kind not in ("image", "audio", "video") or not os.path.isfile(path) or not os.path.getsize(path):
+    if kind not in ("image", "audio", "video", "stream", "model") or not os.path.isfile(path) or not os.path.getsize(path):
         raise ValueError("The capture is empty or has an unsupported media kind.")
     if kind == "image":
         with Image.open(path) as image:
@@ -23,6 +23,35 @@ def validate_capture(path: str, kind: str) -> dict:
             if width < 1 or height < 1 or not mime.startswith("image/"):
                 raise ValueError("The capture does not contain a readable image.")
         return {"mimeType": mime, "width": width, "height": height}
+    if kind == "stream":
+        with open(path, "rb") as f:
+            head = f.read(4096)
+        text_head = head.decode("utf-8", errors="ignore").strip()
+        if text_head.startswith("#EXTM3U") or "#EXT-X-STREAM-INF" in text_head or "#EXT-X-TARGETDURATION" in text_head:
+            return {"mimeType": "application/vnd.apple.mpegurl"}
+        if "<MPD" in text_head or "urn:mpeg:dash:schema:mpd" in text_head:
+            return {"mimeType": "application/dash+xml"}
+        if "#EXT" in text_head:
+            return {"mimeType": "application/x-mpegurl"}
+        raise ValueError("The capture does not contain a valid stream manifest.")
+    if kind == "model":
+        with open(path, "rb") as f:
+            magic = f.read(64)
+        if magic.startswith(b"glTF"):
+            return {"mimeType": "model/gltf-binary"}
+        if magic.startswith(b"ply\n") or magic.startswith(b"ply\r\n"):
+            return {"mimeType": "application/x-ply"}
+        if b"Kaydara FBX" in magic:
+            return {"mimeType": "application/octet-stream"}
+        text_sample = magic.decode("utf-8", errors="ignore")
+        if text_sample.strip().startswith("{") or '"asset"' in text_sample:
+            return {"mimeType": "model/gltf+json"}
+        if any(line.strip().startswith(("v ", "vn ", "vt ", "f ", "# ")) for line in text_sample.splitlines()):
+            return {"mimeType": "model/obj"}
+        size = os.path.getsize(path)
+        if size > 0 and size % 32 == 0:
+            return {"mimeType": "application/x-gaussian-splat"}
+        return {"mimeType": "model/gltf-binary"}
     options = {"capture_output": True, "timeout": 15, "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
     probe = subprocess.run([
         get_ffprobe_binary(), "-v", "error", "-protocol_whitelist", "file,pipe",

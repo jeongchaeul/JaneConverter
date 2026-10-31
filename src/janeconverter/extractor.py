@@ -147,6 +147,11 @@ def identify_source_type(url_or_path: str) -> str:
         return "local_file"
 
     parsed = urllib.parse.urlparse(url_or_path.strip())
+    path_lower = parsed.path.lower()
+    if path_lower.endswith((".m3u8", ".mpd")):
+        return "stream"
+    if path_lower.endswith((".glb", ".gltf", ".obj", ".splat", ".ply", ".fbx")):
+        return "model"
     hostname = (parsed.hostname or "").lower().rstrip(".")
 
     def matches(*domains: str) -> bool:
@@ -841,6 +846,18 @@ def fetch_media_stream(
             "is_local": True
         }
 
+    # Direct Stream Manifest or 3D Model
+    if source_type in ("stream", "model"):
+        from .sniffer import is_direct_asset_url, download_sniffed_asset
+        asset = is_direct_asset_url(source)
+        if asset:
+            return download_sniffed_asset(
+                asset,
+                output_dir,
+                abort_event=abort_event,
+                progress_callback=progress_callback,
+            )
+
     # 2. Spotify Track or Search Queries
     spotify_meta = None
     apple_meta = None
@@ -1070,6 +1087,22 @@ def fetch_media_stream(
                     continue
 
             if not info:
+                # 1. Standalone Native Page Sniffer (discovers hidden streams or 3D models without extension)
+                if is_url(source) and source_type not in ("spotify", "apple_music"):
+                    try:
+                        from .sniffer import sniff_webpage, download_sniffed_asset
+                        sniffed = sniff_webpage(source, report=report)
+                        if sniffed:
+                            report(0.35, f"Native Sniffer engaged: found {sniffed.asset_kind} ({sniffed.extension.upper()})...", force=True)
+                            return download_sniffed_asset(
+                                sniffed,
+                                output_dir,
+                                abort_event=abort_event,
+                                progress_callback=progress_callback,
+                            )
+                    except Exception:
+                        if abort_event and abort_event.is_set():
+                            raise
                 if archival_fallback:
                     from .archival import probe_archival_vaults, download_archival_stream
                     arc_res = probe_archival_vaults(source, report=report)

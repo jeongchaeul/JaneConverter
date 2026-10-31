@@ -199,26 +199,36 @@ function probePage() {
         ? "audio"
         : type.startsWith("image/")
           ? "image"
-          : /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac|weba)(?:[?#]|$)/i.test(url)
-            ? "audio"
-            : /\.(jpe?g|png|gif|webp|avif|heic)(?:[?#]|$)/i.test(url)
-              ? "image"
-              : /\.(m3u8|mpd)(?:[?#]|$)/i.test(url)
-                ? "stream"
-                : /\.(mp4|m4v|webm|mov|mkv|avi|flv|3gp)(?:[?#]|$)/i.test(url)
-                  ? "video"
-                  : "";
+          : type.startsWith("model/") || /\.(glb|gltf|obj|splat|ply|fbx)(?:[?#]|$)/i.test(url)
+            ? "model"
+            : /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac|weba)(?:[?#]|$)/i.test(url)
+              ? "audio"
+              : /\.(jpe?g|png|gif|webp|avif|heic)(?:[?#]|$)/i.test(url)
+                ? "image"
+                : /\.(m3u8|mpd)(?:[?#]|$)/i.test(url)
+                  ? "stream"
+                  : /\.(mp4|m4v|webm|mov|mkv|avi|flv|3gp)(?:[?#]|$)/i.test(url)
+                    ? "video"
+                    : "";
     if (!kind) return;
     state.seen.push(url);
+    let ext = "webm";
+    if (kind === "image") ext = "jpg";
+    else if (kind === "audio") ext = "mp3";
+    else if (kind === "stream") ext = url.includes(".mpd") ? "mpd" : "m3u8";
+    else if (kind === "model") {
+      const m = url.match(/\.(glb|gltf|obj|splat|ply|fbx)(?:[?#]|$)/i);
+      ext = m ? m[1].toLowerCase() : "glb";
+    }
     state.network.push({
       mediaUrl: url,
-      mediaKind: kind === "stream" ? "video" : kind,
+      mediaKind: kind,
       mimeType: String(mimeType || ""),
-      fileName: "browser-capture-" + (state.network.length + 1) + "." + (kind === "image" ? "jpg" : kind === "audio" ? "mp3" : "webm"),
+      fileName: "browser-capture-" + (state.network.length + 1) + "." + ext,
       title: document.title || "Browser capture",
       pageUrl: location.href,
       source: "page-network",
-      captureable: kind !== "stream"
+      captureable: true
     });
     if (state.seen.length > 128) state.seen.shift();
     if (state.network.length > 64) state.network.shift();
@@ -546,9 +556,25 @@ async function capturePageMedia(item, maxBytes, deadline = Date.now() + 180000) 
 
   const sourceUrl = currentUrl(element);
   if (element.tagName.toLowerCase() === "canvas") {
-    const blob = await new Promise(function (resolve) {
-      element.toBlob(resolve, "image/png");
+    let blob = await new Promise(function (resolve) {
+      requestAnimationFrame(function () {
+        try {
+          element.toBlob(resolve, "image/png");
+        } catch (_) {
+          resolve(null);
+        }
+      });
     });
+    if (!blob || !blob.size) {
+      const offscreen = document.createElement("canvas");
+      offscreen.width = element.width;
+      offscreen.height = element.height;
+      const ctx = offscreen.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(element, 0, 0);
+        blob = await new Promise(function (resolve) { offscreen.toBlob(resolve, "image/png"); });
+      }
+    }
     if (!blob || !blob.size || blob.size > maxBytes) {
       throw new Error("The visible canvas did not expose a usable image.");
     }
@@ -925,8 +951,8 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index, d
   if (previousFingerprints.some((previous) => globalThis.JaneMediaUtils.sameStoryFingerprint(previous, fingerprint))) {
     return { duplicate: true, fingerprint };
   }
-  const mediaPrefix = item.mediaKind === "image" ? "image/" : item.mediaKind === "audio" ? "audio/" : "video/";
-  const mimeType = responseMime.startsWith(mediaPrefix) ? responseMime : (mediaPrefix + "*");
+  const mediaPrefix = item.mediaKind === "image" ? "image/" : item.mediaKind === "audio" ? "audio/" : item.mediaKind === "stream" ? "application/" : item.mediaKind === "model" ? "model/" : "video/";
+  const mimeType = responseMime.startsWith(mediaPrefix) || (item.mediaKind === "stream" && (responseMime.includes("mpegurl") || responseMime.includes("dash"))) || (item.mediaKind === "model" && responseMime.includes("gltf")) ? responseMime : (mediaPrefix + "*");
   const startUrl = accessEndpoint(accessTab, "/bridge/capture/start");
   const start = await bridgeFetch(startUrl, {
     method: "POST",

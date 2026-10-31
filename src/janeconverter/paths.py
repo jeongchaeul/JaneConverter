@@ -224,6 +224,24 @@ def initialize_app_data() -> None:
         migrate_legacy_app_data(LEGACY_APP_DATA_DIR, APP_DATA_DIR)
 
 
+def promote_staging_dir(staging_dir: str, target_dir: str, max_attempts: int = 5) -> None:
+    """Atomically promote staging_dir to target_dir with exponential retry on Windows file locks."""
+    import time
+    for attempt in range(max_attempts):
+        try:
+            os.replace(
+                ensure_extended_length_path(staging_dir),
+                ensure_extended_length_path(target_dir),
+            )
+            return
+        except (PermissionError, FileExistsError, OSError) as error:
+            winerr = getattr(error, "winerror", None)
+            if attempt < max_attempts - 1 and (os.name != "nt" or winerr in (5, 32, 33, 183)):
+                time.sleep(0.1 * (2 ** attempt))
+                continue
+            raise
+
+
 APP_DATA_DIR = get_app_data_dir()
 DEFAULT_CONVERTED_DIR = os.path.join(APP_DATA_DIR, "converted")
 DEFAULT_TEMP_DIR = get_temp_dir()

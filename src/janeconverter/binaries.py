@@ -137,3 +137,28 @@ def get_js_runtimes_config() -> dict:
                 return {name: {"path": os.path.abspath(p)}}
     return {"node": {"path": None}}
 
+
+def run_subprocess_binary(
+    cmd: list[str],
+    timeout: Optional[float] = None,
+    capture_output: bool = True,
+) -> tuple[int, str, str]:
+    """Execute an external binary with platform-appropriate flags and clean output decoding."""
+    import subprocess
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+            stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+            timeout=timeout,
+            creationflags=creationflags,
+        )
+        stdout = proc.stdout.decode("utf-8", errors="replace") if proc.stdout else ""
+        stderr = proc.stderr.decode("utf-8", errors="replace") if proc.stderr else ""
+        return proc.returncode, stdout, stderr
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode("utf-8", errors="replace") if exc.stdout else ""
+        stderr = exc.stderr.decode("utf-8", errors="replace") if exc.stderr else ""
+        return -1, stdout, f"TimeoutExpired: {stderr}"
+

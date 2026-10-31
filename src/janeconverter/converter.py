@@ -370,6 +370,8 @@ def build_ffmpeg_args(
             cmd.extend(["-ss", start_time])
         if end_time:
             cmd.extend(["-to", end_time])
+        if input_path.lower().endswith((".m3u8", ".mpd")) or input_path.startswith(("http://", "https://")):
+            cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
         cmd.extend(["-i", input_path])
         if metadata:
             for k, v in metadata.items():
@@ -404,6 +406,8 @@ def build_ffmpeg_args(
             cmd.extend(["-ss", start_time])
         if end_time:
             cmd.extend(["-to", end_time])
+        if input_path.lower().endswith((".m3u8", ".mpd")) or input_path.startswith(("http://", "https://")):
+            cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
         cmd.extend(["-i", input_path])
         cmd.extend(["-i", cover_path])
         cmd.extend(["-map", "0:a", "-map", "1:v"])
@@ -412,6 +416,8 @@ def build_ffmpeg_args(
             cmd.extend(["-ss", start_time])
         if end_time:
             cmd.extend(["-to", end_time])
+        if input_path.lower().endswith((".m3u8", ".mpd")) or input_path.startswith(("http://", "https://")):
+            cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
         cmd.extend(["-i", input_path])
 
     # Metadata tags
@@ -707,6 +713,14 @@ def _convert_media_impl(
     Validates output headers via ffprobe before reporting completion.
     """
     os.makedirs(output_dir, exist_ok=True)
+    _, input_ext = os.path.splitext(input_path)
+    if input_ext.lower() in (".glb", ".gltf", ".obj", ".splat", ".ply", ".fbx"):
+        stem = os.path.splitext(output_filename)[0]
+        final_dest = os.path.join(output_dir, f"{stem}{input_ext.lower()}")
+        shutil.copy2(input_path, final_dest)
+        if progress_callback:
+            progress_callback(1.0, f"3D model ready: {os.path.basename(final_dest)}")
+        return os.path.abspath(final_dest)
     target_format = target_format.lower().strip(".")
     if _recovery is None:
         try:
@@ -795,6 +809,8 @@ def _convert_media_impl(
                 cmd.extend(["-ss", start_time])
             if end_time:
                 cmd.extend(["-to", end_time])
+            if input_path.lower().endswith((".m3u8", ".mpd")) or input_path.startswith(("http://", "https://")):
+                cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
             cmd.extend(["-i", input_path])
             if is_audio_context:
                 cmd.extend(["-vn", "-c:a", "copy"])
@@ -1331,6 +1347,14 @@ def convert_media(
 ) -> str:
     """Stage and validate every attempt before publishing one completed output."""
     os.makedirs(output_dir, exist_ok=True)
+    _, input_ext = os.path.splitext(input_path)
+    if input_ext.lower() in (".glb", ".gltf", ".obj", ".splat", ".ply", ".fbx"):
+        stem = os.path.splitext(output_filename)[0]
+        final_dest = os.path.join(output_dir, f"{stem}{input_ext.lower()}")
+        shutil.copy2(input_path, final_dest)
+        if progress_callback:
+            progress_callback(1.0, f"3D model ready: {os.path.basename(final_dest)}")
+        return os.path.abspath(final_dest)
     start_time = sanitize_time_offset(start_time)
     end_time = sanitize_time_offset(end_time)
     if _recovery is None:

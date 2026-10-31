@@ -25,8 +25,8 @@ MAX_MEDIA_BYTES = 1024 * 1024 * 1024
 MAX_CAPTURE_ITEMS = 24
 MAX_TOTAL_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_TEXT_BYTES = 512
-MEDIA_KINDS = frozenset({"video", "audio", "image"})
-CAPTURE_MODES = frozenset({"current", "sequence", "network"})
+MEDIA_KINDS = frozenset({"video", "audio", "image", "stream", "model"})
+CAPTURE_MODES = frozenset({"current", "sequence", "network", "collect"})
 _SAFE_FILENAME = re.compile(r'^[^<>:"/\\|?*\x00-\x1f]+$')
 
 
@@ -261,4 +261,17 @@ def _valid_mime_type(value: str, media_kind: str) -> bool:
         return prefix == "video"
     if media_kind == "audio":
         return prefix == "audio"
-    return prefix == "image"
+    if media_kind == "image":
+        return prefix == "image"
+    if media_kind == "stream":
+        return prefix in {"application", "video", "audio"} and (
+            "mpegurl" in value
+            or "dash+xml" in value
+            or value in {"application/octet-stream", "application/x-mpegurl", "application/vnd.apple.mpegurl", "application/dash+xml"}
+        )
+    if media_kind == "model":
+        return prefix in {"model", "application"} and (
+            value.startswith("model/")
+            or value in {"application/octet-stream", "application/x-gaussian-splat", "application/x-ply"}
+        )
+    return False
