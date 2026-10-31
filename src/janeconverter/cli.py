@@ -12,6 +12,8 @@ import json
 import hashlib
 import argparse
 import time
+import threading
+import concurrent.futures
 from typing import Optional, Dict, Any, Callable
 
 for _stream in (sys.stdin, sys.stdout, sys.stderr):
@@ -607,6 +609,7 @@ def process_playlist_conversion(
     reconstruct_frequency_loss: bool = False,
     allow_ephemeral_stories: bool = False,
     archival_fallback: bool = False,
+    concurrency: int = 4,
 ) -> Dict[str, Any]:
     """
     Batch-downloads and transcodes selected playlist items into a dedicated playlist folder.
@@ -658,16 +661,11 @@ def process_playlist_conversion(
     if total_items == 0:
         raise ValueError("No playlist items selected for conversion.")
 
-    last_report = [0.0, 0.0]
-
-    def report_overall(frac: float, msg: str):
-        frac = max(last_report[1], max(0.0, min(1.0, float(frac))))
-        now = time.monotonic()
-        if frac >= 1.0 or now - last_report[0] >= 0.15 or int(frac * 100) != int(last_report[1] * 100):
-            last_report[:] = [now, frac]
-            if progress_callback:
-                progress_callback(frac, msg)
-            print(f"[{int(frac * 100)}%] {msg}", flush=True)
+    # Concurrency bounds: at least 1, at most total_items, bounded by concurrency argument (default 4)
+    try:
+        worker_count = max(1, min(int(concurrency), total_items, 16))
+    except (TypeError, ValueError):
+        worker_count = max(1, min(4, total_items))
 
     enc_info = get_best_hardware_encoder()
     gpu_desc = f"{enc_info['short_name']} ({enc_info['encoder_label']})" if active_gpu and enc_info["has_gpu"] else "CPU Multi-Core"
@@ -680,6 +678,7 @@ def process_playlist_conversion(
     print(f"Format: {target_format.upper()} | Bitrate: {bitrate}")
     print(f"Hardware Acceleration: {active_gpu} [{gpu_desc}]")
     print(f"Cover Art: {save_cover_art} | Metadata: {save_metadata}")
+    print(f"Pipeline Workers: {worker_count} concurrent thread(s)")
     print("=" * 60)
 
     # Emit live track manifest so In Progress View immediately displays real titles and live thumbnails
@@ -707,12 +706,39 @@ def process_playlist_conversion(
     converted_files = []
     failed_files = []
     deferred_queue = []
-    consecutive_network_failures = 0
+    active_gpu_state = [active_gpu]
+    consecutive_network_failures = [0]
     MAX_CONSECUTIVE_NETWORK_FAILURES = 5
+    network_aborted = [False]
 
-    for i, entry in enumerate(selected_entries):
+    progress_lock = threading.Lock()
+    state_lock = threading.Lock()
+    last_report = [0.0, 0.0]
+    track_progress = [0.0] * total_items
+    completed_counter = [0]
+
+    def report_overall(frac: float, msg: str):
+        with progress_lock:
+            frac = max(last_report[1], max(0.0, min(1.0, float(frac))))
+            now = time.monotonic()
+            if frac >= 1.0 or now - last_report[0] >= 0.15 or int(frac * 100) != int(last_report[1] * 100):
+                last_report[:] = [now, frac]
+                if progress_callback:
+                    try:
+                        progress_callback(frac, msg)
+                    except Exception:
+                        pass
+                print(f"[{int(frac * 100)}%] {msg}", flush=True)
+
+    def get_overall_progress():
+        with progress_lock:
+            return sum(track_progress) / total_items, completed_counter[0]
+
+    def _process_single_track(i: int, entry: dict):
         if abort_event and abort_event.is_set():
             raise KeyboardInterrupt("Playlist conversion aborted by user.")
+        if network_aborted[0]:
+            return
 
         idx = entry.get("index", i + 1)
         raw_title = entry.get("title", f"Track_{idx}")
@@ -725,21 +751,21 @@ def process_playlist_conversion(
             elif e_id and is_url(f"https://{e_id}"):
                 item_url = f"https://{e_id}"
 
-        # Clean any preexisting numeric prefixes to guarantee clean '1. Song1' format
         clean_title = strip_playlist_track_prefix(raw_title)
-
         ordered_filename = f"{idx}. {clean_title}"
-        base_pct = i / total_items
-        slice_pct = 1.0 / total_items
 
         def item_progress_hook(sub_frac: float, sub_msg: str):
             if abort_event and abort_event.is_set():
                 raise KeyboardInterrupt("Playlist conversion aborted by user.")
-            scaled_pct = max(base_pct, base_pct + (sub_frac * slice_pct))
+            with progress_lock:
+                track_progress[i] = max(track_progress[i], max(0.0, min(0.95, float(sub_frac))))
+                overall_frac = sum(track_progress) / total_items
+                done = completed_counter[0]
             msg_detail = f" — {sub_msg}" if sub_msg else f" ({int(sub_frac * 100)}%)"
-            report_overall(scaled_pct, f"[{i+1}/{total_items}] #{idx}: {clean_title}{msg_detail}")
+            report_overall(overall_frac, f"[{done}/{total_items}] #{idx}: {clean_title}{msg_detail}")
 
-        report_overall(base_pct, f"[{i+1}/{total_items}] Fetching #{idx}: {clean_title}...")
+        current_frac, current_done = get_overall_progress()
+        report_overall(current_frac, f"[{current_done}/{total_items}] Fetching #{idx}: {clean_title}...")
 
         track_work_dir = None
         fetch_attempts = 0
@@ -784,11 +810,12 @@ def process_playlist_conversion(
                     shutil.copy2(stream_info["thumbnail_path"], track_jpg)
                 except OSError as exc:
                     _warn_optional_output(f"Track #{idx} cover art", exc)
-                if not os.path.exists(playlist_cover_dest):
-                    try:
-                        shutil.copy2(stream_info["thumbnail_path"], playlist_cover_dest)
-                    except OSError as exc:
-                        _warn_optional_output("Playlist cover art", exc)
+                with state_lock:
+                    if not os.path.exists(playlist_cover_dest):
+                        try:
+                            shutil.copy2(stream_info["thumbnail_path"], playlist_cover_dest)
+                        except OSError as exc:
+                            _warn_optional_output("Playlist cover art", exc)
             if track_cover and os.path.exists(track_cover):
                 print(f"[*] Track #{idx} Cover: {track_cover}", flush=True)
 
@@ -813,6 +840,9 @@ def process_playlist_conversion(
                 metadata["comment"] = stream_info["description"][:1000]
 
             conversion_started = True
+            with state_lock:
+                current_gpu = active_gpu_state[0]
+
             result_path = _retry_operation(
                 lambda: convert_media(
                     input_path=input_media,
@@ -823,8 +853,8 @@ def process_playlist_conversion(
                     sample_rate=sample_rate,
                     normalize_audio=normalize_audio,
                     resolution=resolution,
-                    use_nvenc=active_gpu,
-                    use_gpu=active_gpu,
+                    use_nvenc=current_gpu,
+                    use_gpu=current_gpu,
                     metadata=metadata,
                     cover_path=track_cover if save_cover_art else None,
                     abort_event=abort_event,
@@ -836,45 +866,106 @@ def process_playlist_conversion(
                 0  # convert_media already selects and bounds distinct recovery methods
             )
 
-            converted_files.append(result_path)
-            consecutive_network_failures = 0
-            print(f"[+] Converted: {os.path.basename(result_path)}")
+            with state_lock:
+                converted_files.append(result_path)
+                consecutive_network_failures[0] = 0
+
+            with progress_lock:
+                track_progress[i] = 1.0
+                completed_counter[0] += 1
+                overall_frac = sum(track_progress) / total_items
+                done = completed_counter[0]
+
+            print(f"[+] Converted: {os.path.basename(result_path)}", flush=True)
+            report_overall(overall_frac, f"[{done}/{total_items}] Converted #{idx}: {clean_title}")
 
         except KeyboardInterrupt:
             raise
         except Exception as e:
             if abort_event and abort_event.is_set():
                 raise KeyboardInterrupt("Playlist conversion aborted by user.")
-            failed_files.append({
-                "index": idx,
-                "title": raw_title,
-                "error": str(e),
-                "attempts": 1 if conversion_started else fetch_attempts,
-            })
-            if not conversion_started:
-                deferred_queue.append((entry, raw_title, artist, clean_title, ordered_filename, idx))
-            if active_gpu and any(w in str(e).lower() for w in ("nvenc", "amf", "qsv", "cuda", "hardware device", "no capable devices")):
-                print("[!] Hardware encoder failure detected. Adaptive Engine: Adapting session to CPU encoding for remaining tracks.", flush=True)
-                active_gpu = False
-            is_net_err = any(word in str(e).lower() for word in ("connection reset", "connection refused", "name or service not known", "nodename nor servname", "network is unreachable", "timed out"))
-            if is_net_err:
-                consecutive_network_failures += 1
-            else:
-                consecutive_network_failures = 0
-            print(f"[!] Error converting track #{idx} '{raw_title}': {e}")
-            if consecutive_network_failures >= MAX_CONSECUTIVE_NETWORK_FAILURES:
-                remaining = total_items - (i + 1)
-                print(
-                    f"[!] {MAX_CONSECUTIVE_NETWORK_FAILURES} network failures in a row - aborting batch "
-                    f"({remaining} remaining tracks skipped). The network connection appears unavailable."
-                )
-                break
+            with state_lock:
+                failed_files.append({
+                    "index": idx,
+                    "title": raw_title,
+                    "error": str(e),
+                    "attempts": 1 if conversion_started else fetch_attempts,
+                })
+                if not conversion_started:
+                    deferred_queue.append((entry, raw_title, artist, clean_title, ordered_filename, idx))
+                if active_gpu_state[0] and any(w in str(e).lower() for w in ("nvenc", "amf", "qsv", "cuda", "hardware device", "no capable devices")):
+                    print("[!] Hardware encoder failure detected. Adaptive Engine: Adapting session to CPU encoding for remaining tracks.", flush=True)
+                    active_gpu_state[0] = False
+                is_net_err = any(word in str(e).lower() for word in ("connection reset", "connection refused", "name or service not known", "nodename nor servname", "network is unreachable", "timed out"))
+                if is_net_err:
+                    consecutive_network_failures[0] += 1
+                    if consecutive_network_failures[0] >= MAX_CONSECUTIVE_NETWORK_FAILURES:
+                        network_aborted[0] = True
+                else:
+                    consecutive_network_failures[0] = 0
+
+            with progress_lock:
+                track_progress[i] = 1.0
+                completed_counter[0] += 1
+                overall_frac = sum(track_progress) / total_items
+                done = completed_counter[0]
+
+            print(f"[!] Error converting track #{idx} '{raw_title}': {e}", flush=True)
+            report_overall(overall_frac, f"[{done}/{total_items}] Failed #{idx}: {clean_title}")
+
         finally:
             if not keep_temp and track_work_dir and os.path.exists(track_work_dir):
                 shutil.rmtree(track_work_dir, ignore_errors=True)
 
+    if worker_count <= 1:
+        for i, entry in enumerate(selected_entries):
+            if abort_event and abort_event.is_set():
+                raise KeyboardInterrupt("Playlist conversion aborted by user.")
+            if network_aborted[0]:
+                break
+            _process_single_track(i, entry)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=worker_count,
+            thread_name_prefix="JanePlaylistWorker"
+        ) as executor:
+            future_to_track = {
+                executor.submit(_process_single_track, i, entry): (i, entry)
+                for i, entry in enumerate(selected_entries)
+            }
+            remaining_futures = set(future_to_track.keys())
+            try:
+                while remaining_futures:
+                    if abort_event and abort_event.is_set():
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        raise KeyboardInterrupt("Playlist conversion aborted by user.")
+                    if network_aborted[0]:
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        remaining = len(remaining_futures)
+                        print(
+                            f"[!] {MAX_CONSECUTIVE_NETWORK_FAILURES} network failures in a row - aborting batch "
+                            f"({remaining} remaining tracks skipped). The network connection appears unavailable.",
+                            flush=True
+                        )
+                        break
+                    done, not_done = concurrent.futures.wait(
+                        remaining_futures,
+                        timeout=0.1,
+                        return_when=concurrent.futures.FIRST_COMPLETED
+                    )
+                    for f in done:
+                        try:
+                            f.result()
+                        except KeyboardInterrupt:
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            raise
+                    remaining_futures = not_done
+            except KeyboardInterrupt:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
+
     # Adaptive Resilience: Deferred Recovery Pass for un-downloaded tracks
-    if deferred_queue and not (abort_event and abort_event.is_set()):
+    if deferred_queue and not (abort_event and abort_event.is_set()) and not network_aborted[0]:
         print(f"\n[*] Adaptive Recovery: Adapting and retrying {len(deferred_queue)} deferred track(s) with alternate route discovery...", flush=True)
         for def_item in deferred_queue:
             if abort_event and abort_event.is_set():
@@ -944,8 +1035,8 @@ def process_playlist_conversion(
                     sample_rate=sample_rate,
                     normalize_audio=normalize_audio,
                     resolution=resolution,
-                    use_nvenc=active_gpu,
-                    use_gpu=active_gpu,
+                    use_nvenc=active_gpu_state[0],
+                    use_gpu=active_gpu_state[0],
                     metadata=metadata,
                     cover_path=track_cover if save_cover_art else None,
                     abort_event=abort_event,
@@ -960,6 +1051,15 @@ def process_playlist_conversion(
             finally:
                 if not keep_temp and track_work_dir and os.path.exists(track_work_dir):
                     shutil.rmtree(track_work_dir, ignore_errors=True)
+
+    # Sort converted files and failed files by natural playlist track order
+    def _track_sort_key(filepath: str) -> int:
+        base = os.path.basename(filepath)
+        m = re.match(r"^(\d+)\.", base)
+        return int(m.group(1)) if m else 999999
+
+    converted_files.sort(key=_track_sort_key)
+    failed_files.sort(key=lambda item: item.get("index", 999999))
 
     # Save overall playlist credits index inside metadata folder
     if save_metadata:
@@ -1101,6 +1201,12 @@ def validate_cli_args(args, parser: argparse.ArgumentParser):
     if args.resolution not in CLI_RESOLUTIONS:
         parser.error(f"Invalid resolution '{args.resolution}'. Choose from: {', '.join(sorted(CLI_RESOLUTIONS))}")
 
+    if hasattr(args, "concurrency") and args.concurrency is not None:
+        if args.concurrency < 1:
+            parser.error("--concurrency must be at least 1.")
+        if args.concurrency > 16:
+            parser.error("--concurrency cannot exceed 16.")
+
     if args.playlist and not is_url(args.source):
         parser.error("--playlist requires a URL; a local file path cannot be a playlist.")
 
@@ -1144,6 +1250,14 @@ def main():
     parser.add_argument("--allow-lossless-png-recovery", action="store_true", help="If source image validation fails, allow a validated PNG output and show the format change")
     parser.add_argument("--archival-fallback", action="store_true", help="Search archival vaults (Wayback Machine, Archive.org, Ghostarchive, Filmot) if target media is deleted or hidden")
     parser.add_argument("--keep-temp", action="store_true", help="Keep intermediate downloaded stream files in temp directory")
+    parser.add_argument(
+        "--concurrency",
+        "--workers",
+        dest="concurrency",
+        type=int,
+        default=4,
+        help="Maximum concurrent worker threads for playlist batch conversion (1-16; default: 4).",
+    )
     parser.add_argument("--playlist", "-p", action="store_true", help="Force treat input source as playlist")
     parser.add_argument("--list-playlist", action="store_true", help="List playlist entries for a graphical frontend and exit")
     parser.add_argument("--playlist-indexes", help="Convert only selected 1-based playlist items, e.g. 1,3,5")
@@ -1371,6 +1485,7 @@ def main():
             reconstruct_frequency_loss=args.reconstruct_frequency_loss,
             allow_ephemeral_stories=args.allow_ephemeral_stories,
             archival_fallback=args.archival_fallback,
+            concurrency=args.concurrency,
         )
         failed = summary.get("failed_count", 0)
         successful = summary.get("successful_count", 0)

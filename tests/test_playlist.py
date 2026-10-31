@@ -294,3 +294,76 @@ def test_process_playlist_conversion_retries_all_deferred_items(tmp_path, monkey
     assert summary["failed_count"] == 0
     assert summary["failed_files"] == []
 
+
+def test_process_playlist_conversion_concurrent_workers(tmp_path, monkeypatch):
+    import time
+    import threading
+    from janeconverter import cli
+
+    concurrency_tracker = {"active": 0, "max_active": 0}
+    lock = threading.Lock()
+
+    def fake_fetch(source, output_dir, **kwargs):
+        with lock:
+            concurrency_tracker["active"] += 1
+            if concurrency_tracker["active"] > concurrency_tracker["max_active"]:
+                concurrency_tracker["max_active"] = concurrency_tracker["active"]
+        try:
+            time.sleep(0.05)
+            os.makedirs(output_dir, exist_ok=True)
+            media_path = os.path.join(output_dir, "track.mp3")
+            with open(media_path, "wb") as f:
+                f.write(b"ID3" + b"\x00" * 32)
+            return {"media_path": media_path, "title": "Track", "artist": "Jane"}
+        finally:
+            with lock:
+                concurrency_tracker["active"] -= 1
+
+    def fake_convert(input_path, output_dir, output_filename, target_format, **kwargs):
+        os.makedirs(output_dir, exist_ok=True)
+        out_path = os.path.join(output_dir, f"{output_filename}.{target_format}")
+        with open(out_path, "wb") as f:
+            f.write(b"converted")
+        return out_path
+
+    monkeypatch.setattr(cli, "fetch_media_stream", fake_fetch)
+    monkeypatch.setattr(cli, "convert_media", fake_convert)
+
+    entries = [
+        {"index": 1, "title": "Track One", "artist": "Jane", "url": "https://example.com/1"},
+        {"index": 2, "title": "Track Two", "artist": "Jane", "url": "https://example.com/2"},
+        {"index": 3, "title": "Track Three", "artist": "Jane", "url": "https://example.com/3"},
+        {"index": 4, "title": "Track Four", "artist": "Jane", "url": "https://example.com/4"},
+    ]
+
+    progress_history = []
+
+    def record_progress(frac, msg):
+        progress_history.append((frac, msg))
+
+    summary = process_playlist_conversion(
+        playlist_title="Concurrent Test Playlist",
+        selected_entries=entries,
+        output_dir=str(tmp_path),
+        target_format="mp3",
+        concurrency=4,
+        check_updates=False,
+        progress_callback=record_progress,
+    )
+
+    assert summary["successful_count"] == 4
+    assert summary["failed_count"] == 0
+    assert concurrency_tracker["max_active"] > 1
+    basenames = [os.path.basename(p) for p in summary["converted_files"]]
+    assert basenames == [
+        "1. Track One.mp3",
+        "2. Track Two.mp3",
+        "3. Track Three.mp3",
+        "4. Track Four.mp3",
+    ]
+    fracs = [p[0] for p in progress_history]
+    for i in range(len(fracs) - 1):
+        assert fracs[i] <= fracs[i + 1]
+    assert fracs[-1] == 1.0
+
+
