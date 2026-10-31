@@ -49,4 +49,5 @@ export interface SessionSummary {
   isLive: boolean;
   isCurrent: boolean;
   overallProgress: number;
+  elapsedMs?: number;
 }

@@ -10,6 +10,7 @@ interface ItemCardProps {
   preview?: string;
   fullPath?: string;
   elapsedMs?: number;
+  isDeleting?: boolean;
   onContextMenu: (e: React.MouseEvent, item: InProgressItem) => void;
   onImageError: (url: string) => void;
   onStatus: (message: string) => void;
@@ -24,6 +25,7 @@ export function ItemCard({
   preview,
   fullPath,
   elapsedMs,
+  isDeleting = false,
   onContextMenu,
   onImageError,
   onStatus,
@@ -129,6 +131,7 @@ export function ItemCard({
           <ItemActionButtons
             item={item}
             fullPath={fullPath}
+            isDeleting={isDeleting}
             onStatus={onStatus}
             onOpen={onOpen}
             onShowInFolder={onShowInFolder}
@@ -216,6 +219,7 @@ export function ItemCard({
       <ItemActionButtons
         item={item}
         fullPath={fullPath}
+        isDeleting={isDeleting}
         onStatus={onStatus}
         onOpen={onOpen}
         onShowInFolder={onShowInFolder}

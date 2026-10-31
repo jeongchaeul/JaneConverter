@@ -254,6 +254,7 @@ def download_social_photo_manifest(
     completed_count = 0
     lock = threading.Lock()
     disk_write_lock = threading.Lock()
+    stop_event = threading.Event()
 
     def report(progress: float, message: str) -> None:
         if progress_callback:
@@ -262,7 +263,7 @@ def download_social_photo_manifest(
     def download_and_process(item: tuple[int, dict[str, Any]]) -> None:
         nonlocal total_bytes, completed_count
         index, photo = item
-        if abort_event and abort_event.is_set():
+        if stop_event.is_set() or (abort_event and abort_event.is_set()):
             raise KeyboardInterrupt(f"{platform} photo download aborted by user.")
         with _get_photo(session, photo["url"], platform_key) as response:
             response.raise_for_status()
@@ -274,7 +275,7 @@ def download_social_photo_manifest(
             image_bytes = 0
             with open(download_path, "wb") as image_file:
                 for chunk in response.iter_content(chunk_size=256 * 1024):
-                    if abort_event and abort_event.is_set():
+                    if stop_event.is_set() or (abort_event and abort_event.is_set()):
                         raise KeyboardInterrupt(f"{platform} photo download aborted by user.")
                     if not chunk:
                         continue
@@ -316,7 +317,13 @@ def download_social_photo_manifest(
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [executor.submit(download_and_process, item) for item in enumerate(photos.values(), start=1)]
                 for future in concurrent.futures.as_completed(futures):
-                    future.result()
+                    try:
+                        future.result()
+                    except Exception:
+                        stop_event.set()
+                        for f in futures:
+                            f.cancel()
+                        raise
     except KeyboardInterrupt:
         if completed_count > 0:
             print(f"[*] Partial album saved with {completed_count} photos: {target_dir}", flush=True)
@@ -449,6 +456,59 @@ def is_pinterest_pin_url(url: str) -> bool:
         return False
 
 
+def _fetch_public_pinterest_pin(
+    pin_id: str,
+    report: Optional[Callable[[float, str], None]] = None,
+) -> Optional[dict[str, Any]]:
+    """Fast guest probe for a single Pinterest pin without opening or decrypting local browser databases."""
+    if report:
+        report(0.04, "Reading public Pinterest pin metadata...")
+    req = urllib.request.Request(
+        f"https://www.pinterest.com/pin/{pin_id}/",
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+        if re.search(r'property=["\']og:type["\'][^>]+content=["\']video', html) or re.search(r'content=["\']video[^"\']*["\'][^>]+property=["\']og:type["\']', html):
+            return {"platform": "pinterest", "media_kind": "video", "title": f"Pinterest Pin {pin_id}"}
+        m_img = re.search(r'id=["\']pin-image-preload["\'][^>]+href=["\']([^"\']+)["\']', html)
+        if not m_img:
+            m_img = re.search(r'content=["\'](https://i\.pinimg\.com/[^"\']+)["\'][^>]+(?:name|property)=["\']og:image["\']', html)
+        if not m_img:
+            m_img = re.search(r'(?:name|property)=["\']og:image["\'][^>]+content=["\'](https://i\.pinimg\.com/[^"\']+)["\']', html)
+        if m_img:
+            img_url = m_img.group(1)
+            orig_url = re.sub(r"/\d+x(?:\d+|_RS)?/", "/originals/", img_url)
+            m_title = re.search(r'content=["\']([^"\']+)["\'][^>]+(?:name|property)=["\']og:title["\']', html)
+            if not m_title:
+                m_title = re.search(r'(?:name|property)=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', html)
+            raw_title = m_title.group(1) if m_title else f"Pinterest Pin {pin_id}"
+            clean_title = sanitize_filename(raw_title[:60], max_length=60) or f"Pinterest Pin {pin_id}"
+            if report:
+                report(0.08, f"Found photo in '{clean_title}'. Starting download...")
+            return {
+                "platform": "pinterest",
+                "title": clean_title,
+                "photos": [{
+                    "id": pin_id,
+                    "url": orig_url,
+                    "title": raw_title[:80],
+                    "width": 1200,
+                }],
+                "media_kind": "photo",
+            }
+    except Exception:
+        pass
+    return None
+
+
 def fetch_pinterest_collection_manifest(
     url: str,
     browser: Optional[str] = None,
@@ -475,6 +535,14 @@ def fetch_pinterest_collection_manifest(
 
     if not mps_match and not news_match and not pin_match:
         raise ValueError(f"Invalid Pinterest media URL: {url}")
+
+    preferred = [browser] if browser and browser.lower() not in ("none", "auto", "public", "public only") else []
+
+    # Fast guest path: single Pinterest pins are public and resolve in ~200ms without inspecting local browser databases
+    if pin_match and not preferred:
+        fast_manifest = _fetch_public_pinterest_pin(pin_match.group(1), report=report)
+        if fast_manifest:
+            return fast_manifest
 
     report(0.04, "Searching desktop browsers for an active Pinterest session...")
     preferred = [browser] if browser and browser.lower() not in ("none", "auto", "public", "public only") else []
@@ -800,6 +868,46 @@ def is_instagram_post_url(url: str) -> bool:
         return False
 
 
+def _query_instagram_media_endpoints(
+    opener: urllib.request.OpenerDirector,
+    media_pk: int,
+    shortcode: str,
+) -> Optional[dict[str, Any]]:
+    """Internal helper to query Instagram mobile info API endpoints with candidate app IDs."""
+    candidate_endpoints = [
+        f"https://i.instagram.com/api/v1/media/{media_pk}/info/",
+        f"https://www.instagram.com/api/v1/media/{media_pk}/info/",
+    ]
+    candidate_app_ids = [
+        "936619743392459",
+        "1217981644879628",
+        "567067343352427",
+    ]
+    for api_url in candidate_endpoints:
+        for app_id in candidate_app_ids:
+            req = urllib.request.Request(
+                api_url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+                    ),
+                    "X-IG-App-ID": app_id,
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Referer": f"https://www.instagram.com/p/{shortcode}/",
+                    "Accept": "*/*",
+                }
+            )
+            try:
+                resp = opener.open(req)
+                parsed = json.loads(resp.read().decode("utf-8"))
+                if parsed.get("items"):
+                    return parsed
+            except Exception:
+                continue
+    return None
+
+
 def fetch_instagram_manifest(
     url: str,
     browser: Optional[str] = None,
@@ -830,65 +938,38 @@ def fetch_instagram_manifest(
     if media_pk <= 0:
         return None
 
-    report(0.04, "Searching desktop browsers for an active Instagram session...")
     preferred = [browser] if browser and browser.lower() not in ("none", "auto", "public", "public only") else []
-    candidates = preferred + [b for b in ("vivaldi", "firefox", "chrome", "edge", "brave", "opera") if b not in preferred]
-
-    jar = None
-    found_browser = None
-    for b in candidates:
-        try:
-            ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
-            candidate_jar = ydl.cookiejar
-            ig_cookies = [c for c in candidate_jar if "instagram" in getattr(c, "domain", "")]
-            if ig_cookies and any(getattr(c, "name", None) in ("sessionid", "ds_user_id") for c in ig_cookies):
-                jar = candidate_jar
-                found_browser = b
-                break
-        except Exception:
-            continue
-
-    if found_browser:
-        report(0.06, f"Connected to Instagram session via {found_browser.title()}. Requesting post info...")
-
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar)) if jar else urllib.request.build_opener()
-
-    candidate_endpoints = [
-        f"https://i.instagram.com/api/v1/media/{media_pk}/info/",
-        f"https://www.instagram.com/api/v1/media/{media_pk}/info/",
-    ]
-    candidate_app_ids = [
-        "936619743392459",
-        "1217981644879628",
-        "567067343352427",
-    ]
 
     res_data = None
-    for api_url in candidate_endpoints:
-        for app_id in candidate_app_ids:
-            req = urllib.request.Request(
-                api_url,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                        "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
-                    ),
-                    "X-IG-App-ID": app_id,
-                    "X-Requested-With": "XMLHttpRequest",
-                    "Referer": f"https://www.instagram.com/p/{shortcode}/",
-                    "Accept": "*/*",
-                }
-            )
+    # Fast guest path: probe public mobile API directly
+    if not preferred:
+        report(0.04, "Connecting to Instagram via public mobile API...")
+        guest_opener = urllib.request.build_opener()
+        res_data = _query_instagram_media_endpoints(guest_opener, media_pk, shortcode)
+
+    if not res_data:
+        report(0.05, "Searching desktop browsers for an active Instagram session...")
+        candidates = preferred + [b for b in ("vivaldi", "firefox", "chrome", "edge", "brave", "opera") if b not in preferred]
+
+        jar = None
+        found_browser = None
+        for b in candidates:
             try:
-                resp = opener.open(req)
-                parsed = json.loads(resp.read().decode("utf-8"))
-                if parsed.get("items"):
-                    res_data = parsed
+                ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
+                candidate_jar = ydl.cookiejar
+                ig_cookies = [c for c in candidate_jar if "instagram" in getattr(c, "domain", "")]
+                if ig_cookies and any(getattr(c, "name", None) in ("sessionid", "ds_user_id") for c in ig_cookies):
+                    jar = candidate_jar
+                    found_browser = b
                     break
             except Exception:
                 continue
-        if res_data:
-            break
+
+        if found_browser:
+            report(0.06, f"Connected to Instagram session via {found_browser.title()}. Requesting post info...")
+        if jar:
+            auth_opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+            res_data = _query_instagram_media_endpoints(auth_opener, media_pk, shortcode)
 
     if not res_data:
         report(0.08, "Instagram direct API request unavailable. Falling back to standard extractor...")

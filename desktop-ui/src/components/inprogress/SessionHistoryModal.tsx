@@ -1,6 +1,19 @@
 import { FolderOpen, History, Trash2, X } from "lucide-react";
 import type { ConversionHistoryItem } from "../../bridge";
 import type { SessionSummary } from "./types";
+import { formatElapsedMs } from "../../options";
+
+function decodeHtmlEntities(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
 
 interface SessionHistoryModalProps {
   open: boolean;
@@ -83,7 +96,7 @@ export function SessionHistoryModal({
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="truncate text-xs font-semibold text-zinc-100 group-hover:text-white">
-                        {sess.title}
+                        {decodeHtmlEntities(sess.title)}
                       </span>
                       {sess.isLive && (
                         <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/20">
@@ -104,6 +117,14 @@ export function SessionHistoryModal({
                           <span className="text-zinc-600">•</span>
                           <span className="rounded bg-white/[0.04] px-1.5 py-0.5 text-[10px] font-mono text-zinc-300">
                             {sess.format.toUpperCase()}
+                          </span>
+                        </>
+                      )}
+                      {sess.elapsedMs !== undefined && sess.elapsedMs > 0 && (
+                        <>
+                          <span className="text-zinc-600">•</span>
+                          <span className="font-mono text-zinc-300">
+                            {formatElapsedMs(sess.elapsedMs)}
                           </span>
                         </>
                       )}
@@ -171,12 +192,18 @@ export function SessionHistoryModal({
                   >
                     <div className="min-w-0">
                       <div className="truncate text-xs font-medium text-zinc-300 group-hover:text-white">
-                        {hist.fileName || hist.source}
+                        {decodeHtmlEntities(hist.fileName || hist.source)}
                       </div>
                       <div className="mt-0.5 flex items-center gap-2 text-[10px] text-zinc-400 font-mono">
                         <span>{hist.presetName || hist.formatLabel}</span>
                         <span>•</span>
                         <span>{new Date(hist.timestamp).toLocaleDateString()}</span>
+                        {hist.elapsedMs !== undefined && hist.elapsedMs > 0 && (
+                          <>
+                            <span>•</span>
+                            <span className="text-zinc-300">{formatElapsedMs(hist.elapsedMs)}</span>
+                          </>
+                        )}
                         <span>•</span>
                         <span className={hist.status === "succeeded" ? "text-emerald-400" : "text-amber-400"}>
                           {hist.status}

@@ -505,77 +505,19 @@ def _resolve_facebook_pagination_query(html: str, session: requests.Session) -> 
     return fallback
 
 
-def fetch_facebook_manifest(
+def _fetch_facebook_manifest_with_session(
+    session: requests.Session,
     url: str,
-    browser: Optional[str] = None,
-    progress_callback: Optional[Callable[[float, str], None]] = None,
+    found_browser: Optional[str] = None,
+    report: Optional[Callable[[float, str], None]] = None,
     abort_event: Optional[Any] = None,
 ) -> Optional[dict[str, Any]]:
-    """Extract photo metadata from a Facebook post using local browser session cookies or guest requests."""
-    patch_yt_dlp_cookie_database_reader()
-    import yt_dlp
+    """Internal helper to fetch and parse Facebook post/album HTML using a configured session."""
+    original_report = report
 
     def report(pct: float, msg: str):
-        if progress_callback:
-            progress_callback(pct, msg)
-
-    raw_browser = str(browser or "").strip().lower()
-    if raw_browser in ("none", "disabled", "off", "false"):
-        return None
-    is_explicit_guest = raw_browser in ("guest", "public", "public only")
-
-    scored_candidates = []
-    app_bound_noted = False
-    now = time.time()
-
-    if not is_explicit_guest:
-        report(0.04, "Searching desktop browsers for an active Facebook session...")
-        running = detect_running_browsers()
-        candidates = get_ordered_browser_candidates(preferred=raw_browser)
-
-        for b in candidates:
-            try:
-                ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
-                cand_jar = ydl.cookiejar
-                fb_cookies = [c for c in cand_jar if "facebook.com" in getattr(c, "domain", "")]
-                auth_cookies = [c for c in fb_cookies if getattr(c, "name", None) in ("c_user", "xs")]
-                has_auth = len(auth_cookies) >= 2
-                unexpired_auth = [c for c in auth_cookies if getattr(c, "expires", None) is None or c.expires > now]
-
-                score = 0
-                if has_auth and len(unexpired_auth) >= 2:
-                    score += 1000
-                elif has_auth:
-                    score += 500
-                elif fb_cookies:
-                    score += 50
-
-                if fb_cookies and b in running:
-                    score += 200
-
-                if score > 0:
-                    scored_candidates.append((score, b, cand_jar))
-                elif b in running and b in ("edge", "chrome", "brave"):
-                    if not app_bound_noted:
-                        report(0.05, f"{b.title()} is active, but its session database is protected by Windows App-Bound Encryption.")
-                        app_bound_noted = True
-            except Exception:
-                continue
-
-    jar = None
-    found_browser = None
-    if scored_candidates:
-        scored_candidates.sort(key=lambda x: x[0], reverse=True)
-        _, found_browser, jar = scored_candidates[0]
-
-    session = requests.Session()
-    if jar and found_browser:
-        report(0.06, f"Connected to Facebook session via {found_browser.title()}. Loading post...")
-        for c in jar:
-            if "facebook.com" in getattr(c, "domain", ""):
-                session.cookies.set(c.name, c.value, domain=c.domain, path=c.path)
-    else:
-        report(0.06, "Connecting to Facebook via guest session...")
+        if original_report:
+            original_report(pct, msg)
 
     session.headers.update({
         "User-Agent": (
@@ -1023,4 +965,96 @@ def fetch_facebook_manifest(
         "photos": list(photos.values()),
         "media_kind": "photo",
     }
+
+
+def fetch_facebook_manifest(
+    url: str,
+    browser: Optional[str] = None,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    abort_event: Optional[Any] = None,
+) -> Optional[dict[str, Any]]:
+    """Extract photo metadata from a Facebook post using guest requests or local browser session cookies."""
+    patch_yt_dlp_cookie_database_reader()
+    import yt_dlp
+
+    def report(pct: float, msg: str):
+        if progress_callback:
+            progress_callback(pct, msg)
+
+    raw_browser = str(browser or "").strip().lower()
+    if raw_browser in ("none", "disabled", "off", "false"):
+        return None
+    is_explicit_guest = raw_browser in ("guest", "public", "public only")
+    is_explicit_browser = raw_browser in (
+        "vivaldi", "firefox", "chrome", "edge", "brave", "opera", "chromium", "safari"
+    )
+
+    # Fast guest path: probe public Facebook post directly in ~200ms without opening or decrypting local browser databases
+    if not is_explicit_browser:
+        guest_session = requests.Session()
+        report(0.04, "Connecting to Facebook via guest session...")
+        guest_manifest = _fetch_facebook_manifest_with_session(
+            guest_session, url, found_browser=None, report=report, abort_event=abort_event
+        )
+        if guest_manifest:
+            return guest_manifest
+        if is_explicit_guest:
+            return None
+
+    scored_candidates = []
+    app_bound_noted = False
+    now = time.time()
+
+    report(0.05, "Searching desktop browsers for an active Facebook session...")
+    running = detect_running_browsers()
+    candidates = get_ordered_browser_candidates(preferred=raw_browser)
+
+    for b in candidates:
+        try:
+            ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
+            cand_jar = ydl.cookiejar
+            fb_cookies = [c for c in cand_jar if "facebook.com" in getattr(c, "domain", "")]
+            auth_cookies = [c for c in fb_cookies if getattr(c, "name", None) in ("c_user", "xs")]
+            has_auth = len(auth_cookies) >= 2
+            unexpired_auth = [c for c in auth_cookies if getattr(c, "expires", None) is None or c.expires > now]
+
+            score = 0
+            if has_auth and len(unexpired_auth) >= 2:
+                score += 1000
+            elif has_auth:
+                score += 500
+            elif fb_cookies:
+                score += 50
+
+            if fb_cookies and b in running:
+                score += 200
+
+            if score > 0:
+                scored_candidates.append((score, b, cand_jar))
+            elif b in running and b in ("edge", "chrome", "brave"):
+                if not app_bound_noted:
+                    report(0.06, f"{b.title()} is active, but its session database is protected by Windows App-Bound Encryption.")
+                    app_bound_noted = True
+        except Exception:
+            continue
+
+    jar = None
+    found_browser = None
+    if scored_candidates:
+        scored_candidates.sort(key=lambda x: x[0], reverse=True)
+        _, found_browser, jar = scored_candidates[0]
+
+    session = requests.Session()
+    if jar and found_browser:
+        report(0.06, f"Connected to Facebook session via {found_browser.title()}. Loading post...")
+        for c in jar:
+            if "facebook.com" in getattr(c, "domain", ""):
+                session.cookies.set(c.name, c.value, domain=c.domain, path=c.path)
+    else:
+        report(0.06, "Connecting to Facebook via guest session...")
+
+    return _fetch_facebook_manifest_with_session(
+        session, url, found_browser=found_browser, report=report, abort_event=abort_event
+    )
+
 

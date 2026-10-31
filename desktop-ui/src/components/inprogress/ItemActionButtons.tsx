@@ -1,10 +1,11 @@
-import { FolderOpen, GripVertical, Play, Trash2 } from "lucide-react";
+import { FolderOpen, GripVertical, Loader2, Play, Trash2 } from "lucide-react";
 import { bridge } from "../../bridge";
 import type { InProgressItem } from "./types";
 
 interface ItemActionButtonsProps {
   item: InProgressItem;
   fullPath?: string;
+  isDeleting?: boolean;
   onStatus: (message: string) => void;
   onOpen: (item: InProgressItem) => void;
   onShowInFolder: (item: InProgressItem) => void;
@@ -14,6 +15,7 @@ interface ItemActionButtonsProps {
 export function ItemActionButtons({
   item,
   fullPath,
+  isDeleting = false,
   onStatus,
   onOpen,
   onShowInFolder,
@@ -53,15 +55,22 @@ export function ItemActionButtons({
       {onDelete && (
         <button
           type="button"
+          disabled={isDeleting}
           onClick={(e) => {
             e.stopPropagation();
-            onDelete(item);
+            if (!isDeleting) {
+              onDelete(item);
+            }
           }}
-          className="flex size-6 items-center justify-center rounded-lg border border-white/5 bg-white/[0.03] text-zinc-400 transition-colors hover:border-red-400/20 hover:bg-red-400/10 hover:text-red-400"
-          title="Delete file"
+          className={`flex size-6 items-center justify-center rounded-lg border transition-colors ${
+            isDeleting
+              ? "border-red-500/20 bg-red-500/10 text-red-400 opacity-50 cursor-not-allowed pointer-events-none"
+              : "border-white/5 bg-white/[0.03] text-zinc-400 hover:border-red-400/20 hover:bg-red-400/10 hover:text-red-400"
+          }`}
+          title={isDeleting ? "Deleting..." : "Delete file"}
           aria-label={"Delete " + item.title}
         >
-          <Trash2 size={12} />
+          {isDeleting ? <Loader2 size={11} className="animate-spin text-red-400" /> : <Trash2 size={12} />}
         </button>
       )}
 

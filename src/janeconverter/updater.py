@@ -588,14 +588,24 @@ def get_current_ffmpeg_version() -> str:
 
 def _compare_ffmpeg_versions(latest: str, current: str) -> bool:
     """Deterministically compares two FFmpeg versions."""
+    if not latest or not current or latest == current:
+        return False
     try:
         from packaging import version
-        return version.parse(latest) > version.parse(current)
+        v_latest = version.parse(latest)
+        v_current = version.parse(current)
+        if hasattr(v_latest, "major") and hasattr(v_current, "major"):
+            if (v_latest.major >= 1900 and v_current.major < 100) or (v_current.major >= 1900 and v_latest.major < 100):
+                return False
+        return v_latest > v_current
     except Exception:
         def parts(v: str) -> tuple:
-            return tuple(int(x) for x in re.findall(r"\d+", v))
+            nums = [int(x) for x in re.findall(r"\d+", v)]
+            return tuple(nums[:4])
         p_latest, p_current = parts(latest), parts(current)
         if p_latest and p_current:
+            if (p_latest[0] >= 1900 and p_current[0] < 100) or (p_current[0] >= 1900 and p_latest[0] < 100):
+                return False
             return p_latest > p_current
         return False
 

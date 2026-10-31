@@ -91,6 +91,7 @@ export function InProgressView({
   const [showSessionModal, setShowSessionModal] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: InProgressItem } | null>(null);
   const [deletedItemIds, setDeletedItemIds] = useState<Set<string>>(new Set());
+  const [deletingItemIds, setDeletingItemIds] = useState<Set<string>>(new Set());
 
   // Close context menu on outside click or Escape
   useEffect(() => {
@@ -172,6 +173,16 @@ export function InProgressView({
         }
         return next;
       });
+      for (const k of Array.from(requestedThumbnailsRef.current)) {
+        if (k.startsWith(`${currentJobId}:`)) {
+          requestedThumbnailsRef.current.delete(k);
+        }
+      }
+      for (const k of Array.from(inFlightThumbnailsRef.current)) {
+        if (k.startsWith(`${currentJobId}:`)) {
+          inFlightThumbnailsRef.current.delete(k);
+        }
+      }
       const remaining = distinctJobIds.filter((id) => id !== currentJobId);
       if (remaining.length > 0) {
         const nextIdx = Math.max(0, Math.min(currentIndex, remaining.length - 1));
@@ -182,6 +193,8 @@ export function InProgressView({
     } else {
       onClear();
       setPreviews({});
+      requestedThumbnailsRef.current.clear();
+      inFlightThumbnailsRef.current.clear();
       setSelectedJobId(null);
     }
   }
@@ -195,13 +208,16 @@ export function InProgressView({
     handleClear();
   }
 
-  // Clear previews when events are completely wiped
+  // Clear previews and thumbnail caches when events are completely wiped
   useEffect(() => {
     if (events.length === 0) {
       setPreviews({});
       setFailedImages({});
+      requestedThumbnailsRef.current.clear();
+      inFlightThumbnailsRef.current.clear();
       setSelectedJobId(null);
       setDeletedItemIds(new Set());
+      setDeletingItemIds(new Set());
     }
   }, [events.length]);
 
@@ -211,12 +227,13 @@ export function InProgressView({
     [events, category, format, sourceTitle, currentJobId, isViewingLive, running]
   );
 
-  // Computed session summaries for all in-memory jobs
+  // Computed session summaries for in-memory jobs (only computed when modal is open to avoid O(N * M) regex recomputation on live progress)
   const sessionSummaries = useMemo<SessionSummary[]>(() => {
+    if (!showSessionModal) return [];
     return distinctJobIds.map((id, index) => {
       const isLive = Boolean(running && jobId && id === jobId);
       const isCurrent = id === currentJobId;
-      const { summary: sSummary } = parseConversionEvents(
+      const { items, summary: sSummary } = parseConversionEvents(
         events,
         category,
         format,
@@ -224,6 +241,16 @@ export function InProgressView({
         id,
         isLive
       );
+      const hist = historyItems.find((h) => h.id === id || h.id.startsWith(id + "-"));
+      let elapsedMs = hist?.elapsedMs;
+      if (elapsedMs === undefined) {
+        const itemElapsed = items
+          .map((it) => getItemElapsedMs(it))
+          .filter((t): t is number => typeof t === "number" && t > 0);
+        if (itemElapsed.length > 0) {
+          elapsedMs = itemElapsed.reduce((a, b) => a + b, 0);
+        }
+      }
       return {
         id,
         sessionNumber: index + 1,
@@ -237,9 +264,10 @@ export function InProgressView({
         isLive,
         isCurrent,
         overallProgress: sSummary.overallProgress,
+        elapsedMs,
       };
     }).reverse();
-  }, [distinctJobIds, events, category, format, jobId, running, currentJobId, sourceTitle]);
+  }, [showSessionModal, distinctJobIds, events, category, format, jobId, running, currentJobId, sourceTitle, historyItems]);
 
   // Historical sessions from catalog
   const catalogSessions = useMemo(() => {
@@ -556,12 +584,14 @@ export function InProgressView({
   }
 
   async function deleteItemFile(item: InProgressItem) {
+    if (deletingItemIds.has(item.id)) return;
     const fullPath = getItemFullPath(item);
     const root = settings?.outputDir || outputDir || summary.outputDir;
     if (!fullPath) {
       onStatus("No file path available to delete.");
       return;
     }
+    setDeletingItemIds((prev) => new Set(prev).add(item.id));
     try {
       if (root) {
         await bridge.deleteLibraryEntry(root, fullPath);
@@ -570,6 +600,12 @@ export function InProgressView({
       onStatus(`Deleted: ${item.title}`);
     } catch (err) {
       onStatus(`Could not delete file: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDeletingItemIds((prev) => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
     }
   }
 
@@ -902,6 +938,7 @@ export function InProgressView({
                 preview={getItemPreview(item)}
                 fullPath={getItemFullPath(item)}
                 elapsedMs={getItemElapsedMs(item)}
+                isDeleting={deletingItemIds.has(item.id)}
                 onContextMenu={handleContextMenu}
                 onImageError={(url) => setFailedImages((prev) => ({ ...prev, [url]: true }))}
                 onStatus={onStatus}
@@ -921,6 +958,7 @@ export function InProgressView({
                 preview={getItemPreview(item)}
                 fullPath={getItemFullPath(item)}
                 elapsedMs={getItemElapsedMs(item)}
+                isDeleting={deletingItemIds.has(item.id)}
                 onContextMenu={handleContextMenu}
                 onImageError={(url) => setFailedImages((prev) => ({ ...prev, [url]: true }))}
                 onStatus={onStatus}

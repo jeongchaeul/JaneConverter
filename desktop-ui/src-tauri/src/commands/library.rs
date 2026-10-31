@@ -222,16 +222,6 @@ pub fn delete_library_entry(
                 "The storage operation registry is unavailable."
             }
         })?;
-    if state
-        .active_job
-        .lock()
-        .map_err(|_| "The conversion registry is unavailable.")?
-        .is_some()
-    {
-        return Err(
-            "Wait for the active conversion to finish before deleting library media.".into(),
-        );
-    }
     let settings = settings_get_internal();
     let canonical_root = fs::canonicalize(root.trim())
         .map_err(|error| format!("The library root is unavailable: {error}"))?;
@@ -239,15 +229,34 @@ pub fn delete_library_entry(
     let canonical_fetch = fs::canonicalize(settings.fetched_dir.trim()).ok();
     let is_valid_root = canonical_out
         .as_ref()
-        .map(|o| o == &canonical_root)
+        .map(|o| o == &canonical_root || canonical_root.starts_with(o))
         .unwrap_or(false)
         || canonical_fetch
             .as_ref()
-            .map(|f| f == &canonical_root)
+            .map(|f| f == &canonical_root || canonical_root.starts_with(f))
             .unwrap_or(false);
 
     if !is_valid_root {
         return Err("For safety, JaneConverter can only delete items inside the configured library or fetched directories.".into());
+    }
+
+    let target_path = Path::new(path.trim());
+    let candidate = if target_path.is_absolute() {
+        target_path.to_path_buf()
+    } else {
+        canonical_root.join(target_path)
+    };
+    if candidate.is_dir()
+        && state
+            .active_job
+            .lock()
+            .map_err(|_| "The conversion registry is unavailable.")?
+            .is_some()
+    {
+        return Err(
+            "Wait for the active conversion to finish before deleting library media folders."
+                .into(),
+        );
     }
     let res = library::delete_inside(&root, &path);
     if res.is_ok() {

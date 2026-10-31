@@ -245,47 +245,17 @@ export function parseConversionEvents(
     // 5. Match Facebook/Social Photo progress: Downloading Facebook photo 1 of 12...
     const photoProgMatch = PHOTO_PROGRESS_RE.exec(rawMsg);
     if (photoProgMatch) {
-      const curPhoto = parseInt(photoProgMatch[1], 10);
       const totPhoto = parseInt(photoProgMatch[2], 10);
       if (totPhoto > detectedTotal) detectedTotal = totPhoto;
       detectedKind = "image";
 
-      // Mark earlier photos as ready if they haven't failed
-      for (let p = 1; p < curPhoto; p++) {
-        let prevItem = itemsMap.get(p);
-        if (!prevItem) {
-          itemsMap.set(p, {
-            id: `item-${p}`,
-            index: p,
-            total: totPhoto,
-            title: `Photo #${p}`,
-            mediaKind: "image",
-            status: "ready",
-            progress: 1,
-          });
-        } else if (prevItem.status !== "failed") {
-          prevItem.status = "ready";
-          prevItem.progress = 1;
+      // Mark queued items as downloading during active transfer
+      for (const it of itemsMap.values()) {
+        if (it.status === "queued") {
+          it.status = "downloading";
+          it.progress = 0.5;
+          it.detailMessage = rawMsg;
         }
-      }
-
-      let curItem = itemsMap.get(curPhoto);
-      if (!curItem) {
-        curItem = {
-          id: `item-${curPhoto}`,
-          index: curPhoto,
-          total: totPhoto,
-          title: `Photo #${curPhoto}`,
-          mediaKind: "image",
-          status: "downloading",
-          progress: 0.5,
-          detailMessage: rawMsg,
-        };
-        itemsMap.set(curPhoto, curItem);
-      } else {
-        curItem.status = "downloading";
-        curItem.progress = 0.5;
-        curItem.detailMessage = rawMsg;
       }
       continue;
     }
@@ -376,12 +346,13 @@ export function parseConversionEvents(
       const actualFile = rawConverted || (idx !== undefined ? `${idx}. ${cleanTitle}` : cleanTitle);
       if (idx !== undefined) {
         let item = itemsMap.get(idx);
+        const isPhoto = detectedKind === "image" || rawMsg.toLowerCase().includes("saved photo");
         if (!item) {
           item = {
             id: `item-${idx}`,
             index: idx,
             total: detectedTotal || idx,
-            title: cleanTitle.replace(/\.[a-zA-Z0-9]+$/, ""),
+            title: isPhoto ? `Photo #${idx}` : cleanTitle.replace(/\.[a-zA-Z0-9]+$/, ""),
             mediaKind: inferMediaKind(defaultCategory, defaultFormat, actualFile),
             status: "ready",
             progress: 1,
@@ -392,7 +363,7 @@ export function parseConversionEvents(
           item.status = "ready";
           item.progress = 1;
           item.outputPath = actualFile;
-          if (!item.title || item.title.startsWith("Track #")) {
+          if (!isPhoto && (!item.title || item.title.startsWith("Track #"))) {
             item.title = cleanTitle.replace(/\.[a-zA-Z0-9]+$/, "");
           }
         }

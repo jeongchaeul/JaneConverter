@@ -938,7 +938,7 @@ def fetch_media_stream(
         "no_warnings": True,
         "noprogress": True,
         "concurrent_fragment_downloads": 4,
-        "socket_timeout": 10,
+        "socket_timeout": 5,
         "retries": 1,
         "fragment_retries": 1,
         "extractor_retries": 1,
@@ -965,7 +965,7 @@ def fetch_media_stream(
             ydl_opts["extractor_args"] = {}
         if "youtube" not in ydl_opts["extractor_args"]:
             ydl_opts["extractor_args"]["youtube"] = {
-                "player_client": ["web_embedded", "android", "ios"],
+                "player_client": ["android", "ios", "web_embedded"],
             }
 
     is_tiktok_source = (
@@ -1340,8 +1340,23 @@ def fetch_playlist_entries(
         "no_warnings": True,
         "skip_download": True,
         "noplaylist": False,
-        "js_runtimes": get_js_runtimes_config()
+        "socket_timeout": 5,
+        "retries": 1,
+        "extractor_retries": 1,
+        "js_runtimes": get_js_runtimes_config(),
     }
+    is_yt = (
+        source_type == "youtube"
+        or "youtube.com" in clean_url
+        or "youtu.be" in clean_url
+        or clean_url.startswith("ytsearch")
+    )
+    if is_yt:
+        ydl_opts["extractor_args"] = {
+            "youtube": {
+                "player_client": ["android", "ios", "web_embedded"],
+            }
+        }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             report(0.3, "Extracting playlist index and track listings...")

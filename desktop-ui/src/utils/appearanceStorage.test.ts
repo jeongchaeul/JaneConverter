@@ -61,6 +61,17 @@ describe("appearanceStorage", () => {
     expect(loaded?.bgMode).toBe("color");
   });
 
+  it("loads legacy settings stored under janecoverter prefix", async () => {
+    window.localStorage.setItem("janecoverter.accentColor", "#a855f7");
+    window.localStorage.setItem("janecoverter.bgMode", "wallpaper");
+    window.localStorage.setItem("janecoverter.wallpaperBlur", "15");
+
+    const loaded = await loadAppearanceFromStorage();
+    expect(loaded?.accentColor).toBe("#a855f7");
+    expect(loaded?.bgMode).toBe("wallpaper");
+    expect(loaded?.wallpaperBlur).toBe(15);
+  });
+
   it("converts hex colors to rgba strings with alpha", () => {
     expect(hexToRgba("#000000", 0.5)).toBe("rgba(0, 0, 0, 0.5)");
     expect(hexToRgba("#05040d", 0.45)).toBe("rgba(5, 4, 13, 0.45)");

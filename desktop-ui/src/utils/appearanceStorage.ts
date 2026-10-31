@@ -58,44 +58,54 @@ function getDB(): Promise<IDBDatabase | null> {
 /**
  * Persists appearance settings both to IndexedDB (for large wallpaper data without quota limits)
  * and to localStorage (for fast synchronous retrieval on startup).
+ * Returns true if both storage tiers succeeded, or false if storage quota/error occurred.
  */
-export async function saveAppearanceToStorage(settings: AppearanceSettings): Promise<void> {
+export async function saveAppearanceToStorage(settings: AppearanceSettings): Promise<boolean> {
+  let localStorageSuccess = true;
   if (typeof window !== "undefined") {
     // Save small configuration values safely with individual try/catches
-    try { window.localStorage.setItem("janecoverter.theme", settings.theme); } catch {}
-    try { window.localStorage.setItem("janecoverter.accentColor", settings.accentColor); } catch {}
-    try { window.localStorage.setItem("janecoverter.bgColor", settings.bgColor); } catch {}
-    try { window.localStorage.setItem("janecoverter.bgMode", settings.bgMode); } catch {}
-    try { window.localStorage.setItem("janecoverter.wallpaperBlur", String(settings.wallpaperBlur)); } catch {}
-    try { window.localStorage.setItem("janecoverter.wallpaperMaskColor", settings.wallpaperMaskColor); } catch {}
-    try { window.localStorage.setItem("janecoverter.wallpaperMaskOpacity", String(settings.wallpaperMaskOpacity)); } catch {}
-    try { window.localStorage.setItem("janecoverter.sidebarColor", settings.sidebarColor ?? "#05040d"); } catch {}
-    try { window.localStorage.setItem("janecoverter.sidebarOpacity", String(settings.sidebarOpacity ?? 45)); } catch {}
+    try { window.localStorage.setItem("janeconverter.theme", settings.theme); } catch { localStorageSuccess = false; }
+    try { window.localStorage.setItem("janeconverter.accentColor", settings.accentColor); } catch { localStorageSuccess = false; }
+    try { window.localStorage.setItem("janeconverter.bgColor", settings.bgColor); } catch { localStorageSuccess = false; }
+    try { window.localStorage.setItem("janeconverter.bgMode", settings.bgMode); } catch { localStorageSuccess = false; }
+    try { window.localStorage.setItem("janeconverter.wallpaperBlur", String(settings.wallpaperBlur)); } catch { localStorageSuccess = false; }
+    try { window.localStorage.setItem("janeconverter.wallpaperMaskColor", settings.wallpaperMaskColor); } catch { localStorageSuccess = false; }
+    try { window.localStorage.setItem("janeconverter.wallpaperMaskOpacity", String(settings.wallpaperMaskOpacity)); } catch { localStorageSuccess = false; }
+    try { window.localStorage.setItem("janeconverter.sidebarColor", settings.sidebarColor ?? "#05040d"); } catch { localStorageSuccess = false; }
+    try { window.localStorage.setItem("janeconverter.sidebarOpacity", String(settings.sidebarOpacity ?? 45)); } catch { localStorageSuccess = false; }
+
+    // Clean up legacy typo keys if present
+    try {
+      window.localStorage.removeItem("janecoverter.wallpaper");
+      window.localStorage.removeItem("janecoverter.bgMode");
+    } catch {}
 
     // Only save wallpaper to localStorage if it fits; if it exceeds quota, IndexedDB will maintain it
     try {
-      window.localStorage.setItem("janecoverter.wallpaper", settings.wallpaper);
+      window.localStorage.setItem("janeconverter.wallpaper", settings.wallpaper);
     } catch {
-      // Ignored: quota exceeded for large image in localStorage
+      // Quota exceeded for large image in localStorage - IndexedDB is primary backing store
     }
   }
 
   const db = await getDB();
-  if (!db) return;
+  if (!db) return localStorageSuccess;
 
-  await new Promise<void>((resolve) => {
+  const idbSuccess = await new Promise<boolean>((resolve) => {
     try {
       const tx = db.transaction(STORE_NAME, "readwrite");
       const store = tx.objectStore(STORE_NAME);
       const req = store.put(settings, SETTINGS_KEY);
-      req.onsuccess = () => resolve();
-      req.onerror = () => resolve();
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => resolve(false);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
     } catch {
-      resolve();
+      resolve(false);
     }
   });
+
+  return idbSuccess;
 }
 
 /**
@@ -121,22 +131,23 @@ export async function loadAppearanceFromStorage(): Promise<Partial<AppearanceSet
     }
   }
 
-  // Fallback to localStorage
+  // Fallback to localStorage (supports both modern janeconverter.* and legacy janecoverter.* keys)
   if (typeof window !== "undefined") {
     try {
-      const wallpaper = window.localStorage.getItem("janecoverter.wallpaper") || "";
-      const bgMode = (window.localStorage.getItem("janecoverter.bgMode") as "color" | "wallpaper") || "color";
-      const accentColor = window.localStorage.getItem("janecoverter.accentColor") || undefined;
-      const bgColor = window.localStorage.getItem("janecoverter.bgColor") || undefined;
-      const theme = (window.localStorage.getItem("janecoverter.theme") as "dark" | "light") || undefined;
-      const rawBlur = window.localStorage.getItem("janecoverter.wallpaperBlur");
-      const wallpaperBlur = rawBlur !== null ? parseInt(rawBlur, 10) : undefined;
-      const wallpaperMaskColor = window.localStorage.getItem("janecoverter.wallpaperMaskColor") || undefined;
-      const rawOpacity = window.localStorage.getItem("janecoverter.wallpaperMaskOpacity");
-      const wallpaperMaskOpacity = rawOpacity !== null ? parseInt(rawOpacity, 10) : undefined;
-      const sidebarColor = window.localStorage.getItem("janecoverter.sidebarColor") || undefined;
-      const rawSidebarOpacity = window.localStorage.getItem("janecoverter.sidebarOpacity");
-      const sidebarOpacity = rawSidebarOpacity !== null ? parseInt(rawSidebarOpacity, 10) : undefined;
+      const getPref = (key: string) => window.localStorage.getItem(`janeconverter.${key}`) ?? window.localStorage.getItem(`janecoverter.${key}`);
+      const wallpaper = getPref("wallpaper") || "";
+      const bgMode = (getPref("bgMode") as "color" | "wallpaper") || "color";
+      const accentColor = getPref("accentColor") || undefined;
+      const bgColor = getPref("bgColor") || undefined;
+      const theme = (getPref("theme") as "dark" | "light") || undefined;
+      const rawBlur = getPref("wallpaperBlur");
+      const wallpaperBlur = rawBlur !== null && rawBlur !== undefined ? parseInt(rawBlur, 10) : undefined;
+      const wallpaperMaskColor = getPref("wallpaperMaskColor") || undefined;
+      const rawOpacity = getPref("wallpaperMaskOpacity");
+      const wallpaperMaskOpacity = rawOpacity !== null && rawOpacity !== undefined ? parseInt(rawOpacity, 10) : undefined;
+      const sidebarColor = getPref("sidebarColor") || undefined;
+      const rawSidebarOpacity = getPref("sidebarOpacity");
+      const sidebarOpacity = rawSidebarOpacity !== null && rawSidebarOpacity !== undefined ? parseInt(rawSidebarOpacity, 10) : undefined;
 
       return {
         theme,
@@ -164,13 +175,15 @@ export async function loadAppearanceFromStorage(): Promise<Partial<AppearanceSet
 export async function clearAppearanceStorage(): Promise<void> {
   if (typeof window !== "undefined") {
     try {
-      window.localStorage.removeItem("janecoverter.wallpaper");
-      window.localStorage.setItem("janecoverter.bgMode", "color");
-      window.localStorage.setItem("janecoverter.wallpaperBlur", "20");
-      window.localStorage.setItem("janecoverter.wallpaperMaskColor", "#000000");
-      window.localStorage.setItem("janecoverter.wallpaperMaskOpacity", "50");
-      window.localStorage.setItem("janecoverter.sidebarColor", "#05040d");
-      window.localStorage.setItem("janecoverter.sidebarOpacity", "45");
+      for (const prefix of ["janeconverter", "janecoverter"]) {
+        window.localStorage.removeItem(`${prefix}.wallpaper`);
+        window.localStorage.setItem(`${prefix}.bgMode`, "color");
+        window.localStorage.setItem(`${prefix}.wallpaperBlur`, "20");
+        window.localStorage.setItem(`${prefix}.wallpaperMaskColor`, "#000000");
+        window.localStorage.setItem(`${prefix}.wallpaperMaskOpacity`, "50");
+        window.localStorage.setItem(`${prefix}.sidebarColor`, "#05040d");
+        window.localStorage.setItem(`${prefix}.sidebarOpacity`, "45");
+      }
     } catch {}
   }
 
