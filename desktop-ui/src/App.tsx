@@ -150,6 +150,7 @@ export default function App() {
   const settingsRef = useRef<ConverterSettings>(defaultSettings);
   settingsRef.current = settings;
   const [events, setEvents] = useState<ConverterEvent[]>([]);
+  const [rawEvents, setRawEvents] = useState<ConverterEvent[]>([]);
   const [access, setAccess] = useState<AccessStatus>({ active: false, link: "", browser: "", source: null, bridgeConnected: false });
   const [selectedCapture, setSelectedCapture] = useState<FetchedMedia | null>(null);
   const [jobId, setJobId] = useState("");
@@ -539,6 +540,7 @@ export default function App() {
     void bridge.subscribe((event) => {
       if (!mounted) return;
       setEvents((current) => [...current.slice(-9999), event]);
+      setRawEvents((current) => [...current.slice(-9999), event]);
       if (event.kind === "started" && !activeJobRef.current) {
         activeJobRef.current = event.jobId;
         setJobId(event.jobId);
@@ -686,6 +688,7 @@ export default function App() {
         if (!unseen.length) return;
         for (const entry of unseen) accessDiagnosticIds.current.add(entry.id);
         setEvents((current) => [...current.slice(-1499), ...unseen.map((entry) => ({ jobId: "browser-session", kind: "status" as const, message: entry.message }))]);
+        setRawEvents((current) => [...current.slice(-1499), ...unseen.map((entry) => ({ jobId: "browser-session", kind: "status" as const, message: entry.message }))]);
       } catch (error) {
         statusMessage(error instanceof Error ? error.message : String(error));
       } finally {
@@ -712,6 +715,7 @@ export default function App() {
         if (!/update available|check unavailable/i.test(message)) return;
         setStatus(message);
         setEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
+        setRawEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
       }).catch(() => {
         // Startup checks stay quiet when the machine is offline. The Settings
         // view remains available for an explicit retry and full status text.
@@ -725,6 +729,7 @@ export default function App() {
   const statusMessage = useCallback((message: string) => {
     setStatus(message);
     setEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
+    setRawEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
   }, []);
 
   const errorMessage = useCallback((message: string) => {
@@ -922,6 +927,7 @@ export default function App() {
       ? (
         <ConsoleView
           events={events}
+          rawEvents={rawEvents}
           jobId={jobId || undefined}
           running={Boolean(jobId) || captureBusy}
           paused={paused}
@@ -949,6 +955,9 @@ export default function App() {
               setProgress(0);
             }
           }}
+          onClearRaw={() => {
+            setRawEvents([]);
+          }}
           onStatus={statusMessage}
           onNavigateToConverter={() => setActiveView("converter")}
           onNavigateToLibrary={() => setActiveView("library")}
@@ -960,6 +969,7 @@ export default function App() {
               { jobId: item.id, kind: "finished", message: "Conversion finished. Your media is ready.", output: item.exportPath },
             ];
             setEvents((prev) => [...prev, ...syntheticEvents]);
+            setRawEvents((prev) => [...prev, ...syntheticEvents]);
           }}
         />
       )

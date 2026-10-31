@@ -39,11 +39,32 @@ class _AuthenticatedYtdlpLogger:
     def __init__(self, progress_callback: Optional[Callable[[float, str], None]]):
         self.progress_callback = progress_callback
         self._seen_errors = set()
+        self._last_step = ""
 
-    def debug(self, _message: object):
+    def debug(self, message: object):
+        if not self.progress_callback:
+            return None
+        msg_str = str(message or "")
+        if "Downloading webpage" in msg_str and self._last_step != "webpage":
+            self._last_step = "webpage"
+            self.progress_callback(0.08, "Connecting to media stream server...")
+        elif ("Downloading player" in msg_str or "player API JSON" in msg_str) and self._last_step != "player":
+            self._last_step = "player"
+            self.progress_callback(0.10, "Parsing media formats and stream manifest...")
+        elif "Solving JS challenges" in msg_str and self._last_step != "js":
+            self._last_step = "js"
+            self.progress_callback(0.12, "Verifying media signatures...")
+        elif "Sleeping" in msg_str and "as required by the site" in msg_str and self._last_step != "sleep":
+            self._last_step = "sleep"
+            self.progress_callback(0.14, "Synchronizing with media delivery network...")
         return None
 
-    def info(self, _message: object):
+    def info(self, message: object):
+        if not self.progress_callback:
+            return None
+        msg_str = str(message or "")
+        if "Downloading 1 format" in msg_str or "Downloading video" in msg_str:
+            self.progress_callback(0.15, "Stream link established. Downloading media...")
         return None
 
     def warning(self, _message: object):
@@ -951,6 +972,7 @@ def fetch_media_stream(
             else ["res", "fps", "proto:https", "br"]
         ),
         "js_runtimes": get_js_runtimes_config(),
+        "logger": _AuthenticatedYtdlpLogger(report),
         "progress_hooks": [progress_hook]
     }
     is_youtube_source = (
@@ -965,7 +987,7 @@ def fetch_media_stream(
             ydl_opts["extractor_args"] = {}
         if "youtube" not in ydl_opts["extractor_args"]:
             ydl_opts["extractor_args"]["youtube"] = {
-                "player_client": ["android", "ios", "web_embedded"],
+                "player_client": ["web_embedded", "android", "ios"],
             }
 
     is_tiktok_source = (
@@ -1354,7 +1376,7 @@ def fetch_playlist_entries(
     if is_yt:
         ydl_opts["extractor_args"] = {
             "youtube": {
-                "player_client": ["android", "ios", "web_embedded"],
+                "player_client": ["web_embedded", "android", "ios"],
             }
         }
     try:

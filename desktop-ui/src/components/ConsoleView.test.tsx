@@ -988,4 +988,52 @@ describe("ConsoleView", () => {
     });
     container.remove();
   });
+
+  it("preserves raw console logs when in-progress rack events are cleared", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onClearRaw = vi.fn();
+
+    const persistentLogs: ConverterEvent[] = [
+      { jobId: "j1", kind: "started", message: "[*] Starting conversion: secret_log.mp3" },
+      { jobId: "j1", kind: "log", message: "Connecting to stream provider..." },
+      { jobId: "j1", kind: "finished", message: "DONE! Exported: C:\\secret_log.mp3" },
+    ];
+
+    // InProgress rack events are already cleared (empty), but rawEvents has logs
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={[]}
+          rawEvents={persistentLogs}
+          initialMode="raw"
+          onClear={vi.fn()}
+          onClearRaw={onClearRaw}
+          onStatus={vi.fn()}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain("Starting conversion: secret_log.mp3");
+    expect(container.textContent).toContain("Connecting to stream provider...");
+    expect(container.textContent).toContain("DONE! Exported: C:\\secret_log.mp3");
+
+    // Click Clear button in Raw Console
+    const clearBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim().includes("Clear")
+    );
+    expect(clearBtn).toBeDefined();
+
+    await act(async () => {
+      clearBtn?.click();
+    });
+
+    expect(onClearRaw).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
 });

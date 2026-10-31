@@ -5,6 +5,7 @@ import { InProgressView } from "./InProgressView";
 
 export function ConsoleView({
   events,
+  rawEvents,
   jobId,
   running = false,
   paused = false,
@@ -22,6 +23,7 @@ export function ConsoleView({
   onPauseToggle,
   onAbort,
   onClear,
+  onClearRaw,
   onStatus,
   onNavigateToConverter,
   onNavigateToHistory,
@@ -29,6 +31,7 @@ export function ConsoleView({
   onRestoreSession,
 }: {
   events: ConverterEvent[];
+  rawEvents?: ConverterEvent[];
   jobId?: string;
   running?: boolean;
   paused?: boolean;
@@ -46,6 +49,7 @@ export function ConsoleView({
   onPauseToggle?: () => Promise<void> | void;
   onAbort?: () => Promise<void> | void;
   onClear: (targetJobId?: string) => void;
+  onClearRaw?: () => void;
   onStatus: (message: string) => void;
   onNavigateToConverter?: () => void;
   onNavigateToHistory?: () => void;
@@ -91,20 +95,22 @@ export function ConsoleView({
     }
   }
 
+  const consoleEvents = rawEvents ?? events;
+
   // 1. Process and collapse repetitive progress frames when in "clean" mode
   const processedEvents = useMemo(() => {
     let list: ConverterEvent[];
     if (filter === "failed") {
-      list = events.filter((e) => e.kind === "failed");
+      list = consoleEvents.filter((e) => e.kind === "failed");
     } else if (filter === "progress") {
-      list = events.filter((e) => e.progress !== undefined || e.kind === "progress");
+      list = consoleEvents.filter((e) => e.progress !== undefined || e.kind === "progress");
     } else if (filter === "all") {
-      list = events;
+      list = consoleEvents;
     } else {
       // Default: "clean" mode - collapse consecutive progress updates in-place
       const collapsed: ConverterEvent[] = [];
       let lastWasProgress = false;
-      for (const event of events) {
+      for (const event of consoleEvents) {
         const isMilestone =
           event.message.startsWith("[+]") ||
           event.message.startsWith("[*]") ||
@@ -140,7 +146,7 @@ export function ConsoleView({
     }
 
     return list;
-  }, [events, filter, searchQuery]);
+  }, [consoleEvents, filter, searchQuery]);
 
   // 2. Windowing buffer to prevent infinite scroll DOM bloat
   const totalProcessedCount = processedEvents.length;
@@ -330,7 +336,7 @@ export function ConsoleView({
           </button>
           <button
             type="button"
-            onClick={() => onClear()}
+            onClick={() => (onClearRaw ? onClearRaw() : onClear())}
             className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
           >
             <Trash2 size={13} /> Clear

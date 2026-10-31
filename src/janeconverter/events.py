@@ -48,7 +48,7 @@ class CoalescingCallbackQueue:
         """Return a bounded batch for execution on the UI thread."""
         deadline = time.monotonic() + max(0.0, time_budget_ms) / 1000.0
         callbacks = []
-        while len(callbacks) < max(1, max_items) and time.monotonic() <= deadline:
+        while len(callbacks) < max(1, max_items) and (not callbacks or time.monotonic() <= deadline):
             with self._lock:
                 if not self._items:
                     break

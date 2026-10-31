@@ -509,6 +509,10 @@ def _fetch_public_pinterest_pin(
     return None
 
 
+_CACHED_PINTEREST_SESSION: Optional[dict[str, Any]] = None
+_CACHED_INSTAGRAM_SESSION: Optional[dict[str, Any]] = None
+
+
 def fetch_pinterest_collection_manifest(
     url: str,
     browser: Optional[str] = None,
@@ -544,23 +548,33 @@ def fetch_pinterest_collection_manifest(
         if fast_manifest:
             return fast_manifest
 
-    report(0.04, "Searching desktop browsers for an active Pinterest session...")
-    preferred = [browser] if browser and browser.lower() not in ("none", "auto", "public", "public only") else []
-    candidates = preferred + [b for b in ("vivaldi", "firefox", "chrome", "edge", "brave", "opera") if b not in preferred]
-
     jar = None
     found_browser = None
-    for b in candidates:
-        try:
-            ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
-            candidate_jar = ydl.cookiejar
-            p_cookies = [c for c in candidate_jar if "pinterest" in getattr(c, "domain", "")]
-            if p_cookies and any(getattr(c, "name", None) in ("_pinterest_sess", "_auth") for c in p_cookies):
-                jar = candidate_jar
-                found_browser = b
-                break
-        except Exception:
-            continue
+
+    global _CACHED_PINTEREST_SESSION
+    if _CACHED_PINTEREST_SESSION and (time.time() - _CACHED_PINTEREST_SESSION.get("timestamp", 0) < 900):
+        cached_b = _CACHED_PINTEREST_SESSION.get("browser")
+        if not preferred or preferred[0] == cached_b:
+            jar = _CACHED_PINTEREST_SESSION.get("jar")
+            found_browser = cached_b
+
+    if not jar:
+        report(0.04, "Searching desktop browsers for an active Pinterest session...")
+        preferred = [browser] if browser and browser.lower() not in ("none", "auto", "public", "public only") else []
+        candidates = preferred + [b for b in ("vivaldi", "firefox", "chrome", "edge", "brave", "opera") if b not in preferred]
+
+        for b in candidates:
+            try:
+                ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
+                candidate_jar = ydl.cookiejar
+                p_cookies = [c for c in candidate_jar if "pinterest" in getattr(c, "domain", "")]
+                if p_cookies and any(getattr(c, "name", None) in ("_pinterest_sess", "_auth") for c in p_cookies):
+                    jar = candidate_jar
+                    found_browser = b
+                    _CACHED_PINTEREST_SESSION = {"timestamp": time.time(), "browser": found_browser, "jar": jar}
+                    break
+            except Exception:
+                continue
 
     opener = None
     csrf = ""
@@ -948,22 +962,32 @@ def fetch_instagram_manifest(
         res_data = _query_instagram_media_endpoints(guest_opener, media_pk, shortcode)
 
     if not res_data:
-        report(0.05, "Searching desktop browsers for an active Instagram session...")
-        candidates = preferred + [b for b in ("vivaldi", "firefox", "chrome", "edge", "brave", "opera") if b not in preferred]
-
         jar = None
         found_browser = None
-        for b in candidates:
-            try:
-                ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
-                candidate_jar = ydl.cookiejar
-                ig_cookies = [c for c in candidate_jar if "instagram" in getattr(c, "domain", "")]
-                if ig_cookies and any(getattr(c, "name", None) in ("sessionid", "ds_user_id") for c in ig_cookies):
-                    jar = candidate_jar
-                    found_browser = b
-                    break
-            except Exception:
-                continue
+
+        global _CACHED_INSTAGRAM_SESSION
+        if _CACHED_INSTAGRAM_SESSION and (time.time() - _CACHED_INSTAGRAM_SESSION.get("timestamp", 0) < 900):
+            cached_b = _CACHED_INSTAGRAM_SESSION.get("browser")
+            if not preferred or preferred[0] == cached_b:
+                jar = _CACHED_INSTAGRAM_SESSION.get("jar")
+                found_browser = cached_b
+
+        if not jar:
+            report(0.05, "Searching desktop browsers for an active Instagram session...")
+            candidates = preferred + [b for b in ("vivaldi", "firefox", "chrome", "edge", "brave", "opera") if b not in preferred]
+
+            for b in candidates:
+                try:
+                    ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
+                    candidate_jar = ydl.cookiejar
+                    ig_cookies = [c for c in candidate_jar if "instagram" in getattr(c, "domain", "")]
+                    if ig_cookies and any(getattr(c, "name", None) in ("sessionid", "ds_user_id") for c in ig_cookies):
+                        jar = candidate_jar
+                        found_browser = b
+                        _CACHED_INSTAGRAM_SESSION = {"timestamp": time.time(), "browser": found_browser, "jar": jar}
+                        break
+                except Exception:
+                    continue
 
         if found_browser:
             report(0.06, f"Connected to Instagram session via {found_browser.title()}. Requesting post info...")

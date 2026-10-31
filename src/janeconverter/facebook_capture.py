@@ -505,6 +505,9 @@ def _resolve_facebook_pagination_query(html: str, session: requests.Session) -> 
     return fallback
 
 
+_CACHED_FACEBOOK_SESSION: Optional[dict[str, Any]] = None
+
+
 def _fetch_facebook_manifest_with_session(
     session: requests.Session,
     url: str,
@@ -544,6 +547,8 @@ def _fetch_facebook_manifest_with_session(
 
     final_url = response.url
     if "/login" in final_url.lower():
+        global _CACHED_FACEBOOK_SESSION
+        _CACHED_FACEBOOK_SESSION = None
         if found_browser:
             report(0.08, f"Facebook redirected to login despite {found_browser.title()} session.")
         else:
@@ -989,6 +994,27 @@ def fetch_facebook_manifest(
         "vivaldi", "firefox", "chrome", "edge", "brave", "opera", "chromium", "safari"
     )
 
+    global _CACHED_FACEBOOK_SESSION
+
+    # Warm session path: reuse cached authenticated browser session from earlier in the run (< 15 mins)
+    if not is_explicit_guest and _CACHED_FACEBOOK_SESSION:
+        cached_ts = _CACHED_FACEBOOK_SESSION.get("timestamp", 0)
+        cached_browser = _CACHED_FACEBOOK_SESSION.get("browser")
+        cached_jar = _CACHED_FACEBOOK_SESSION.get("jar")
+        if time.time() - cached_ts < 900 and cached_jar and (not raw_browser or raw_browser == str(cached_browser).lower()):
+            report(0.04, f"Reusing active Facebook session via {str(cached_browser).title()}...")
+            warm_session = requests.Session()
+            for c in cached_jar:
+                if "facebook.com" in getattr(c, "domain", ""):
+                    warm_session.cookies.set(c.name, c.value, domain=c.domain, path=c.path)
+            warm_manifest = _fetch_facebook_manifest_with_session(
+                warm_session, url, found_browser=cached_browser, report=report, abort_event=abort_event
+            )
+            if warm_manifest:
+                _CACHED_FACEBOOK_SESSION["timestamp"] = time.time()
+                return warm_manifest
+            _CACHED_FACEBOOK_SESSION = None
+
     # Fast guest path: probe public Facebook post directly in ~200ms without opening or decrypting local browser databases
     if not is_explicit_browser:
         guest_session = requests.Session()
@@ -1031,6 +1057,8 @@ def fetch_facebook_manifest(
 
             if score > 0:
                 scored_candidates.append((score, b, cand_jar))
+                if score >= 1000:
+                    break
             elif b in running and b in ("edge", "chrome", "brave"):
                 if not app_bound_noted:
                     report(0.06, f"{b.title()} is active, but its session database is protected by Windows App-Bound Encryption.")
@@ -1046,6 +1074,11 @@ def fetch_facebook_manifest(
 
     session = requests.Session()
     if jar and found_browser:
+        _CACHED_FACEBOOK_SESSION = {
+            "timestamp": time.time(),
+            "browser": found_browser,
+            "jar": jar,
+        }
         report(0.06, f"Connected to Facebook session via {found_browser.title()}. Loading post...")
         for c in jar:
             if "facebook.com" in getattr(c, "domain", ""):
