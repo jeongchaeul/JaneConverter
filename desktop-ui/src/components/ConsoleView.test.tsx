@@ -684,6 +684,74 @@ describe("ConsoleView", () => {
     container.remove();
   });
 
+  it("renders Retry button and Copy URL on failed items, right-click menu, and excludes empty ghost sessions", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const onRetryItem = vi.fn();
+    const onStatus = vi.fn();
+
+    // Event stream with 1 ghost/empty job and 1 real job with a failed track
+    const testEvents: ConverterEvent[] = [
+      { jobId: "ghost-empty-job", kind: "started", message: "[*] Starting ghost empty job..." },
+      { jobId: "real-job", kind: "started", message: "[*] JANECONVERTER PLAYLIST BATCH PIPELINE" },
+      { jobId: "real-job", kind: "log", message: "[*] Track #1 Manifest: Broken Stream\tUnknown Artist\thttps://i.ytimg.com/vi/1Zeut24kgLw/hqdefault.jpg\thttps://www.youtube.com/watch?v=1Zeut24kgLw" },
+      { jobId: "real-job", kind: "failed", message: "[!] Error converting track #1 'Broken Stream': Video unavailable" },
+      { jobId: "real-job", kind: "finished", message: "DONE! Exported: D:\\Music", output: "D:\\Music" },
+    ];
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={testEvents}
+          jobId="real-job"
+          running={false}
+          initialMode="in_progress"
+          outputDir="D:\\Music"
+          onClear={vi.fn()}
+          onStatus={onStatus}
+          onRetryItem={onRetryItem}
+        />
+      );
+    });
+
+    // 1. Ghost job with 0 items is filtered out, so there is only 1 session (Session 1 / 1)
+    expect(container.textContent).toContain("Session 1 / 1");
+    expect(container.textContent).not.toContain("Session 2 / 2");
+
+    // 2. Retry button and Copy link button are rendered on the failed track card
+    const retryBtn = container.querySelector<HTMLButtonElement>("button[aria-label='Retry Broken Stream']");
+    const copyLinkBtn = container.querySelector<HTMLButtonElement>("button[aria-label='Copy link for Broken Stream']");
+    expect(retryBtn).toBeDefined();
+    expect(copyLinkBtn).toBeDefined();
+
+    // 3. Clicking Retry invokes onRetryItem
+    await act(async () => {
+      retryBtn?.click();
+    });
+    expect(onRetryItem).toHaveBeenCalledTimes(1);
+    expect(onRetryItem).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Broken Stream",
+      status: "failed",
+      url: "https://www.youtube.com/watch?v=1Zeut24kgLw",
+    }));
+
+    // 4. Right-click context menu shows Retry conversion and Copy media URL
+    const card = container.querySelector(".group.relative.flex.flex-col");
+    await act(async () => {
+      card?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 200, clientY: 200 }));
+    });
+
+    expect(container.textContent).toContain("Retry conversion");
+    expect(container.textContent).toContain("Copy media URL");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("handles Close Page enablement across multiple sessions and ongoing status, and tests drag file handler", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

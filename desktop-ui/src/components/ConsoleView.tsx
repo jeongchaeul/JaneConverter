@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, Check, Clipboard, Download, Filter, Layers, Pause, Play, Search, Square, TerminalSquare, Trash2, X } from "lucide-react";
 import { bridge, type Category, type ConverterEvent, type ConversionHistoryItem, type ConverterSettings } from "../bridge";
 import { InProgressView } from "./InProgressView";
+import { parseConversionEvents } from "./inprogress/parser";
+import type { InProgressItem } from "./inprogress/types";
 
 export function ConsoleView({
   events,
@@ -29,6 +31,7 @@ export function ConsoleView({
   onNavigateToHistory,
   onNavigateToLibrary,
   onRestoreSession,
+  onRetryItem,
 }: {
   events: ConverterEvent[];
   rawEvents?: ConverterEvent[];
@@ -55,6 +58,7 @@ export function ConsoleView({
   onNavigateToHistory?: () => void;
   onNavigateToLibrary?: () => void;
   onRestoreSession?: (item: ConversionHistoryItem) => void;
+  onRetryItem?: (item: InProgressItem) => void;
 }) {
   const [internalMode, setInternalMode] = useState<"in_progress" | "raw">(initialMode);
   const activeMode = mode !== undefined ? mode : internalMode;
@@ -72,14 +76,21 @@ export function ConsoleView({
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   const distinctJobIds = useMemo(() => {
-    const ids: string[] = [];
+    const rawIds: string[] = [];
     for (const evt of events) {
-      if (evt.jobId && evt.jobId !== "ui" && evt.jobId !== "browser-session" && !ids.includes(evt.jobId)) {
-        ids.push(evt.jobId);
+      if (evt.jobId && evt.jobId !== "ui" && evt.jobId !== "browser-session" && !rawIds.includes(evt.jobId)) {
+        rawIds.push(evt.jobId);
       }
     }
-    return ids;
-  }, [events]);
+    if (jobId && jobId !== "ui" && jobId !== "browser-session" && !rawIds.includes(jobId)) {
+      rawIds.push(jobId);
+    }
+    return rawIds.filter((id) => {
+      if (running && jobId && id === jobId) return true;
+      const parsed = parseConversionEvents(events, category, format, undefined, id, false);
+      return parsed.items.length > 0;
+    });
+  }, [events, jobId, running, category, format]);
 
   const isOngoing = Boolean(running || paused);
   const isSinglePage = distinctJobIds.length <= 1;
@@ -252,6 +263,7 @@ export function ConsoleView({
         onNavigateToHistory={onNavigateToHistory}
         onNavigateToLibrary={onNavigateToLibrary}
         onRestoreSession={onRestoreSession}
+        onRetryItem={onRetryItem}
       />
     );
   }

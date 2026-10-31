@@ -13,6 +13,7 @@ import { FetchedMediaView } from "./components/FetchedMediaView";
 import { UpdatePromptHeader, isAppUpdateAvailable } from "./components/UpdatePromptHeader";
 import { UpdateChangesModal } from "./components/UpdateChangesModal";
 import { findPresetName, formatBytes, formatElapsedMs } from "./options";
+import { extractYouTubeUrlFromThumbnail } from "./components/inprogress/parser";
 import { clearAppearanceStorage, loadAppearanceFromStorage, saveAppearanceToStorage, type AppearanceSettings } from "./utils/appearanceStorage";
 
 const defaultSettings: ConverterSettings = {
@@ -970,6 +971,18 @@ export default function App() {
             ];
             setEvents((prev) => [...prev, ...syntheticEvents]);
             setRawEvents((prev) => [...prev, ...syntheticEvents]);
+          }}
+          onRetryItem={async (item) => {
+            const mediaUrl = item.url || extractYouTubeUrlFromThumbnail(item.thumbnail);
+            if (mediaUrl) {
+              statusMessage(`Retrying: ${item.title}...`);
+              await start(mediaUrl);
+            } else if (activeJobContextRef.current?.source) {
+              statusMessage(`Retrying #${item.index}: ${item.title}...`);
+              await start(activeJobContextRef.current.source, String(item.index));
+            } else {
+              statusMessage(`Could not resolve URL to retry ${item.title}`);
+            }
           }}
         />
       )

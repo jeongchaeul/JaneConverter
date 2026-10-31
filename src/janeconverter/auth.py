@@ -245,6 +245,8 @@ def describe_authenticated_extraction_failure(
             f"Use the default {browser} profile and make sure JaneConverter and {browser} run under the same Windows account. "
             "JaneConverter does not copy or save your cookies. If it still fails, switch Account access back to Public only."
         )
+    if any(p in lowered for p in ("video unavailable", "this video is not available", "video is not available", "has been removed", "deleted by the uploader", "account has been terminated", "not available in your country")):
+        return f"This {subject} is unavailable or has been removed from the platform."
     return (
         f"Authenticated {subject} extraction failed using your {browser} browser session. "
         "The session may be expired, locked, or unable to access this content. "

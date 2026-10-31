@@ -225,3 +225,12 @@ def test_session_domains_dynamic_and_expanded_platforms():
     assert session_domains("https://threads.net/@user/post/123") == ("threads.net",)
     assert session_domains("https://bsky.app/profile/user/post/123") == ("bsky.app",)
 
+
+
+def test_describe_authenticated_extraction_failure_unavailable_video():
+    msg = describe_authenticated_extraction_failure(
+        "vivaldi",
+        RuntimeError("ERROR: [youtube] x4aVYURB9Cc: Video unavailable. This video is not available"),
+    )
+    assert "unavailable or has been removed" in msg
+    assert "Vivaldi" not in msg

@@ -1,4 +1,5 @@
-import { Clock, Copy, FolderOpen, Play, Terminal, Trash2 } from "lucide-react";
+import { Clock, Copy, FolderOpen, Link2, Play, RotateCcw, Terminal, Trash2 } from "lucide-react";
+import { extractYouTubeUrlFromThumbnail } from "./parser";
 import { formatElapsedMs } from "../../options";
 import { ItemStatusBadge } from "./ItemStatusBadge";
 import type { InProgressItem } from "./types";
@@ -11,6 +12,7 @@ interface ItemContextMenuProps {
   openItemFile: (item: InProgressItem) => void;
   showItemInFolder: (item: InProgressItem) => void;
   onDeleteItem?: (item: InProgressItem) => void;
+  onRetryItem?: (item: InProgressItem) => void;
   openOutputFolder?: () => void;
   onOpenRawConsole: () => void;
   onStatus: (message: string) => void;
@@ -25,6 +27,7 @@ export function ItemContextMenu({
   openItemFile,
   showItemInFolder,
   onDeleteItem,
+  onRetryItem,
   openOutputFolder,
   onOpenRawConsole,
   onStatus,
@@ -33,6 +36,7 @@ export function ItemContextMenu({
   if (!contextMenu) return null;
   const item = contextMenu.item;
   const hasPath = Boolean(fullPath);
+  const mediaUrl = item.url || extractYouTubeUrlFromThumbnail(item.thumbnail);
 
   return (
     <div
@@ -97,6 +101,32 @@ export function ItemContextMenu({
 
       {/* Action Buttons */}
       <div className="mt-1 space-y-0.5">
+        {item.status === "failed" && onRetryItem && (
+          <button
+            type="button"
+            onClick={() => {
+              onRetryItem(item);
+              onClose();
+            }}
+            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-500/10 hover:text-emerald-300"
+          >
+            <RotateCcw size={13} className="text-emerald-400" /> Retry conversion
+          </button>
+        )}
+
+        {mediaUrl && (
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard.writeText(mediaUrl);
+              onStatus(`Copied link for ${item.title}`);
+              onClose();
+            }}
+            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 transition-colors hover:bg-white/[0.06]"
+          >
+            <Link2 size={13} className="text-zinc-400" /> Copy media URL
+          </button>
+        )}
         {item.status === "ready" && hasPath && (
           <>
             <button

@@ -11,7 +11,7 @@ export const PHOTO_ALBUM_HEADER_RE = /Found\s*(\d+)\s*photos\s*in\s*['"]?(.*?)['
 export const PHOTO_PROGRESS_RE = /Downloading\s*(?:Facebook|Instagram|Pinterest|social)?\s*photo\s*(\d+)\s*of\s*(\d+)/i;
 export const PHOTO_COMPLETED_RE = /(?:Downloaded|Saved)\s*(?:all\s*)?(\d+)\s*(?:public\s*)?(?:Facebook|Instagram|Pinterest)?\s*photo/i;
 export const COVER_ART_RE = /\[\*\]\s*Playlist Cover Art:\s*(.*)/i;
-export const TRACK_MANIFEST_RE = /\[\*\]\s*Track\s*#(\d+)\s*Manifest:\s*(.*?)(?:\t(.*?))?(?:\t(.*?))?$/i;
+export const TRACK_MANIFEST_RE = /\[\*\]\s*Track\s*#(\d+)\s*Manifest:\s*(.*?)(?:\t(.*?))?(?:\t(.*?))?(?:\t(.*?))?$/i;
 export const TRACK_THUMBNAIL_RE = /\[\*\]\s*Track\s*#(\d+)\s*(?:Thumbnail|Source):\s*(.*)/i;
 export const TRACK_COVER_RE = /\[\*\]\s*Track\s*#(\d+)\s*Cover:\s*(.*)/i;
 export const PHOTO_SOURCE_RE = /\[\*\]\s*Photo\s*#(\d+)\s*Source:\s*(.*)/i;
@@ -29,6 +29,19 @@ export function extractYouTubeThumbnail(urlOrId?: string): string | undefined {
   const match = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/i);
   if (match) {
     return `https://i.ytimg.com/vi/${match[1]}/hqdefault.jpg`;
+  }
+  return undefined;
+}
+
+export function extractYouTubeUrlFromThumbnail(thumbOrUrl?: string): string | undefined {
+  if (!thumbOrUrl) return undefined;
+  const match = thumbOrUrl.match(/\/vi\/([\w-]{11})\//i);
+  if (match) {
+    return `https://www.youtube.com/watch?v=${match[1]}`;
+  }
+  const idMatch = thumbOrUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/i);
+  if (idMatch) {
+    return `https://www.youtube.com/watch?v=${idMatch[1]}`;
   }
   return undefined;
 }
@@ -117,6 +130,7 @@ export function parseConversionEvents(
       const mTitle = (manifestMatch[2] || "").trim();
       const mArtist = (manifestMatch[3] || "").trim();
       const mThumb = (manifestMatch[4] || "").trim();
+      const mUrl = (manifestMatch[5] || "").trim();
       if (mIdx > detectedTotal) detectedTotal = mIdx;
       let item = itemsMap.get(mIdx);
       if (!item) {
@@ -130,12 +144,15 @@ export function parseConversionEvents(
           status: "queued",
           progress: 0,
           thumbnail: mThumb || undefined,
+          url: mUrl || extractYouTubeUrlFromThumbnail(mThumb) || undefined,
         };
         itemsMap.set(mIdx, item);
       } else {
         if (mTitle) item.title = mTitle;
         if (mArtist) item.artist = mArtist;
         if (mThumb) item.thumbnail = mThumb;
+        if (mUrl) item.url = mUrl;
+        else if (!item.url && mThumb) item.url = extractYouTubeUrlFromThumbnail(mThumb);
       }
       continue;
     }
@@ -157,10 +174,12 @@ export function parseConversionEvents(
           status: "queued",
           progress: 0,
           thumbnail: pUrl,
+          url: pUrl,
         };
         itemsMap.set(pIdx, item);
       } else {
         item.thumbnail = pUrl;
+        item.url = pUrl;
       }
       continue;
     }

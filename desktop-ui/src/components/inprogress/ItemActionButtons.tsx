@@ -1,5 +1,6 @@
-import { FolderOpen, GripVertical, Loader2, Play, Trash2 } from "lucide-react";
+import { FolderOpen, GripVertical, Link2, Loader2, Play, RotateCcw, Trash2 } from "lucide-react";
 import { bridge } from "../../bridge";
+import { extractYouTubeUrlFromThumbnail } from "./parser";
 import type { InProgressItem } from "./types";
 
 interface ItemActionButtonsProps {
@@ -10,6 +11,7 @@ interface ItemActionButtonsProps {
   onOpen: (item: InProgressItem) => void;
   onShowInFolder: (item: InProgressItem) => void;
   onDelete?: (item: InProgressItem) => void;
+  onRetry?: (item: InProgressItem) => void;
 }
 
 export function ItemActionButtons({
@@ -20,7 +22,48 @@ export function ItemActionButtons({
   onOpen,
   onShowInFolder,
   onDelete,
+  onRetry,
 }: ItemActionButtonsProps) {
+  const mediaUrl = item.url || extractYouTubeUrlFromThumbnail(item.thumbnail);
+
+  if (item.status === "failed") {
+    if (!onRetry && !mediaUrl) return null;
+    return (
+      <div className="flex items-center gap-1 shrink-0">
+        {onRetry && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRetry(item);
+            }}
+            className="flex size-6 items-center justify-center rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 transition-colors hover:border-emerald-400/40 hover:bg-emerald-500/20 hover:text-emerald-300"
+            title={"Retry conversion for " + item.title}
+            aria-label={"Retry " + item.title}
+          >
+            <RotateCcw size={11} className="text-emerald-400" />
+          </button>
+        )}
+
+        {mediaUrl && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              void navigator.clipboard.writeText(mediaUrl);
+              onStatus(`Copied link for ${item.title}`);
+            }}
+            className="flex size-6 items-center justify-center rounded-lg border border-white/5 bg-white/[0.03] text-zinc-400 transition-colors hover:border-white/10 hover:bg-white/10 hover:text-white"
+            title={"Copy media URL for " + item.title}
+            aria-label={"Copy link for " + item.title}
+          >
+            <Link2 size={11} />
+          </button>
+        )}
+      </div>
+    );
+  }
+
   if (item.status !== "ready" || !fullPath) {
     return null;
   }
@@ -71,6 +114,22 @@ export function ItemActionButtons({
           aria-label={"Delete " + item.title}
         >
           {isDeleting ? <Loader2 size={11} className="animate-spin text-red-400" /> : <Trash2 size={12} />}
+        </button>
+      )}
+
+      {mediaUrl && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            void navigator.clipboard.writeText(mediaUrl);
+            onStatus(`Copied link for ${item.title}`);
+          }}
+          className="flex size-6 items-center justify-center rounded-lg border border-white/5 bg-white/[0.03] text-zinc-400 transition-colors hover:border-white/10 hover:bg-white/10 hover:text-white"
+          title={"Copy media URL for " + item.title}
+          aria-label={"Copy link for " + item.title}
+        >
+          <Link2 size={11} />
         </button>
       )}
 

@@ -18,6 +18,7 @@ export interface InProgressItem {
   outputPath?: string;
   coverPath?: string;
   thumbnail?: string;
+  url?: string;
   errorMessage?: string;
   elapsedMs?: number;
 }

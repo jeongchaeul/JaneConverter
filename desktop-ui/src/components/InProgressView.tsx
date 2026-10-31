@@ -60,6 +60,7 @@ export function InProgressView({
   onNavigateToConverter,
   onNavigateToLibrary,
   onRestoreSession,
+  onRetryItem,
 }: {
   events: ConverterEvent[];
   jobId?: string;
@@ -82,6 +83,7 @@ export function InProgressView({
   onNavigateToHistory?: () => void;
   onNavigateToLibrary?: () => void;
   onRestoreSession?: (item: ConversionHistoryItem) => void;
+  onRetryItem?: (item: InProgressItem) => void;
 }) {
   const [layoutMode, setLayoutMode] = useState<"grid" | "list">("grid");
   const [filterState, setFilterState] = useState<"all" | "active" | "done" | "failed">("all");
@@ -112,17 +114,21 @@ export function InProgressView({
 
   // Extract distinct chronological jobs from conversion events
   const distinctJobIds = useMemo(() => {
-    const ids: string[] = [];
+    const rawIds: string[] = [];
     for (const e of events) {
-      if (e.jobId && e.jobId !== "ui" && e.jobId !== "browser-session" && !ids.includes(e.jobId)) {
-        ids.push(e.jobId);
+      if (e.jobId && e.jobId !== "ui" && e.jobId !== "browser-session" && !rawIds.includes(e.jobId)) {
+        rawIds.push(e.jobId);
       }
     }
-    if (jobId && jobId !== "ui" && jobId !== "browser-session" && !ids.includes(jobId)) {
-      ids.push(jobId);
+    if (jobId && jobId !== "ui" && jobId !== "browser-session" && !rawIds.includes(jobId)) {
+      rawIds.push(jobId);
     }
-    return ids;
-  }, [events, jobId]);
+    return rawIds.filter((id) => {
+      if (running && jobId && id === jobId) return true;
+      const parsed = parseConversionEvents(events, category, format, undefined, id, false);
+      return parsed.items.length > 0;
+    });
+  }, [events, jobId, running, category, format]);
 
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -745,6 +751,7 @@ export function InProgressView({
           onOpenRawConsole={onOpenRawConsole}
           onStatus={onStatus}
           hasOutputDir={hasOutputDir}
+          onRetryItem={onRetryItem}
         />
       </div>
     );
@@ -954,6 +961,7 @@ export function InProgressView({
                 onOpen={openItemFile}
                 onShowInFolder={showItemInFolder}
                 onDelete={deleteItemFile}
+                onRetry={onRetryItem}
               />
             ))}
           </div>
@@ -974,6 +982,7 @@ export function InProgressView({
                 onOpen={openItemFile}
                 onShowInFolder={showItemInFolder}
                 onDelete={deleteItemFile}
+                onRetry={onRetryItem}
               />
             ))}
           </div>
@@ -1071,6 +1080,7 @@ export function InProgressView({
         onOpenRawConsole={onOpenRawConsole}
         onStatus={onStatus}
         hasOutputDir={hasOutputDir}
+        onRetryItem={onRetryItem}
       />
     </div>
   );

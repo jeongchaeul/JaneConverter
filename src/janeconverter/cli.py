@@ -689,7 +689,8 @@ def process_playlist_conversion(
         e_title = strip_playlist_track_prefix(entry.get("title", f"Track_{e_idx}"))
         e_artist = entry.get("artist", "")
         e_thumb = resolve_entry_thumbnail(entry, "")
-        print(f"[*] Track #{e_idx} Manifest: {e_title}\t{e_artist}\t{e_thumb}", flush=True)
+        e_url = entry.get("url") or (f"https://www.youtube.com/watch?v={entry.get('id')}" if entry.get("id") else "")
+        print(f"[*] Track #{e_idx} Manifest: {e_title}\t{e_artist}\t{e_thumb}\t{e_url}", flush=True)
 
     # Pre-fetch album / playlist cover art if available
     playlist_cover_dest = os.path.join(metadata_dir, "cover.jpg")
