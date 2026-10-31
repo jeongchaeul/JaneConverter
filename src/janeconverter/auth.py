@@ -25,6 +25,7 @@ BROWSER_SESSION_CHOICES = (
 
 _BROWSER_ALIASES = {
     "none": None,
+    "guest": None,
     "disabled": None,
     "off": None,
     "false": None,
@@ -283,6 +284,48 @@ def detect_running_browsers() -> list[str]:
     """Return all supported browsers currently running with active processes."""
     running: list[str] = []
     seen: set[str] = set()
+
+    if os.name == "nt":
+        try:
+            import ctypes
+            import ctypes.wintypes
+
+            th32cs_snapprocess = 0x00000002
+
+            class _PROCESSENTRY32(ctypes.Structure):
+                _fields_ = [
+                    ("dwSize", ctypes.wintypes.DWORD),
+                    ("cntUsage", ctypes.wintypes.DWORD),
+                    ("th32ProcessID", ctypes.wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t),
+                    ("th32ModuleID", ctypes.wintypes.DWORD),
+                    ("cntThreads", ctypes.wintypes.DWORD),
+                    ("th32ParentProcessID", ctypes.wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long),
+                    ("dwFlags", ctypes.wintypes.DWORD),
+                    ("szExeFile", ctypes.c_char * 260),
+                ]
+
+            h_snap = ctypes.windll.kernel32.CreateToolhelp32Snapshot(th32cs_snapprocess, 0)
+            if h_snap and h_snap != ctypes.wintypes.HANDLE(-1).value:
+                pe = _PROCESSENTRY32()
+                pe.dwSize = ctypes.sizeof(_PROCESSENTRY32)
+                if ctypes.windll.kernel32.Process32First(h_snap, ctypes.byref(pe)):
+                    while True:
+                        exe = pe.szExeFile.decode("latin1", errors="ignore").lower()
+                        if exe.endswith(".exe"):
+                            exe = exe[:-4]
+                        for b, names in _BROWSER_PROCESS_NAMES.items():
+                            if b not in seen and exe in names:
+                                running.append(b)
+                                seen.add(b)
+                        if not ctypes.windll.kernel32.Process32Next(h_snap, ctypes.byref(pe)):
+                            break
+                ctypes.windll.kernel32.CloseHandle(h_snap)
+                return running
+        except Exception:
+            pass
+
     try:
         import psutil
     except ImportError:
@@ -305,10 +348,12 @@ def detect_running_browsers() -> list[str]:
     return running
 
 
-def get_ordered_browser_candidates(preferred: Optional[str] = None) -> list[str]:
+def get_ordered_browser_candidates(
+    preferred: Optional[str] = None, running: Optional[list[str]] = None
+) -> list[str]:
     """Return candidate browsers intelligently ordered by relevance:
     1. Explicitly requested or preferred browser.
-    2. Browsers currently running on the host.
+    2. Browsers currently running on the host that are confirmed installed.
     3. System default browser.
     4. Installed browsers with existing user profiles.
     5. Other known supported browsers.
@@ -318,15 +363,19 @@ def get_ordered_browser_candidates(preferred: Optional[str] = None) -> list[str]
     if raw_pref and raw_pref not in ("auto", "none"):
         candidates.append(raw_pref)
 
-    for b in detect_running_browsers():
-        if b not in candidates:
+    installed = detect_installed_browser_sessions()
+    installed_set = set(installed)
+
+    running_browsers = running if running is not None else detect_running_browsers()
+    for b in running_browsers:
+        if b in installed_set and b not in candidates:
             candidates.append(b)
 
     default_b = detect_default_browser_session()
     if default_b and default_b not in candidates:
         candidates.append(default_b)
 
-    for b in detect_installed_browser_sessions():
+    for b in installed:
         if b not in candidates:
             candidates.append(b)
 

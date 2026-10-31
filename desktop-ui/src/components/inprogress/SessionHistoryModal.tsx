@@ -1,7 +1,10 @@
-import { FolderOpen, History, Trash2, X } from "lucide-react";
+import { useState } from "react";
+import { ChevronLeft, ChevronRight, FolderOpen, History, Trash2, X } from "lucide-react";
 import type { ConversionHistoryItem } from "../../bridge";
 import type { SessionSummary } from "./types";
 import { formatElapsedMs } from "../../options";
+
+const CATALOG_PAGE_SIZE = 20;
 
 function decodeHtmlEntities(text: string): string {
   if (!text) return "";
@@ -29,13 +32,21 @@ interface SessionHistoryModalProps {
 export function SessionHistoryModal({
   open,
   onClose,
-  sessionSummaries,
-  catalogSessions,
+  sessionSummaries = [],
+  catalogSessions = [],
   onSelectSession,
   onRemoveSession,
   onRestoreSession,
   onNavigateToLibrary,
 }: SessionHistoryModalProps) {
+  const [historyPage, setHistoryPage] = useState(1);
+  const totalHistoryPages = Math.max(1, Math.ceil(catalogSessions.length / CATALOG_PAGE_SIZE));
+  const safeHistoryPage = Math.min(Math.max(1, historyPage), totalHistoryPages);
+  const pagedCatalogSessions = catalogSessions.slice(
+    (safeHistoryPage - 1) * CATALOG_PAGE_SIZE,
+    safeHistoryPage * CATALOG_PAGE_SIZE
+  );
+
   if (!open) return null;
 
   return (
@@ -176,11 +187,18 @@ export function SessionHistoryModal({
           {/* Previous Launches from Catalog */}
           {catalogSessions.length > 0 && (
             <div className="pt-4 border-t border-white/[0.06]">
-              <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 mb-2">
-                Past Conversions from Library ({catalogSessions.length})
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
+                  Past Conversions from Library ({catalogSessions.length})
+                </div>
+                {totalHistoryPages > 1 && (
+                  <div className="text-[10px] font-mono text-zinc-400">
+                    Page {safeHistoryPage} of {totalHistoryPages}
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
-                {catalogSessions.map((hist) => (
+                {pagedCatalogSessions.map((hist) => (
                   <div
                     key={hist.id}
                     onClick={() => {
@@ -225,6 +243,39 @@ export function SessionHistoryModal({
                   </div>
                 ))}
               </div>
+
+              {totalHistoryPages > 1 && (
+                <div className="mt-3 flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.02] px-3.5 py-2">
+                  <div className="text-[11px] text-zinc-400">
+                    Showing <span className="font-medium text-white">{(safeHistoryPage - 1) * CATALOG_PAGE_SIZE + 1}</span>–
+                    <span className="font-medium text-white">{Math.min(safeHistoryPage * CATALOG_PAGE_SIZE, catalogSessions.length)}</span> of{" "}
+                    <span className="font-medium text-white">{catalogSessions.length}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={safeHistoryPage <= 1}
+                      onClick={() => setHistoryPage((prev) => Math.max(1, prev - 1))}
+                      className="subtle-button flex items-center gap-1 px-2.5 py-1 text-xs text-zinc-300 hover:text-white disabled:pointer-events-none disabled:opacity-40"
+                      aria-label="Previous history page"
+                    >
+                      <ChevronLeft size={13} /> Previous
+                    </button>
+                    <span className="px-2 text-xs font-mono text-zinc-300">
+                      {safeHistoryPage} / {totalHistoryPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={safeHistoryPage >= totalHistoryPages}
+                      onClick={() => setHistoryPage((prev) => Math.min(totalHistoryPages, prev + 1))}
+                      className="subtle-button flex items-center gap-1 px-2.5 py-1 text-xs text-zinc-300 hover:text-white disabled:pointer-events-none disabled:opacity-40"
+                      aria-label="Next history page"
+                    >
+                      Next <ChevronRight size={13} />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

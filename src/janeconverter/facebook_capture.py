@@ -972,6 +972,65 @@ def _fetch_facebook_manifest_with_session(
     }
 
 
+def _get_facebook_session_cache_path() -> str:
+    from .paths import APP_DATA_DIR
+    cache_dir = os.path.join(APP_DATA_DIR, "cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    return os.path.join(cache_dir, "facebook_session.json")
+
+
+def _load_persisted_facebook_session() -> Optional[dict[str, Any]]:
+    p = _get_facebook_session_cache_path()
+    if not os.path.isfile(p):
+        return None
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        # 24-hour TTL for authenticated Facebook session
+        if time.time() - data.get("timestamp", 0) > 86400:
+            return None
+        cookies = data.get("cookies", [])
+        if not cookies or not any(c.get("name") in ("c_user", "xs") for c in cookies):
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def _save_persisted_facebook_session(browser_name: str, jar: Any) -> None:
+    try:
+        cookies_list = []
+        for c in jar:
+            if "facebook.com" in getattr(c, "domain", ""):
+                cookies_list.append({
+                    "name": getattr(c, "name", ""),
+                    "value": getattr(c, "value", ""),
+                    "domain": getattr(c, "domain", ""),
+                    "path": getattr(c, "path", "/"),
+                })
+        if cookies_list:
+            p = _get_facebook_session_cache_path()
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump({
+                    "browser": browser_name,
+                    "timestamp": time.time(),
+                    "cookies": cookies_list,
+                }, f)
+    except Exception:
+        pass
+
+
+def _clear_persisted_facebook_session() -> None:
+    try:
+        p = _get_facebook_session_cache_path()
+        if os.path.isfile(p):
+            os.remove(p)
+    except Exception:
+        pass
+
+
 def fetch_facebook_manifest(
     url: str,
     browser: Optional[str] = None,
@@ -989,15 +1048,22 @@ def fetch_facebook_manifest(
     raw_browser = str(browser or "").strip().lower()
     if raw_browser in ("none", "disabled", "off", "false"):
         return None
-    is_explicit_guest = raw_browser in ("guest", "public", "public only")
+    is_explicit_guest = raw_browser in ("guest", "public", "public only", "none")
     is_explicit_browser = raw_browser in (
         "vivaldi", "firefox", "chrome", "edge", "brave", "opera", "chromium", "safari"
     )
 
+    if is_explicit_guest:
+        guest_session = requests.Session()
+        report(0.04, "Connecting to Facebook via guest session...")
+        return _fetch_facebook_manifest_with_session(
+            guest_session, url, found_browser=None, report=report, abort_event=abort_event
+        )
+
     global _CACHED_FACEBOOK_SESSION
 
-    # Warm session path: reuse cached authenticated browser session from earlier in the run (< 15 mins)
-    if not is_explicit_guest and _CACHED_FACEBOOK_SESSION:
+    # 1. In-process cache check
+    if _CACHED_FACEBOOK_SESSION:
         cached_ts = _CACHED_FACEBOOK_SESSION.get("timestamp", 0)
         cached_browser = _CACHED_FACEBOOK_SESSION.get("browser")
         cached_jar = _CACHED_FACEBOOK_SESSION.get("jar")
@@ -1015,8 +1081,28 @@ def fetch_facebook_manifest(
                 return warm_manifest
             _CACHED_FACEBOOK_SESSION = None
 
-    # Fast guest path: probe public Facebook post directly in ~200ms without opening or decrypting local browser databases
-    if not is_explicit_browser:
+    # 2. Disk-persisted session cache check (reusable across CLI engine invocations in 0.00s)
+    if not is_explicit_guest:
+        persisted = _load_persisted_facebook_session()
+        if persisted and (not raw_browser or raw_browser == str(persisted.get("browser", "")).lower()):
+            cached_b = persisted.get("browser", "Browser")
+            report(0.04, f"Reusing saved Facebook session via {str(cached_b).title()}...")
+            disk_session = requests.Session()
+            for c in persisted.get("cookies", []):
+                disk_session.cookies.set(c["name"], c["value"], domain=c.get("domain", ".facebook.com"), path=c.get("path", "/"))
+            disk_manifest = _fetch_facebook_manifest_with_session(
+                disk_session, url, found_browser=cached_b, report=report, abort_event=abort_event
+            )
+            if disk_manifest:
+                return disk_manifest
+            _clear_persisted_facebook_session()
+
+    # 3. Detect running browsers with ultra-fast Win32 snapshot (17ms)
+    running = detect_running_browsers()
+    candidates = get_ordered_browser_candidates(preferred=raw_browser, running=running)
+
+    # 4. If no browsers with auth are running, try guest path
+    if not is_explicit_browser and not running:
         guest_session = requests.Session()
         report(0.04, "Connecting to Facebook via guest session...")
         guest_manifest = _fetch_facebook_manifest_with_session(
@@ -1024,21 +1110,34 @@ def fetch_facebook_manifest(
         )
         if guest_manifest:
             return guest_manifest
-        if is_explicit_guest:
-            return None
 
     scored_candidates = []
     app_bound_noted = False
     now = time.time()
 
     report(0.05, "Searching desktop browsers for an active Facebook session...")
-    running = detect_running_browsers()
-    candidates = get_ordered_browser_candidates(preferred=raw_browser)
 
     for b in candidates:
+        cand_jar = None
+        # Try up to 3 rapid attempts with 35ms backoff to handle transient SQLite file locks
+        for attempt in range(3):
+            try:
+                ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
+                cand_jar = ydl.cookiejar
+                if cand_jar:
+                    break
+            except Exception:
+                if attempt < 2 and b in running:
+                    time.sleep(0.035)
+                continue
+
+        if not cand_jar:
+            if b in running and b in ("edge", "chrome", "brave") and not app_bound_noted:
+                report(0.06, f"{b.title()} is active, but its session database is protected by Windows App-Bound Encryption.")
+                app_bound_noted = True
+            continue
+
         try:
-            ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
-            cand_jar = ydl.cookiejar
             fb_cookies = [c for c in cand_jar if "facebook.com" in getattr(c, "domain", "")]
             auth_cookies = [c for c in fb_cookies if getattr(c, "name", None) in ("c_user", "xs")]
             has_auth = len(auth_cookies) >= 2
@@ -1059,10 +1158,6 @@ def fetch_facebook_manifest(
                 scored_candidates.append((score, b, cand_jar))
                 if score >= 1000:
                     break
-            elif b in running and b in ("edge", "chrome", "brave"):
-                if not app_bound_noted:
-                    report(0.06, f"{b.title()} is active, but its session database is protected by Windows App-Bound Encryption.")
-                    app_bound_noted = True
         except Exception:
             continue
 
@@ -1079,6 +1174,7 @@ def fetch_facebook_manifest(
             "browser": found_browser,
             "jar": jar,
         }
+        _save_persisted_facebook_session(found_browser, jar)
         report(0.06, f"Connected to Facebook session via {found_browser.title()}. Loading post...")
         for c in jar:
             if "facebook.com" in getattr(c, "domain", ""):

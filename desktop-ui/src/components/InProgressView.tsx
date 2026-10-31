@@ -283,9 +283,7 @@ export function InProgressView({
   // Historical sessions from catalog
   const catalogSessions = useMemo(() => {
     if (!historyItems || historyItems.length === 0) return [];
-    return historyItems
-      .filter((h) => !distinctJobIds.includes(h.id))
-      .slice(0, 25);
+    return historyItems.filter((h) => !distinctJobIds.includes(h.id));
   }, [historyItems, distinctJobIds]);
 
   function getItemPreview(item: InProgressItem): string | undefined {

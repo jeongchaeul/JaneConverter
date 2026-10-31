@@ -509,6 +509,66 @@ def _fetch_public_pinterest_pin(
     return None
 
 
+def _get_social_session_cache_path(platform: str) -> str:
+    from .paths import APP_DATA_DIR
+    cache_dir = os.path.join(APP_DATA_DIR, "cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    return os.path.join(cache_dir, f"{platform}_session.json")
+
+
+def _load_persisted_social_cookies(platform: str) -> Optional[tuple[str, Any]]:
+    p = _get_social_session_cache_path(platform)
+    if not os.path.isfile(p):
+        return None
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        if time.time() - data.get("timestamp", 0) > 86400:
+            return None
+        browser = data.get("browser", "Browser")
+        raw_cookies = data.get("cookies", [])
+        if not raw_cookies:
+            return None
+        import http.cookiejar
+        jar = http.cookiejar.CookieJar()
+        for c in raw_cookies:
+            ck = http.cookiejar.Cookie(
+                version=0, name=c["name"], value=c["value"], port=None, port_specified=False,
+                domain=c.get("domain", f".{platform}.com"), domain_specified=True, domain_initial_dot=True,
+                path=c.get("path", "/"), path_specified=True, secure=True, expires=None, discard=False,
+                comment=None, comment_url=None, rest={}, rfc2109=False,
+            )
+            jar.set_cookie(ck)
+        return browser, jar
+    except Exception:
+        return None
+
+
+def _save_persisted_social_cookies(platform: str, browser_name: str, jar: Any) -> None:
+    try:
+        cookies_list = []
+        for c in jar:
+            if platform in getattr(c, "domain", ""):
+                cookies_list.append({
+                    "name": getattr(c, "name", ""),
+                    "value": getattr(c, "value", ""),
+                    "domain": getattr(c, "domain", ""),
+                    "path": getattr(c, "path", "/"),
+                })
+        if cookies_list:
+            p = _get_social_session_cache_path(platform)
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump({
+                    "browser": browser_name,
+                    "timestamp": time.time(),
+                    "cookies": cookies_list,
+                }, f)
+    except Exception:
+        pass
+
+
 _CACHED_PINTEREST_SESSION: Optional[dict[str, Any]] = None
 _CACHED_INSTAGRAM_SESSION: Optional[dict[str, Any]] = None
 
@@ -559,9 +619,15 @@ def fetch_pinterest_collection_manifest(
             found_browser = cached_b
 
     if not jar:
+        persisted = _load_persisted_social_cookies("pinterest")
+        if persisted and (not preferred or preferred[0] == persisted[0].lower()):
+            found_browser, jar = persisted
+
+    if not jar:
         report(0.04, "Searching desktop browsers for an active Pinterest session...")
-        preferred = [browser] if browser and browser.lower() not in ("none", "auto", "public", "public only") else []
-        candidates = preferred + [b for b in ("vivaldi", "firefox", "chrome", "edge", "brave", "opera") if b not in preferred]
+        from .auth import get_ordered_browser_candidates, detect_running_browsers
+        running = detect_running_browsers()
+        candidates = get_ordered_browser_candidates(preferred=browser, running=running)
 
         for b in candidates:
             try:
@@ -572,6 +638,7 @@ def fetch_pinterest_collection_manifest(
                     jar = candidate_jar
                     found_browser = b
                     _CACHED_PINTEREST_SESSION = {"timestamp": time.time(), "browser": found_browser, "jar": jar}
+                    _save_persisted_social_cookies("pinterest", b, jar)
                     break
             except Exception:
                 continue
@@ -973,8 +1040,15 @@ def fetch_instagram_manifest(
                 found_browser = cached_b
 
         if not jar:
+            persisted = _load_persisted_social_cookies("instagram")
+            if persisted and (not preferred or preferred[0] == persisted[0].lower()):
+                found_browser, jar = persisted
+
+        if not jar:
             report(0.05, "Searching desktop browsers for an active Instagram session...")
-            candidates = preferred + [b for b in ("vivaldi", "firefox", "chrome", "edge", "brave", "opera") if b not in preferred]
+            from .auth import get_ordered_browser_candidates, detect_running_browsers
+            running = detect_running_browsers()
+            candidates = get_ordered_browser_candidates(preferred=browser, running=running)
 
             for b in candidates:
                 try:
@@ -985,6 +1059,7 @@ def fetch_instagram_manifest(
                         jar = candidate_jar
                         found_browser = b
                         _CACHED_INSTAGRAM_SESSION = {"timestamp": time.time(), "browser": found_browser, "jar": jar}
+                        _save_persisted_social_cookies("instagram", b, jar)
                         break
                 except Exception:
                     continue
