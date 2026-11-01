@@ -331,7 +331,11 @@ def validate_output_intent(
                 raise RuntimeError("ValidationFailed: the output video frame rate changed.")
         if intent.resolution == "original" and source_video:
             for dimension in ("width", "height"):
-                if source_video.get(dimension) and source_video.get(dimension) != video.get(dimension):
+                src_dim = source_video.get(dimension)
+                out_dim = video.get(dimension)
+                if src_dim and src_dim != out_dim:
+                    if src_dim % 2 != 0 and out_dim == src_dim + 1:
+                        continue
                     raise RuntimeError("ValidationFailed: the output video dimensions changed.")
         elif intent.resolution in {"4k", "1440p", "1080p", "720p", "480p"}:
             expected_height = {"4k": 2160, "1440p": 1440, "1080p": 1080,

@@ -1,4 +1,5 @@
 """Automatic, temporary yt-dlp authentication after a public sign-in failure."""
+import threading
 from urllib.parse import urlparse
 
 from .auth import (
@@ -100,6 +101,9 @@ class _PrivateLogger:
     def error(self, _message): pass
 
 
+_COOKIE_EXTRACT_LOCK = threading.Lock()
+
+
 def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                                   abort_event=None, report=None, deadline=None,
                                   allow_cookies=True):
@@ -160,7 +164,8 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
             authenticated = None
             try:
                 import yt_dlp
-                with yt_dlp.YoutubeDL(opts) as authenticated:
+                with _COOKIE_EXTRACT_LOCK:
+                    authenticated = yt_dlp.YoutubeDL(opts)
                     jar = getattr(authenticated, "_cookiejar", None) or authenticated.cookiejar
                     matching_count = 0
                     if jar is not None:
@@ -173,17 +178,24 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                                 cookie.secure = True
                                 matching_count += 1
 
-                    if not jar or matching_count == 0:
-                        # No usable session for this site in this browser, try next candidate
-                        continue
+                if not jar or matching_count == 0:
+                    # No usable session for this site in this browser, try next candidate
+                    if authenticated is not None:
+                        try:
+                            authenticated.close()
+                        except Exception:
+                            pass
+                        authenticated = None
+                    continue
 
-                    tried_browsers.append(b)
-                    if report:
-                        report(0.15, f"Sign-in required. Using your {b.title()} session to retry.", force=True)
+                tried_browsers.append(b)
+                if report:
+                    report(0.15, f"Sign-in required. Using your {b.title()} session to retry.", force=True)
 
-                    if abort_event and abort_event.is_set():
-                        raise KeyboardInterrupt("Stream extraction aborted by user.")
+                if abort_event and abort_event.is_set():
+                    raise KeyboardInterrupt("Stream extraction aborted by user.")
 
+                with authenticated:
                     try:
                         return extract_with_recovery(authenticated, query, download, abort_event, report, deadline)
                     except Exception as extract_err:

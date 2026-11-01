@@ -330,6 +330,23 @@ def adapt_ffmpeg_command(cmd: list[str], stderr: bytes | str | None) -> Optional
         mutated.insert(-1, "cfr")
         changed = True
 
+    # 6. Dimensions not divisible by 2 (e.g. [libx264] height not divisible by 2)
+    divisible_errors = (
+        "not divisible by 2", "height not divisible by 2", "width not divisible by 2",
+    )
+    if any(err in text for err in divisible_errors):
+        pad_filter = "pad=ceil(iw/2)*2:ceil(ih/2)*2"
+        if "-vf" in mutated:
+            idx = mutated.index("-vf")
+            if idx + 1 < len(mutated):
+                if pad_filter not in mutated[idx + 1]:
+                    mutated[idx + 1] = f"{mutated[idx + 1]},{pad_filter}"
+                    changed = True
+        else:
+            mutated.insert(-1, "-vf")
+            mutated.insert(-1, pad_filter)
+            changed = True
+
     return mutated if changed else None
 
 

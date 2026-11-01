@@ -525,7 +525,15 @@ def test_adapt_ffmpeg_command_transforms_arguments():
     assert "-ac" in adapted4
     assert adapted4[adapted4.index("-ac") + 1] == "2"
 
-    # 5. Non-matching stderr returns None
+    # 5. Odd dimensions not divisible by 2 injects pad filter
+    cmd5 = ["ffmpeg", "-y", "-i", "in.mp4", "-c:v", "libx264", "out.mp4"]
+    stderr5 = b"[libx264 @ 000001] height not divisible by 2 (1320x2347)"
+    adapted5 = converter.adapt_ffmpeg_command(cmd5, stderr5)
+    assert adapted5 is not None
+    assert "-vf" in adapted5
+    assert "pad=ceil(iw/2)*2:ceil(ih/2)*2" in adapted5[adapted5.index("-vf") + 1]
+
+    # 6. Non-matching stderr returns None
     assert converter.adapt_ffmpeg_command(cmd, b"Invalid data found") is None
 
 

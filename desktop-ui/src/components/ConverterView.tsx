@@ -62,6 +62,7 @@ import {
   type SocialPhotoPlatform,
   socialPhotoPlatformLabel,
   isEphemeralStoryUrl,
+  extractInstagramProfileUser,
   groupIndexesByPreset,
   isFacebookPostLink,
   isInstagramVideoRoute,
@@ -1252,6 +1253,38 @@ export function ConverterView({
             </button>
           )}
         </div>
+
+        {extractInstagramProfileUser(source) && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-500/30 bg-sky-500/10 p-3.5 text-xs text-sky-200">
+            <div className="flex items-start gap-2.5 min-w-0 flex-1">
+              <Info className="size-4 shrink-0 text-sky-400 mt-0.5" />
+              <div>
+                <div className="font-semibold text-sky-100">
+                  Instagram Profile Detected (@{extractInstagramProfileUser(source)})
+                </div>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-sky-300/80">
+                  Instagram profile links do not contain direct media streams. If you are looking for active 24-hour stories posted by this user, switch to the story tray route.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const user = extractInstagramProfileUser(source);
+                if (user) {
+                  handleSourceInput(`https://www.instagram.com/stories/${user}/`);
+                }
+              }}
+              className="shrink-0 rounded-xl px-3.5 py-1.5 text-xs font-semibold text-white shadow-md transition-all hover:brightness-110 active:scale-95"
+              style={{
+                backgroundColor: accentColor,
+                boxShadow: `0 2px 8px ${accentColor}40`,
+              }}
+            >
+              Fetch Story (@{extractInstagramProfileUser(source)})
+            </button>
+          </div>
+        )}
 
         {isEphemeralStoryUrl(source) && !settings.allowStoryExtraction && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-200">

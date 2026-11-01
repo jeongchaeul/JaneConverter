@@ -996,4 +996,30 @@ it("groupIndexesByPreset groups selected items by their distinct presets", () =>
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });
+
+  it("shows an Instagram profile banner and button to redirect to active stories", async () => {
+    const profileUrl = "https://www.instagram.com/mzwerr/";
+    const view = renderView();
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, profileUrl);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(view.container.textContent).toContain("Instagram Profile Detected (@mzwerr)");
+    const fetchStoryBtn = Array.from(view.container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Fetch Story (@mzwerr)")
+    );
+    expect(fetchStoryBtn).toBeDefined();
+
+    await act(async () => {
+      fetchStoryBtn?.click();
+      await Promise.resolve();
+    });
+
+    expect(input.value).toBe("https://www.instagram.com/stories/mzwerr/");
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
 });

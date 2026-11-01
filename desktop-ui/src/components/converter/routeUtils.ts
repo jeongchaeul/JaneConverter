@@ -34,6 +34,40 @@ export function isEphemeralStoryUrl(value: string): boolean {
   }
 }
 
+export function extractInstagramProfileUser(value: string): string | null {
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.toLowerCase();
+    if (host !== "instagram.com" && !host.endsWith(".instagram.com")) {
+      return null;
+    }
+    const parts = url.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+    if (parts.length === 1) {
+      const username = parts[0].toLowerCase();
+      const reserved = new Set([
+        "p",
+        "reel",
+        "reels",
+        "stories",
+        "explore",
+        "direct",
+        "accounts",
+        "about",
+        "legal",
+        "developer",
+        "api",
+        "graphql",
+      ]);
+      if (!reserved.has(username) && /^[a-zA-Z0-9_.]+$/.test(username)) {
+        return parts[0];
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function groupIndexesByPreset(
   indexesStr: string,
   fallbackPreset: IntentPreset | undefined,

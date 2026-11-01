@@ -256,6 +256,30 @@ def is_ephemeral_story_url(url_or_path: str) -> bool:
         pass
     return False
 
+def is_instagram_profile_url(url_or_path: str) -> Optional[str]:
+    """If url is an Instagram profile link (e.g. instagram.com/mzwerr/), return the username.
+    Otherwise return None.
+    """
+    if not is_url(url_or_path):
+        return None
+    try:
+        parsed = urllib.parse.urlsplit(str(url_or_path or "").strip())
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if host not in ("instagram.com", "www.instagram.com", "instagr.am"):
+            return None
+        parts = [p for p in parsed.path.split("/") if p]
+        if len(parts) == 1:
+            username = parts[0].lower()
+            reserved = {
+                "p", "reel", "reels", "stories", "explore", "direct",
+                "accounts", "about", "legal", "developer", "api", "graphql"
+            }
+            if username not in reserved and re.match(r"^[a-zA-Z0-9_.]+$", username):
+                return parts[0]
+    except Exception:
+        pass
+    return None
+
 from .catalog import (
     format_duration,
     build_search_candidates,
@@ -728,6 +752,20 @@ def fetch_media_stream(
             "To convert Instagram or Facebook stories, you must acknowledge the Legal Disclaimer & Acceptable Use Policy "
             "in DISCLAIMER.md by enabling 'Ephemeral Stories Extraction' in Settings, or passing --allow-ephemeral-stories in the CLI."
         )
+    ig_user = is_instagram_profile_url(source)
+    if ig_user:
+        story_url = f"https://www.instagram.com/stories/{ig_user}/"
+        if not allow_ephemeral_stories:
+            raise ValueError(
+                f"Instagram profile links do not contain a direct media stream. "
+                f"To fetch active stories for @{ig_user}, use: {story_url} "
+                f"(and enable 'Ephemeral Stories Extraction' in Settings, or pass --allow-ephemeral-stories in CLI)."
+            )
+        else:
+            raise ValueError(
+                f"Instagram profile links contain a collection of media items. "
+                f"To fetch active stories for @{ig_user}, use: {story_url}"
+            )
     os.makedirs(output_dir, exist_ok=True)
     preexisting_stream_files = {}
     try:
@@ -971,7 +1009,7 @@ def fetch_media_stream(
 
     ydl_opts = {
         "format": format_selector,
-        "outtmpl": os.path.join(output_dir, "%(title).80s_%(id)s.%(ext)s"),
+        "outtmpl": os.path.join(output_dir, "%(title).80s_%(id).40s.%(ext)s"),
         "paths": {"home": output_dir, "temp": output_dir},
         "noplaylist": True,
         "quiet": True,
@@ -1485,20 +1523,23 @@ def fetch_playlist_entries(
                 e_thumb = resolve_entry_thumbnail(e, "")
                 e_desc = e.get("description") or ""
 
-                if not e_url or not is_url(e_url):
+                is_story_playlist = "instagram.com/stories/" in clean_url.lower()
+                is_cdn_url = any(cdn in e_url.lower() for cdn in ("cdninstagram.com", "fbcdn.net", "fbsbx.com"))
+
+                if not e_url or not is_url(e_url) or (is_story_playlist and is_cdn_url):
                     if e_id and ("youtube" in clean_url.lower() or "youtu.be" in clean_url.lower() or "list=" in clean_url.lower()):
                         e_url = f"https://www.youtube.com/watch?v={e_id}"
                     elif e_id and "instagram.com" in clean_url.lower():
                         m_user = re.search(r'instagram\.com/stories/([^/?#]+)', clean_url)
                         if m_user:
                             story_user = m_user.group(1)
-                            pk = e_id
-                            if not e_id.isdigit():
+                            pk = str(e_id)
+                            if not pk.isdigit():
                                 try:
                                     import yt_dlp.extractor.instagram as ig
                                     pk = str(ig._id_to_pk(e_id))
                                 except Exception:
-                                    pk = e_id
+                                    pk = str(e_id)
                             if pk and pk.isdigit():
                                 if story_user.lower() == "highlights":
                                     e_url = f"https://www.instagram.com/stories/highlights/{pk}/"

@@ -745,10 +745,26 @@ def process_playlist_conversion(
         raw_title = entry.get("title", f"Track_{idx}")
         artist = entry.get("artist", "")
         item_url = entry.get("url", "")
-        if not item_url or not is_url(item_url):
+        is_cdn_url = any(cdn in str(item_url).lower() for cdn in ("cdninstagram.com", "fbcdn.net", "fbsbx.com"))
+        if not item_url or not is_url(item_url) or is_cdn_url:
             e_id = entry.get("id", "")
-            if e_id and (source_type == "instagram" or "instagram.com" in playlist_title.lower()):
-                item_url = f"https://www.instagram.com/p/{e_id}/"
+            if e_id and (source_type == "instagram" or "instagram.com" in playlist_title.lower() or "story by" in playlist_title.lower()):
+                m_story = re.search(r"story by ([^/?#\s]+)", playlist_title.lower())
+                if m_story:
+                    story_user = m_story.group(1)
+                    pk = str(e_id)
+                    if not pk.isdigit():
+                        try:
+                            import yt_dlp.extractor.instagram as ig
+                            pk = str(ig._id_to_pk(e_id))
+                        except Exception:
+                            pk = str(e_id)
+                    if pk and pk.isdigit():
+                        item_url = f"https://www.instagram.com/stories/{story_user}/{pk}/"
+                    else:
+                        item_url = f"https://www.instagram.com/p/{e_id}/"
+                else:
+                    item_url = f"https://www.instagram.com/p/{e_id}/"
             elif e_id and is_url(f"https://{e_id}"):
                 item_url = f"https://{e_id}"
 
