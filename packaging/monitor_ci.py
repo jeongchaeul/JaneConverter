@@ -86,7 +86,7 @@ def get_runs_for_commit(repo: str, commit_sha: str, token: Optional[str]) -> Lis
     url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=20"
     data = github_request(url, token)
     runs = data.get("workflow_runs", [])
-    return [r for r in runs if r.get("head_sha") == commit_sha]
+    return [r for r in runs if r.get("head_sha", "").startswith(commit_sha)]
 
 
 def get_failed_jobs(repo: str, run_id: int, token: Optional[str]) -> List[Dict[str, Any]]:
