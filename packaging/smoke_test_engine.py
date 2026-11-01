@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import math
 import os
@@ -159,7 +160,46 @@ def main() -> int:
         if flp_downgrade_proc.returncode != 0 or not flp_out.exists():
             raise RuntimeError(f"Packaged engine FLP downgrade failed: {flp_downgrade_proc.stderr.strip() or flp_downgrade_proc.stdout.strip()}")
 
-    print("Packaged engine smoke test passed: local WAV converted to a readable one-second MP3, and FL Studio project parsed and downgraded.")
+        # Ableton Live Project (.als) smoke test
+        sample_als_xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+<Ableton MajorVersion="5" MinorVersion="12.0_12049" SchemaChangeCount="4" Creator="Ableton Live 12.0.1" Revision="">
+  <LiveSet>
+    <Tracks>
+      <AudioTrack Id="0">
+        <Name><EffectiveName Value="Vocal Hook" /></Name>
+      </AudioTrack>
+    </Tracks>
+    <MasterTrack>
+      <MasterChain>
+        <Mixer>
+          <Tempo>
+            <Manual Value="170" />
+          </Tempo>
+        </Mixer>
+      </MasterChain>
+    </MasterTrack>
+  </LiveSet>
+</Ableton>"""
+        smoke_als = temporary_directory / "smoke-project.als"
+        als_out = temporary_directory / "smoke-migrated.als"
+        smoke_als.write_bytes(gzip.compress(sample_als_xml, compresslevel=6))
+
+        als_inspect_proc = _run([*engine, "--als-inspect", str(smoke_als)], environment, work_directory)
+        if als_inspect_proc.returncode != 0:
+            raise RuntimeError(f"Packaged engine ALS inspection failed: {als_inspect_proc.stderr.strip() or als_inspect_proc.stdout.strip()}")
+        als_info = json.loads(als_inspect_proc.stdout)
+        if als_info.get("bpm") != 170.0 or als_info.get("track_count") != 1:
+            raise RuntimeError(f"Packaged engine ALS inspection returned invalid metadata: {als_info}")
+
+        als_migrate_proc = _run(
+            [*engine, "--als-migrate", str(smoke_als), "--als-target", "11", "--als-output", str(als_out)],
+            environment,
+            work_directory,
+        )
+        if als_migrate_proc.returncode != 0 or not als_out.exists():
+            raise RuntimeError(f"Packaged engine ALS migration failed: {als_migrate_proc.stderr.strip() or als_migrate_proc.stdout.strip()}")
+
+    print("Packaged engine smoke test passed: local WAV converted to a readable one-second MP3, and FL Studio / Ableton Live projects parsed and migrated.")
     return 0
 
 

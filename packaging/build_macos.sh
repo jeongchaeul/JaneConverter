@@ -175,6 +175,7 @@ echo "Building the frozen engine (onedir)..."
 uv run --locked pyinstaller --noconfirm --clean --onedir --contents-directory _internal \
   --collect-all yt_dlp_ejs \
   --collect-submodules janeconverter.flp \
+  --collect-submodules janeconverter.als \
   --hidden-import urllib.request \
   --name JaneConverterEngine \
   --paths "$REPO_ROOT/src" \

@@ -148,7 +148,45 @@ def browser_session_label(selection: Optional[str]) -> str:
     return browser.title()
 
 
-def yt_dlp_cookie_option(selection: Optional[str]) -> Optional[Tuple[str, None, None, None]]:
+def detect_browser_profiles(selection: Optional[str]) -> list[str]:
+    """Discover profile directory names (e.g. ['Default', 'Profile 1', ...]) for a Chromium browser."""
+    browser = normalize_browser_session(selection)
+    if not browser:
+        return []
+    profiles = ["Default"]
+    if os.name == "nt":
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        paths = []
+        if browser == "chrome":
+            paths = [
+                os.path.join(local_app_data, "Google", "Chrome", "User Data"),
+                os.path.join(local_app_data, "Google", "Chrome SxS", "User Data"),
+            ]
+        elif browser == "edge":
+            paths = [
+                os.path.join(local_app_data, "Microsoft", "Edge", "User Data"),
+                os.path.join(local_app_data, "Microsoft", "Edge Beta", "User Data"),
+            ]
+        elif browser == "brave":
+            paths = [os.path.join(local_app_data, "BraveSoftware", "Brave-Browser", "User Data")]
+        elif browser == "vivaldi":
+            paths = [os.path.join(local_app_data, "Vivaldi", "User Data")]
+        elif browser == "chromium":
+            paths = [os.path.join(local_app_data, "Chromium", "User Data")]
+
+        for user_data in paths:
+            if os.path.isdir(user_data):
+                try:
+                    for entry in os.listdir(user_data):
+                        if entry.lower().startswith("profile ") and os.path.isdir(os.path.join(user_data, entry)):
+                            if entry not in profiles:
+                                profiles.append(entry)
+                except OSError:
+                    pass
+    return profiles
+
+
+def yt_dlp_cookie_option(selection: Optional[str], profile: Optional[str] = None) -> Optional[Tuple[str, Optional[str], None, None]]:
     """Build yt-dlp's in-memory browser-cookie option without creating a file."""
     browser = normalize_browser_session(selection)
     if browser is None:
@@ -159,7 +197,7 @@ def yt_dlp_cookie_option(selection: Optional[str]) -> Optional[Tuple[str, None, 
             return None
     # yt-dlp accepts (browser, profile, keyring, container). Leaving the
     # optional values empty lets it select the user's default profile.
-    return (browser, None, None, None)
+    return (browser, profile, None, None)
 
 
 def browser_process_is_running(selection: Optional[str]) -> Optional[bool]:

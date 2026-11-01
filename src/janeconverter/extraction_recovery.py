@@ -70,10 +70,13 @@ def extract_with_recovery(ydl, query, download, abort_event=None, report=None, d
                 if report:
                     report(0.15, f"Extraction recovery: {category.value}; attempt {attempt + 2}/4.", force=True)
                 if category == ExtractionCategory.FORMAT:
-                    if not hasattr(ydl, "params") or attempt > 0:
+                    if not hasattr(ydl, "params") or attempt > 1:
                         raise
                     ydl.params.pop("extractor_args", None)
-                    ydl.params["format"] = "bv*+ba/b/best"
+                    if attempt == 0:
+                        ydl.params["format"] = "bv*+ba/b/best"
+                    else:
+                        ydl.params["format"] = "best[protocol^=m3u8]/b/best"
                     continue
                 if category == ExtractionCategory.LAYOUT:
                     if not hasattr(ydl, "params"):

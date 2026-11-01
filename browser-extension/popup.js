@@ -239,7 +239,7 @@ function probePage() {
     if (!root || typeof root.querySelectorAll !== "function") return;
     for (const element of root.querySelectorAll("*")) {
       const tag = element.tagName.toLowerCase();
-      if ((tag === "video" || tag === "audio" || tag === "img" || tag === "canvas") && !seenElements.has(element)) {
+      if ((tag === "video" || tag === "audio" || tag === "img" || tag === "canvas" || tag === "image") && !seenElements.has(element)) {
         seenElements.add(element);
         elements.push(element);
       }
@@ -261,7 +261,11 @@ function probePage() {
       && rect.left < innerWidth
       && area > 4;
     const source = element.querySelector && element.querySelector("source[src]");
-    const url = element.currentSrc || element.src || (source && source.src) || "";
+    const hasSrcObject = Boolean(element.srcObject);
+    const isSvgImg = tag === "image";
+    const bgUrlMatch = !element.currentSrc && !element.src && style.backgroundImage && style.backgroundImage.match(/^url\((?:['"]?)(.*?)(?:['"]?)\)$/);
+    const bgUrl = bgUrlMatch ? bgUrlMatch[1] : "";
+    const url = element.currentSrc || element.src || (source && source.src) || (isSvgImg ? (element.getAttribute("href") || element.getAttribute("xlink:href") || "") : "") || (hasSrcObject ? "webrtc:stream" : "") || bgUrl || "";
     const readable = tag === "video"
       ? element.readyState > 0 || element.videoWidth > 0 || Boolean(url)
       : tag === "audio"
@@ -270,7 +274,7 @@ function probePage() {
           ? element.width > 0 && element.height > 0
           : element.complete && element.naturalWidth > 0 || Boolean(url);
     if (!visible || !readable) return null;
-    const kind = tag === "img" || tag === "canvas" ? "image" : tag;
+    const kind = (tag === "img" || tag === "canvas" ? "image" : (tag === "image" ? "image" : tag));
     const playing = tag === "video" && !element.paused && element.readyState >= 2;
     const storyCandidate = visible && (
       playing
@@ -609,14 +613,15 @@ async function capturePageMedia(item, maxBytes, deadline = Date.now() + 180000) 
     return encodeCapture(blob, blob.type || "image/png", item.fileName.replace(/\.[^.]+$/, "") + ".png");
   }
 
-  if (element.tagName.toLowerCase() !== "video") {
+  const tag = element.tagName.toLowerCase();
+  if (tag !== "video" && tag !== "audio") {
     throw new Error("The page exposed media, but it did not provide readable media bytes.");
   }
   const captureStream = element.captureStream || element.mozCaptureStream;
   if (typeof captureStream !== "function" || typeof MediaRecorder === "undefined") {
     throw new Error("The page is playing protected media that the browser cannot expose to the bridge.");
   }
-  const supportedTypes = [
+  const supportedTypes = tag === "audio" ? ["audio/webm;codecs=opus", "audio/webm", "audio/ogg"] : [
     "video/webm;codecs=vp9,opus",
     "video/webm;codecs=vp8,opus",
     "video/webm"
@@ -624,7 +629,7 @@ async function capturePageMedia(item, maxBytes, deadline = Date.now() + 180000) 
   const mimeType = supportedTypes.find(function (value) {
     return typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(value);
   });
-  if (!mimeType) throw new Error("This browser cannot record the currently playing video format.");
+  if (!mimeType) throw new Error("This browser cannot record the currently playing " + (tag === "audio" ? "audio" : "video") + " format.");
 
   const originalTime = Number.isFinite(element.currentTime) ? element.currentTime : 0;
   const originalPaused = element.paused;
@@ -635,7 +640,7 @@ async function capturePageMedia(item, maxBytes, deadline = Date.now() + 180000) 
       throw new Error("Start playback in the browser, then retry.");
     }
   }
-  if (element.readyState < 2 && !element.videoWidth) {
+  if (tag === "video" ? (element.readyState < 2 && !element.videoWidth) : element.readyState < 2) {
     throw new Error("The browser has not loaded this media yet. Keep it playing, then retry.");
   }
   if (duration > 0 && duration < 30 * 60) {

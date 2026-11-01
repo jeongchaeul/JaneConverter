@@ -122,11 +122,32 @@ Whenever an extractor, route handler, or media parser is updated:
 
 ---
 
-## 🚀 Continuous Operation Protocol
+## 🚀 Continuous Operation & Mandatory Live CI Monitoring Protocol
 
-Before pushing code or tagging releases:
-1. Run local pre-push checks (Python tests, pyflakes lint, Vitest tests, Vite build, Cargo fmt, Cargo test).
-2. Monitor GitHub Actions CI workflows until all matrix jobs complete green. If any job fails, inspect logs, apply fixes, and re-verify.
+Whenever an agent or operator is commanded to **commit and push** changes to the repository:
+
+### 1. Local Hermetic Pre-Flight Checks
+Never push code without running the full local verification suite:
+- **Python Unit & Integration Suite**: `uv run --locked pytest tests/ -v`
+- **Static Linting**: `uv run --locked pyflakes src/janeconverter packaging/engine_entry.py packaging/create_updater_manifest.py packaging/smoke_test_engine.py packaging/build_browser_bridge.py packaging/set_version.py`
+- **Companion Browser Extension**: `node --test browser-extension/test/*.js`
+- **Desktop UI Vitest & Production Build**: `cd desktop-ui; npm.cmd test -- --run; npm.cmd run build`
+- **Rust Tauri Bridge**: `cargo fmt --manifest-path desktop-ui/src-tauri/Cargo.toml --check` and `cargo test --manifest-path desktop-ui/src-tauri/Cargo.toml`
+
+### 2. Mandatory Live CI State Monitoring (NEVER Fire-and-Forget)
+**An agent must NEVER consider a task finished simply because `git push` succeeded.** Upstream CI environments (Windows x64 runner, Ubuntu 22.04 runner, macOS arm64/x64 runners) execute builds and cross-platform matrix workflows that cannot be 100% simulated locally.
+
+Immediately after pushing:
+1. **Identify the Pushed Commit SHA**: Run `git rev-parse HEAD` to capture the target commit hash.
+2. **Deploy Active Monitoring**: Monitor the live status of the triggered GitHub Actions workflows (`CI`, `Continuous updater packages`, etc.) for that specific commit SHA until all jobs finish.
+   - Run the automated monitor: `uv run python packaging/monitor_ci.py` (or query the GitHub Actions REST API).
+3. **Immediate Incident Response (Zero Dormant Errors)**:
+   - If any workflow, job, or matrix runner fails (`conclusion: failure`):
+     - Immediately fetch the failed step log and diagnostics.
+     - Isolate the failure mechanism (e.g., path separator quirks, runner timing, packaging manifest mismatch, upstream dependency lock).
+     - Implement the surgical fix, re-verify locally, commit, push, and resume monitoring.
+4. **Completion Clearance Criterion**:
+   - The task is concluded ONLY when all remote workflows triggered by the commit report `conclusion: success` (all green).
 
 ---
 

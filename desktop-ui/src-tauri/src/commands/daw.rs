@@ -1,4 +1,6 @@
-use crate::model::{FlpDowngradeResult, FlpProjectInfo, InstalledFlStudio};
+use crate::model::{
+    AlsMigrationResult, AlsProjectInfo, FlpDowngradeResult, FlpProjectInfo, InstalledFlStudio,
+};
 use crate::paths::{find_python, packaged_engine, project_root};
 use rfd::FileDialog;
 use std::process::Command;
@@ -29,6 +31,86 @@ pub async fn choose_als_file() -> Option<String> {
     .await
     .ok()
     .flatten()
+}
+
+#[tauri::command]
+pub async fn als_inspect(path: String) -> Result<AlsProjectInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = find_python();
+        let mut command = Command::new(&engine);
+        if !packaged_engine(&engine) {
+            command.args(["run", "--locked", "janeconverter"]);
+        }
+        command
+            .arg(format!("--als-inspect={path}"))
+            .current_dir(project_root());
+        let output = crate::process::bounded_output(
+            &mut command,
+            std::time::Duration::from_secs(30),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .map_err(|error| format!("Could not inspect Ableton Live project: {error}"))?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if detail.is_empty() {
+                format!("ALS inspector exited with status {}.", output.status)
+            } else {
+                detail
+            });
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("Could not read ALS inspector output: {error}"))
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn als_migrate(
+    source: String,
+    target_version: String,
+    output_path: Option<String>,
+    overwrite: Option<bool>,
+) -> Result<AlsMigrationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = find_python();
+        let mut command = Command::new(&engine);
+        if !packaged_engine(&engine) {
+            command.args(["run", "--locked", "janeconverter"]);
+        }
+        command
+            .args([
+                format!("--als-migrate={source}"),
+                format!("--als-target={target_version}"),
+            ])
+            .current_dir(project_root());
+        if let Some(ref out) = output_path {
+            if !out.trim().is_empty() {
+                command.arg(format!("--als-output={}", out.trim()));
+            }
+        }
+        if overwrite.unwrap_or(false) {
+            command.arg("--als-overwrite");
+        }
+        let output = crate::process::bounded_output(
+            &mut command,
+            std::time::Duration::from_secs(30),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .map_err(|error| format!("Could not migrate Ableton Live project: {error}"))?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if detail.is_empty() {
+                format!("ALS migrator exited with status {}.", output.status)
+            } else {
+                detail
+            });
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("Could not read ALS migrator output: {error}"))
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]

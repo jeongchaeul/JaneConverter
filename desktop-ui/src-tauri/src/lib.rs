@@ -105,6 +105,8 @@ pub fn run() {
             choose_folder,
             choose_flp_file,
             choose_als_file,
+            als_inspect,
+            als_migrate,
             flp_inspect,
             flp_downgrade,
             flp_detect_installed,

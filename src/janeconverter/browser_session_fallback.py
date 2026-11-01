@@ -3,6 +3,7 @@ import threading
 from urllib.parse import urlparse
 
 from .auth import (
+    detect_browser_profiles,
     detect_default_browser_session,
     detect_installed_browser_sessions,
     detect_running_browsers,
@@ -148,96 +149,106 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
         tried_browsers = []
 
         for b in candidate_browsers:
-            opts = dict(options)
-            opts.pop("extractor_args", None)
-            opts.pop("cookiefile", None)
-            opts.update(cookiesfrombrowser=yt_dlp_cookie_option(b),
-                        logger=_PrivateLogger(), verbose=False, cachedir=get_ytdlp_cache_dir(),
-                        quiet=True, no_warnings=True, noprogress=True)
-            if "js_runtimes" not in opts or not opts["js_runtimes"] or opts["js_runtimes"].get("node", {}).get("path") is None:
-                try:
-                    from .converter import get_js_runtimes_config
-                    opts["js_runtimes"] = get_js_runtimes_config()
-                except ImportError:
-                    pass
-
-            jar = None
-            authenticated = None
-            try:
-                import yt_dlp
-                with _COOKIE_EXTRACT_LOCK:
-                    authenticated = yt_dlp.YoutubeDL(opts)
-                    jar = getattr(authenticated, "_cookiejar", None) or authenticated.cookiejar
-                    matching_count = 0
-                    if jar is not None:
-                        for cookie in list(jar):
-                            raw_domain = getattr(cookie, "domain", None) or ""
-                            host = raw_domain.lstrip(".").lower()
-                            if not host or not any(host == root or host.endswith("." + root) for root in domains):
-                                jar.clear(getattr(cookie, "domain", None), getattr(cookie, "path", None), getattr(cookie, "name", None))
-                            else:
-                                cookie.secure = True
-                                matching_count += 1
-
-                if not jar or matching_count == 0:
-                    # No usable session for this site in this browser, try next candidate
-                    if authenticated is not None:
-                        try:
-                            authenticated.close()
-                        except Exception:
-                            pass
-                        authenticated = None
-                    continue
-
-                tried_browsers.append(b)
-                if report:
-                    report(0.15, f"Sign-in required. Using your {b.title()} session to retry.", force=True)
-
-                if abort_event and abort_event.is_set():
-                    raise KeyboardInterrupt("Stream extraction aborted by user.")
-
-                with authenticated:
+            detected_profs = detect_browser_profiles(b)
+            profile_list = detected_profs if detected_profs else [None]
+            session_found = False
+            for prof in profile_list:
+                opts = dict(options)
+                opts.pop("extractor_args", None)
+                opts.pop("cookiefile", None)
+                prof_arg = None if prof == "Default" else prof
+                opts.update(cookiesfrombrowser=yt_dlp_cookie_option(b, prof_arg),
+                            logger=_PrivateLogger(), verbose=False, cachedir=get_ytdlp_cache_dir(),
+                            quiet=True, no_warnings=True, noprogress=True)
+                if "js_runtimes" not in opts or not opts["js_runtimes"] or opts["js_runtimes"].get("node", {}).get("path") is None:
                     try:
-                        return extract_with_recovery(authenticated, query, download, abort_event, report, deadline)
-                    except Exception as extract_err:
-                        message = str(extract_err).casefold()
-                        if "drm" in message or "geo-restricted" in message:
-                            raise
-                        detail = f"Automatic browser-session retry did not succeed. Check that the source plays in {b.title()}, then retry."
+                        from .converter import get_js_runtimes_config
+                        opts["js_runtimes"] = get_js_runtimes_config()
+                    except ImportError:
+                        pass
+
+                jar = None
+                authenticated = None
+                try:
+                    import yt_dlp
+                    with _COOKIE_EXTRACT_LOCK:
+                        authenticated = yt_dlp.YoutubeDL(opts)
+                        jar = getattr(authenticated, "_cookiejar", None) or authenticated.cookiejar
+                        matching_count = 0
+                        if jar is not None:
+                            for cookie in list(jar):
+                                raw_domain = getattr(cookie, "domain", None) or ""
+                                host = raw_domain.lstrip(".").lower()
+                                if not host or not any(host == root or host.endswith("." + root) for root in domains):
+                                    jar.clear(getattr(cookie, "domain", None), getattr(cookie, "path", None), getattr(cookie, "name", None))
+                                else:
+                                    cookie.secure = True
+                                    matching_count += 1
+
+                    if not jar or matching_count == 0:
+                        # No usable session for this profile, try next
+                        if authenticated is not None:
+                            try:
+                                authenticated.close()
+                            except Exception:
+                                pass
+                            authenticated = None
+                        continue
+
+                    session_found = True
+                    b_label = f"{b.title()} ({prof})" if prof and prof != "Default" else b.title()
+                    tried_browsers.append(b_label)
+                    if report:
+                        report(0.15, f"Sign-in required. Using your {b_label} session to retry.", force=True)
+
+                    if abort_event and abort_event.is_set():
+                        raise KeyboardInterrupt("Stream extraction aborted by user.")
+
+                    with authenticated:
+                        try:
+                            return extract_with_recovery(authenticated, query, download, abort_event, report, deadline)
+                        except Exception as extract_err:
+                            message = str(extract_err).casefold()
+                            if "drm" in message or "geo-restricted" in message:
+                                raise
+                            detail = f"Automatic browser-session retry did not succeed. Check that the source plays in {b_label}, then retry."
+                            if browser == "auto":
+                                last_error = BrowserSessionError(detail)
+                                continue
+                            raise BrowserSessionError(detail) from None
+
+                except KeyboardInterrupt:
+                    raise
+                except BrowserSessionError:
+                    if browser == "auto":
+                        continue
+                    raise
+                except Exception as error:
+                    last_error = error
+                    message = str(error).casefold()
+                    if any(word in message for word in ("cookie database", "decrypt", "dpapi", "keyring", "extract cookies", "cookies from", "load cookies")):
+                        b_label = f"{b.title()} ({prof})" if prof and prof != "Default" else b.title()
+                        detail = f"yt-dlp could not read the {b_label} session. The browser may be locked or its cookie encryption unsupported. Close it and retry."
                         if browser == "auto":
                             last_error = BrowserSessionError(detail)
                             continue
                         raise BrowserSessionError(detail) from None
-
-            except KeyboardInterrupt:
-                raise
-            except BrowserSessionError:
-                if browser == "auto":
                     continue
-                raise
-            except Exception as error:
-                last_error = error
-                message = str(error).casefold()
-                if any(word in message for word in ("cookie database", "decrypt", "dpapi", "keyring", "extract cookies", "cookies from", "load cookies")):
-                    detail = f"yt-dlp could not read the {b.title()} session. The browser may be locked or its cookie encryption unsupported. Close it and retry."
-                    if browser == "auto":
-                        last_error = BrowserSessionError(detail)
-                        continue
-                    raise BrowserSessionError(detail) from None
-                continue
-            finally:
-                if jar is not None:
-                    try:
-                        jar.clear()
-                    except (AttributeError, RuntimeError):
-                        pass
-                if authenticated is not None:
-                    try:
-                        auth_jar = getattr(authenticated, "_cookiejar", None)
-                        if auth_jar is not None:
-                            auth_jar.clear()
-                    except (AttributeError, RuntimeError):
-                        pass
+                finally:
+                    if jar is not None:
+                        try:
+                            jar.clear()
+                        except (AttributeError, RuntimeError):
+                            pass
+                    if authenticated is not None:
+                        try:
+                            auth_jar = getattr(authenticated, "_cookiejar", None)
+                            if auth_jar is not None:
+                                auth_jar.clear()
+                        except (AttributeError, RuntimeError):
+                            pass
+            if session_found:
+                break
 
         if tried_browsers:
             detail = f"Automatic browser-session retry did not succeed with {', '.join(b.title() for b in tried_browsers)}. Check that the source plays in your browser, then retry."

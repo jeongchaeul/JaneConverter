@@ -155,3 +155,70 @@ def test_download_sniffed_3d_model(tmp_path):
         assert os.path.isfile(meta["media_path"])
         assert meta["media_path"].endswith(".glb")
         assert open(meta["media_path"], "rb").read() == b"glTF\x02\x00\x00\x00\x00\x00\x00\x00"
+
+
+def test_is_direct_asset_url_detects_audio():
+    audio = is_direct_asset_url("https://cdn.example.com/audio/track_01.flac")
+    assert audio is not None
+    assert audio.asset_kind == "audio"
+    assert audio.extension == "flac"
+    assert audio.title == "track_01"
+
+
+def test_sniff_webpage_extracts_from_next_data_hydration():
+    html_sample = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>NextJS SPA Video Player</title></head>
+    <body>
+        <div id="__next"></div>
+        <script id="__NEXT_DATA__" type="application/json">
+        {
+            "props": {
+                "pageProps": {
+                    "video": {
+                        "streamManifest": "https://video-cdn.example.com/hls/master.m3u8",
+                        "title": "Exclusive Release"
+                    }
+                }
+            }
+        }
+        </script>
+    </body>
+    </html>
+    """
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = html_sample
+    mock_resp.url = "https://example.com/video/exclusive"
+
+    with patch("requests.Session.get", return_value=mock_resp):
+        asset = sniff_webpage("https://example.com/video/exclusive")
+        assert asset is not None
+        assert asset.asset_kind == "stream"
+        assert asset.extension == "m3u8"
+        assert asset.asset_url == "https://video-cdn.example.com/hls/master.m3u8"
+
+
+def test_sniff_webpage_extracts_direct_audio_element():
+    html_sample = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Podcast Audio Player</title></head>
+    <body>
+        <audio controls src="https://media.podcasts.org/episodes/ep42.mp3"></audio>
+    </body>
+    </html>
+    """
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = html_sample
+    mock_resp.url = "https://example.com/podcasts/42"
+
+    with patch("requests.Session.get", return_value=mock_resp):
+        asset = sniff_webpage("https://example.com/podcasts/42")
+        assert asset is not None
+        assert asset.asset_kind == "audio"
+        assert asset.extension == "mp3"
+        assert asset.asset_url == "https://media.podcasts.org/episodes/ep42.mp3"
+

@@ -8,6 +8,7 @@ a browser extension or user intervention.
 from __future__ import annotations
 
 import html
+import json
 import os
 import re
 import urllib.parse
@@ -49,6 +50,12 @@ _DIRECT_VIDEO_PATTERNS = [
     re.compile(r"""<video[^>]+src=["'](?P<url>[^"']+\.(?:mp4|webm|mkv|mov)[^"']*)["']""", re.IGNORECASE),
     re.compile(r"""<source[^>]+src=["'](?P<url>[^"']+\.(?:mp4|webm|mkv|mov)[^"']*)["']""", re.IGNORECASE),
     re.compile(r"""https?://[^\s"'<>\\]+?\.(?:mp4|webm)(?:[?#][^\s"'<>\\]*)?""", re.IGNORECASE),
+]
+
+_DIRECT_AUDIO_PATTERNS = [
+    re.compile(r"""<audio[^>]+src=["'](?P<url>[^"']+\.(?:mp3|m4a|aac|opus|ogg|flac|wav)[^"']*)["']""", re.IGNORECASE),
+    re.compile(r"""<source[^>]+src=["'](?P<url>[^"']+\.(?:mp3|m4a|aac|opus|ogg|flac|wav)[^"']*)["']""", re.IGNORECASE),
+    re.compile(r"""https?://[^\s"'<>\\]+?\.(?:mp3|m4a|aac|opus|ogg|flac|wav)(?:[?#][^\s"'<>\\]*)?""", re.IGNORECASE),
 ]
 
 _IFRAME_PATTERN = re.compile(r"""<iframe[^>]+src=["'](?P<src>[^"']+)["']""", re.IGNORECASE)
@@ -121,6 +128,17 @@ def is_direct_asset_url(url: str) -> Optional[SniffedAsset]:
                 headers=headers,
             )
 
+    for audio_ext in ("mp3", "m4a", "aac", "opus", "ogg", "flac", "wav"):
+        if path_lower.endswith("." + audio_ext):
+            return SniffedAsset(
+                asset_url=url,
+                asset_kind="audio",
+                extension=audio_ext,
+                title=_clean_title(stem),
+                source_page=url,
+                headers=headers,
+            )
+
     return None
 
 
@@ -163,6 +181,102 @@ def _find_direct_video_in_html(html_text: str, base_url: str) -> Optional[str]:
                 resolved = urllib.parse.urljoin(base_url, found.strip().strip("'\""))
                 if resolved.startswith(("http://", "https://")):
                     return resolved
+    return None
+
+
+def _find_direct_audio_in_html(html_text: str, base_url: str) -> Optional[Tuple[str, str]]:
+    unescaped = html_text.replace(r"\/", "/")
+    for pattern in _DIRECT_AUDIO_PATTERNS:
+        match = pattern.search(unescaped)
+        if match:
+            found = match.group("url") if "url" in match.groupdict() else match.group(0)
+            if found:
+                resolved = urllib.parse.urljoin(base_url, found.strip().strip("'\""))
+                if resolved.startswith(("http://", "https://")):
+                    path_lower = urllib.parse.urlparse(resolved).path.lower()
+                    for ext in ("mp3", "m4a", "aac", "opus", "ogg", "flac", "wav"):
+                        if path_lower.endswith("." + ext):
+                            return (resolved, ext)
+                    return (resolved, "mp3")
+    return None
+
+
+def _find_in_hydration_json(html_text: str, base_url: str) -> Optional[Tuple[str, str, str]]:
+    """Traverse Next.js, Nuxt, and generic JSON hydration script blocks for embedded media URLs."""
+    candidates = []
+    # 1. Script tags with JSON
+    script_matches = re.findall(
+        r'<script[^>]+(?:type=["\']application/json["\']|id=["\']__(?:NEXT|NUXT)_DATA__["\'])[^>]*>(.*?)</script>',
+        html_text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    for raw_json in script_matches:
+        raw_json = raw_json.strip()
+        if not raw_json or len(raw_json) > 10 * 1024 * 1024:
+            continue
+        try:
+            candidates.append(json.loads(raw_json))
+        except Exception:
+            continue
+
+    # 2. window.__INITIAL_STATE__ or similar assignments
+    state_matches = re.findall(
+        r'window\.(?:__INITIAL_STATE__|__PRELOADED_STATE__|__APP_DATA__)\s*=\s*({.*?});\s*</script>',
+        html_text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    for raw_json in state_matches:
+        raw_json = raw_json.strip()
+        if not raw_json or len(raw_json) > 10 * 1024 * 1024:
+            continue
+        try:
+            candidates.append(json.loads(raw_json))
+        except Exception:
+            continue
+
+    stream_exts = (".m3u8", ".mpd")
+    model_exts = ("glb", "gltf", "obj", "splat", "ply", "fbx")
+    video_exts = ("mp4", "webm", "mkv", "mov")
+    audio_exts = ("mp3", "m4a", "aac", "opus", "ogg", "flac", "wav")
+
+    def _walk(obj, depth=0):
+        if depth > 12:
+            return None
+        if isinstance(obj, str):
+            val = obj.strip().replace(r"\/", "/")
+            if val.startswith(("http://", "https://", "//", "/")):
+                resolved = urllib.parse.urljoin(base_url, val)
+                parsed = urllib.parse.urlparse(resolved)
+                path_lower = parsed.path.lower()
+                if any(path_lower.endswith(ext) for ext in stream_exts):
+                    ext = "mpd" if path_lower.endswith(".mpd") else "m3u8"
+                    return (resolved, "stream", ext)
+                for ext in model_exts:
+                    if path_lower.endswith("." + ext):
+                        return (resolved, "model", ext)
+                for ext in video_exts:
+                    if path_lower.endswith("." + ext):
+                        return (resolved, "video", ext)
+                for ext in audio_exts:
+                    if path_lower.endswith("." + ext):
+                        return (resolved, "audio", ext)
+            return None
+        if isinstance(obj, dict):
+            for v in obj.values():
+                res = _walk(v, depth + 1)
+                if res:
+                    return res
+        elif isinstance(obj, list):
+            for v in obj:
+                res = _walk(v, depth + 1)
+                if res:
+                    return res
+        return None
+
+    for root in candidates:
+        found = _walk(root)
+        if found:
+            return found
     return None
 
 
@@ -289,6 +403,38 @@ def sniff_webpage(
             asset_url=video_url,
             asset_kind="video",
             extension=ext,
+            title=title,
+            source_page=effective_url,
+            headers=headers,
+            thumbnail_url=thumb_url,
+        )
+
+    # 5. Look for direct HTML5 audio element
+    audio_match = _find_direct_audio_in_html(html_content, effective_url)
+    if audio_match:
+        a_url, a_ext = audio_match
+        if report:
+            report(0.35, f"Discovered direct audio track ({a_ext.upper()}): {a_url[:60]}...")
+        return SniffedAsset(
+            asset_url=a_url,
+            asset_kind="audio",
+            extension=a_ext,
+            title=title,
+            source_page=effective_url,
+            headers=headers,
+            thumbnail_url=thumb_url,
+        )
+
+    # 6. Deep inspection of JSON Hydration state (Next.js, Nuxt, Redux initial state)
+    hydration_match = _find_in_hydration_json(html_content, effective_url)
+    if hydration_match:
+        h_url, h_kind, h_ext = hydration_match
+        if report:
+            report(0.35, f"Discovered hydration media ({h_kind.upper()} / {h_ext.upper()}): {h_url[:60]}...")
+        return SniffedAsset(
+            asset_url=h_url,
+            asset_kind=h_kind,
+            extension=h_ext,
             title=title,
             source_page=effective_url,
             headers=headers,

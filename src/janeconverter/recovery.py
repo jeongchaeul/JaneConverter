@@ -137,7 +137,7 @@ def classify_ffmpeg_failure(stderr: bytes | str | None) -> FailureCategory:
         return FailureCategory.PERMISSION
     if any(word in value for word in ("no space left", "disk full", "out of memory", "cannot allocate memory")):
         return FailureCategory.RESOURCE
-    if any(word in value for word in ("invalid data found", "could not find codec parameters", "moov atom not found")):
+    if any(word in value for word in ("invalid data found", "could not find codec parameters")):
         return FailureCategory.INVALID_INPUT
     if any(word in value for word in ("connection reset", "connection timed out", "temporary failure", "i/o error")):
         return FailureCategory.TRANSIENT_IO
@@ -145,7 +145,7 @@ def classify_ffmpeg_failure(stderr: bytes | str | None) -> FailureCategory:
         return FailureCategory.ARTWORK
     if any(word in value for word in ("nvenc", "vaapi", "videotoolbox", "qsv", "amf", "hardware device", "no capable devices", "cuda", "cuinit", "nvcuda")):
         return FailureCategory.HARDWARE
-    if any(word in value for word in ("not supported in container", "could not write header", "tag ", "incorrect codec parameters")) or ("codec" in value and "not supported" in value):
+    if any(word in value for word in ("not supported in container", "could not write header", "tag ", "incorrect codec parameters", "moov atom not found")) or ("codec" in value and "not supported" in value):
         return FailureCategory.CONTAINER
     if any(word in value for word in ("unknown encoder", "encoder not found", "error while opening encoder", "unrecognized option", "option not found")):
         return FailureCategory.ENCODER

@@ -1115,7 +1115,7 @@ def fetch_media_stream(
                     last_error = bse
                     if (is_tiktok_source or catalog_meta) and query_item != candidates[-1]:
                         continue
-                    if is_tiktok_source:
+                    if is_tiktok_source or archival_fallback:
                         break
                     raise
                 except Exception as ex:

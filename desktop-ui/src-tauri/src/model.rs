@@ -278,3 +278,44 @@ pub struct InstalledFlStudio {
     pub build: u32,
     pub executable_path: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlsProjectInfo {
+    pub file_path: String,
+    pub file_name: String,
+    pub file_size: u64,
+    pub creator: String,
+    pub version: String,
+    pub major_version: u32,
+    pub schema_change_count: String,
+    pub revision: String,
+    pub title: String,
+    pub bpm: f64,
+    pub tracks_count: usize,
+    pub tracks: Vec<String>,
+    pub plugins_count: usize,
+    pub plugins: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlsMigrationResult {
+    pub success: bool,
+    pub source_creator: String,
+    pub source_version: String,
+    pub source_major: u32,
+    pub target_version: String,
+    pub target_major: u32,
+    pub target_profile: String,
+    pub target_label: String,
+    pub output_size_bytes: u64,
+    pub tracks_count: usize,
+    pub plugins_count: usize,
+    #[serde(default)]
+    pub source_path: Option<String>,
+    #[serde(default)]
+    pub output_path: Option<String>,
+    #[serde(default)]
+    pub backup_path: Option<String>,
+}

@@ -1333,6 +1333,11 @@ def main():
     parser.add_argument("--flp-output", help="Optional destination path for downgraded .flp project")
     parser.add_argument("--flp-overwrite", action="store_true", help="Overwrite original .flp file in-place (creates .bak backup)")
     parser.add_argument("--flp-detect-installed", action="store_true", help="Detect installed FL Studio versions and output JSON")
+    parser.add_argument("--als-inspect", help="Inspect an Ableton Live project (.als) and output JSON metadata")
+    parser.add_argument("--als-migrate", help="Migrate an Ableton Live project (.als) to a target version")
+    parser.add_argument("--als-target", default="11", help="Target Ableton Live version or profile (e.g. 11, 10, 9; default: 11)")
+    parser.add_argument("--als-output", help="Optional destination path for migrated .als project")
+    parser.add_argument("--als-overwrite", action="store_true", help="Overwrite original .als file in-place (creates .backup)")
     parser.add_argument("--version", action="version", version=f"JaneConverter {__version__}")
 
     args = parser.parse_args()
@@ -1363,6 +1368,29 @@ def main():
                 target_build=args.flp_build,
                 output_path=args.flp_output,
                 overwrite=args.flp_overwrite,
+            )
+            print(json.dumps(summary))
+        except Exception as error:
+            print(json.dumps({"error": str(error)}))
+            sys.exit(1)
+        return
+    if args.als_inspect:
+        from .als import inspect_als_file
+        try:
+            info = inspect_als_file(args.als_inspect)
+            print(json.dumps(info))
+        except Exception as error:
+            print(json.dumps({"error": str(error)}))
+            sys.exit(1)
+        return
+    if args.als_migrate:
+        from .als import migrate_als_file
+        try:
+            summary = migrate_als_file(
+                source_path=args.als_migrate,
+                target_version=args.als_target,
+                output_path=args.als_output,
+                overwrite=args.als_overwrite,
             )
             print(json.dumps(summary))
         except Exception as error:
