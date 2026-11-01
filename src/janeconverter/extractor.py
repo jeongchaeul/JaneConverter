@@ -18,6 +18,8 @@ import json
 import html
 import requests
 import yt_dlp
+from .paths import get_ytdlp_cache_dir
+from .session_pacer import pace_request
 from .catalog_match import choose_catalog_match, match_score
 from .extraction_recovery import classify_extraction, ExtractionCategory
 from .browser_session_fallback import extract_with_browser_fallback, BrowserSessionError
@@ -1011,6 +1013,8 @@ def fetch_media_stream(
         "format": format_selector,
         "outtmpl": os.path.join(output_dir, "%(title).80s_%(id).40s.%(ext)s"),
         "paths": {"home": output_dir, "temp": output_dir},
+        "cachedir": get_ytdlp_cache_dir(),
+        "http_chunk_size": 10485760,
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
@@ -1066,6 +1070,8 @@ def fetch_media_stream(
         last_error = None
         catalog_meta = spotify_meta or apple_meta
         recovery_deadline = time.monotonic() + 60
+        if is_url(source):
+            pace_request(source, abort_event=abort_event)
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             def extract(query, download):
                 return extract_with_browser_fallback(
@@ -1431,6 +1437,7 @@ def fetch_playlist_entries(
     report(0.1, "Inspecting playlist catalog...")
     ydl_opts = {
         "extract_flat": True,
+        "cachedir": get_ytdlp_cache_dir(),
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
@@ -1453,6 +1460,8 @@ def fetch_playlist_entries(
             }
         }
     try:
+        if is_url(clean_url):
+            pace_request(clean_url)
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             report(0.3, "Extracting playlist index and track listings...")
             info = extract_with_browser_fallback(

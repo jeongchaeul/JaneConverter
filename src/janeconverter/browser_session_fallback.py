@@ -9,6 +9,7 @@ from .auth import (
     normalize_browser_session,
     yt_dlp_cookie_option,
 )
+from .paths import get_ytdlp_cache_dir
 from .cookie_unlocker import patch_yt_dlp_cookie_database_reader
 from .instagram_patch import patch_instagram_story_extractor
 from .facebook_patch import patch_facebook_story_extractor
@@ -151,7 +152,7 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
             opts.pop("extractor_args", None)
             opts.pop("cookiefile", None)
             opts.update(cookiesfrombrowser=yt_dlp_cookie_option(b),
-                        logger=_PrivateLogger(), verbose=False, cachedir=False,
+                        logger=_PrivateLogger(), verbose=False, cachedir=get_ytdlp_cache_dir(),
                         quiet=True, no_warnings=True, noprogress=True)
             if "js_runtimes" not in opts or not opts["js_runtimes"] or opts["js_runtimes"].get("node", {}).get("path") is None:
                 try:

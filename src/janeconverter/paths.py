@@ -214,6 +214,23 @@ def get_temp_dir() -> str:
     return fallback
 
 
+def get_ytdlp_cache_dir() -> str:
+    """Return the persistent yt-dlp cache directory for player JS and challenge reuse."""
+    configured = os.environ.get("JANECONVERTER_CACHE_DIR", "").strip()
+    if configured:
+        try:
+            os.makedirs(configured, exist_ok=True)
+            return os.path.abspath(configured)
+        except OSError:
+            pass
+    fallback = os.path.join(APP_DATA_DIR, "ytdlp_cache")
+    try:
+        os.makedirs(fallback, exist_ok=True)
+    except OSError:
+        pass
+    return fallback
+
+
 def initialize_app_data() -> None:
     """Validate the selected store and migrate legacy data during CLI startup."""
     if not _writable_directory(APP_DATA_DIR):
@@ -245,5 +262,6 @@ def promote_staging_dir(staging_dir: str, target_dir: str, max_attempts: int = 5
 APP_DATA_DIR = get_app_data_dir()
 DEFAULT_CONVERTED_DIR = os.path.join(APP_DATA_DIR, "converted")
 DEFAULT_TEMP_DIR = get_temp_dir()
+YTDLP_CACHE_DIR = get_ytdlp_cache_dir()
 LOG_DIR = os.path.join(APP_DATA_DIR, "logs")
 CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")

@@ -32,6 +32,7 @@ from .extractor import (
     is_playlist_url, fetch_playlist_entries, download_and_convert_thumbnail, format_duration, resolve_entry_thumbnail,
     identify_source_type, is_ephemeral_story_url,
 )
+from .session_pacer import pace_request
 from .converter import (
     convert_media,
     SUPPORTED_AUDIO_FORMATS,
@@ -780,6 +781,9 @@ def process_playlist_conversion(
                 done = completed_counter[0]
             msg_detail = f" — {sub_msg}" if sub_msg else f" ({int(sub_frac * 100)}%)"
             report_overall(overall_frac, f"[{done}/{total_items}] #{idx}: {clean_title}{msg_detail}")
+
+        if item_url and is_url(item_url):
+            pace_request(item_url, abort_event=abort_event)
 
         current_frac, current_done = get_overall_progress()
         report_overall(current_frac, f"[{current_done}/{total_items}] Fetching #{idx}: {clean_title}...")

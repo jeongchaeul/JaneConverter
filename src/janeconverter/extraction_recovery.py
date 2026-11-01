@@ -43,6 +43,8 @@ def classify_extraction(error):
 
 
 def extract_with_recovery(ydl, query, download, abort_event=None, report=None, deadline=None):
+    from .session_pacer import pace_request
+
     deadline = deadline or time.monotonic() + 45
     original = ydl.params.get("extractor_args") if hasattr(ydl, "params") else None
     client_ladder = [
@@ -56,6 +58,7 @@ def extract_with_recovery(ydl, query, download, abort_event=None, report=None, d
                 raise KeyboardInterrupt("Stream extraction aborted by user.")
             if time.monotonic() >= deadline:
                 raise TimeoutError("Extraction recovery deadline reached. Retry the source when it is available.")
+            pace_request(query, abort_event=abort_event)
             try:
                 return ydl.extract_info(query, download=download)
             except KeyboardInterrupt:
