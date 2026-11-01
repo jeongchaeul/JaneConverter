@@ -9,12 +9,30 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
+
+
+def get_git_credential_token() -> Optional[str]:
+    try:
+        proc = subprocess.run(
+            ["git", "credential", "fill"],
+            input="protocol=https\nhost=github.com\n",
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        match = re.search(r"password=([^\r\n]+)", proc.stdout)
+        if match:
+            return match.group(1).strip()
+    except Exception:
+        pass
+    return None
 
 
 def get_current_commit() -> str:
@@ -168,7 +186,7 @@ def main() -> int:
 
     commit_sha = args.commit or get_current_commit()
     repo = args.repo or get_repo_slug()
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or get_git_credential_token()
 
     return monitor(
         repo=repo,

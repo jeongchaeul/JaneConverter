@@ -188,7 +188,8 @@ def main() -> int:
         if als_inspect_proc.returncode != 0:
             raise RuntimeError(f"Packaged engine ALS inspection failed: {als_inspect_proc.stderr.strip() or als_inspect_proc.stdout.strip()}")
         als_info = json.loads(als_inspect_proc.stdout)
-        if als_info.get("bpm") != 170.0 or als_info.get("track_count") != 1:
+        tracks_count = als_info.get("tracksCount", als_info.get("track_count"))
+        if als_info.get("bpm") != 170.0 or tracks_count != 1:
             raise RuntimeError(f"Packaged engine ALS inspection returned invalid metadata: {als_info}")
 
         als_migrate_proc = _run(
