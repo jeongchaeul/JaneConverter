@@ -112,19 +112,25 @@ fn save(path: &Path, catalog: &Catalog) -> Result<(), String> {
 }
 
 pub fn source_url(value: &str) -> String {
-    if let Ok(mut url) = url::Url::parse(value) {
+    let trimmed = value.trim();
+    if let Ok(mut url) = url::Url::parse(trimmed) {
         if matches!(url.scheme(), "http" | "https") {
-            let ids: Vec<(String, String)> = url
+            let pairs: Vec<(String, String)> = url
                 .query_pairs()
-                .filter(|(key, _)| matches!(key.as_ref(), "v" | "fbid"))
+                .filter(|(key, _)| {
+                    !matches!(
+                        key.to_ascii_lowercase().as_str(),
+                        "token" | "secret" | "auth_token" | "access_token" | "api_key" | "apikey"
+                    )
+                })
                 .map(|(key, value)| (key.into_owned(), value.into_owned()))
                 .collect();
             let _ = url.set_username("");
             let _ = url.set_password(None);
             url.set_query(None);
             url.set_fragment(None);
-            if !ids.is_empty() {
-                url.query_pairs_mut().extend_pairs(ids);
+            if !pairs.is_empty() {
+                url.query_pairs_mut().extend_pairs(pairs);
             }
             return url.into();
         }
@@ -147,7 +153,7 @@ fn validate_history(entry: &Value) -> Result<(), String> {
             .get(field)
             .and_then(Value::as_str)
             .ok_or("A history entry has invalid fields.")?;
-        if text.len() > 8192 || (matches!(field, "id" | "timestamp") && text.is_empty()) {
+        if text.len() > 65536 || (matches!(field, "id" | "timestamp") && text.is_empty()) {
             return Err("A history field exceeds its supported size.".into());
         }
     }
@@ -329,6 +335,25 @@ mod tests {
         assert_eq!(
             source_url("https://user:secret@example.test/watch?v=123&token=secret#secret"),
             "https://example.test/watch?v=123"
+        );
+    }
+    #[test]
+    fn source_url_preserves_playlist_and_album_query_parameters() {
+        assert_eq!(
+            source_url("https://www.youtube.com/playlist?list=PLUuLyWfWijGgSWHDCoebvTPwkMR-Ank7Q"),
+            "https://www.youtube.com/playlist?list=PLUuLyWfWijGgSWHDCoebvTPwkMR-Ank7Q"
+        );
+        assert_eq!(
+            source_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLabc&index=3&t=45s"),
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLabc&index=3&t=45s"
+        );
+        assert_eq!(
+            source_url("https://open.spotify.com/album/3RQQmkQEvNCY4prGKE6oc5?si=abc123xyz"),
+            "https://open.spotify.com/album/3RQQmkQEvNCY4prGKE6oc5?si=abc123xyz"
+        );
+        assert_eq!(
+            source_url("https://example.test/playlist?list=PL123&token=secret"),
+            "https://example.test/playlist?list=PL123"
         );
     }
     #[test]
