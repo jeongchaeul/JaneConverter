@@ -1131,8 +1131,19 @@ def fetch_media_stream(
                     continue
 
             if not info:
+                if is_tiktok_source:
+                    report(0.18, "Engaging direct TikTok stream extractor...", force=True)
+                    return _fetch_tiktok_direct(
+                        source,
+                        output_dir,
+                        audio_only=audio_only,
+                        abort_event=abort_event,
+                        progress_callback=progress_callback,
+                        report=report,
+                        preexisting_stream_files=preexisting_stream_files,
+                    )
                 # 1. Standalone Native Page Sniffer (discovers hidden streams or 3D models without extension)
-                if is_url(source) and source_type not in ("spotify", "apple_music"):
+                if is_url(source) and source_type not in ("spotify", "apple_music") and not is_tiktok_source:
                     try:
                         from .sniffer import sniff_webpage, download_sniffed_asset
                         sniffed = sniff_webpage(source, report=report)
@@ -1154,17 +1165,6 @@ def fetch_media_stream(
                         return download_archival_stream(
                             arc_res, output_dir, abort_event=abort_event, progress_callback=progress_callback
                         )
-                if is_tiktok_source:
-                    report(0.18, "Engaging direct TikTok stream extractor...", force=True)
-                    return _fetch_tiktok_direct(
-                        source,
-                        output_dir,
-                        audio_only=audio_only,
-                        abort_event=abort_event,
-                        progress_callback=progress_callback,
-                        report=report,
-                        preexisting_stream_files=preexisting_stream_files,
-                    )
                 if source_type == "apple_music":
                     msg = (
                         "Apple Music was recognized, but no matching downloadable public stream was found. "
@@ -1280,13 +1280,6 @@ def fetch_media_stream(
                 "is_local": False
             }
     except BrowserSessionError:
-        if archival_fallback:
-            from .archival import probe_archival_vaults, download_archival_stream
-            arc_res = probe_archival_vaults(source, report=report)
-            if arc_res and arc_res.found:
-                return download_archival_stream(
-                    arc_res, output_dir, abort_event=abort_event, progress_callback=progress_callback
-                )
         if is_tiktok_source:
             report(0.18, "Engaging direct TikTok stream extractor...", force=True)
             return _fetch_tiktok_direct(
@@ -1298,8 +1291,6 @@ def fetch_media_stream(
                 report=report,
                 preexisting_stream_files=preexisting_stream_files,
             )
-        raise
-    except Exception as e:
         if archival_fallback:
             from .archival import probe_archival_vaults, download_archival_stream
             arc_res = probe_archival_vaults(source, report=report)
@@ -1307,6 +1298,8 @@ def fetch_media_stream(
                 return download_archival_stream(
                     arc_res, output_dir, abort_event=abort_event, progress_callback=progress_callback
                 )
+        raise
+    except Exception as e:
         if is_tiktok_source:
             report(0.18, "Engaging direct TikTok stream extractor...", force=True)
             try:
@@ -1321,6 +1314,13 @@ def fetch_media_stream(
                 )
             except Exception as direct_err:
                 raise RuntimeError(f"Stream extraction failed: {str(e)} (Direct extractor: {direct_err})") from e
+        if archival_fallback:
+            from .archival import probe_archival_vaults, download_archival_stream
+            arc_res = probe_archival_vaults(source, report=report)
+            if arc_res and arc_res.found:
+                return download_archival_stream(
+                    arc_res, output_dir, abort_event=abort_event, progress_callback=progress_callback
+                )
         if auth_browser:
             raise RuntimeError(describe_authenticated_extraction_failure(auth_browser, e)) from e
         raise RuntimeError(f"Stream extraction failed: {str(e)}") from e

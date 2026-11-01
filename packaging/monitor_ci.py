@@ -84,30 +84,30 @@ def monitor(
     interval_seconds: int = 15,
     token: Optional[str] = None,
 ) -> int:
-    print(f"Monitoring GitHub Actions for {repo} @ commit {commit_sha[:8]}...")
+    print(f"Monitoring GitHub Actions for {repo} @ commit {commit_sha[:8]}...", flush=True)
     start_time = time.time()
     discovered = False
 
     while True:
         elapsed = int(time.time() - start_time)
         if elapsed > timeout_seconds:
-            print(f"[TIMEOUT] CI monitoring exceeded timeout of {timeout_seconds}s.", file=sys.stderr)
+            print(f"[TIMEOUT] CI monitoring exceeded timeout of {timeout_seconds}s.", file=sys.stderr, flush=True)
             return 1
 
         try:
             runs = get_runs_for_commit(repo, commit_sha, token)
         except Exception as err:
-            print(f"[WARN] Error fetching workflow runs ({err}), retrying in {interval_seconds}s...")
+            print(f"[WARN] Error fetching workflow runs ({err}), retrying in {interval_seconds}s...", flush=True)
             time.sleep(interval_seconds)
             continue
 
         if not runs:
             if not discovered:
-                print(f"[WAITING] No workflow runs detected yet for commit {commit_sha[:8]} ({elapsed}s elapsed)...")
+                print(f"[WAITING] No workflow runs detected yet for commit {commit_sha[:8]} ({elapsed}s elapsed)...", flush=True)
                 time.sleep(interval_seconds)
                 continue
             else:
-                print(f"[WARN] Workflow runs disappeared for {commit_sha[:8]}?", file=sys.stderr)
+                print(f"[WARN] Workflow runs disappeared for {commit_sha[:8]}?", file=sys.stderr, flush=True)
                 return 1
 
         discovered = True
@@ -126,33 +126,33 @@ def monitor(
             elif conclusion not in ("success", "skipped"):
                 has_failure = True
 
-        print(f"[{elapsed}s] " + " | ".join(status_line))
+        print(f"[{elapsed}s] " + " | ".join(status_line), flush=True)
 
         if all_completed:
             if has_failure:
-                print("\n[ALERT] One or more CI workflows failed!", file=sys.stderr)
+                print("\n[ALERT] One or more CI workflows failed!", file=sys.stderr, flush=True)
                 for run in runs:
                     conclusion = run.get("conclusion")
                     if conclusion not in ("success", "skipped"):
                         run_id = run.get("id")
                         name = run.get("name")
                         html_url = run.get("html_url")
-                        print(f"\n--- Failed Workflow: {name} ({conclusion}) ---", file=sys.stderr)
-                        print(f"Link: {html_url}", file=sys.stderr)
+                        print(f"\n--- Failed Workflow: {name} ({conclusion}) ---", file=sys.stderr, flush=True)
+                        print(f"Link: {html_url}", file=sys.stderr, flush=True)
                         try:
                             failed_jobs = get_failed_jobs(repo, run_id, token)
                             for job in failed_jobs:
                                 job_name = job.get("name")
                                 job_conclusion = job.get("conclusion")
-                                print(f"  Job: {job_name} -> {job_conclusion}", file=sys.stderr)
+                                print(f"  Job: {job_name} -> {job_conclusion}", file=sys.stderr, flush=True)
                                 for step in job.get("steps", []):
                                     if step.get("conclusion") == "failure":
-                                        print(f"    Failed Step: {step.get('name')}", file=sys.stderr)
+                                        print(f"    Failed Step: {step.get('name')}", file=sys.stderr, flush=True)
                         except Exception as job_err:
-                            print(f"  Could not load jobs: {job_err}", file=sys.stderr)
+                            print(f"  Could not load jobs: {job_err}", file=sys.stderr, flush=True)
                 return 1
             else:
-                print(f"\n[SUCCESS] All workflows for {commit_sha[:8]} completed green (success).")
+                print(f"\n[SUCCESS] All workflows for {commit_sha[:8]} completed green (success).", flush=True)
                 return 0
 
         time.sleep(interval_seconds)
