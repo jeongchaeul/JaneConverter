@@ -33,6 +33,10 @@ pub struct ConverterSettings {
     pub allow_story_extraction: bool,
     #[serde(default)]
     pub archival_fallback: bool,
+    #[serde(default)]
+    pub playlist_mode: Option<String>,
+    #[serde(default)]
+    pub concurrency: Option<u8>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -71,6 +75,10 @@ pub struct ConversionRequest {
     pub allow_story_extraction: bool,
     #[serde(default)]
     pub archival_fallback: bool,
+    #[serde(default)]
+    pub playlist_mode: Option<String>,
+    #[serde(default)]
+    pub concurrency: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -209,7 +209,7 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                             return extract_with_recovery(authenticated, query, download, abort_event, report, deadline)
                         except Exception as extract_err:
                             message = str(extract_err).casefold()
-                            if "drm" in message or "geo-restricted" in message:
+                            if "drm" in message or "geo-restricted" in message or "music premium" in message or "premium members" in message or "members-only" in message:
                                 raise
                             detail = f"Automatic browser-session retry did not succeed. Check that the source plays in {b_label}, then retry."
                             if browser == "auto":

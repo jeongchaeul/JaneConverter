@@ -130,11 +130,11 @@ def test_catalog_downloads_only_the_confident_preview_candidate(tmp_path, monkey
     if ambiguous:
         with pytest.raises(RuntimeError, match="uncertain"):
             extractor.fetch_media_stream("https://open.spotify.com/track/example", str(tmp_path), audio_only=True)
-        assert calls == [("ytsearch5:Jane Cerys My Song", False)]
+        assert calls == [("ytsearch10:Jane Cerys My Song", False)]
         assert not output.exists()
     else:
         result = extractor.fetch_media_stream("https://open.spotify.com/track/example", str(tmp_path), audio_only=True)
-        assert calls == [("ytsearch5:Jane Cerys My Song", False), (candidate["webpage_url"], True)]
+        assert calls == [("ytsearch10:Jane Cerys My Song", False), (candidate["webpage_url"], True)]
         assert result["webpage_url"] == candidate["webpage_url"]
         assert result["requested_catalog_url"] == "https://open.spotify.com/track/example"
         assert result["matched_source_title"] == candidate["title"]

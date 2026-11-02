@@ -18,10 +18,16 @@ def tokens(value):
 
 
 def match_score(requested, candidate, relaxed: bool = False):
-    title = tokens(requested.get("title"))
+    raw_req_title = re.sub(r'\s*[\(\[]\s*(?:feat|ft|featuring)\.?\s+.*?[\)\]]', '', str(requested.get("title") or ""), flags=re.IGNORECASE)
+    title = tokens(raw_req_title)
     artist = tokens(requested.get("artist"))
     actual = tokens(candidate.get("title"))
-    credit = tokens(candidate.get("artist") or candidate.get("creator") or candidate.get("uploader") or candidate.get("channel"))
+    credit_str = candidate.get("artist") or candidate.get("creator") or candidate.get("uploader") or candidate.get("channel") or ""
+    credit = tokens(credit_str)
+    if relaxed and not (artist <= (actual | credit)):
+        desc_str = str(candidate.get("description") or "")[:600]
+        credit |= tokens(desc_str)
+
     if not title or not artist or requested.get("artist") == "Unknown Artist":
         return None
     if (title & VERSION_WORDS) != (actual & VERSION_WORDS):
@@ -70,10 +76,13 @@ def match_score(requested, candidate, relaxed: bool = False):
     is_official_title = "official audio" in cand_title_str or "official music video" in cand_title_str or "original audio" in cand_title_str or "official track" in cand_title_str
     official_bonus = 0.08 if (is_topic_channel or is_official_title) else (0.04 if "official" in cand_title_str or "audio" in cand_title_str else 0)
 
+    view_bonus = 0.02 if (candidate.get("view_count") or 0) > 10000 else 0
+    ver_bonus = 0.02 if candidate.get("channel_is_verified") else 0
+
     if not relaxed:
-        return 0.8 + duration_score + artist_bonus + official_bonus
+        return 0.8 + duration_score + artist_bonus + official_bonus + view_bonus + ver_bonus
     extra_penalty = min(0.15, len(extra) * 0.02)
-    return 0.7 - extra_penalty + duration_score + artist_bonus + official_bonus
+    return 0.7 - extra_penalty + duration_score + artist_bonus + official_bonus + view_bonus + ver_bonus
 
 
 def choose_catalog_match(requested, candidates, allow_relaxed: bool = True):
@@ -90,8 +99,10 @@ def choose_catalog_match(requested, candidates, allow_relaxed: bool = True):
 
     if not ranked:
         raise ValueError("Catalog match is uncertain. Use a direct link to the intended recording; no guessed recording was downloaded.")
-    if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < 0.03 and ranked[0][1].get("id") != ranked[1][1].get("id"):
+    if len(ranked) > 1 and abs(ranked[0][0] - ranked[1][0]) < 1e-4 and ranked[0][1].get("id") != ranked[1][1].get("id"):
         c0, c1 = ranked[0][1], ranked[1][1]
+        raw_req = re.sub(r'\s*[\(\[]\s*(?:feat|ft|featuring)\.?\s+.*?[\)\]]', '', str(requested.get("title") or ""), flags=re.IGNORECASE)
+        wanted_title = tokens(raw_req) - NOISE_WORDS
         t0 = tokens(c0.get("title")) - NOISE_WORDS
         t1 = tokens(c1.get("title")) - NOISE_WORDS
         chan0 = c0.get("channel_id") or c0.get("uploader_id")
@@ -101,6 +112,19 @@ def choose_catalog_match(requested, candidates, allow_relaxed: bool = True):
         same_channel = bool(chan0 and chan0 == chan1)
         artist_tok = tokens(requested.get("artist"))
         both_official = bool(artist_tok and artist_tok <= cred0 and artist_tok <= cred1 and t0 == t1)
+
+        has_real_metadata = bool((chan0 or chan1) and (c0.get("view_count") is not None or c1.get("view_count") is not None or c0.get("channel_is_verified") or c1.get("channel_is_verified")))
+
+        if wanted_title and wanted_title <= t0 and wanted_title <= t1 and has_real_metadata:
+            v0 = c0.get("view_count") or 0
+            v1 = c1.get("view_count") or 0
+            ver0 = bool(c0.get("channel_is_verified"))
+            ver1 = bool(c1.get("channel_is_verified"))
+            if (ver0, v0) >= (ver1, v1):
+                return c0
+            else:
+                return c1
+
         if not (same_channel or (both_official and chan0 and chan1)):
             raise ValueError("Catalog match is uncertain. Use a direct link to the intended recording; no guessed recording was downloaded.")
     return ranked[0][1]

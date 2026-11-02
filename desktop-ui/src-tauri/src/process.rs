@@ -130,12 +130,46 @@ fn partial_summary_from_line(line: &str) -> Option<String> {
     None
 }
 
+fn has_converted_media_files(path: &std::path::Path) -> bool {
+    if path.is_file() {
+        return true;
+    }
+    if !path.is_dir() {
+        return false;
+    }
+    let media_extensions = [
+        "mp3", "m4a", "flac", "wav", "opus", "aac", "ogg", "aiff", "mp4", "mkv", "webm", "mov",
+        "avi", "png", "jpg", "jpeg", "webp", "gif", "bmp",
+    ];
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+                    if name.eq_ignore_ascii_case("cover.jpg")
+                        || name.eq_ignore_ascii_case("folder.jpg")
+                        || name.ends_with(".txt")
+                        || name.ends_with(".json")
+                    {
+                        continue;
+                    }
+                }
+                if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
+                    if media_extensions.contains(&ext.to_ascii_lowercase().as_str()) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 fn exported_path_from_line(line: &str) -> Option<String> {
     let trimmed = line.trim();
     let raw = trimmed
         .strip_prefix("DONE! Exported:")
-        .or_else(|| trimmed.strip_prefix("Export Directory:"))
-        .or_else(|| trimmed.strip_prefix("Target Directory:"))?
+        .or_else(|| trimmed.strip_prefix("Export Directory:"))?
         .trim();
     if raw.is_empty() {
         return None;
@@ -561,6 +595,20 @@ pub fn build_conversion_args_with_capture(
     if request.allow_story_extraction {
         args.push("--allow-ephemeral-stories".into());
     }
+    let effective_concurrency = if let Some(workers) = request.concurrency {
+        workers.clamp(1, 16)
+    } else if let Some(mode) = &request.playlist_mode {
+        if mode == "concurrent" {
+            4
+        } else {
+            1
+        }
+    } else if request.category == "Image" {
+        4
+    } else {
+        1
+    };
+    args.extend(["--concurrency".into(), effective_concurrency.to_string()]);
     Ok(args)
 }
 
@@ -750,13 +798,7 @@ pub fn start_conversion(
                 let (record_target, display_output) =
                     crate::library::resolve_exported_output(&raw_path);
                 let target_path = std::path::Path::new(&record_target);
-                let has_content = if target_path.is_dir() {
-                    std::fs::read_dir(target_path)
-                        .map(|mut entries| entries.next().is_some())
-                        .unwrap_or(false)
-                } else {
-                    target_path.is_file()
-                };
+                let has_content = has_converted_media_files(target_path);
                 if has_content {
                     crate::library::record_conversion_timing(&record_target, elapsed_ms);
                     resolved_output = Some(display_output);
@@ -781,7 +823,7 @@ pub fn start_conversion(
                 "Conversion finished. Your media is ready.".to_string(),
                 Some(1.0),
             )
-        } else if resolved_output.is_some() {
+        } else if partial_msg.is_some() && resolved_output.is_some() {
             let msg = failure_msg
                 .map(|value| format!("Partial conversion: {value}"))
                 .unwrap_or_else(|| "Partial conversion completed with some errors.".to_string());
@@ -1119,6 +1161,8 @@ mod tests {
             end_time: None,
             allow_story_extraction: false,
             archival_fallback: false,
+            playlist_mode: None,
+            concurrency: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false)
             .expect("display labels should be accepted");
@@ -1163,6 +1207,8 @@ mod tests {
             end_time: None,
             allow_story_extraction: false,
             archival_fallback: false,
+            playlist_mode: None,
+            concurrency: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, true).unwrap();
 
@@ -1207,6 +1253,8 @@ mod tests {
             end_time: None,
             allow_story_extraction: false,
             archival_fallback: false,
+            playlist_mode: None,
+            concurrency: None,
         };
 
         let args =
@@ -1248,6 +1296,8 @@ mod tests {
             end_time: None,
             allow_story_extraction: false,
             archival_fallback: false,
+            playlist_mode: None,
+            concurrency: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false)
             .expect("public conversion should be valid");
@@ -1283,6 +1333,8 @@ mod tests {
             end_time: Some("00:03:45".into()),
             allow_story_extraction: false,
             archival_fallback: false,
+            playlist_mode: None,
+            concurrency: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         let s_pos = args
@@ -1325,6 +1377,8 @@ mod tests {
             end_time: None,
             allow_story_extraction: false,
             archival_fallback: false,
+            playlist_mode: None,
+            concurrency: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         let session_pos = args
@@ -1368,6 +1422,8 @@ mod tests {
             end_time: None,
             allow_story_extraction: false,
             archival_fallback: false,
+            playlist_mode: None,
+            concurrency: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         assert!(args.contains(&"--reconstruct-frequency-loss".into()));
@@ -1405,6 +1461,8 @@ mod tests {
             end_time: None,
             allow_story_extraction: true,
             archival_fallback: false,
+            playlist_mode: None,
+            concurrency: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         assert!(args.contains(&"--allow-ephemeral-stories".into()));
@@ -1442,6 +1500,8 @@ mod tests {
             end_time: None,
             allow_story_extraction: false,
             archival_fallback: true,
+            playlist_mode: None,
+            concurrency: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         assert!(args.contains(&"--archival-fallback".into()));
@@ -1449,5 +1509,81 @@ mod tests {
         request.archival_fallback = false;
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         assert!(!args.contains(&"--archival-fallback".into()));
+    }
+
+    #[test]
+    fn concurrency_routing_defaults_to_linear_for_music_and_concurrent_for_images() {
+        let mut request = ConversionRequest {
+            source: "https://www.youtube.com/watch?v=dQw4w9WgXcQ".into(),
+            output_dir: "out".into(),
+            temp_dir: None,
+            category: "Music".into(),
+            format: "mp3".into(),
+            bitrate: "320k".into(),
+            sample_rate: 48000,
+            resolution: "original".into(),
+            normalize: false,
+            use_gpu: false,
+            save_cover: false,
+            save_metadata: false,
+            allow_png_fallback: false,
+            reconstruct_frequency_loss: false,
+            retries: 2,
+            playlist_indexes: None,
+            read_browser_cookies: false,
+            browser_session: None,
+            browser_capture_path: None,
+            facebook_capture_id: None,
+            social_capture_id: None,
+            start_time: None,
+            end_time: None,
+            allow_story_extraction: false,
+            archival_fallback: false,
+            playlist_mode: None,
+            concurrency: None,
+        };
+        // Default music category: linear concurrency 1
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        let idx = args.iter().position(|a| a == "--concurrency").unwrap();
+        assert_eq!(args[idx + 1], "1");
+
+        // Explicit concurrent mode: 4
+        request.playlist_mode = Some("concurrent".into());
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        let idx = args.iter().position(|a| a == "--concurrency").unwrap();
+        assert_eq!(args[idx + 1], "4");
+
+        // Default image category: 4
+        request.playlist_mode = None;
+        request.category = "Image".into();
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        let idx = args.iter().position(|a| a == "--concurrency").unwrap();
+        assert_eq!(args[idx + 1], "4");
+
+        // Explicit concurrency overrides mode
+        request.concurrency = Some(8);
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        let idx = args.iter().position(|a| a == "--concurrency").unwrap();
+        assert_eq!(args[idx + 1], "8");
+    }
+
+    #[test]
+    fn has_converted_media_files_ignores_metadata_and_covers() {
+        let temp_path =
+            std::env::temp_dir().join(format!("jane-media-test-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp_path).unwrap();
+        assert!(!has_converted_media_files(&temp_path));
+
+        // Adding cover.jpg and metadata does not count as converted media
+        std::fs::write(temp_path.join("cover.jpg"), b"fake_jpeg").unwrap();
+        std::fs::create_dir(temp_path.join("metadata")).unwrap();
+        std::fs::write(temp_path.join("metadata").join("credits.txt"), b"credits").unwrap();
+        assert!(!has_converted_media_files(&temp_path));
+
+        // Adding an actual audio file counts
+        std::fs::write(temp_path.join("1. Song.mp3"), b"mp3_data").unwrap();
+        assert!(has_converted_media_files(&temp_path));
+
+        let _ = std::fs::remove_dir_all(&temp_path);
     }
 }

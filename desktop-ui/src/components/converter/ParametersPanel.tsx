@@ -272,6 +272,46 @@ export function ParametersPanel({
                   label="Search archival vaults for unavailable media"
                   hint="Index Wayback Machine, Archive.org, Ghostarchive, and Filmot if a video is deleted or private"
                 />
+                <div className="mt-3 border-t border-white/[0.06] pt-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="block text-xs font-medium text-zinc-300">Playlist Download Strategy</span>
+                      <span className="mt-0.5 block text-[11px] text-zinc-500">
+                        Linear processes items sequentially with dedicated recovery; Concurrent downloads in parallel.
+                      </span>
+                    </div>
+                    <div className="flex rounded-lg border border-white/[0.08] bg-black/30 p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => update({ playlistMode: "linear", concurrency: 1 })}
+                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                          (settings.playlistMode ?? "linear") === "linear"
+                            ? "bg-white/[0.12] text-zinc-100 shadow-sm"
+                            : "text-zinc-400 hover:text-zinc-200"
+                        }`}
+                      >
+                        Linear (Sequential)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => update({ playlistMode: "concurrent", concurrency: 4 })}
+                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                          settings.playlistMode === "concurrent"
+                            ? "bg-white/[0.12] text-zinc-100 shadow-sm"
+                            : "text-zinc-400 hover:text-zinc-200"
+                        }`}
+                      >
+                        Concurrent (Parallel)
+                      </button>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-[11px] leading-relaxed text-zinc-400">
+                    <strong className="text-zinc-300">Strategy tip:</strong>{" "}
+                    {(settings.playlistMode ?? "linear") === "linear"
+                      ? "Recommended for music albums, video series, and streaming playlists (Spotify, YouTube, SoundCloud) so each item receives full adaptive error recovery and avoids rate limits."
+                      : "Recommended for high-speed bulk photo downloading (e.g. Pinterest boards, Facebook photo albums). May encounter rate limits or cookie locks on streaming video/audio."}
+                  </p>
+                </div>
               </div>
               {settings.archivalFallback && (
                 <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] p-3 text-xs leading-relaxed text-zinc-300">

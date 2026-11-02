@@ -523,6 +523,14 @@ pub fn settings_get_internal() -> ConverterSettings {
         start_time: values.get("start_time").cloned(),
         end_time: values.get("end_time").cloned(),
         browser_session: values.get("browser_session").cloned(),
+        playlist_mode: values
+            .get("playlist_mode")
+            .cloned()
+            .or_else(|| Some("linear".into())),
+        concurrency: values
+            .get("concurrency")
+            .and_then(|value| value.parse().ok())
+            .or(Some(1)),
     }
 }
 
@@ -548,6 +556,13 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
             .clone()
             .unwrap_or_else(|| "auto".into()),
     );
+    let playlist_mode = clean(
+        &settings
+            .playlist_mode
+            .clone()
+            .unwrap_or_else(|| "linear".into()),
+    );
+    let concurrency = settings.concurrency.unwrap_or(1).clamp(1, 16).to_string();
     let body = [
         ("output_dir", output_dir.as_str()),
         ("fetched_dir", fetched_dir.as_str()),
@@ -618,6 +633,8 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
         ("start_time", start_time.as_str()),
         ("end_time", end_time.as_str()),
         ("browser_session", browser_session.as_str()),
+        ("playlist_mode", playlist_mode.as_str()),
+        ("concurrency", concurrency.as_str()),
     ]
     .iter()
     .map(|(key, value)| format!("{key}={value}\n"))

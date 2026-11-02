@@ -58,6 +58,8 @@ export interface ConverterSettings {
   endTime?: string;
   allowStoryExtraction?: boolean;
   archivalFallback?: boolean;
+  playlistMode?: "linear" | "concurrent";
+  concurrency?: number;
 }
 
 export interface UpdateCheckResult {

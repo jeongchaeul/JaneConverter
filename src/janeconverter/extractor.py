@@ -43,11 +43,29 @@ class _AuthenticatedYtdlpLogger:
         self.progress_callback = progress_callback
         self._seen_errors = set()
         self._last_step = ""
+        self.is_evaluating_search = False
 
     def debug(self, message: object):
         if not self.progress_callback:
             return None
         msg_str = str(message or "")
+
+        m_item = re.search(r'Downloading item (\d+) of (\d+)', msg_str)
+        if m_item:
+            self.is_evaluating_search = True
+            curr, total = m_item.group(1), m_item.group(2)
+            self._last_step = f"item_{curr}"
+            try:
+                frac = int(curr) / max(1, int(total))
+                pct = 0.10 + (0.04 * frac)
+            except Exception:
+                pct = 0.12
+            self.progress_callback(pct, f"Evaluating search candidate ({curr}/{total})...")
+            return None
+
+        if self.is_evaluating_search:
+            return None
+
         if "Downloading webpage" in msg_str and self._last_step != "webpage":
             self._last_step = "webpage"
             self.progress_callback(0.08, "Connecting to media stream server...")
@@ -730,6 +748,64 @@ def _fetch_tiktok_direct(
     }
 
 
+def is_youtube_gated_error(err: Any) -> bool:
+    """Checks whether an extraction exception is due to YouTube Premium / Music Premium or member gating."""
+    if not err:
+        return False
+    msg = str(err).lower()
+    cause = str(getattr(err, "__cause__", "") or "").lower()
+    combined = f"{msg} {cause}"
+    return any(
+        phrase in combined
+        for phrase in (
+            "music premium",
+            "youtube premium",
+            "premium members",
+            "only available to music",
+            "only available to youtube premium",
+            "members-only",
+            "join this channel to get access to members-only",
+            "sign in to confirm your age",
+            "confirm your age",
+        )
+    )
+
+
+def resolve_youtube_oembed_metadata(source_url: str) -> Dict[str, str]:
+    """
+    Fetches public oEmbed metadata for a YouTube URL without authentication.
+    Returns a dict with 'title', 'artist', 'thumbnail', or empty dict on failure.
+    """
+    if not is_url(source_url) or not ("youtube.com" in source_url or "youtu.be" in source_url):
+        return {}
+    try:
+        import urllib.parse
+        import urllib.request
+        import json
+        encoded = urllib.parse.quote(source_url, safe="")
+        oembed_url = f"https://www.youtube.com/oembed?url={encoded}&format=json"
+        req = urllib.request.Request(
+            oembed_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        raw_title = str(data.get("title") or "").strip()
+        author = str(data.get("author_name") or "").strip()
+        if author.endswith(" - Topic"):
+            author = author[:-8].strip()
+        thumb = str(data.get("thumbnail_url") or "").strip()
+        return {
+            "title": raw_title,
+            "artist": author,
+            "thumbnail": thumb,
+        }
+    except Exception:
+        return {}
+
+
 def fetch_media_stream(
     source: str,
     output_dir: str,
@@ -1073,25 +1149,52 @@ def fetch_media_stream(
         if is_url(source):
             pace_request(source, abort_event=abort_event)
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            def extract(query, download):
-                return extract_with_browser_fallback(
-                    ydl, ydl_opts, query, download, browser=effective_auth_browser,
-                    abort_event=abort_event, report=report, deadline=recovery_deadline,
-                    allow_cookies=allow_browser_cookies,
-                )
+            logger_inst = ydl_opts.get("logger")
+            def extract(query, download, ignore_errors=False, extract_flat=False):
+                if download and hasattr(logger_inst, "is_evaluating_search"):
+                    logger_inst.is_evaluating_search = False
+                    logger_inst._last_step = ""
+                params = getattr(ydl, "params", None)
+                prev_ignore = params.get("ignoreerrors", False) if isinstance(params, dict) else False
+                prev_flat = params.get("extract_flat", False) if isinstance(params, dict) else False
+                if ignore_errors and isinstance(params, dict):
+                    params["ignoreerrors"] = True
+                if extract_flat and isinstance(params, dict):
+                    params["extract_flat"] = True
+                try:
+                    return extract_with_browser_fallback(
+                        ydl, ydl_opts, query, download, browser=effective_auth_browser,
+                        abort_event=abort_event, report=report, deadline=recovery_deadline,
+                        allow_cookies=allow_browser_cookies,
+                    )
+                finally:
+                    if isinstance(params, dict):
+                        if ignore_errors:
+                            params["ignoreerrors"] = prev_ignore
+                        if extract_flat:
+                            params["extract_flat"] = prev_flat
 
-            for query_item in candidates:
+            remaining_candidates = list(candidates)
+            gated_fallback_attempted = False
+            excluded_video_ids = set()
+            while remaining_candidates:
                 if abort_event and abort_event.is_set():
                     raise KeyboardInterrupt("Stream extraction aborted by user.")
+                query_item = remaining_candidates.pop(0)
                 try:
                     if time.monotonic() >= recovery_deadline:
                         raise TimeoutError("Extraction recovery deadline reached.")
                     if catalog_meta and (query_item.startswith(("ytsearch", "scsearch")) or not is_url(query_item)):
-                        search = re.sub(r"^(ytsearch|scsearch)1:", r"\g<1>5:", query_item)
-                        preview = extract(search, False)
+                        search = re.sub(r"^(ytsearch|scsearch)1:", r"\g<1>10:", query_item)
+                        report(0.10, f"Evaluating candidate uploads for '{catalog_meta.get('artist', '')} - {catalog_meta.get('title', '')}'...")
+                        preview = extract(search, False, ignore_errors=True, extract_flat=True)
                         matches = list((preview or {}).get("entries") or [preview])
+                        if excluded_video_ids:
+                            matches = [m for m in matches if m and m.get("id") not in excluded_video_ids]
                         selected = choose_catalog_match(catalog_meta, matches)
                         selected_url = selected.get("webpage_url") or selected.get("original_url") or selected.get("url")
+                        if (not selected_url or not is_url(selected_url)) and selected.get("id"):
+                            selected_url = f"https://www.youtube.com/watch?v={selected['id']}"
                         if not selected_url or not is_url(selected_url):
                             raise ValueError("Catalog candidate has no direct source link.")
                         report(0.15, f"Catalog match selected from {identify_source_type(selected_url)}: {selected.get('title', '')}. This is an alternate public recording, not catalog audio.", force=True)
@@ -1113,7 +1216,39 @@ def fetch_media_stream(
                     raise
                 except BrowserSessionError as bse:
                     last_error = bse
-                    if (is_tiktok_source or catalog_meta) and query_item != candidates[-1]:
+                    is_yt_item = source_type == "youtube" or any(yt in str(query_item).lower() for yt in ("youtube.com", "youtu.be"))
+                    if is_yt_item and is_youtube_gated_error(bse) and not gated_fallback_attempted:
+                        gated_fallback_attempted = True
+                        m_id = re.search(r'(?:v=|youtu\.be/|shorts/|embed/)([a-zA-Z0-9_-]{11})', str(query_item))
+                        if m_id:
+                            excluded_video_ids.add(m_id.group(1))
+                        m_src = re.search(r'(?:v=|youtu\.be/|shorts/|embed/)([a-zA-Z0-9_-]{11})', str(source))
+                        if m_src:
+                            excluded_video_ids.add(m_src.group(1))
+
+                        oe = resolve_youtube_oembed_metadata(query_item) if is_url(str(query_item)) else {}
+                        gated_title = fallback_title or oe.get("title")
+                        gated_artist = fallback_artist or oe.get("artist") or "Unknown Artist"
+                        gated_thumb = oe.get("thumbnail")
+                        if gated_title:
+                            report(
+                                0.14,
+                                f"YouTube track is restricted to Music Premium members. Locating alternate public audio stream for '{gated_artist} - {gated_title}'...",
+                                force=True,
+                            )
+                            catalog_meta = {
+                                "title": gated_title,
+                                "artist": gated_artist,
+                                "album": "",
+                                "year": "",
+                                "thumbnail": gated_thumb,
+                                "search_candidates": build_search_candidates(gated_artist, gated_title),
+                            }
+                            recovery_candidates = build_search_candidates(gated_artist, gated_title)
+                            remaining_candidates = recovery_candidates + remaining_candidates
+                            continue
+
+                    if (is_tiktok_source or catalog_meta) and remaining_candidates:
                         continue
                     if is_tiktok_source or archival_fallback:
                         break
@@ -1121,11 +1256,43 @@ def fetch_media_stream(
                 except Exception as ex:
                     last_error = ex
                     if is_tiktok_source:
-                        if query_item != candidates[-1]:
+                        if remaining_candidates:
                             continue
                         break
+                    # YouTube Gated / Music Premium Fallback
+                    is_yt_item = source_type == "youtube" or any(yt in str(query_item).lower() for yt in ("youtube.com", "youtu.be"))
+                    if is_yt_item and is_youtube_gated_error(ex) and not gated_fallback_attempted:
+                        gated_fallback_attempted = True
+                        m_id = re.search(r'(?:v=|youtu\.be/|shorts/|embed/)([a-zA-Z0-9_-]{11})', str(query_item))
+                        if m_id:
+                            excluded_video_ids.add(m_id.group(1))
+                        m_src = re.search(r'(?:v=|youtu\.be/|shorts/|embed/)([a-zA-Z0-9_-]{11})', str(source))
+                        if m_src:
+                            excluded_video_ids.add(m_src.group(1))
+
+                        oe = resolve_youtube_oembed_metadata(query_item) if is_url(str(query_item)) else {}
+                        gated_title = fallback_title or oe.get("title")
+                        gated_artist = fallback_artist or oe.get("artist") or "Unknown Artist"
+                        gated_thumb = oe.get("thumbnail")
+                        if gated_title:
+                            report(
+                                0.14,
+                                f"YouTube track is restricted to Music Premium members. Locating alternate public audio stream for '{gated_artist} - {gated_title}'...",
+                                force=True,
+                            )
+                            catalog_meta = {
+                                "title": gated_title,
+                                "artist": gated_artist,
+                                "album": "",
+                                "year": "",
+                                "thumbnail": gated_thumb,
+                                "search_candidates": build_search_candidates(gated_artist, gated_title),
+                            }
+                            recovery_candidates = build_search_candidates(gated_artist, gated_title)
+                            remaining_candidates = recovery_candidates + remaining_candidates
+                            continue
                     if classify_extraction(ex) in (ExtractionCategory.ACCESS, ExtractionCategory.REMOVED, ExtractionCategory.RATE_LIMIT, ExtractionCategory.NETWORK):
-                        if (source_type == "tiktok" or catalog_meta) and query_item != candidates[-1]:
+                        if (source_type == "tiktok" or catalog_meta) and remaining_candidates:
                             continue
                         break
                     continue
@@ -1219,7 +1386,7 @@ def fetch_media_stream(
                     f"Refusing to reuse a stale downloaded stream: {downloaded_file}"
                 )
 
-            catalog_meta = spotify_meta or apple_meta
+            catalog_meta = catalog_meta or spotify_meta or apple_meta
             extracted_title = catalog_meta["title"] if catalog_meta else info.get("title", "Media Track")
             extracted_artist = catalog_meta["artist"] if catalog_meta else info.get("uploader", "Unknown Artist")
             extracted_album = catalog_meta["album"] if catalog_meta else ""
@@ -1321,7 +1488,7 @@ def fetch_media_stream(
                 return download_archival_stream(
                     arc_res, output_dir, abort_event=abort_event, progress_callback=progress_callback
                 )
-        if auth_browser:
+        if auth_browser and isinstance(e, BrowserSessionError):
             raise RuntimeError(describe_authenticated_extraction_failure(auth_browser, e)) from e
         raise RuntimeError(f"Stream extraction failed: {str(e)}") from e
 

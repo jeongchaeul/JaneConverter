@@ -118,6 +118,53 @@ export function SettingsHardwareTab({
         </details>
       </section>
 
+      {/* Batch & Playlist Strategy */}
+      <section className="panel space-y-4 p-5" aria-labelledby="playlist-strategy-heading">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+              <RotateCw size={16} className="text-zinc-400" />
+              <span id="playlist-strategy-heading">Default Playlist &amp; Batch Strategy</span>
+              <span className="rounded-md border border-white/[0.10] bg-white/[0.03] px-2 py-0.5 font-mono text-[10px] uppercase text-zinc-300">
+                {(settings?.playlistMode ?? "linear") === "linear" ? "Linear" : "Concurrent"}
+              </span>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
+              Control whether albums, playlists, and collection batches download sequentially or in parallel.
+            </p>
+          </div>
+          <div className="flex rounded-lg border border-white/[0.08] bg-black/30 p-0.5">
+            <button
+              type="button"
+              disabled={!settings || !onSettings}
+              onClick={() => onSettings && settings && onSettings({ ...settings, playlistMode: "linear", concurrency: 1 })}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                (settings?.playlistMode ?? "linear") === "linear"
+                  ? "bg-white/[0.12] text-zinc-100 shadow-sm"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              Linear (Sequential)
+            </button>
+            <button
+              type="button"
+              disabled={!settings || !onSettings}
+              onClick={() => onSettings && settings && onSettings({ ...settings, playlistMode: "concurrent", concurrency: 4 })}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                settings?.playlistMode === "concurrent"
+                  ? "bg-white/[0.12] text-zinc-100 shadow-sm"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              Concurrent (Parallel)
+            </button>
+          </div>
+        </div>
+        <p className="text-[11px] leading-relaxed text-zinc-400">
+          <strong className="text-zinc-300">Recommendation:</strong> Use <strong className="text-emerald-300">Linear (Sequential)</strong> for music playlists and video albums to ensure every track undergoes full adaptive route recovery and avoids rate limits. Use <strong className="text-sky-300">Concurrent (Parallel)</strong> for bulk photo albums (Pinterest, Facebook).
+        </p>
+      </section>
+
       {/* Application Data Folder */}
       <section className="panel p-5">
         <div className="flex items-center gap-2 text-sm text-zinc-200">

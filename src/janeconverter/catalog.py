@@ -8,6 +8,7 @@ from __future__ import annotations
 import html
 import json
 import re
+import unicodedata
 import urllib.parse
 from typing import Any, Callable, Dict, Optional
 import requests
@@ -27,14 +28,16 @@ def format_duration(seconds: int) -> str:
 
 def build_search_candidates(artist: str, title: str) -> list:
     """
-    Builds prioritized search queries to locate the best matching audio stream.
-    Strips search syntax operators (colons, slashes, commas, question marks)
-    and control characters that cause YouTube/SoundCloud search engines to drop matches.
+    Builds prioritized, high-precision search queries to locate matching audio streams.
+    Strips search syntax operators, noise tags, non-spacing unicode marks, and trademark
+    symbols (\u2122, \u00ae, \u00a9) that degrade search precision on YouTube/SoundCloud.
     """
     def clean(s: str) -> str:
-        s = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', str(s or ""))
+        s = unicodedata.normalize("NFKD", str(s or ""))
+        s = "".join(c for c in s if not unicodedata.combining(c))
+        s = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', s)
         s = s.replace("\xa0", " ").replace(":", " ").replace("/", " ").replace("\\", " ").replace(",", " ")
-        s = re.sub(r'[\?\"\'\!\*\<\>\|\^]', ' ', s)
+        s = re.sub(r'[\?\"\'\!\*\<\>\|\^\u2122\u00ae\u00a9\u00b2\u00b3]', ' ', s)
         return re.sub(r'\s+', ' ', s).strip()
 
     c_art = clean(artist) if artist and artist != "Unknown Artist" else ""
@@ -48,31 +51,25 @@ def build_search_candidates(artist: str, title: str) -> list:
     clean_base_tit = clean(clean_base_tit)
 
     candidates = []
-    if c_art and c_tit:
-        candidates.append(f"ytsearch1:{c_art} {c_tit} official audio")
-        candidates.append(f"ytsearch1:{c_art} {c_tit} topic")
-        candidates.append(f"ytsearch1:{c_art} {c_tit}")
-    if prim_art and c_tit and prim_art != c_art:
-        candidates.append(f"ytsearch1:{prim_art} {c_tit}")
-    if clean_base_tit and clean_base_tit != c_tit and prim_art:
+    # 1. Primary artist + clean base title (highest hit rate, fastest resolution)
+    if prim_art and clean_base_tit:
         candidates.append(f"ytsearch1:{prim_art} {clean_base_tit}")
-    if c_art and c_tit:
-        candidates.append(f"ytsearch1:{c_art} {c_tit} topic")
-    if prim_art and c_tit:
-        candidates.append(f"ytsearch1:{prim_art} {c_tit} topic")
-    if clean_base_tit and prim_art:
-        candidates.append(f"ytsearch1:{clean_base_tit} {prim_art} topic")
-    if c_tit and prim_art:
-        candidates.append(f"ytsearch1:{c_tit} {prim_art}")
-    if c_tit:
-        candidates.append(f"ytsearch1:{c_tit}")
-    if clean_base_tit and clean_base_tit != c_tit:
-        candidates.append(f"ytsearch1:{clean_base_tit}")
-    if c_art and c_tit:
-        candidates.append(f"scsearch1:{c_art} {c_tit}")
-    if prim_art and c_tit:
-        candidates.append(f"scsearch1:{prim_art} {c_tit}")
-    if clean_base_tit and prim_art:
+    # 2. If <= 2 artists and full artist string != prim_art, try both artists
+    if c_art and clean_base_tit and c_art != prim_art:
+        art_parts = [a.strip() for a in re.split(r'[,&]', artist) if a.strip()]
+        if len(art_parts) <= 2:
+            candidates.append(f"ytsearch1:{c_art} {clean_base_tit}")
+    # 3. If raw title had annotations that might be part of the actual song name (e.g. VIP, Pt 2)
+    if prim_art and c_tit and c_tit != clean_base_tit:
+        candidates.append(f"ytsearch1:{prim_art} {c_tit}")
+    # 4. If <= 2 artists and raw title has annotations
+    if c_art and c_tit and c_art != prim_art and c_tit != clean_base_tit:
+        art_parts = [a.strip() for a in re.split(r'[,&]', artist) if a.strip()]
+        if len(art_parts) <= 2:
+            candidates.append(f"ytsearch1:{c_art} {c_tit}")
+
+    # 5. SoundCloud fallback
+    if prim_art and clean_base_tit:
         candidates.append(f"scsearch1:{prim_art} {clean_base_tit}")
 
     seen = set()
