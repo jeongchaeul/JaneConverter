@@ -638,14 +638,12 @@ describe("ConsoleView", () => {
       );
     });
 
-    // 1. Close Page button in active header is blacked out & disabled when only 1 session page exists
+    // 1. Close Page button in active header is enabled even when 1 session page exists (allows closing to reach 0 sessions)
     const closePageBtn = Array.from(container.querySelectorAll("button")).find(
       (b) => b.textContent?.includes("Close Page")
     );
     expect(closePageBtn).toBeDefined();
-    expect(closePageBtn?.disabled).toBe(true);
-    expect(closePageBtn?.className).toContain("opacity-25");
-    expect(closePageBtn?.className).toContain("cursor-not-allowed");
+    expect(closePageBtn?.disabled).toBe(false);
 
     // 2. Conversion time badge on card
     expect(container.textContent).toContain("2.4s");

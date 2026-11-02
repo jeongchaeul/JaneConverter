@@ -183,8 +183,8 @@ export function InProgressHeader({
           title={
             isOngoing
               ? "Cannot close page while conversion is ongoing (abort first)"
-              : isSinglePage
-                ? "Cannot close the only remaining conversion page"
+              : distinctJobCount <= 0
+                ? "No conversion pages to close"
                 : "Close this conversion page"
           }
         >

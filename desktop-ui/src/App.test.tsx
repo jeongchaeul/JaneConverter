@@ -174,7 +174,7 @@ describe("Application shell", () => {
     container.remove();
   });
 
-  it("keeps Convert media disabled across tab switches and supports Pause/Resume and Abort while a Facebook photo capture is running", async () => {
+  it("allows queuing via Convert media and supports Pause/Resume and Abort while a Facebook photo capture is running", async () => {
     let rejectCapture: ((err: Error) => void) | undefined;
     vi.spyOn(bridge, "settingsGet").mockResolvedValue({
       outputDir: "converted", fetchedDir: "fetched", category: "Image", format: "png",
@@ -209,7 +209,13 @@ describe("Application shell", () => {
       await Promise.resolve();
     });
 
-    expect(convertBtn?.disabled).toBe(true);
+    // Clicking Convert media while operation is active queues the media instead of overriding
+    expect(convertBtn?.disabled).toBe(false);
+    await act(async () => {
+      convertBtn?.click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Conversion Queue");
 
     // Switch to Console tab and back to Converter tab
     const consoleNav = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Console"));
@@ -218,7 +224,7 @@ describe("Application shell", () => {
     const converterNav = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Converter"));
     await act(async () => { converterNav?.click(); await Promise.resolve(); });
 
-    // Convert button must still be disabled after switching tabs
+    // With queue added and source cleared, convert button is disabled until next source is entered
     expect(convertBtn?.disabled).toBe(true);
 
     // Pause and Resume

@@ -93,8 +93,8 @@ export function ConsoleView({
   }, [events, jobId, running, category, format]);
 
   const isOngoing = Boolean(running || paused);
-  const isSinglePage = distinctJobIds.length <= 1;
-  const isClosePageDisabled = isSinglePage || isOngoing;
+  const hasNoPages = distinctJobIds.length <= 0;
+  const isClosePageDisabled = hasNoPages || isOngoing;
 
   function handleClosePage() {
     if (isClosePageDisabled) return;
@@ -367,8 +367,8 @@ export function ConsoleView({
             title={
               isOngoing
                 ? "Cannot close page while conversion is ongoing (abort first)"
-                : isSinglePage
-                  ? "Cannot close the only remaining conversion page"
+                : hasNoPages
+                  ? "No conversion pages to close"
                   : "Close this page"
             }
           >

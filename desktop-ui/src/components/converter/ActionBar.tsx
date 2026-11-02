@@ -124,8 +124,13 @@ export function ActionBar({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              disabled={isOperationActive && !(!queueRunning && pendingQueueCount > 0)}
+              disabled={isOperationActive && !source.trim()}
               onClick={onConvert}
+              title={
+                isOperationActive && source.trim()
+                  ? "Queue this conversion (operation currently in progress)"
+                  : undefined
+              }
               className="primary-button inline-flex h-9.5 flex-1 min-w-[124px] items-center justify-center gap-2 px-3.5 text-xs font-semibold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap"
             >
               <Play className="size-3.5 fill-current shrink-0" />
@@ -136,7 +141,6 @@ export function ActionBar({
             {source.trim() && (
               <button
                 type="button"
-                disabled={facebookCaptureBusy || socialCaptureBusy}
                 onClick={onAddToQueue}
                 className="subtle-button inline-flex h-9.5 shrink-0 items-center gap-1.5 px-3 text-xs font-medium text-pink-300 hover:text-pink-200 border-pink-500/25 bg-pink-500/[0.06] disabled:opacity-40 whitespace-nowrap"
                 title="Add current source to conversion queue"

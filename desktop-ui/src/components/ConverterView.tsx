@@ -490,7 +490,7 @@ export function ConverterView({
   // Sequential queue runner
   useEffect(() => {
     if (!queueRunning) return;
-    if (running || effectivePaused) return;
+    if (running || effectivePaused || facebookCaptureBusy || socialCaptureBusy) return;
     if (isStartingQueueRef.current) return;
 
     // Do not start next item if an item is already converting
@@ -540,7 +540,7 @@ export function ConverterView({
       .finally(() => {
         isStartingQueueRef.current = false;
       });
-  }, [queueRunning, running, effectivePaused, queue, onStart, onStatus, onSettings]);
+  }, [queueRunning, running, effectivePaused, facebookCaptureBusy, socialCaptureBusy, queue, onStart, onStatus, onSettings]);
 
   function addToQueue(
     customSource?: string,
@@ -978,8 +978,19 @@ export function ConverterView({
   }
 
   async function convert(indexes?: string, customPreset?: IntentPreset) {
+    if (isOperationActive) {
+      if (!source.trim() && !access.bridgeConnected) {
+        onStatus("Paste a source URL, choose a local file, or capture media in the browser first.");
+        return;
+      }
+      addToQueue(source.trim(), indexes, undefined, customPreset);
+      setQueueRunning(true);
+      return;
+    }
     if (queue.length > 0 && queue.some((item) => item.status === "queued" || item.status === "converting")) {
-      if (!running) {
+      if (source.trim()) {
+        addToQueue(source.trim(), indexes, undefined, customPreset);
+      } else if (!running) {
         setQueue((curr) =>
           curr.map((it) => (it.status === "converting" ? { ...it, status: "queued", progress: 0 } : it))
         );
@@ -1195,20 +1206,22 @@ export function ConverterView({
           <input
             aria-label="Source media URL or local path"
             value={source}
-            disabled={facebookCaptureBusy || socialCaptureBusy}
             onChange={(event) => handleSourceInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void convert();
+            }}
             onDragOver={handleDragOver}
             onDrop={handleDropEvent}
             placeholder="Paste a media or Facebook post link, or drop local files..."
             className="field min-w-0 flex-1 px-3.5 py-3 text-sm placeholder:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
           />
-          <button type="button" disabled={facebookCaptureBusy || socialCaptureBusy} onClick={() => void paste()} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50">
+          <button type="button" onClick={() => void paste()} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50">
             <Clipboard className="size-3.5" /> Paste
           </button>
-          <button type="button" disabled={facebookCaptureBusy || socialCaptureBusy} onClick={() => void browseFile()} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50">
+          <button type="button" onClick={() => void browseFile()} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50">
             <FilePlus2 className="size-3.5" /> Browse
           </button>
-          <button type="button" disabled={facebookCaptureBusy || socialCaptureBusy} onClick={() => void browseBatch()} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50">
+          <button type="button" onClick={() => void browseBatch()} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50">
             <Files className="size-3.5" /> Batch
           </button>
           {isEphemeralStoryUrl(source.trim()) ? (
@@ -1234,7 +1247,7 @@ export function ConverterView({
           )}
           <button
             type="button"
-            disabled={!source.trim() || facebookCaptureBusy || socialCaptureBusy}
+            disabled={!source.trim()}
             onClick={() => addToQueue()}
             className="subtle-button flex items-center gap-1.5 px-3 text-xs text-pink-300 hover:text-pink-200 border-pink-500/25 bg-pink-500/[0.04] disabled:cursor-not-allowed disabled:opacity-40"
             title="Add this source to conversion queue"

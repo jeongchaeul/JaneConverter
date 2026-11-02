@@ -814,6 +814,48 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
+  it("queues an item when clicking Convert media while an operation is already active and starts it when current conversion completes", async () => {
+    const onStart = vi.fn().mockResolvedValue(true);
+    const view = renderView(undefined, undefined, onStart);
+    await act(async () => {
+      view.updateProps({ running: true });
+    });
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "https://youtube.com/watch?v=queuedItem");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const convertBtn = Array.from(view.container.querySelectorAll("button")).find((btn) => btn.textContent?.trim() === "Convert media");
+    expect(convertBtn).toBeDefined();
+    expect(convertBtn?.disabled).toBe(false);
+
+    // Clicking Convert media while running should queue it instead of calling onStart directly
+    await act(async () => {
+      convertBtn?.click();
+    });
+
+    expect(view.container.textContent).toContain("Conversion Queue");
+    expect(onStart).not.toHaveBeenCalled();
+
+    // Now simulate the active conversion finishing (running becomes false)
+    await act(async () => {
+      view.updateProps({
+        events: [{ jobId: "standalone-job", kind: "finished", message: "Conversion complete: initial.mp3" }],
+        running: false,
+      });
+    });
+
+    // The queued item must now automatically start converting!
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(onStart).toHaveBeenCalledWith("https://youtube.com/watch?v=queuedItem", undefined);
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
   it("allows toggling harmonic exciter in advanced settings and displays explanation", async () => {
     const onSettings = vi.fn();
     const view = renderView(undefined, undefined, undefined, null, onSettings, {

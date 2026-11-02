@@ -206,8 +206,8 @@ export function InProgressView({
   }
 
   const isOngoing = Boolean(running || paused);
-  const isSinglePage = distinctJobIds.length <= 1;
-  const isClosePageDisabled = isSinglePage || isOngoing;
+  const hasNoPages = distinctJobIds.length <= 0;
+  const isClosePageDisabled = hasNoPages || isOngoing;
 
   function handleClosePage() {
     if (isClosePageDisabled) return;
@@ -671,7 +671,7 @@ export function InProgressView({
     hasEvents: events.length > 0,
     isClosePageDisabled,
     isOngoing,
-    isSinglePage,
+    isSinglePage: hasNoPages,
     hasOutputDir,
     onNavigateSession: handleNavigateSession,
     onOpenSessionModal: () => setShowSessionModal(true),
