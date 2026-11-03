@@ -70,7 +70,6 @@ export function Topbar({ runtime }: { runtime: RuntimeInfo | null }) {
             />
           </div>
           <span className="text-xs font-semibold tracking-tight text-zinc-300">JaneConverter Desktop</span>
-          <span className="mono-label text-[10px] text-zinc-600 hidden sm:inline">v2.3.5</span>
         </div>
 
         {/* Central Drag Region */}
