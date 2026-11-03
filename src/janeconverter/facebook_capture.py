@@ -969,47 +969,25 @@ def _get_facebook_session_cache_path() -> str:
 
 
 def _load_persisted_facebook_session() -> Optional[dict[str, Any]]:
+    # Plaintext disk cookie persistence is deprecated for credential safety.
+    # Automatically purge any legacy plaintext session file.
     p = _get_facebook_session_cache_path()
-    if not os.path.isfile(p):
-        return None
-    try:
-        with open(p, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return None
-        # 24-hour TTL for authenticated Facebook session
-        if time.time() - data.get("timestamp", 0) > 86400:
-            return None
-        cookies = data.get("cookies", [])
-        if not cookies or not any(c.get("name") in ("c_user", "xs") for c in cookies):
-            return None
-        return data
-    except Exception:
-        return None
-
+    if os.path.isfile(p):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    return None
 
 def _save_persisted_facebook_session(browser_name: str, jar: Any) -> None:
-    try:
-        cookies_list = []
-        for c in jar:
-            if "facebook.com" in getattr(c, "domain", ""):
-                cookies_list.append({
-                    "name": getattr(c, "name", ""),
-                    "value": getattr(c, "value", ""),
-                    "domain": getattr(c, "domain", ""),
-                    "path": getattr(c, "path", "/"),
-                })
-        if cookies_list:
-            p = _get_facebook_session_cache_path()
-            with open(p, "w", encoding="utf-8") as f:
-                json.dump({
-                    "browser": browser_name,
-                    "timestamp": time.time(),
-                    "cookies": cookies_list,
-                }, f)
-    except Exception:
-        pass
-
+    # Ephemeral in-memory caching is preferred over unencrypted disk storage.
+    # Purge any stale file that may exist on disk.
+    p = _get_facebook_session_cache_path()
+    if os.path.isfile(p):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
 
 def _clear_persisted_facebook_session() -> None:
     try:

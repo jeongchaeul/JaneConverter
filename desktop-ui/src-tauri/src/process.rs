@@ -169,7 +169,8 @@ fn exported_path_from_line(line: &str) -> Option<String> {
     let trimmed = line.trim();
     let raw = trimmed
         .strip_prefix("DONE! Exported:")
-        .or_else(|| trimmed.strip_prefix("Export Directory:"))?
+        .or_else(|| trimmed.strip_prefix("Export Directory:"))
+        .or_else(|| trimmed.strip_prefix("Target Directory:"))?
         .trim();
     if raw.is_empty() {
         return None;
@@ -801,6 +802,8 @@ pub fn start_conversion(
                 let has_content = has_converted_media_files(target_path);
                 if has_content {
                     crate::library::record_conversion_timing(&record_target, elapsed_ms);
+                }
+                if target_path.exists() || !display_output.is_empty() {
                     resolved_output = Some(display_output);
                 }
             }

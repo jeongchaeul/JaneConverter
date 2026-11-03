@@ -607,15 +607,15 @@ export function SettingsGuideTab({ onNavigateTab }: { onNavigateTab?: (tab: "bro
             </p>
             <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3.5 space-y-2.5 text-xs">
               <div className="space-y-1">
-                <div className="font-medium text-zinc-200">Direct Edge &amp; Chrome Cookie Access (Chromium 127+ Fix):</div>
+                <div className="font-medium text-zinc-200">Vivaldi &amp; Firefox (Recommended for Automated Sessions):</div>
                 <p className="text-zinc-400 text-[11px] leading-relaxed">
-                  Chromium 127+ introduced Windows App-Bound Encryption, which breaks standard external cookie tools. JaneConverter fixes this natively: enable <strong className="text-zinc-200">Direct Edge &amp; Chrome Cookie Access</strong> in the Browser tab. This configures the user policy <code className="text-zinc-300">ApplicationBoundEncryptionEnabled = 0</code>, allowing JaneConverter to read sessions via native Windows DPAPI with <strong className="text-zinc-200">zero third-party browser extensions</strong> and <strong className="text-zinc-200">zero manual .txt file exports</strong>.
+                  These browsers support seamless background session reading out of the box with <strong className="text-zinc-200">zero Windows registry edits</strong> and <strong className="text-zinc-200">zero extensions</strong>. If you keep your social logins in Vivaldi or Firefox, JaneConverter automatically resolves private/age-gated media in the background while keeping your primary Google Chrome protected.
                 </p>
               </div>
               <div className="space-y-1">
-                <div className="font-medium text-zinc-200">Firefox, Vivaldi &amp; Brave:</div>
+                <div className="font-medium text-zinc-200">Edge &amp; Chrome Security Model:</div>
                 <p className="text-zinc-400 text-[11px] leading-relaxed">
-                  These browsers use standard encryption. Simply select your browser from the dropdown in Settings.
+                  Edge and Chrome use Windows App-Bound Encryption to safeguard session cookies against infostealers. To preserve your browser's security, JaneConverter does not bypass this encryption. Use Vivaldi or Firefox for frictionless background sessions, or the Browser Bridge extension if capturing directly from Chrome.
                 </p>
               </div>
               <div className="rounded-lg border border-white/[0.06] bg-black/20 p-2.5 space-y-1 text-[11px]">

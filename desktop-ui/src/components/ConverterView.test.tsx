@@ -107,6 +107,8 @@ describe("Converter account access feedback", () => {
     window.scrollTo = vi.fn();
     bridge.openUrl.mockReset();
     bridge.openUrl.mockResolvedValue(undefined);
+    bridge.openPath.mockReset();
+    bridge.openPath.mockResolvedValue(undefined);
     HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
     HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false; });
   });
@@ -1028,12 +1030,61 @@ it("groupIndexesByPreset groups selected items by their distinct presets", () =>
     const closeBtn = view.container.querySelector('button[aria-label="Close completion prompt"]') as HTMLButtonElement | null;
     expect(closeBtn).not.toBeNull();
 
+    const openFolderBtn = Array.from(view.container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Open folder")
+    );
+    expect(openFolderBtn).toBeDefined();
+
+    await act(async () => {
+      openFolderBtn?.click();
+      await Promise.resolve();
+    });
+
+    expect(bridge.openPath).toHaveBeenCalledWith("C:/output/song.mp3");
+
     await act(async () => {
       closeBtn?.click();
       await Promise.resolve();
     });
 
     expect(view.container.textContent).not.toContain("Conversion finished and verified via ffprobe.");
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("resolves the exact folder from event history lines when finished event lacks output", async () => {
+    const view = renderView();
+    await act(async () => {
+      view.updateProps({
+        events: [
+          {
+            jobId: "job-album-1",
+            kind: "progress",
+            message: "Export Directory: D:/Music/Skrillex - Quest For Fire (FULL ALBUM 2023)",
+          },
+          {
+            jobId: "job-album-1",
+            kind: "finished",
+            message: "Conversion finished. Your media is ready.",
+          },
+        ],
+      });
+    });
+
+    expect(view.container.textContent).toContain("Skrillex - Quest For Fire (FULL ALBUM 2023)");
+
+    const openFolderBtn = Array.from(view.container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Open folder")
+    );
+    expect(openFolderBtn).toBeDefined();
+
+    await act(async () => {
+      openFolderBtn?.click();
+      await Promise.resolve();
+    });
+
+    expect(bridge.openPath).toHaveBeenCalledWith("D:/Music/Skrillex - Quest For Fire (FULL ALBUM 2023)");
 
     await act(async () => { view.root.unmount(); });
     view.container.remove();

@@ -227,12 +227,29 @@ export function ConverterView({
     for (const evt of unprocessed) {
       if (evt.kind === "finished" || (evt.kind as string) === "partial") {
         let outName = "media file";
+        let outPath = evt.output;
+
+        if (!outPath) {
+          for (let i = events.length - 1; i >= 0; i--) {
+            const msg = events[i]?.message?.trim() || "";
+            const match = /(?:DONE!\s*Exported:\s*|Export Directory:\s*|Target Directory:\s*)(.*)/i.exec(msg);
+            if (match && match[1]?.trim()) {
+              outPath = match[1].trim();
+              break;
+            }
+          }
+        }
+
         if (evt.message.startsWith("Conversion complete: ")) {
           outName = evt.message.replace("Conversion complete: ", "").trim();
+        } else if (outPath) {
+          outName = outPath.replace(/^.*[\\/]/, "");
         } else if (evt.output) {
           outName = evt.output.replace(/^.*[\\/]/, "");
         }
-        const outPath = evt.output || (settings.outputDir ? `${settings.outputDir.replace(/[\\/]+$/, "")}/${outName}` : undefined);
+        if (!outPath && settings.outputDir) {
+          outPath = `${settings.outputDir.replace(/[\\/]+$/, "")}/${outName}`;
+        }
         setCompletedItem({ name: outName, path: outPath });
 
         const activeId = activeQueueItemIdRef.current;
@@ -1455,7 +1472,7 @@ export function ConverterView({
               )}
               <button
                 type="button"
-                onClick={() => void bridge.openPath(settings.outputDir)}
+                onClick={() => void bridge.openPath(completedItem.path || settings.outputDir)}
                 className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
               >
                 <FolderOpen className="size-3.5" /> Open folder

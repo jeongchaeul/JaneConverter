@@ -503,7 +503,17 @@ export function InProgressView({
   }, [paginatedItems, outputDir, summary.outputDir, summary.coverArtPath, currentJobId]);
 
   async function openOutputFolder() {
-    const dir = summary.outputDir || outputDir;
+    let dir = summary.outputDir || outputDir;
+    if (!summary.outputDir && items.length > 0) {
+      const firstWithOutput = items.find((it) => it.outputPath);
+      if (firstWithOutput) {
+        const full = getItemFullPath(firstWithOutput);
+        if (full) {
+          const idx = Math.max(full.lastIndexOf("\\"), full.lastIndexOf("/"));
+          if (idx > 0) dir = full.slice(0, idx);
+        }
+      }
+    }
     if (!dir) {
       onStatus("No output directory recorded yet.");
       return;

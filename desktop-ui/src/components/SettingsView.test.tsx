@@ -368,33 +368,6 @@ describe("Settings updates", () => {
     container.remove();
   });
 
-  it('toggles Direct Edge and Chrome Cookie Access policy', async () => {
-    const container = document.createElement('div');
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    const onStatus = vi.fn();
-
-    await act(async () => {
-      root.render(<SettingsView runtime={sourceRuntime} onStatus={onStatus} />);
-      await Promise.resolve();
-    });
-
-    expect(container.textContent).toContain('Direct Edge & Chrome Cookie Access');
-    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="Direct Edge & Chrome Cookie Access"]');
-    expect(toggle).toBeDefined();
-    expect(toggle?.getAttribute('aria-checked')).toBe('false');
-
-    await act(async () => {
-      toggle?.click();
-      await Promise.resolve();
-    });
-
-    expect(onStatus).toHaveBeenCalledWith(expect.stringContaining('Direct Edge & Chrome cookie access enabled'));
-
-    await act(async () => { root.unmount(); });
-    container.remove();
-  });
-
   it('renders the User Manual guide and allows tab navigation', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

@@ -106,11 +106,7 @@ export function SettingsView({
   const [message, setMessage] = useState(effectiveUpdateResult?.message ?? "");
   const [dataRootPath, setDataRootPath] = useState(runtime?.dataRoot ?? "");
   const [changingDataRoot, setChangingDataRoot] = useState(false);
-  const [chromiumPolicy, setChromiumPolicy] = useState(false);
   const [showStoryModal, setShowStoryModal] = useState(false);
-  const [togglingPolicy, setTogglingPolicy] = useState(false);
-  const [policyError, setPolicyError] = useState<string | null>(null);
-  const [copiedCmd, setCopiedCmd] = useState(false);
 
   useEffect(() => {
     if (effectiveUpdateResult?.message && !message) {
@@ -121,13 +117,6 @@ export function SettingsView({
   useEffect(() => {
     setDataRootPath(runtime?.dataRoot ?? "");
   }, [runtime?.dataRoot]);
-
-  useEffect(() => {
-    bridge
-      .getChromiumCookiePolicy()
-      .then(setChromiumPolicy)
-      .catch(() => {});
-  }, []);
 
   function toggleAdaptiveGpu() {
     if (!settings || !onSettings) return;
@@ -149,29 +138,6 @@ export function SettingsView({
       : "Browser session cookie reading disabled. Conversions will use strictly public guest extraction.";
     setMessage(nextMessage);
     onStatus(nextMessage);
-  }
-
-  async function toggleChromiumPolicy() {
-    if (togglingPolicy) return;
-    setTogglingPolicy(true);
-    setPolicyError(null);
-    try {
-      const next = !chromiumPolicy;
-      const result = await bridge.setChromiumCookiePolicy(next);
-      setChromiumPolicy(result);
-      const nextMsg = result
-        ? "Direct Edge & Chrome cookie access enabled. Restart Edge/Chrome to apply standard DPAPI encryption to new sessions."
-        : "Direct Edge & Chrome cookie access disabled. Restored default App-Bound encryption.";
-      setMessage(nextMsg);
-      onStatus(nextMsg);
-    } catch (error) {
-      const failMsg = error instanceof Error ? error.message : String(error);
-      setPolicyError(failMsg);
-      setMessage(`Could not update Chromium cookie policy: ${failMsg}`);
-      onStatus(`Could not update Chromium cookie policy: ${failMsg}`);
-    } finally {
-      setTogglingPolicy(false);
-    }
   }
 
   async function chooseDataRoot() {
@@ -325,13 +291,7 @@ export function SettingsView({
         <SettingsBrowserTab
           settings={settings}
           onSettings={onSettings}
-          chromiumPolicy={chromiumPolicy}
-          togglingPolicy={togglingPolicy}
-          policyError={policyError}
-          copiedCmd={copiedCmd}
-          toggleChromiumPolicy={toggleChromiumPolicy}
           toggleBrowserCookies={toggleBrowserCookies}
-          setCopiedCmd={setCopiedCmd}
           setShowStoryModal={setShowStoryModal}
           setMessage={setMessage}
           onStatus={onStatus}

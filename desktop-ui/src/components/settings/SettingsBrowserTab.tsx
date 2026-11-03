@@ -1,12 +1,9 @@
 import {
   CheckCircle2,
   ChevronDown,
-  Copy,
   Globe,
   KeyRound,
   Lock,
-  RefreshCw,
-  RotateCw,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -17,26 +14,14 @@ import type { ConverterSettings } from "../../bridge";
 export function SettingsBrowserTab({
   settings,
   onSettings,
-  chromiumPolicy,
-  togglingPolicy,
-  policyError,
-  copiedCmd,
-  toggleChromiumPolicy,
   toggleBrowserCookies,
-  setCopiedCmd,
   setShowStoryModal,
   setMessage,
   onStatus,
 }: {
   settings?: ConverterSettings;
   onSettings?: (next: ConverterSettings) => void;
-  chromiumPolicy: boolean;
-  togglingPolicy: boolean;
-  policyError: string | null;
-  copiedCmd: boolean;
-  toggleChromiumPolicy: () => Promise<void>;
   toggleBrowserCookies: () => void;
-  setCopiedCmd: (copied: boolean) => void;
   setShowStoryModal: (show: boolean) => void;
   setMessage: (msg: string) => void;
   onStatus: (msg: string) => void;
@@ -47,111 +32,6 @@ export function SettingsBrowserTab({
         <Globe className="size-3.5" style={{ color: "var(--accent-color, #c52b68)" }} />
         Browser Authentication &amp; Cookie Sessions
       </div>
-
-      {/* Direct Edge & Chrome Cookie Access (Opt-in Policy) */}
-      <section className="panel space-y-4 p-5" aria-labelledby="chromium-cookie-heading">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
-              <ShieldCheck size={16} style={{ color: "var(--accent-color, #c52b68)" }} />
-              <span id="chromium-cookie-heading">Direct Edge &amp; Chrome Cookie Access</span>
-              <span
-                className={
-                  "rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase " +
-                  (chromiumPolicy
-                    ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
-                    : "border-white/[0.10] bg-white/[0.03] text-zinc-400")
-                }
-              >
-                {chromiumPolicy ? "Active (Standard DPAPI)" : "Default (App-Bound)"}
-              </span>
-            </div>
-            <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
-              Allows JaneConverter to read active sessions directly from <strong className="text-zinc-200">Microsoft Edge</strong> and <strong className="text-zinc-200">Google Chrome</strong> with zero browser extensions or manual exports.
-            </p>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={chromiumPolicy}
-            aria-label="Direct Edge & Chrome Cookie Access"
-            disabled={togglingPolicy}
-            onClick={() => void toggleChromiumPolicy()}
-            className={
-              "flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-medium transition-colors disabled:cursor-wait " +
-              (chromiumPolicy
-                ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
-                : "subtle-button text-zinc-200")
-            }
-          >
-            {togglingPolicy ? (
-              <>
-                <RefreshCw className="size-3.5 animate-spin text-zinc-400" />
-                <span>Applying...</span>
-              </>
-            ) : (
-              <>
-                <ShieldCheck className={"size-3.5 " + (chromiumPolicy ? "text-emerald-300" : "text-zinc-400")} />
-                <span>{chromiumPolicy ? "Direct Access Active" : "Enable Direct Access"}</span>
-              </>
-            )}
-          </button>
-        </div>
-
-        {policyError && (
-          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300 space-y-2">
-            <div className="flex items-center gap-1.5 font-medium">
-              <ShieldAlert className="size-4 shrink-0 text-rose-400" />
-              <span>Windows Administrator Permission Needed</span>
-            </div>
-            <p className="text-[11px] leading-relaxed text-zinc-300">
-              {policyError}
-            </p>
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  const cmd = 'reg add "HKCU\\Software\\Policies\\Microsoft\\Edge" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f & reg add "HKCU\\Software\\Policies\\Google\\Chrome" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f';
-                  void navigator.clipboard.writeText(cmd);
-                  setCopiedCmd(true);
-                  setTimeout(() => setCopiedCmd(false), 2500);
-                  onStatus("Copied 1-line admin registry command to clipboard.");
-                }}
-                className="subtle-button flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-zinc-200 hover:text-white"
-              >
-                {copiedCmd ? <CheckCircle2 className="size-3 text-emerald-400" /> : <Copy className="size-3" />}
-                <span>{copiedCmd ? "Copied Command!" : "Copy Admin Command"}</span>
-              </button>
-              <span className="text-[11px] text-zinc-400">Run once in PowerShell as Administrator, then restart Edge.</span>
-            </div>
-          </div>
-        )}
-
-        <details className="group border-t border-white/[0.06] pt-3">
-          <summary className="flex cursor-pointer items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-colors list-none select-none">
-            <ChevronDown className="size-3.5 transition-transform group-open:rotate-180 text-zinc-500" />
-            <span>How direct Edge &amp; Chrome access works &amp; technical details</span>
-          </summary>
-          <div className="mt-3 grid gap-2.5 md:grid-cols-2">
-            <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-300">
-                <Sparkles className="size-3.5 shrink-0" /> Zero Extension Requirement
-              </div>
-              <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">
-                Configures the official Windows Chromium policy (<span className="font-mono text-zinc-300 text-[10px]">ApplicationBoundEncryptionEnabled = 0</span>) in the registry. This instructs Edge and Chrome to store session cookies using standard Windows DPAPI (the exact format used by Vivaldi and Firefox), eliminating the need to install or run browser extensions.
-              </p>
-            </div>
-            <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-amber-300">
-                <RotateCw className="size-3.5 shrink-0" /> Restart Browser After Enabling
-              </div>
-              <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">
-                Edge and Chrome read this policy when starting up. After enabling this setting, completely restart Edge or Chrome so the browser writes future session cookies in standard decryptable format.
-              </p>
-            </div>
-          </div>
-        </details>
-      </section>
 
       {/* Read Browser Cookies (Session Recovery) */}
       <section className="panel space-y-4 p-5" aria-labelledby="read-browser-cookies-heading">
@@ -224,11 +104,11 @@ export function SettingsBrowserTab({
               className="field rounded-xl px-3 py-1.5 text-xs text-zinc-200 bg-black/30 border border-white/10"
             >
               <option value="auto">Auto-detect (Active Running Browser)</option>
-              <option value="edge">Microsoft Edge</option>
-              <option value="vivaldi">Vivaldi</option>
-              <option value="chrome">Google Chrome</option>
-              <option value="firefox">Mozilla Firefox</option>
+              <option value="vivaldi">Vivaldi (Recommended - Safe Background Sessions)</option>
+              <option value="firefox">Mozilla Firefox (Safe Background Sessions)</option>
               <option value="brave">Brave</option>
+              <option value="edge">Microsoft Edge</option>
+              <option value="chrome">Google Chrome</option>
               <option value="opera">Opera</option>
             </select>
           </div>
