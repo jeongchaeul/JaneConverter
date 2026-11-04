@@ -9,6 +9,7 @@ from janeconverter.sniffer import (
     SniffedAsset,
     download_sniffed_asset,
     is_direct_asset_url,
+    is_public_http_url,
     sniff_webpage,
 )
 
@@ -221,4 +222,39 @@ def test_sniff_webpage_extracts_direct_audio_element():
         assert asset.asset_kind == "audio"
         assert asset.extension == "mp3"
         assert asset.asset_url == "https://media.podcasts.org/episodes/ep42.mp3"
+
+
+def test_sniffer_blocks_ssrf_to_private_and_loopback_hosts(tmp_path):
+    assert not is_public_http_url("http://127.0.0.1:8080/live.m3u8")
+    assert not is_public_http_url("http://localhost/model.glb")
+    assert not is_public_http_url("http://169.254.169.254/latest/meta-data/")
+    assert not is_public_http_url("http://192.168.1.1/stream.mp4")
+    assert not is_public_http_url("http://10.0.0.1/audio.mp3")
+    assert not is_public_http_url("http://[::1]/index.m3u8")
+    assert is_direct_asset_url("http://127.0.0.1/stream.m3u8") is None
+    assert sniff_webpage("http://127.0.0.1:8000/watch") is None
+
+    evil_html = """
+    <html><body>
+        <video src="http://127.0.0.1:9000/internal.mp4"></video>
+        <iframe src="http://169.254.169.254/latest/meta-data"></iframe>
+    </body></html>
+    """
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = evil_html
+    mock_resp.url = "https://example.com/evil"
+    with patch("requests.Session.get", return_value=mock_resp):
+        assert sniff_webpage("https://example.com/evil") is None
+
+    loopback_asset = SniffedAsset(
+        asset_url="http://127.0.0.1/secret.glb",
+        asset_kind="model",
+        extension="glb",
+        title="Secret",
+        source_page="https://example.com",
+        headers={},
+    )
+    with pytest.raises(ValueError, match="private, loopback, or unsafe"):
+        download_sniffed_asset(loopback_asset, str(tmp_path))
 

@@ -51,7 +51,9 @@ def probe_media_duration(input_path: str) -> Optional[float]:
     try:
         no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         probe_cmd = [get_ffprobe_binary(), "-v", "error"]
-        if input_path.lower().endswith((".m3u8", ".mpd")) or input_path.startswith(("http://", "https://")):
+        if input_path.startswith(("http://", "https://")):
+            probe_cmd.extend(["-protocol_whitelist", "http,https,tcp,tls,crypto"])
+        elif input_path.lower().endswith((".m3u8", ".mpd")):
             probe_cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
         probe_cmd.extend(["-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", input_path])
         res = subprocess.run(

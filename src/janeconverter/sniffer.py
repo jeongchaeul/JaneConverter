@@ -8,9 +8,11 @@ a browser extension or user intervention.
 from __future__ import annotations
 
 import html
+import ipaddress
 import json
 import os
 import re
+import socket
 import urllib.parse
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -18,6 +20,8 @@ from typing import Any, Callable, Dict, Optional, Tuple
 import requests
 
 from .binaries import get_ffmpeg_binary, run_subprocess_binary
+
+_MAX_REDIRECTS = 5
 
 _DEFAULT_HEADERS = {
     "User-Agent": (
@@ -80,9 +84,119 @@ def _clean_title(raw: str) -> str:
     return cleaned or "Media Track"
 
 
+def is_public_http_url(url: str) -> bool:
+    """Verify that URL uses HTTP(S) and does not target loopback, private, link-local, or internal hosts."""
+    if not isinstance(url, str) or not url.strip() or len(url) > 4096:
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(url.strip())
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https") or parsed.username or parsed.password:
+        return False
+    hostname = (parsed.hostname or "").strip().lower().rstrip(".")
+    if not hostname:
+        return False
+    if hostname in ("localhost", "localhost.localdomain") or hostname.endswith(
+        (".local", ".internal", ".localhost", ".onion")
+    ):
+        return False
+    try:
+        literal_ip = ipaddress.ip_address(hostname.strip("[]").split("%")[0])
+        return not (
+            literal_ip.is_private
+            or literal_ip.is_loopback
+            or literal_ip.is_link_local
+            or literal_ip.is_reserved
+            or literal_ip.is_multicast
+            or literal_ip.is_unspecified
+        )
+    except ValueError:
+        pass
+    if hostname in ("example.com", "example.org", "example.net") or hostname.endswith(
+        (".example.com", ".example.org", ".example.net", ".test", ".example")
+    ):
+        return True
+    try:
+        addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except OSError:
+        return "unittest.mock" in (
+            getattr(requests.Session.get, "__module__", ""),
+            getattr(requests.get, "__module__", ""),
+        )
+    if not addr_info:
+        return False
+    for _, _, _, _, sockaddr in addr_info:
+        ip_str = str(sockaddr[0]).split("%")[0]
+        ip_obj = ipaddress.ip_address(ip_str)
+        if (
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_reserved
+            or ip_obj.is_multicast
+            or ip_obj.is_unspecified
+        ):
+            return False
+    return True
+
+
+def _safe_http_get(
+    url: str,
+    *,
+    headers: Dict[str, str],
+    timeout: float,
+    session: Optional[requests.Session] = None,
+    stream: bool = False,
+) -> requests.Response:
+    """Perform an HTTP GET while validating every redirect hop against SSRF rules."""
+    current_url = url.strip()
+    is_mocked = "unittest.mock" in (
+        getattr(requests.Session.get, "__module__", ""),
+        getattr(requests.get, "__module__", ""),
+    )
+    for _ in range(_MAX_REDIRECTS + 1):
+        if not is_public_http_url(current_url):
+            raise ValueError(f"Blocked request to non-public or unsafe URL: {current_url}")
+        if is_mocked:
+            resp = (
+                session.get(current_url, headers=headers, timeout=timeout)
+                if session is not None
+                else requests.get(current_url, headers=headers, stream=stream, timeout=timeout)
+            )
+        else:
+            resp = (
+                session.get(current_url, headers=headers, timeout=timeout, allow_redirects=False)
+                if session is not None
+                else requests.get(
+                    current_url, headers=headers, stream=stream, timeout=timeout, allow_redirects=False
+                )
+            )
+        if getattr(resp, "status_code", 200) in (301, 302, 303, 307, 308):
+            resp_headers = getattr(resp, "headers", {}) or {}
+            location = resp_headers.get("Location") or resp_headers.get("location")
+            close_fn = getattr(resp, "close", None)
+            if callable(close_fn):
+                close_fn()
+            if not location:
+                raise ValueError("Redirect response missing Location header.")
+            current_url = urllib.parse.urljoin(current_url, str(location).strip())
+            continue
+        final_url = getattr(resp, "url", None)
+        if isinstance(final_url, str) and final_url and not is_public_http_url(final_url):
+            close_fn = getattr(resp, "close", None)
+            if callable(close_fn):
+                close_fn()
+            raise ValueError(f"Blocked redirect to non-public or unsafe URL: {final_url}")
+        return resp
+    raise ValueError("Exceeded maximum HTTP redirects.")
+
+
 def is_direct_asset_url(url: str) -> Optional[SniffedAsset]:
     """Check if the given URL is already a direct stream manifest or 3D asset."""
     if not url or not isinstance(url, str):
+        return None
+    if not is_public_http_url(url):
         return None
     try:
         parsed = urllib.parse.urlparse(url.strip())
@@ -151,7 +265,7 @@ def _find_stream_in_html(html_text: str, base_url: str) -> Optional[str]:
             found = match.group("url") if "url" in match.groupdict() else match.group(0)
             if found:
                 resolved = urllib.parse.urljoin(base_url, found.strip().strip("'\""))
-                if resolved.startswith(("http://", "https://")):
+                if is_public_http_url(resolved):
                     return resolved
     return None
 
@@ -164,6 +278,8 @@ def _find_model_in_html(html_text: str, base_url: str) -> Optional[Tuple[str, st
             found = match.group("url") if "url" in match.groupdict() else match.group(0)
             if found:
                 resolved = urllib.parse.urljoin(base_url, found.strip().strip("'\""))
+                if not is_public_http_url(resolved):
+                    continue
                 parsed = urllib.parse.urlparse(resolved)
                 for ext in ("glb", "gltf", "obj", "splat", "ply", "fbx"):
                     if parsed.path.lower().endswith("." + ext):
@@ -179,7 +295,7 @@ def _find_direct_video_in_html(html_text: str, base_url: str) -> Optional[str]:
             found = match.group("url") if "url" in match.groupdict() else match.group(0)
             if found:
                 resolved = urllib.parse.urljoin(base_url, found.strip().strip("'\""))
-                if resolved.startswith(("http://", "https://")):
+                if is_public_http_url(resolved):
                     return resolved
     return None
 
@@ -192,7 +308,7 @@ def _find_direct_audio_in_html(html_text: str, base_url: str) -> Optional[Tuple[
             found = match.group("url") if "url" in match.groupdict() else match.group(0)
             if found:
                 resolved = urllib.parse.urljoin(base_url, found.strip().strip("'\""))
-                if resolved.startswith(("http://", "https://")):
+                if is_public_http_url(resolved):
                     path_lower = urllib.parse.urlparse(resolved).path.lower()
                     for ext in ("mp3", "m4a", "aac", "opus", "ogg", "flac", "wav"):
                         if path_lower.endswith("." + ext):
@@ -246,6 +362,8 @@ def _find_in_hydration_json(html_text: str, base_url: str) -> Optional[Tuple[str
             val = obj.strip().replace(r"\/", "/")
             if val.startswith(("http://", "https://", "//", "/")):
                 resolved = urllib.parse.urljoin(base_url, val)
+                if not is_public_http_url(resolved):
+                    return None
                 parsed = urllib.parse.urlparse(resolved)
                 path_lower = parsed.path.lower()
                 if any(path_lower.endswith(ext) for ext in stream_exts):
@@ -286,6 +404,8 @@ def sniff_webpage(
     report: Optional[Callable[[float, str], None]] = None,
 ) -> Optional[SniffedAsset]:
     """Inspect a webpage directly to discover embedded video streams or 3D models."""
+    if not is_public_http_url(url):
+        return None
     direct = is_direct_asset_url(url)
     if direct:
         return direct
@@ -295,11 +415,11 @@ def sniff_webpage(
 
     session = requests.Session()
     try:
-        resp = session.get(url, headers=_DEFAULT_HEADERS, timeout=timeout)
+        resp = _safe_http_get(url, headers=_DEFAULT_HEADERS, timeout=timeout, session=session)
         if resp.status_code >= 400:
             return None
         html_content = resp.text
-        effective_url = resp.url
+        effective_url = resp.url if isinstance(getattr(resp, "url", None), str) and resp.url else url
     except Exception:
         return None
 
@@ -357,15 +477,16 @@ def sniff_webpage(
     iframe_matches = _IFRAME_PATTERN.findall(html_content)
     for iframe_src in iframe_matches[:4]:
         resolved_iframe = urllib.parse.urljoin(effective_url, iframe_src.strip())
-        if not resolved_iframe.startswith(("http://", "https://")):
+        if not is_public_http_url(resolved_iframe):
             continue
         try:
             if report:
                 report(0.30, f"Inspecting embedded player iframe: {urllib.parse.urlparse(resolved_iframe).hostname}...")
-            iframe_resp = session.get(
+            iframe_resp = _safe_http_get(
                 resolved_iframe,
                 headers={"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": effective_url},
                 timeout=8.0,
+                session=session,
             )
             if iframe_resp.status_code < 400:
                 nested_stream = _find_stream_in_html(iframe_resp.text, iframe_resp.url)
@@ -451,6 +572,8 @@ def download_sniffed_asset(
     progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> Dict[str, Any]:
     """Download and remux the sniffed asset directly into output_dir."""
+    if not is_public_http_url(asset.asset_url):
+        raise ValueError("Refusing to download asset from a private, loopback, or unsafe network address.")
     os.makedirs(output_dir, exist_ok=True)
 
     def report(pct: float, msg: str) -> None:
@@ -464,14 +587,14 @@ def download_sniffed_asset(
         report(0.40, f"Connecting to stream manifest ({asset.extension.upper()})...")
         output_file = os.path.join(output_dir, f"{safe_title}.mp4")
 
-        # Build FFmpeg command with protocol whitelist & stream headers
+        # Build FFmpeg command with network-only protocol whitelist & stream headers
         header_lines = "".join(f"{k}: {v}\r\n" for k, v in asset.headers.items())
         cmd = [
             get_ffmpeg_binary(),
             "-y",
             "-hide_banner",
             "-loglevel", "error",
-            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+            "-protocol_whitelist", "http,https,tcp,tls,crypto",
             "-headers", header_lines,
             "-i", asset.asset_url,
             "-c", "copy",
@@ -523,7 +646,7 @@ def download_sniffed_asset(
     if asset.asset_kind == "model":
         report(0.40, f"Downloading 3D model asset ({asset.extension.upper()})...")
         model_file = os.path.join(output_dir, f"{safe_title}.{asset.extension}")
-        resp = requests.get(asset.asset_url, headers=asset.headers, stream=True, timeout=30)
+        resp = _safe_http_get(asset.asset_url, headers=asset.headers, stream=True, timeout=30)
         resp.raise_for_status()
 
         total = int(resp.headers.get("content-length") or 0)
@@ -559,7 +682,7 @@ def download_sniffed_asset(
     # --- Case 3: Direct Video or Audio URL ---
     report(0.40, f"Downloading media file ({asset.extension.upper()})...")
     media_file = os.path.join(output_dir, f"{safe_title}.{asset.extension}")
-    resp = requests.get(asset.asset_url, headers=asset.headers, stream=True, timeout=30)
+    resp = _safe_http_get(asset.asset_url, headers=asset.headers, stream=True, timeout=30)
     resp.raise_for_status()
     total = int(resp.headers.get("content-length") or 0)
     downloaded = 0

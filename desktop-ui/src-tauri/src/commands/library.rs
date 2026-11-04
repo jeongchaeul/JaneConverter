@@ -24,18 +24,86 @@ pub fn conversion_history(
     Ok(serde_json::json!({"history":result.history,"warning":result.warning}))
 }
 
+fn resolve_configured_root(raw: &str) -> PathBuf {
+    let trimmed = PathBuf::from(raw.trim());
+    if trimmed.is_absolute() {
+        trimmed
+    } else {
+        project_root().join(trimmed)
+    }
+}
+
+fn is_allowed_library_or_history_path(candidate: &str) -> Result<bool, String> {
+    let trimmed = candidate.trim();
+    if trimmed.is_empty() {
+        return Ok(false);
+    }
+    let candidate_path = resolve_configured_root(trimmed);
+    if !candidate_path.exists() {
+        return Ok(false);
+    }
+    let canonical_target = fs::canonicalize(&candidate_path)
+        .map_err(|error| format!("Could not resolve library path: {error}"))?;
+    let settings = settings_get_internal();
+
+    let mut allowed_roots = vec![
+        resolve_configured_root(&settings.output_dir),
+        resolve_configured_root(&settings.fetched_dir),
+        data_root(),
+        std::env::temp_dir(),
+    ];
+    if let Ok(cat) = catalog::history(
+        &data_root().join("catalog.json"),
+        Vec::new(),
+        None,
+        None,
+        false,
+    ) {
+        for item in cat.history {
+            if let Some(export_path) = item.get("exportPath").and_then(|v| v.as_str()) {
+                if !export_path.trim().is_empty() {
+                    allowed_roots.push(resolve_configured_root(export_path));
+                }
+            }
+        }
+    }
+
+    for root in allowed_roots {
+        if library::is_library_path(&root, &canonical_target) {
+            return Ok(true);
+        }
+        if let Ok(canonical_root) = fs::canonicalize(&root) {
+            if canonical_target == canonical_root || canonical_target.starts_with(&canonical_root) {
+                return Ok(true);
+            }
+        }
+    }
+
+    Err("For safety, JaneConverter can only access items inside the configured library or fetched directories.".into())
+}
+
 #[tauri::command]
 pub async fn path_size(path: String) -> Result<u64, String> {
-    tauri::async_runtime::spawn_blocking(move || library::path_total_bytes(&path))
-        .await
-        .map_err(|e| format!("Task execution error: {e}"))
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_allowed_library_or_history_path(&path)? {
+            return Ok(0);
+        }
+        Ok(library::path_total_bytes(&path))
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]
 pub async fn scan_library(path: String) -> Result<Vec<LibraryEntry>, String> {
-    tauri::async_runtime::spawn_blocking(move || library::scan(&path))
-        .await
-        .map_err(|e| format!("Task execution error: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_allowed_library_or_history_path(&path)? {
+            return Ok(Vec::new());
+        }
+        library::scan(&path)
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]
@@ -57,9 +125,14 @@ pub fn is_converted_library_path(path: String) -> bool {
 
 #[tauri::command]
 pub async fn recent_conversions(path: String, limit: usize) -> Result<Vec<LibraryEntry>, String> {
-    tauri::async_runtime::spawn_blocking(move || library::recent(&path, limit))
-        .await
-        .map_err(|e| format!("Task execution error: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_allowed_library_or_history_path(&path)? {
+            return Ok(Vec::new());
+        }
+        library::recent(&path, limit)
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]
@@ -101,9 +174,14 @@ pub async fn drag_library_file(
 
 #[tauri::command]
 pub async fn get_thumbnail(root: String, path: String) -> Result<Option<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || library::thumbnail(&root, &path))
-        .await
-        .map_err(|e| format!("Task execution error: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_allowed_library_or_history_path(&root)? {
+            return Ok(None);
+        }
+        library::thumbnail(&root, &path)
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]
