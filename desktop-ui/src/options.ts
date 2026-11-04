@@ -109,7 +109,7 @@ export const intentPresets: IntentPreset[] = [
     normalize: false,
     useGpu: false,
     preserveQuality: true,
-    archivalFallback: true,
+    archivalFallback: false,
   },
   {
     id: "studio-master",
@@ -123,7 +123,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: false,
     useGpu: false,
-    archivalFallback: true,
+    archivalFallback: false,
   },
   {
     id: "universal-music",
@@ -137,7 +137,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: true,
     useGpu: false,
-    archivalFallback: true,
+    archivalFallback: false,
   },
   {
     id: "fast-music",
@@ -151,7 +151,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: false,
     useGpu: false,
-    archivalFallback: true,
+    archivalFallback: false,
   },
   {
     id: "lossless-flac",
@@ -165,7 +165,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: false,
     useGpu: false,
-    archivalFallback: true,
+    archivalFallback: false,
   },
   {
     id: "universal-video",
@@ -179,7 +179,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "1080p",
     normalize: false,
     useGpu: true,
-    archivalFallback: true,
+    archivalFallback: false,
   },
   {
     id: "studio-cinematic",
@@ -193,7 +193,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: false,
     useGpu: false,
-    archivalFallback: true,
+    archivalFallback: false,
   },
   {
     id: "av1-archive",
@@ -207,7 +207,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: false,
     useGpu: true,
-    archivalFallback: true,
+    archivalFallback: false,
   },
   {
     id: "lossless-image",
@@ -221,7 +221,7 @@ export const intentPresets: IntentPreset[] = [
     resolution: "original",
     normalize: false,
     useGpu: false,
-    archivalFallback: true,
+    archivalFallback: false,
   },
 ];
 

@@ -117,7 +117,7 @@ def measure_audio_loudness(
     ])
     if sample_rate:
         cmd.extend(["-ar", str(sample_rate)])
-    cmd.extend(["-f", "null", "-"])
+    cmd.extend(["-threads", "0", "-f", "null", "-"])
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         if abort_event is not None:

@@ -112,6 +112,22 @@ def test_build_ffmpeg_args_stream_copy():
     assert video_cmd[video_cmd.index("-c:a") + 1] == "copy"
 
 
+def test_build_ffmpeg_args_stream_copy_with_cover(tmp_path):
+    cover = tmp_path / "cover.jpg"
+    cover.write_bytes(b"dummy")
+    cmd = build_ffmpeg_args(
+        input_path="input.mp3",
+        output_path="output.mp3",
+        target_format="mp3",
+        cover_path=str(cover),
+        stream_copy=True,
+    )
+    assert "-c:a" in cmd and cmd[cmd.index("-c:a") + 1] == "copy"
+    assert "-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy"
+    assert "-disposition:v" in cmd and cmd[cmd.index("-disposition:v") + 1] == "attached_pic"
+    assert "-map" in cmd
+
+
 @pytest.mark.skipif(not shutil.which(get_ffmpeg_binary()), reason="requires FFmpeg on PATH")
 def test_convert_media_stream_copy_e2e(tmp_path):
     ffmpeg = get_ffmpeg_binary()

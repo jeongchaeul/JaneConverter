@@ -35,9 +35,9 @@ const defaultSettings: ConverterSettings = {
   startTime: "",
   endTime: "",
   allowStoryExtraction: false,
-  archivalFallback: true,
-  playlistMode: "linear",
-  concurrency: 1,
+  archivalFallback: false,
+  playlistMode: "concurrent",
+  concurrency: 4,
 };
 
 const HISTORY_STORAGE_KEY = "janeconverter.conversionHistory";

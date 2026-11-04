@@ -246,14 +246,14 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
-  it("activates archival fallback by default on presets, while allowing manual disable", async () => {
+  it("leaves archival fallback disabled by default on presets, while allowing manual enable", async () => {
     const view = renderView();
     const presetButton = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Studio Master");
     expect(presetButton).toBeDefined();
 
-    // 1. Selecting preset enables archivalFallback by default
+    // 1. Selecting preset keeps archivalFallback false by default
     await act(async () => { presetButton?.click(); await Promise.resolve(); });
-    expect(view.onSettings).toHaveBeenLastCalledWith(expect.objectContaining({ format: "wav", archivalFallback: true }));
+    expect(view.onSettings).toHaveBeenLastCalledWith(expect.objectContaining({ format: "wav", archivalFallback: false }));
 
     // 2. User can expand Advanced settings and disable archival fallback
     const advanced = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.includes("Advanced settings"));

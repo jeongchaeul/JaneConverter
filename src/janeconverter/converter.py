@@ -145,13 +145,16 @@ def is_stream_copy_safe(
     """
     if normalize_audio or reconstruct_frequency_loss:
         return False
-    if target_format.lower().strip(".") in SUPPORTED_AUDIO_FORMATS and cover_path and os.path.exists(cover_path):
-        return False
-    if resolution and resolution.lower() != "original":
-        return False
 
     target_format = target_format.lower().strip(".")
     if target_format in SUPPORTED_IMAGE_FORMATS or target_format == "gif":
+        return False
+
+    if target_format in SUPPORTED_AUDIO_FORMATS and cover_path and os.path.exists(cover_path):
+        if target_format not in ("mp3", "flac", "m4a", "aac"):
+            return False
+
+    if resolution and resolution.lower() != "original":
         return False
 
     info = probed_info if probed_info is not None else probe_media_streams(input_path)
@@ -182,6 +185,8 @@ def is_stream_copy_safe(
         if target_format == "flac" and a_codec == "flac":
             return True
         if target_format == "ogg" and a_codec in ("vorbis", "opus"):
+            return True
+        if target_format == "opus" and a_codec == "opus":
             return True
         return False
 
@@ -390,12 +395,28 @@ def build_ffmpeg_args(
         if input_path.lower().endswith((".m3u8", ".mpd")) or input_path.startswith(("http://", "https://")):
             cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
         cmd.extend(["-i", input_path])
+        can_embed_art = has_valid_cover and target_format in ("mp3", "flac", "m4a", "aac")
+        if can_embed_art:
+            cmd.extend(["-i", cover_path])
+            cmd.extend(["-map", "0:a", "-map", "1:v"])
         if metadata:
             for k, v in metadata.items():
                 if v:
                     cmd.extend(["-metadata", f"{k}={v}"])
         if target_format in SUPPORTED_AUDIO_FORMATS:
-            cmd.extend(["-vn", "-c:a", "copy"])
+            if can_embed_art:
+                cmd.extend(["-c:a", "copy", "-c:v", "copy"])
+                if target_format == "mp3":
+                    cmd.extend([
+                        "-id3v2_version", "3",
+                        "-metadata:s:v", "title=Album cover",
+                        "-metadata:s:v", "comment=Cover (front)",
+                        "-disposition:v", "attached_pic"
+                    ])
+                else:
+                    cmd.extend(["-disposition:v", "attached_pic"])
+            else:
+                cmd.extend(["-vn", "-c:a", "copy"])
         elif target_format in SUPPORTED_VIDEO_FORMATS:
             cmd.extend(["-c:v", "copy", "-c:a", "copy"])
         cmd.extend(["-threads", "0"])
@@ -569,8 +590,13 @@ def build_ffmpeg_args(
 
             if target_format == "webm":
                 cmd.extend([
-                    "-c:v", "libvpx-vp9", "-crf", str(video_quality["crf"]),
-                    "-b:v", "0", "-c:a", "libopus", "-b:a", video_quality["audio_bitrate"]
+                    "-c:v", "libvpx-vp9",
+                    "-row-mt", "1",
+                    "-cpu-used", "4",
+                    "-crf", str(video_quality["crf"]),
+                    "-b:v", "0",
+                    "-c:a", "libopus",
+                    "-b:a", video_quality["audio_bitrate"]
                 ])
             else:
                 if enc_spec is not None:
@@ -1012,7 +1038,7 @@ def _convert_media_impl(
             use_nvenc=False,
             use_gpu=False,
             metadata=metadata,
-            cover_path=None,
+            cover_path=cover_path,
             input_sample_rate=input_sample_rate,
             fps=fps,
             stream_copy=True,

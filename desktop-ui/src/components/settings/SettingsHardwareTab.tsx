@@ -161,7 +161,7 @@ export function SettingsHardwareTab({
           </div>
         </div>
         <p className="text-[11px] leading-relaxed text-zinc-400">
-          <strong className="text-zinc-300">Recommendation:</strong> Use <strong className="text-emerald-300">Linear (Sequential)</strong> for music playlists and video albums to ensure every track undergoes full adaptive route recovery and avoids rate limits. Use <strong className="text-sky-300">Concurrent (Parallel)</strong> for bulk photo albums (Pinterest, Facebook).
+          <strong className="text-zinc-300">Recommendation:</strong> Use <strong className="text-sky-300">Concurrent (Parallel)</strong> for maximum conversion speed on multi-core PCs (4 workers protected by session rate-pacing). Use <strong className="text-emerald-300">Linear (Sequential)</strong> on metered or low-bandwidth connections.
         </p>
       </section>
 

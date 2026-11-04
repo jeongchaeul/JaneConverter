@@ -451,6 +451,8 @@ def process_conversion(
             browser_media_path=browser_media_path,
             allow_ephemeral_stories=allow_ephemeral_stories,
             archival_fallback=archival_fallback,
+            target_format=target_format,
+            save_cover_art=save_cover_art,
         )
 
         input_media = stream_info["media_path"]
@@ -810,6 +812,8 @@ def process_playlist_conversion(
                     auth_browser=auth_browser,
                     allow_ephemeral_stories=allow_ephemeral_stories,
                     archival_fallback=archival_fallback,
+                    target_format=target_format,
+                    save_cover_art=save_cover_art,
                 )
             except Exception:
                 if not keep_temp and track_work_dir and os.path.exists(track_work_dir):

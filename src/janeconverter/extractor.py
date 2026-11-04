@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import time
+import threading
 import unicodedata
 import urllib.parse
 from datetime import datetime
@@ -428,6 +429,25 @@ def resolve_entry_thumbnail(entry: Dict[str, Any], fallback_cover: str = "") -> 
     return fallback_cover
 
 
+_THUMBNAIL_SESSION: Optional[requests.Session] = None
+_THUMBNAIL_SESSION_LOCK = threading.Lock()
+
+
+def _get_thumbnail_session() -> requests.Session:
+    global _THUMBNAIL_SESSION
+    with _THUMBNAIL_SESSION_LOCK:
+        if _THUMBNAIL_SESSION is None:
+            s = requests.Session()
+            s.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            })
+            adapter = requests.adapters.HTTPAdapter(pool_connections=16, pool_maxsize=16)
+            s.mount("http://", adapter)
+            s.mount("https://", adapter)
+            _THUMBNAIL_SESSION = s
+        return _THUMBNAIL_SESSION
+
+
 def download_and_convert_thumbnail(thumbnail_url: str, output_path: str) -> Optional[str]:
     """Downloads cover art or thumbnail from URL (or loads local image) and converts it to standard RGB JPEG.
 
@@ -442,7 +462,7 @@ def download_and_convert_thumbnail(thumbnail_url: str, output_path: str) -> Opti
 
         if is_url(thumbnail_url):
             current_url = thumbnail_url.strip()
-            session = requests.Session()
+            session = _get_thumbnail_session()
             session.headers.update({
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             })
@@ -819,6 +839,8 @@ def fetch_media_stream(
     browser_media_path: Optional[str] = None,
     allow_ephemeral_stories: bool = False,
     archival_fallback: bool = False,
+    target_format: Optional[str] = None,
+    save_cover_art: bool = True,
 ) -> Dict[str, Any]:
     """
     Fetches the media stream from a URL (or validates local file) into output_dir.
@@ -1076,11 +1098,20 @@ def fetch_media_stream(
         elif progress_callback and d.get("status") == "finished":
             report(0.75, "Stream download complete. Preparing conversion...", force=True)
 
-    format_selector = (
-        "download/original/bestaudio[acodec=opus]/bestaudio[ext=opus]/bestaudio[ext=webm]/bestaudio[abr>140]/bestaudio/best"
-        if audio_only
-        else build_video_format_selector(resolution)
-    )
+    fmt_target = (target_format or "").lower().strip(".")
+    if audio_only:
+        if fmt_target in ("aac", "m4a"):
+            format_selector = "bestaudio[ext=m4a]/bestaudio[acodec=mp4a.40.2]/bestaudio[acodec=aac]/bestaudio[acodec=opus]/bestaudio/best"
+            audio_format_sort = ["proto:https", "acodec:aac", "abr", "asr"]
+        elif fmt_target in ("opus", "ogg"):
+            format_selector = "bestaudio[acodec=opus]/bestaudio[ext=opus]/bestaudio[ext=webm]/bestaudio/best"
+            audio_format_sort = ["proto:https", "acodec:opus", "abr", "asr"]
+        else:
+            format_selector = "download/original/bestaudio[acodec=opus]/bestaudio[ext=opus]/bestaudio[ext=webm]/bestaudio[abr>140]/bestaudio/best"
+            audio_format_sort = ["proto:https", "acodec:opus", "abr", "asr"]
+    else:
+        format_selector = build_video_format_selector(resolution)
+        audio_format_sort = None
 
     from .converter import get_ffmpeg_binary, get_js_runtimes_config
     ffmpeg_bin = get_ffmpeg_binary()
@@ -1104,7 +1135,7 @@ def fetch_media_stream(
         # response) over lossy-lowpassed AAC (which brickwalls at 16kHz on YouTube/SoundCloud).
         # For video downloads, prioritize resolution and high-bitrate video streams.
         "format_sort": (
-            ["proto:https", "acodec:opus", "abr", "asr"]
+            audio_format_sort
             if audio_only
             else ["res", "fps", "proto:https", "br"]
         ),
@@ -1418,7 +1449,7 @@ def fetch_media_stream(
             if thumb_url and (thumb_url.startswith("http://") or thumb_url.startswith("https://")):
                 print(f"[*] Media Thumbnail URL: {thumb_url}", flush=True)
             thumbnail_local_path = None
-            if thumb_url:
+            if save_cover_art and thumb_url:
                 local_thumb_file = os.path.join(output_dir, "cover.jpg")
                 thumbnail_local_path = download_and_convert_thumbnail(thumb_url, local_thumb_file)
 
