@@ -132,3 +132,11 @@ def test_patch_yt_dlp_cookie_database_reader_applies_patch():
     assert "database_path" in sig.parameters
     assert "tmpdir" in sig.parameters
     assert getattr(yt_dlp.cookies.WindowsChromeCookieDecryptor, "_jane_patched", False) is True
+
+
+def test_is_safe_candidate_handle_entry_skips_synchronous_pipes_and_non_file_types():
+    for mask in cookie_unlocker.SYNCHRONOUS_PIPE_ACCESS_MASKS:
+        assert not cookie_unlocker.is_safe_candidate_handle_entry(mask, 37)
+    assert cookie_unlocker.is_safe_candidate_handle_entry(0x00120089, 37)
+    assert cookie_unlocker.is_safe_candidate_handle_entry(0x00120089, 37, file_object_type_index=37)
+    assert not cookie_unlocker.is_safe_candidate_handle_entry(0x00120089, 12, file_object_type_index=37)

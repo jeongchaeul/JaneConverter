@@ -110,6 +110,23 @@ def clean_nt_path(path: str) -> str:
     return path
 
 
+# Windows named-pipe access masks known to deadlock GetFileType / NtQueryObject on synchronous pipes.
+SYNCHRONOUS_PIPE_ACCESS_MASKS = frozenset({0x0012019F, 0x00120189, 0x001A019F})
+
+
+def is_safe_candidate_handle_entry(
+    granted_access: int,
+    object_type_index: int,
+    file_object_type_index: Optional[int] = None,
+) -> bool:
+    """Return True if a kernel handle table entry is safe to duplicate and inspect."""
+    if granted_access in SYNCHRONOUS_PIPE_ACCESS_MASKS:
+        return False
+    if file_object_type_index is not None and object_type_index != file_object_type_index:
+        return False
+    return True
+
+
 def get_locking_pids(file_path: str) -> List[int]:
     """Query locking PIDs via Restart Manager in strictly read-only mode without shutting down anything."""
     if os.name != "nt" or not file_path or not os.path.exists(file_path):
@@ -218,11 +235,17 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
         FILE_CURRENT = 1
 
         pid_set = set(pids)
-        pid_handles: dict[int, list[int]] = {p: [] for p in pids}
+        pid_handles: dict[int, list[tuple[int, int, int]]] = {p: [] for p in pids}
         for i in range(count):
             entry = SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX.from_buffer(buf, 16 + i * entry_size)
             if entry.UniqueProcessId in pid_set:
-                pid_handles[entry.UniqueProcessId].append(entry.HandleValue)
+                if not is_safe_candidate_handle_entry(entry.GrantedAccess, entry.ObjectTypeIndex):
+                    continue
+                pid_handles[entry.UniqueProcessId].append(
+                    (entry.HandleValue, entry.GrantedAccess, entry.ObjectTypeIndex)
+                )
+
+        file_object_type_index: Optional[int] = None
 
         for pid in pids:
             handles = pid_handles.get(pid)
@@ -232,7 +255,11 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
             if not h_proc:
                 continue
             try:
-                for handle_val in handles:
+                for handle_val, granted_access, obj_type_idx in handles:
+                    if not is_safe_candidate_handle_entry(
+                        granted_access, obj_type_idx, file_object_type_index
+                    ):
+                        continue
                     target_handle = wintypes.HANDLE()
                     ok = kernel32.DuplicateHandle(
                         h_proc,
@@ -246,6 +273,8 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
                     if ok and target_handle.value:
                         try:
                             if kernel32.GetFileType(target_handle) == FILE_TYPE_DISK:
+                                if file_object_type_index is None:
+                                    file_object_type_index = obj_type_idx
                                 path_buf = ctypes.create_unicode_buffer(1024)
                                 plen = kernel32.GetFinalPathNameByHandleW(target_handle, path_buf, 1024, 0)
                                 if plen > 0:
