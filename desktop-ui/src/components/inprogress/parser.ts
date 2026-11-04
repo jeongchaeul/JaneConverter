@@ -6,6 +6,7 @@ export const PLAYLIST_ITEM_RE = /\[(\d+)\/(\d+)\]\s*(?:(?:#(\d+)|Fetching\s*#(\d
 export const CONVERTED_RE = /\[\+\]\s*(?:Adapted & )?(?:Converted|Saved photo):\s*(?:(\d+)\.\s*)?(.*)/i;
 export const READY_RE = /Ready:\s*(?:(\d+)\.\s*)?(.*)/i;
 export const ERROR_RE = /\[\!\]\s*Error converting track\s*#(\d+)\s*'(.*?)':\s*(.*)/i;
+export const REQUEUE_RE = /\[\*\]\s*Requeuing\s*(?:track\s*)?#(\d+)/i;
 export const PLAYLIST_HEADER_RE = /(?:Playlist:\s*(.*)|\[\*\]\s*Found\s*(\d+)\s*tracks\s*in\s*'(.*?)')/i;
 export const PHOTO_ALBUM_HEADER_RE = /Found\s*(\d+)\s*photos\s*in\s*['"]?(.*?)['"]?\.\s*Starting/i;
 export const PHOTO_PROGRESS_RE = /Downloading\s*(?:Facebook|Instagram|Pinterest|social)?\s*photo\s*(\d+)\s*of\s*(\d+)/i;
@@ -421,6 +422,19 @@ export function parseConversionEvents(
         if (!singleOutputPath) {
           singleOutputPath = actualFile;
         }
+      }
+      continue;
+    }
+
+    // 9.5 Match requeue: e.g. [*] Requeuing track #13 as next conversion: Can't Understand
+    const reqMatch = REQUEUE_RE.exec(rawMsg);
+    if (reqMatch) {
+      const reqIdx = parseInt(reqMatch[1], 10);
+      const item = itemsMap.get(reqIdx);
+      if (item) {
+        item.status = "queued";
+        item.errorMessage = undefined;
+        item.progress = 0;
       }
       continue;
     }

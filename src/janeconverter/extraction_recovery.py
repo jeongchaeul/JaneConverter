@@ -25,14 +25,18 @@ def classify_extraction(error):
         "error code: 152", "code: 152", "152 - 18", "watch video on youtube", "confirm your age", "the page needs to be reloaded",
     )):
         return ExtractionCategory.ACCESS
-    if any(word in message for word in ("404", "410", "removed", "deleted", "unavailable video")):
+    if any(word in message for word in ("requested format", "no video formats", "no formats", "format unavailable")):
+        return ExtractionCategory.FORMAT
+    if any(word in message for word in (
+        "404", "410", "removed", "deleted", "unavailable", "not available",
+        "is not available", "video is not available", "no longer available",
+        "not archived or indexed", "no preserved video streams", "no matching streams returned",
+    )):
         return ExtractionCategory.REMOVED
     if "429" in message or "rate limit" in message:
         return ExtractionCategory.RATE_LIMIT
     if any(word in message for word in ("timeout", "timed out", "connection", "network", "502", "503", "504", "temporarily")):
         return ExtractionCategory.NETWORK
-    if any(word in message for word in ("requested format", "no video formats", "no formats")):
-        return ExtractionCategory.FORMAT
     if any(word in message for word in (
         "unable to extract", "signature", "nsig", "extractor", "could not locate",
         "unexpected response from webpage request", "unable to solve js challenge",

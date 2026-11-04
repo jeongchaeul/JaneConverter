@@ -19,7 +19,12 @@ import requests
 logger = logging.getLogger(__name__)
 
 # Common timeout for archival HTTP queries to avoid hanging
-ARCHIVE_TIMEOUT = 12
+ARCHIVE_TIMEOUT = 5
+
+_ARCHIVAL_CACHE: Dict[str, Optional['ArchivalStreamResult']] = {}
+
+def clear_archival_cache() -> None:
+    _ARCHIVAL_CACHE.clear()
 
 # Standard browser User-Agent for archival queries
 ARCHIVE_HEADERS = {
@@ -481,6 +486,9 @@ def probe_archival_vaults(
     if not video_id:
         return None
 
+    if video_id in _ARCHIVAL_CACHE:
+        return _ARCHIVAL_CACHE[video_id]
+
     if report:
         report(0.16, f"Initiating Archival Recovery Protocol for '{video_id}'...", force=True)
 
@@ -500,6 +508,7 @@ def probe_archival_vaults(
     if res and res.found:
         if report:
             report(0.40, f"Found preserved media in Internet Archive item '{res.item_identifier}'!", force=True)
+        _ARCHIVAL_CACHE[video_id] = res
         return res
 
     # Step B: Ghostarchive
@@ -507,6 +516,7 @@ def probe_archival_vaults(
     if res and res.found:
         if report:
             report(0.40, "Found preserved media in Ghostarchive vault!", force=True)
+        _ARCHIVAL_CACHE[video_id] = res
         return res
 
     # Step C: Wayback Machine Direct Stream / Watch Capture
@@ -514,6 +524,7 @@ def probe_archival_vaults(
     if res and res.found:
         if report:
             report(0.40, f"Found capture in {res.source_name}!", force=True)
+        _ARCHIVAL_CACHE[video_id] = res
         return res
 
     if report:
@@ -524,6 +535,7 @@ def probe_archival_vaults(
             force=True,
         )
 
+    _ARCHIVAL_CACHE[video_id] = None
     return None
 
 

@@ -1144,6 +1144,7 @@ def fetch_media_stream(
     try:
         info = None
         last_error = None
+        archival_attempted = False
         catalog_meta = spotify_meta or apple_meta
         recovery_deadline = time.monotonic() + 60
         if is_url(source):
@@ -1325,7 +1326,8 @@ def fetch_media_stream(
                     except Exception:
                         if abort_event and abort_event.is_set():
                             raise
-                if archival_fallback:
+                if archival_fallback and not archival_attempted:
+                    archival_attempted = True
                     from .archival import probe_archival_vaults, download_archival_stream
                     arc_res = probe_archival_vaults(source, report=report)
                     if arc_res and arc_res.found:
@@ -1458,7 +1460,8 @@ def fetch_media_stream(
                 report=report,
                 preexisting_stream_files=preexisting_stream_files,
             )
-        if archival_fallback:
+        if archival_fallback and not archival_attempted:
+            archival_attempted = True
             from .archival import probe_archival_vaults, download_archival_stream
             arc_res = probe_archival_vaults(source, report=report)
             if arc_res and arc_res.found:
@@ -1481,7 +1484,8 @@ def fetch_media_stream(
                 )
             except Exception as direct_err:
                 raise RuntimeError(f"Stream extraction failed: {str(e)} (Direct extractor: {direct_err})") from e
-        if archival_fallback:
+        if archival_fallback and not archival_attempted:
+            archival_attempted = True
             from .archival import probe_archival_vaults, download_archival_stream
             arc_res = probe_archival_vaults(source, report=report)
             if arc_res and arc_res.found:

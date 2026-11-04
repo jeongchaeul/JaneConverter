@@ -976,6 +976,22 @@ export default function App() {
           }}
           onRetryItem={async (item) => {
             const mediaUrl = item.url || extractYouTubeUrlFromThumbnail(item.thumbnail);
+            if (Boolean(jobId)) {
+              try {
+                const requeued = await bridge.requeueTrack(item.index, mediaUrl);
+                if (requeued) {
+                  statusMessage(`Requeuing #${item.index} as next conversion: ${item.title}...`);
+                  const syntheticEvents: ConverterEvent[] = [
+                    { jobId: jobId || item.id, kind: "log", message: `[*] Requeuing track #${item.index} as next conversion: ${item.title}` },
+                  ];
+                  setEvents((prev) => [...prev, ...syntheticEvents]);
+                  setRawEvents((prev) => [...prev, ...syntheticEvents]);
+                  return;
+                }
+              } catch (err) {
+                console.warn("Could not requeue track into active engine:", err);
+              }
+            }
             if (mediaUrl) {
               statusMessage(`Retrying: ${item.title}...`);
               await start(mediaUrl);

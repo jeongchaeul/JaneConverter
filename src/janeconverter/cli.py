@@ -13,7 +13,7 @@ import hashlib
 import argparse
 import time
 import threading
-import concurrent.futures
+from collections import deque
 from typing import Optional, Dict, Any, Callable
 
 for _stream in (sys.stdin, sys.stdout, sys.stderr):
@@ -938,52 +938,122 @@ def process_playlist_conversion(
             if not keep_temp and track_work_dir and os.path.exists(track_work_dir):
                 shutil.rmtree(track_work_dir, ignore_errors=True)
 
-    if worker_count <= 1:
-        for i, entry in enumerate(selected_entries):
-            if abort_event and abort_event.is_set():
-                raise KeyboardInterrupt("Playlist conversion aborted by user.")
-            if network_aborted[0]:
-                break
-            _process_single_track(i, entry)
-    else:
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=worker_count,
-            thread_name_prefix="JanePlaylistWorker"
-        ) as executor:
-            future_to_track = {
-                executor.submit(_process_single_track, i, entry): (i, entry)
-                for i, entry in enumerate(selected_entries)
-            }
-            remaining_futures = set(future_to_track.keys())
+    pending_queue = deque((i, entry) for i, entry in enumerate(selected_entries))
+    entry_by_index = {}
+    for i, entry in enumerate(selected_entries):
+        try:
+            k = int(entry.get("index", i + 1))
+            entry_by_index[k] = (i, entry)
+        except (TypeError, ValueError):
+            pass
+
+    queue_cv = threading.Condition()
+    active_workers = [0]
+    stop_processing = [False]
+    worker_exceptions = []
+
+    def handle_requeue(req_idx: int, req_url: str = ""):
+        with queue_cv:
+            matched = entry_by_index.get(req_idx)
+            if matched is None:
+                orig_i = len(track_progress)
+                with progress_lock:
+                    track_progress.append(0.0)
+                matched = (orig_i, {"index": req_idx, "title": f"Track_{req_idx}", "url": req_url})
+                entry_by_index[req_idx] = matched
+
+            orig_i, entry = matched
+            if req_url and not entry.get("url"):
+                entry["url"] = req_url
+
+            with state_lock:
+                failed_files[:] = [f for f in failed_files if f.get("index") != req_idx]
+                deferred_queue[:] = [d for d in deferred_queue if d[5] != req_idx]
+
+            with progress_lock:
+                if orig_i < len(track_progress):
+                    track_progress[orig_i] = 0.0
+                completed_counter[0] = max(0, completed_counter[0] - 1)
+
+            # Filter out if already in pending_queue to prevent duplicates
+            filtered = [item for item in pending_queue if item[1].get("index", item[0] + 1) != req_idx]
+            pending_queue.clear()
+            pending_queue.extend(filtered)
+
+            # Insert at the FRONT of pending_queue so it runs immediately after the active track
+            pending_queue.appendleft((orig_i, entry))
+            queue_cv.notify_all()
+
+            raw_t = entry.get("title", f"Track_{req_idx}")
+            clean_t = strip_playlist_track_prefix(raw_t)
+            print(f"[*] Requeuing track #{req_idx} ('{clean_t}') to run next after the active track.", flush=True)
+
+    stdin_stop = threading.Event()
+
+    def _stdin_listener():
+        while not stdin_stop.is_set():
             try:
-                while remaining_futures:
-                    if abort_event and abort_event.is_set():
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        raise KeyboardInterrupt("Playlist conversion aborted by user.")
-                    if network_aborted[0]:
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        remaining = len(remaining_futures)
-                        print(
-                            f"[!] {MAX_CONSECUTIVE_NETWORK_FAILURES} network failures in a row - aborting batch "
-                            f"({remaining} remaining tracks skipped). The network connection appears unavailable.",
-                            flush=True
-                        )
-                        break
-                    done, not_done = concurrent.futures.wait(
-                        remaining_futures,
-                        timeout=0.1,
-                        return_when=concurrent.futures.FIRST_COMPLETED
-                    )
-                    for f in done:
+                line = sys.stdin.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if line.startswith("__JANE_REQUEUE__\t"):
+                    parts = line.split("\t")
+                    if len(parts) >= 2:
                         try:
-                            f.result()
-                        except KeyboardInterrupt:
-                            executor.shutdown(wait=False, cancel_futures=True)
-                            raise
-                    remaining_futures = not_done
+                            r_idx = int(parts[1])
+                            r_url = parts[2] if len(parts) > 2 else ""
+                            handle_requeue(r_idx, r_url)
+                        except (TypeError, ValueError):
+                            pass
+            except Exception:
+                break
+
+    listener_thread = threading.Thread(target=_stdin_listener, daemon=True, name="JaneStdinListener")
+    listener_thread.start()
+
+    def _worker_loop():
+        while True:
+            if abort_event and abort_event.is_set():
+                break
+            if network_aborted[0] or stop_processing[0]:
+                break
+            with queue_cv:
+                while not pending_queue and active_workers[0] > 0 and not (stop_processing[0] or (abort_event and abort_event.is_set()) or network_aborted[0]):
+                    queue_cv.wait(timeout=0.2)
+                if not pending_queue or stop_processing[0] or (abort_event and abort_event.is_set()) or network_aborted[0]:
+                    break
+                i, entry = pending_queue.popleft()
+                active_workers[0] += 1
+
+            try:
+                _process_single_track(i, entry)
             except KeyboardInterrupt:
-                executor.shutdown(wait=False, cancel_futures=True)
-                raise
+                with queue_cv:
+                    stop_processing[0] = True
+                    queue_cv.notify_all()
+                worker_exceptions.append(KeyboardInterrupt("Playlist conversion aborted by user."))
+                break
+            except Exception as w_exc:
+                worker_exceptions.append(w_exc)
+            finally:
+                with queue_cv:
+                    active_workers[0] -= 1
+                    queue_cv.notify_all()
+
+    try:
+        threads = [
+            threading.Thread(target=_worker_loop, name=f"JanePlaylistWorker-{w+1}")
+            for w in range(worker_count)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        if any(isinstance(e, KeyboardInterrupt) for e in worker_exceptions):
+            raise KeyboardInterrupt("Playlist conversion aborted by user.")
+    finally:
+        stdin_stop.set()
 
     # Adaptive Resilience: Deferred Recovery Pass for un-downloaded tracks
     if deferred_queue and not (abort_event and abort_event.is_set()) and not network_aborted[0]:

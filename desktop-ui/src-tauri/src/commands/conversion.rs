@@ -12,6 +12,7 @@ use crate::process::{
 use crate::social_photo_capture;
 use crate::AppState;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -150,6 +151,8 @@ pub fn start_conversion(
     let child_slot = Arc::clone(&state.active_child);
     let cancel_slot = Arc::clone(&state.active_cancel);
     let active_job_slot = Arc::clone(&state.active_job);
+    let stdin_slot = Arc::clone(&state.active_stdin);
+    let stdin_slot_for_worker = Arc::clone(&stdin_slot);
     let child_slot_for_worker = Arc::clone(&child_slot);
     let cancel_slot_for_worker = Arc::clone(&cancel_slot);
     let active_job_for_worker = Arc::clone(&active_job_slot);
@@ -242,10 +245,14 @@ pub fn start_conversion(
             child: child_slot,
             cancel: cancel_slot,
             facebook_refresh,
+            stdin: Some(stdin_slot),
         },
         move |_code, _cancelled| {
             paused_for_worker.store(false, Ordering::Relaxed);
             if let Ok(mut value) = child_slot_for_worker.lock() {
+                *value = None;
+            }
+            if let Ok(mut value) = stdin_slot_for_worker.lock() {
                 *value = None;
             }
             if let Ok(mut value) = cancel_slot_for_worker.lock() {
@@ -462,4 +469,32 @@ pub fn cancel_playlist(state: State<'_, AppState>) -> Result<(), String> {
         cancel.store(true, Ordering::Relaxed);
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn requeue_track(
+    state: State<'_, AppState>,
+    index: u32,
+    url: Option<String>,
+) -> Result<bool, String> {
+    let stdin_opt = {
+        let guard = state
+            .active_stdin
+            .lock()
+            .map_err(|_| "Could not access engine stdin.")?;
+        guard.as_ref().cloned()
+    };
+    if let Some(stdin_arc) = stdin_opt {
+        let mut stdin = stdin_arc.lock().map_err(|_| "Engine stdin is locked.")?;
+        let payload = format!("__JANE_REQUEUE__\t{}\t{}\n", index, url.unwrap_or_default());
+        stdin
+            .write_all(payload.as_bytes())
+            .map_err(|err| format!("Failed to send requeue to engine: {err}"))?;
+        stdin
+            .flush()
+            .map_err(|err| format!("Failed to flush engine stdin: {err}"))?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }

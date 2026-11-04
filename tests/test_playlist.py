@@ -367,3 +367,98 @@ def test_process_playlist_conversion_concurrent_workers(tmp_path, monkeypatch):
     assert fracs[-1] == 1.0
 
 
+
+
+def test_process_playlist_conversion_requeues_track_as_next(tmp_path, monkeypatch):
+    import time
+    import threading
+    from janeconverter import cli
+
+    executed_order = []
+    track2_attempt = 0
+
+    class PipeStdin:
+        def __init__(self):
+            self.buffer = ""
+            self.closed = False
+            self.lock = threading.Lock()
+
+        def write(self, text):
+            with self.lock:
+                self.buffer += text
+
+        def close(self):
+            with self.lock:
+                self.closed = True
+
+        def readline(self):
+            while True:
+                with self.lock:
+                    if "\n" in self.buffer:
+                        idx = self.buffer.index("\n")
+                        line = self.buffer[:idx + 1]
+                        self.buffer = self.buffer[idx + 1:]
+                        return line
+                    if self.closed:
+                        return ""
+                time.sleep(0.01)
+
+    fake_stdin = PipeStdin()
+
+    def fake_fetch(source, output_dir, **kwargs):
+        nonlocal track2_attempt
+        os.makedirs(output_dir, exist_ok=True)
+        if "track-2" in source:
+            track2_attempt += 1
+            if track2_attempt == 1:
+                raise RuntimeError("Track 2 stream timeout")
+        media_path = os.path.join(output_dir, "track.mp3")
+        with open(media_path, "wb") as f:
+            f.write(b"ID3" + b"\x00" * 32)
+        return {"media_path": media_path, "title": "Track", "artist": "Jane"}
+
+    def fake_convert(input_path, output_dir, output_filename, target_format, **kwargs):
+        executed_order.append(output_filename)
+        os.makedirs(output_dir, exist_ok=True)
+        out_path = os.path.join(output_dir, f"{output_filename}.{target_format}")
+        with open(out_path, "wb") as f:
+            f.write(b"converted")
+        # When track 3 is converting, simulate receiving a requeue command for track 2 via stdin
+        if output_filename == "3. Track Three":
+            fake_stdin.write("__JANE_REQUEUE__\t2\thttps://example.com/track-2\n")
+            time.sleep(0.05)
+        return out_path
+
+    monkeypatch.setattr(cli.sys, "stdin", fake_stdin)
+    monkeypatch.setattr(cli, "fetch_media_stream", fake_fetch)
+    monkeypatch.setattr(cli, "convert_media", fake_convert)
+
+    entries = [
+        {"index": 1, "title": "Track One", "artist": "Jane", "url": "https://example.com/track-1"},
+        {"index": 2, "title": "Track Two", "artist": "Jane", "url": "https://example.com/track-2"},
+        {"index": 3, "title": "Track Three", "artist": "Jane", "url": "https://example.com/track-3"},
+        {"index": 4, "title": "Track Four", "artist": "Jane", "url": "https://example.com/track-4"},
+    ]
+
+    try:
+        summary = process_playlist_conversion(
+            playlist_title="Requeue Test Playlist",
+            selected_entries=entries,
+            output_dir=str(tmp_path),
+            target_format="mp3",
+            concurrency=1,
+            max_retries=0,
+            check_updates=False,
+        )
+    finally:
+        fake_stdin.close()
+
+    # Executed order must be: 1. Track One, 3. Track Three, 2. Track Two (requeued next!), 4. Track Four
+    assert executed_order == [
+        "1. Track One",
+        "3. Track Three",
+        "2. Track Two",
+        "4. Track Four",
+    ]
+    assert summary["successful_count"] == 4
+    assert summary["failed_count"] == 0

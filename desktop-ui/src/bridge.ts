@@ -255,6 +255,7 @@ export interface JaneBridge {
   openFile(path: string): Promise<void>;
   openUrl(url: string): Promise<void>;
   startConversion(request: ConversionRequest): Promise<string>;
+  requeueTrack(index: number, url?: string): Promise<boolean>;
   captureFacebookAlbum(source: string, captureId: string): Promise<FacebookCaptureResult>;
   cancelFacebookAlbum(captureId: string): Promise<void>;
   captureSocialPostPhotos(source: string, captureId: string): Promise<SocialCaptureResult>;
@@ -348,6 +349,7 @@ const demoBridge: JaneBridge = {
   async openFile() {},
   async openUrl() {},
   async startConversion() { return "preview-job"; },
+  async requeueTrack() { return true; },
   async captureFacebookAlbum() { throw new Error("Facebook album capture is available in the JaneConverter desktop app."); },
   async cancelFacebookAlbum() {},
   async captureSocialPostPhotos() { return { captureId: "", title: "", photoCount: 0 }; },
@@ -478,6 +480,7 @@ const tauriBridge: JaneBridge = {
   openFile: (path) => invoke<void>("open_file", { path }),
   openUrl: (url) => invoke<void>("open_url", { url }),
   startConversion: (request) => invoke<string>("start_conversion", { request }),
+  requeueTrack: (index, url) => invoke<boolean>("requeue_track", { index, url: url ?? null }),
   captureFacebookAlbum: (source, captureId) => invoke<FacebookCaptureResult>("capture_facebook_album", { source, captureId }),
   cancelFacebookAlbum: (captureId) => invoke<void>("cancel_facebook_album", { captureId }),
   captureSocialPostPhotos: (source, captureId) => invoke<SocialCaptureResult>("capture_social_post_photos", { source, captureId }),

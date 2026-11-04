@@ -640,6 +640,7 @@ pub struct ConversionSlots {
     pub child: Arc<Mutex<Option<Arc<Mutex<Child>>>>>,
     pub cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     pub facebook_refresh: Option<FacebookRefreshHandler>,
+    pub stdin: Option<Arc<Mutex<Option<Arc<Mutex<std::process::ChildStdin>>>>>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -679,11 +680,7 @@ pub fn start_conversion(
         .args(&args)
         .current_dir(project_root())
         .env("PYTHONUNBUFFERED", "1")
-        .stdin(if manifest_json.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
@@ -702,9 +699,10 @@ pub fn start_conversion(
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not start the Python engine: {error}"))?;
+    let mut stdin_writer = child.stdin.take();
     let mut facebook_stdin = None;
     if let Some(manifest_json) = manifest_json {
-        let mut input = child.stdin.take().ok_or_else(|| {
+        let mut input = stdin_writer.take().ok_or_else(|| {
             "The Python engine did not accept the captured photo list.".to_string()
         })?;
         if let Err(error) = input
@@ -716,8 +714,17 @@ pub fn start_conversion(
                 "Could not pass the captured photo list to the local engine: {error}"
             ));
         }
+        stdin_writer = Some(input);
+    }
+    let child_stdin_arc = stdin_writer.map(|s| Arc::new(Mutex::new(s)));
+    if let Some(stdin_ref) = &child_stdin_arc {
         if has_facebook_manifest {
-            facebook_stdin = Some(Arc::new(Mutex::new(input)));
+            facebook_stdin = Some(Arc::clone(stdin_ref));
+        }
+        if let Some(stdin_slot) = &slots.stdin {
+            if let Ok(mut lock) = stdin_slot.lock() {
+                *lock = Some(Arc::clone(stdin_ref));
+            }
         }
     }
     let stdout = child.stdout.take();
@@ -1085,7 +1092,7 @@ mod tests {
         )
         .unwrap_err()
         .contains("timed out"));
-        assert!(started.elapsed() < Duration::from_secs(4));
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

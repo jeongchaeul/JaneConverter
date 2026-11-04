@@ -52,6 +52,7 @@ pub(crate) type SocialManifestStore =
 #[derive(Clone)]
 pub struct AppState {
     pub(crate) active_child: Arc<Mutex<Option<Arc<Mutex<std::process::Child>>>>>,
+    pub(crate) active_stdin: Arc<Mutex<Option<Arc<Mutex<std::process::ChildStdin>>>>>,
     pub(crate) active_cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     pub(crate) playlist_cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     pub(crate) active_paused: Arc<AtomicBool>,
@@ -70,6 +71,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             active_child: Arc::new(Mutex::new(None)),
+            active_stdin: Arc::new(Mutex::new(None)),
             active_cancel: Arc::new(Mutex::new(None)),
             playlist_cancel: Arc::new(Mutex::new(None)),
             active_paused: Arc::new(AtomicBool::new(false)),
@@ -118,6 +120,7 @@ pub fn run() {
             capture_social_post_photos,
             cancel_social_post_photos,
             start_conversion,
+            requeue_track,
             pause_conversion,
             resume_conversion,
             cancel_conversion,

@@ -225,3 +225,26 @@ def test_fetch_playlist_entries_archival_fallback_enabled(monkeypatch):
         assert entries[1]["title"] == "Recovered Deleted Song"
         assert entries[1]["artist"] == "Original Artist"
         assert entries[1]["is_archival_candidate"] is True
+
+
+def test_archival_cache_prevents_repeated_lookups():
+    from janeconverter.archival import clear_archival_cache
+    clear_archival_cache()
+    with patch("janeconverter.archival.lookup_historical_metadata") as mock_meta, \
+         patch("janeconverter.archival.query_archive_org_collections") as mock_ia, \
+         patch("janeconverter.archival.query_ghostarchive") as mock_ga, \
+         patch("janeconverter.archival.query_wayback_machine_stream") as mock_wb:
+        mock_meta.return_value = ArchivalMetadata(video_id="dead1234567")
+        mock_ia.return_value = None
+        mock_ga.return_value = None
+        mock_wb.return_value = None
+
+        res1 = probe_archival_vaults("https://www.youtube.com/watch?v=dead1234567")
+        assert res1 is None
+        assert mock_ia.call_count == 1
+
+        # Second lookup for same ID should immediately return cached None without calling APIs
+        res2 = probe_archival_vaults("https://www.youtube.com/watch?v=dead1234567")
+        assert res2 is None
+        assert mock_ia.call_count == 1
+        clear_archival_cache()

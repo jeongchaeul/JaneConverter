@@ -59,6 +59,9 @@ def test_catalog_disambiguates_same_channel_releases():
     ("Sign in to confirm your age", ExtractionCategory.ACCESS),
     ("Sign in to confirm you're not a bot", ExtractionCategory.LAYOUT),
     ("Sign in to confirm you’re not a bot", ExtractionCategory.LAYOUT),
+    ("ERROR: [youtube] lmjDIUDNyDE: This video is not available", ExtractionCategory.REMOVED),
+    ("ERROR: [web.archive:youtube] etGE8B6Ofec: The requested video is not archived or indexed", ExtractionCategory.REMOVED),
+    ("Archival search complete: no preserved video streams found across public archives for ID 4Rgqw2_GNjo.", ExtractionCategory.REMOVED),
 ])
 def test_extraction_failures_have_distinct_recovery_categories(message, category):
     assert classify_extraction(message) == category
