@@ -143,3 +143,28 @@ def test_migrate_als_file_with_backup(tmp_path):
 
     migrated_proj = parse_als_file(str(out_file))
     assert migrated_proj.detected_major == 11
+
+
+def test_parse_als_rejects_xml_entities_and_gzip_bombs(monkeypatch):
+    import janeconverter.als.parser as als_parser
+
+    xxe_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE Ableton [
+      <!ENTITY lol "lololololol">
+    ]>
+    <Ableton MajorVersion="5" MinorVersion="12.0_12049" Creator="Ableton Live 12.0.1">
+      <LiveSet></LiveSet>
+    </Ableton>
+    """
+    with pytest.raises(AlsParseError, match="Unsafe XML DOCTYPE or ENTITY"):
+        parse_als(gzip.compress(xxe_xml.encode("utf-8")))
+
+    # UTF-16 encoded DOCTYPE/ENTITY should also be rejected
+    with pytest.raises(AlsParseError, match="Unsafe XML DOCTYPE or ENTITY"):
+        parse_als(gzip.compress(xxe_xml.encode("utf-16")))
+
+    # Gzip decompression bomb exceeding MAX_ALS_FILE_SIZE should be rejected without unbounded decompression
+    monkeypatch.setattr(als_parser, "MAX_ALS_FILE_SIZE", 1024)
+    oversized_payload = gzip.compress(b"<Ableton>" + (b"A" * 4096) + b"</Ableton>")
+    with pytest.raises(AlsParseError, match="exceeds maximum ceiling"):
+        parse_als(oversized_payload)

@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 from typing import Any, Dict, Optional, Tuple
 
 from .models import TARGET_PROFILES, normalize_als_target_key
-from .parser import parse_als
+from .parser import AlsParseError, MAX_ALS_FILE_SIZE, parse_als
 
 
 def migrate_als_bytes(data: bytes, target_version: str) -> Tuple[bytes, Dict[str, Any]]:
@@ -70,6 +70,10 @@ def migrate_als_file(
     """Migrate an on-disk .als project file to target Ableton Live version."""
     if not os.path.isfile(source_path):
         raise FileNotFoundError(f"Source ALS file not found: {source_path}")
+
+    file_size = os.path.getsize(source_path)
+    if file_size > MAX_ALS_FILE_SIZE:
+        raise AlsParseError(f"ALS file size ({file_size} bytes) exceeds maximum ceiling ({MAX_ALS_FILE_SIZE} bytes).")
 
     with open(source_path, "rb") as f:
         data = f.read()

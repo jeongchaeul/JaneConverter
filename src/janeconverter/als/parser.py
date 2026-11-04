@@ -5,6 +5,7 @@ Parser for Ableton Live (.als) gzip-compressed XML projects.
 from __future__ import annotations
 
 import gzip
+import io
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -20,25 +21,46 @@ class AlsParseError(ValueError):
     pass
 
 
+def _reject_unsafe_xml(xml_bytes: bytes) -> None:
+    """Reject XML DTDs and entity declarations across UTF-8 and UTF-16 encodings."""
+    normalized = xml_bytes.replace(b"\x00", b"").lower()
+    if b"<!doctype" in normalized or b"<!entity" in normalized:
+        raise AlsParseError("Unsafe XML DOCTYPE or ENTITY declarations are not permitted in ALS files.")
+
+
 def parse_als(data: bytes, file_path: Optional[str] = None) -> AlsProject:
     """Parse raw bytes of an Ableton Live (.als) project into an AlsProject."""
     if not data:
         raise AlsParseError("ALS file is empty.")
+    if len(data) > MAX_ALS_FILE_SIZE:
+        raise AlsParseError(f"ALS data size ({len(data)} bytes) exceeds maximum ceiling ({MAX_ALS_FILE_SIZE} bytes).")
 
-    # Decompress gzip stream
+    # Decompress gzip stream with bounded ceiling to prevent decompression bombs
     try:
         if data[:2] == b"\x1f\x8b":
-            xml_bytes = gzip.decompress(data)
-        elif b"<Ableton" in data[:200]:
+            with gzip.GzipFile(fileobj=io.BytesIO(data), mode="rb") as gz_file:
+                xml_bytes = gz_file.read(MAX_ALS_FILE_SIZE + 1)
+        elif b"<Ableton" in data[:200] or b"<\x00A\x00b\x00l\x00e\x00t\x00o\x00n\x00" in data[:400]:
             # Plain uncompressed XML (rare, but supported by Ableton in some dev/test builds)
             xml_bytes = data
         else:
             raise AlsParseError("File is not a valid gzip-compressed Ableton Live project.")
+    except AlsParseError:
+        raise
     except Exception as exc:
         raise AlsParseError(f"Could not decompress ALS project: {exc}") from exc
 
+    if len(xml_bytes) > MAX_ALS_FILE_SIZE:
+        raise AlsParseError(
+            f"Decompressed ALS XML size ({len(xml_bytes)} bytes) exceeds maximum ceiling ({MAX_ALS_FILE_SIZE} bytes)."
+        )
+    _reject_unsafe_xml(xml_bytes)
+
     try:
-        xml_text = xml_bytes.decode("utf-8")
+        if xml_bytes.startswith((b"\xff\xfe", b"\xfe\xff")) or b"\x00" in xml_bytes[:100]:
+            xml_text = xml_bytes.decode("utf-16", errors="replace")
+        else:
+            xml_text = xml_bytes.decode("utf-8")
     except UnicodeDecodeError:
         xml_text = xml_bytes.decode("latin-1", errors="replace")
 
