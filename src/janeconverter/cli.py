@@ -51,7 +51,7 @@ from .version import __version__
 from .paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, initialize_app_data
 from .auth import normalize_browser_session
 from .browser_session_fallback import BrowserSessionError
-from .extraction_recovery import classify_extraction, ExtractionCategory
+from .extraction_recovery import classify_extraction, ExtractionCategory, humanize_extraction_error
 from .facebook_capture import (
     download_facebook_photo_manifest,
     is_facebook_post_url,
@@ -935,7 +935,8 @@ def process_playlist_conversion(
                 overall_frac = sum(track_progress) / total_items
                 done = completed_counter[0]
 
-            print(f"[!] Error converting track #{idx} '{raw_title}': {e}", flush=True)
+            clean_err = humanize_extraction_error(e)
+            print(f"[!] Error converting track #{idx} '{raw_title}': {clean_err}", flush=True)
             report_overall(overall_frac, f"[{done}/{total_items}] Failed #{idx}: {clean_title}")
 
         finally:

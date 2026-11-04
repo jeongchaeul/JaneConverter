@@ -19,12 +19,106 @@ import requests
 logger = logging.getLogger(__name__)
 
 # Common timeout for archival HTTP queries to avoid hanging
-ARCHIVE_TIMEOUT = 5
+import concurrent.futures
+import threading
+import time
+
+ARCHIVE_TIMEOUT = 2.5
 
 _ARCHIVAL_CACHE: Dict[str, Optional['ArchivalStreamResult']] = {}
+_DISK_CACHE_LOCK = threading.Lock()
+
+
+def _get_disk_cache_path() -> str:
+    try:
+        from .paths import APP_DATA_DIR
+        cache_dir = os.path.join(APP_DATA_DIR, "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        return os.path.join(cache_dir, "archival_vault_cache.json")
+    except Exception:
+        return ""
+
+
+def _load_from_disk_cache(video_id: str) -> Optional[tuple[bool, Optional['ArchivalStreamResult']]]:
+    """Check persistent on-disk cache. Returns (is_cached, result) or None if absent/expired."""
+    disk_path = _get_disk_cache_path()
+    if not disk_path or not os.path.exists(disk_path):
+        return None
+    with _DISK_CACHE_LOCK:
+        try:
+            with open(disk_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if video_id in data:
+                entry = data[video_id]
+                # Negative cache expires after 7 days
+                if not entry.get("found"):
+                    if time.time() - float(entry.get("ts", 0)) < 7 * 86400:
+                        return (True, None)
+                    return None
+                return (True, ArchivalStreamResult(
+                    found=True,
+                    source_name=entry.get("source_name", "Archival Vault"),
+                    stream_url=entry.get("stream_url", ""),
+                    title=entry.get("title", ""),
+                    uploader=entry.get("uploader", ""),
+                    description=entry.get("description", ""),
+                    ext=entry.get("ext", "mp4"),
+                    duration=entry.get("duration"),
+                    thumbnail_url=entry.get("thumbnail_url"),
+                    is_direct_media=entry.get("is_direct_media", True),
+                    item_identifier=entry.get("item_identifier"),
+                ))
+        except Exception as exc:
+            logger.debug(f"Failed to read archival disk cache: {exc}")
+    return None
+
+
+def _save_to_disk_cache(video_id: str, res: Optional['ArchivalStreamResult']) -> None:
+    """Save positive or negative archival probe outcome to disk cache for sub-millisecond future hits."""
+    disk_path = _get_disk_cache_path()
+    if not disk_path:
+        return
+    with _DISK_CACHE_LOCK:
+        try:
+            data = {}
+            if os.path.exists(disk_path):
+                try:
+                    with open(disk_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except Exception:
+                    data = {}
+            if res is None:
+                data[video_id] = {"found": False, "ts": time.time()}
+            else:
+                data[video_id] = {
+                    "found": True,
+                    "source_name": res.source_name,
+                    "stream_url": res.stream_url,
+                    "title": res.title,
+                    "uploader": res.uploader,
+                    "description": res.description,
+                    "ext": res.ext,
+                    "duration": res.duration,
+                    "thumbnail_url": res.thumbnail_url,
+                    "is_direct_media": res.is_direct_media,
+                    "item_identifier": res.item_identifier,
+                    "ts": time.time(),
+                }
+            with open(disk_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as exc:
+            logger.debug(f"Failed to write archival disk cache: {exc}")
+
 
 def clear_archival_cache() -> None:
     _ARCHIVAL_CACHE.clear()
+    disk_path = _get_disk_cache_path()
+    if disk_path and os.path.exists(disk_path):
+        with _DISK_CACHE_LOCK:
+            try:
+                os.remove(disk_path)
+            except Exception:
+                pass
 
 # Standard browser User-Agent for archival queries
 ARCHIVE_HEADERS = {
@@ -476,15 +570,157 @@ def query_wayback_machine_stream(
 def probe_archival_vaults(
     source: str,
     report: Optional[Callable[[float, str], None]] = None,
+    parallel: bool = True,
 ) -> Optional[ArchivalStreamResult]:
     """
     Main entry point for Archival Recovery.
     Given a URL or ID, systematically discovers historical metadata and attempts
     to locate preserved video streams across Internet Archive, Ghostarchive, and Wayback Machine.
+    Supports high-speed concurrent multi-vault probing (parallel=True) or sequential ladder (parallel=False).
     """
     video_id = extract_youtube_id(source)
     if not video_id:
         return None
+
+    if video_id in _ARCHIVAL_CACHE:
+        return _ARCHIVAL_CACHE[video_id]
+
+    disk_entry = _load_from_disk_cache(video_id)
+    if disk_entry is not None:
+        is_cached, cached_res = disk_entry
+        if is_cached:
+            _ARCHIVAL_CACHE[video_id] = cached_res
+            return cached_res
+
+    if report:
+        report(0.16, f"Initiating Archival Recovery Protocol for '{video_id}'...", force=True)
+
+    if parallel:
+        return _probe_archival_vaults_concurrent(video_id, report=report)
+    return _probe_archival_vaults_sequential(video_id, report=report)
+
+
+def _probe_archival_vaults_concurrent(
+    video_id: str,
+    report: Optional[Callable[[float, str], None]] = None,
+) -> Optional[ArchivalStreamResult]:
+    """Execute metadata discovery and stream vault probing concurrently."""
+    metadata_placeholder = ArchivalMetadata(video_id=video_id)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="jc_archival") as executor:
+        fut_meta = executor.submit(lookup_historical_metadata, video_id, None)
+        fut_ia = executor.submit(query_archive_org_collections, video_id, metadata_placeholder, None)
+        fut_ga = executor.submit(query_ghostarchive, video_id, metadata_placeholder, None)
+        fut_wb = executor.submit(query_wayback_machine_stream, video_id, metadata_placeholder, None)
+
+        timeout = ARCHIVE_TIMEOUT + 0.5
+        try:
+            metadata = fut_meta.result(timeout=timeout)
+        except Exception:
+            metadata = metadata_placeholder
+
+        try:
+            ia_res = fut_ia.result(timeout=timeout)
+        except Exception:
+            ia_res = None
+
+        try:
+            ga_res = fut_ga.result(timeout=timeout)
+        except Exception:
+            ga_res = None
+
+        try:
+            wb_res = fut_wb.result(timeout=timeout)
+        except Exception:
+            wb_res = None
+
+    chosen = None
+    if ia_res and ia_res.found:
+        chosen = ia_res
+    elif ga_res and ga_res.found:
+        chosen = ga_res
+    elif wb_res and wb_res.found:
+        chosen = wb_res
+
+    if chosen:
+        if metadata.title and (not chosen.title or chosen.title.startswith("Archived") or chosen.title.startswith("Ghostarchive")):
+            chosen.title = metadata.title
+        if metadata.uploader and (not chosen.uploader or chosen.uploader in ("Ghostarchive Vault", "Wayback Machine", "Internet Archive")):
+            chosen.uploader = metadata.uploader
+        if metadata.description and not chosen.description:
+            chosen.description = metadata.description
+        if metadata.duration and not chosen.duration:
+            chosen.duration = metadata.duration
+
+        if report:
+            report(0.40, f"Found preserved media in {chosen.source_name}!", force=True)
+        _ARCHIVAL_CACHE[video_id] = chosen
+        _save_to_disk_cache(video_id, chosen)
+        return chosen
+
+    if report:
+        meta_info = f"'{metadata.title}'" if metadata.title else f"ID {video_id}"
+        report(
+            0.45,
+            f"Archival search complete: no preserved video streams found across public archives for {meta_info}.",
+            force=True,
+        )
+    _ARCHIVAL_CACHE[video_id] = None
+    _save_to_disk_cache(video_id, None)
+    return None
+
+
+def _probe_archival_vaults_sequential(
+    video_id: str,
+    report: Optional[Callable[[float, str], None]] = None,
+) -> Optional[ArchivalStreamResult]:
+    """Sequential discovery ladder (Archive.org -> Ghostarchive -> Wayback Machine)."""
+    # Phase 1: Metadata Fingerprinting
+    metadata = lookup_historical_metadata(video_id, report=report)
+    if metadata.title and report:
+        report(
+            0.22,
+            f"Identified original metadata via {metadata.source_service}: '{metadata.title}'"
+            + (f" by {metadata.uploader}" if metadata.uploader else ""),
+            force=True,
+        )
+
+    # Phase 2: Direct Media Stream Recovery
+    res = query_archive_org_collections(video_id, metadata, report=report)
+    if res and res.found:
+        if report:
+            report(0.40, f"Found preserved media in Internet Archive item '{res.item_identifier}'!", force=True)
+        _ARCHIVAL_CACHE[video_id] = res
+        _save_to_disk_cache(video_id, res)
+        return res
+
+    res = query_ghostarchive(video_id, metadata, report=report)
+    if res and res.found:
+        if report:
+            report(0.40, "Found preserved media in Ghostarchive vault!", force=True)
+        _ARCHIVAL_CACHE[video_id] = res
+        _save_to_disk_cache(video_id, res)
+        return res
+
+    res = query_wayback_machine_stream(video_id, metadata, report=report)
+    if res and res.found:
+        if report:
+            report(0.40, f"Found capture in {res.source_name}!", force=True)
+        _ARCHIVAL_CACHE[video_id] = res
+        _save_to_disk_cache(video_id, res)
+        return res
+
+    if report:
+        meta_info = f"'{metadata.title}'" if metadata.title else f"ID {video_id}"
+        report(
+            0.45,
+            f"Archival search complete: no preserved video streams found across public archives for {meta_info}.",
+            force=True,
+        )
+
+    _ARCHIVAL_CACHE[video_id] = None
+    _save_to_disk_cache(video_id, None)
+    return None
 
     if video_id in _ARCHIVAL_CACHE:
         return _ARCHIVAL_CACHE[video_id]

@@ -1370,10 +1370,14 @@ def fetch_media_stream(
                         "Apple Music was recognized, but no matching downloadable public stream was found. "
                         "Try a direct song link with ?i=TRACK_ID, check the region, or try another public version."
                     )
+                elif last_error and any(k in str(last_error).casefold() for k in ("not available", "unavailable", "deleted")):
+                    msg = f"Video is dead or unavailable on YouTube ({str(last_error).replace('ERROR: ', '').strip()})"
+                elif last_error and any(k in str(last_error).casefold() for k in ("403", "forbidden")):
+                    msg = "YouTube CDN stream forbidden (HTTP 403 - token expired or throttled)"
                 else:
                     msg = f"No matching streams returned from search (tried {len(candidates)} query strategies)."
-                if last_error:
-                    msg += f" Last error: {last_error}"
+                    if last_error:
+                        msg += f" Last error: {last_error}"
                 raise ValueError(msg)
 
             downloaded_file = ydl.prepare_filename(info)

@@ -148,13 +148,56 @@ def test_probe_archival_vaults_ladder():
             ext="mp4",
         )
 
-        res = probe_archival_vaults("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        res = probe_archival_vaults("https://www.youtube.com/watch?v=dQw4w9WgXcQ", parallel=False)
         assert res is not None
         assert res.found is True
         assert res.source_name == "Ghostarchive"
         mock_ia.assert_called_once()
         mock_ga.assert_called_once()
         mock_wb.assert_not_called()
+
+
+def test_probe_archival_vaults_parallel():
+    """Verify concurrent vault probing prioritizes higher ladder vaults (IA > GA > WB)."""
+    from janeconverter.archival import clear_archival_cache
+    clear_archival_cache()
+    with patch("janeconverter.archival.lookup_historical_metadata") as mock_meta, \
+         patch("janeconverter.archival.query_archive_org_collections") as mock_ia, \
+         patch("janeconverter.archival.query_ghostarchive") as mock_ga, \
+         patch("janeconverter.archival.query_wayback_machine_stream") as mock_wb:
+
+        mock_meta.return_value = ArchivalMetadata(video_id="par_vid_123", title="Never Gonna Give You Up")
+        mock_ia.return_value = None
+        mock_ga.return_value = ArchivalStreamResult(
+            found=True,
+            source_name="Ghostarchive",
+            stream_url="https://ghostarchive.org/varchive/par_vid_123.mp4",
+            title="Ghostarchive Title",
+            uploader="Ghostarchive Uploader",
+            description="",
+            ext="mp4",
+        )
+        mock_wb.return_value = ArchivalStreamResult(
+            found=True,
+            source_name="Wayback Machine Playback",
+            stream_url="https://web.archive.org/web/videoplayback",
+            title="Wayback Title",
+            uploader="Wayback Uploader",
+            description="",
+            ext="mp4",
+        )
+
+        res = probe_archival_vaults("https://www.youtube.com/watch?v=par_vid_123", parallel=True)
+        assert res is not None
+        assert res.found is True
+        # Ghostarchive should be chosen over Wayback Machine due to ladder priority
+        assert res.source_name == "Ghostarchive"
+        # Metadata title should be applied
+        assert res.title == "Never Gonna Give You Up"
+        mock_ia.assert_called_once()
+        mock_ga.assert_called_once()
+        mock_wb.assert_called_once()
+        clear_archival_cache()
 
 
 def test_fetch_playlist_entries_archival_fallback_disabled(monkeypatch):
@@ -247,4 +290,44 @@ def test_archival_cache_prevents_repeated_lookups():
         res2 = probe_archival_vaults("https://www.youtube.com/watch?v=dead1234567")
         assert res2 is None
         assert mock_ia.call_count == 1
+        clear_archival_cache()
+
+
+def test_archival_disk_cache_persistence(tmp_path, monkeypatch):
+    from janeconverter.archival import clear_archival_cache, _ARCHIVAL_CACHE
+    import janeconverter.archival as archival_mod
+    monkeypatch.setattr(archival_mod, "_get_disk_cache_path", lambda: str(tmp_path / "test_cache.json"))
+    clear_archival_cache()
+
+    with patch("janeconverter.archival.lookup_historical_metadata") as mock_meta, \
+         patch("janeconverter.archival.query_archive_org_collections") as mock_ia, \
+         patch("janeconverter.archival.query_ghostarchive") as mock_ga, \
+         patch("janeconverter.archival.query_wayback_machine_stream") as mock_wb:
+        mock_meta.return_value = ArchivalMetadata(video_id="disk_vid_999", title="Persisted Song")
+        mock_ia.return_value = ArchivalStreamResult(
+            found=True,
+            source_name="Internet Archive",
+            stream_url="https://archive.org/download/test.mp4",
+            title="Persisted Song",
+            uploader="Creator",
+            description="",
+            ext="mp4",
+        )
+        mock_ga.return_value = None
+        mock_wb.return_value = None
+
+        res1 = probe_archival_vaults("https://www.youtube.com/watch?v=disk_vid_999", parallel=True)
+        assert res1 is not None
+        assert res1.found is True
+
+        # Clear in-memory cache to simulate brand new process launch
+        _ARCHIVAL_CACHE.clear()
+
+        # Probe again: should load straight from disk cache without invoking mock_ia
+        mock_ia.reset_mock()
+        res2 = probe_archival_vaults("https://www.youtube.com/watch?v=disk_vid_999", parallel=True)
+        assert res2 is not None
+        assert res2.found is True
+        assert res2.stream_url == "https://archive.org/download/test.mp4"
+        mock_ia.assert_not_called()
         clear_archival_cache()

@@ -46,6 +46,29 @@ def classify_extraction(error):
     return ExtractionCategory.UNKNOWN
 
 
+def humanize_extraction_error(error: object) -> str:
+    """Format cryptic or nested extraction errors into clear, creator-facing summaries."""
+    msg = str(error).strip()
+    lmsg = msg.casefold()
+
+    if any(k in lmsg for k in ("not available in your country", "geo restricted", "geoblocked")):
+        return "Video is region blocked / not available in your location"
+    if any(k in lmsg for k in ("confirm you're not a bot", "confirm you’re not a bot", "not a bot", "bot detection")):
+        return "YouTube bot challenge / verification required"
+    if any(k in lmsg for k in ("private video", "video is private")):
+        return "Video is set to private on YouTube"
+    if any(k in lmsg for k in ("http error 403", "403: forbidden", "403 forbidden")):
+        return "Stream forbidden by YouTube CDN (HTTP 403 - token expired or throttled)"
+    if any(k in lmsg for k in ("not available", "is not available", "video unavailable", "video deleted", "deleted video", "no matching streams returned", "not archived or indexed")):
+        return "Video is dead or unavailable on YouTube"
+    if any(k in lmsg for k in ("timed out", "timeout", "connection reset", "network is unreachable")):
+        return "Network connection timed out"
+
+    if msg.startswith("ERROR: "):
+        msg = msg[7:].strip()
+    return msg
+
+
 def extract_with_recovery(ydl, query, download, abort_event=None, report=None, deadline=None):
     from .session_pacer import pace_request
 
