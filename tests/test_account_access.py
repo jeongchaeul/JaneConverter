@@ -226,3 +226,28 @@ def test_bridge_challenge_keeps_cors_for_unconfirmed_extension():
     assert unconfirmed.value.code == 409
     assert unconfirmed.value.headers["Access-Control-Allow-Origin"] == EXTENSION_ORIGIN
     server.stop()
+
+
+def test_account_access_rejects_untrusted_host_and_prefetch_and_unsafe_source_scheme():
+    with pytest.raises(ValueError, match="valid HTTP or HTTPS"):
+        AccountAccessServer("javascript:alert(1)")
+
+    ready = Event()
+    server = AccountAccessServer(
+        "https://example.com/private-media",
+        on_ready=lambda _detection: ready.set(),
+    )
+    link = server.start()
+
+    with pytest.raises(HTTPError) as rebind:
+        _request(link, headers={"Host": "evil.rebind.example:8080"})
+    assert rebind.value.code == 403
+
+    prefetch = _request(f"{link}/ready", headers={"Sec-Purpose": "prefetch"})
+    assert prefetch.status == 204
+    assert not ready.is_set()
+
+    post_ready = _request(f"{link}/ready", data=b"", method="POST")
+    assert post_ready.status == 200
+    assert ready.wait(2)
+    server.stop()

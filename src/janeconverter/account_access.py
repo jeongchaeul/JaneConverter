@@ -107,6 +107,9 @@ class AccountAccessServer:
 
             class AccessRequestHandler(BaseHTTPRequestHandler):
                 def do_GET(self):  # noqa: N802 - required by BaseHTTPRequestHandler
+                    if not owner._valid_loopback_host(self):
+                        owner._send_json(self, {"error": "Untrusted Host header."}, status=403)
+                        return
                     owner._record_browser(self.headers)
                     parsed = urlparse(self.path)
                     base_path = f"/access/{owner._token}"
@@ -114,6 +117,9 @@ class AccountAccessServer:
                         owner._send_response(self, owner._landing_page(owner.detected_browser))
                         return
                     if parsed.path == f"{base_path}/ready":
+                        if owner._is_prefetch_request(self):
+                            owner._send_json(self, {}, status=204)
+                            return
                         owner._confirm(self)
                         return
                     if parsed.path == f"{base_path}/bridge/challenge":
@@ -122,6 +128,9 @@ class AccountAccessServer:
                     owner._send_response(self, owner._error_page("This access link is not valid."), 404)
 
                 def do_OPTIONS(self):  # noqa: N802 - required by BaseHTTPRequestHandler
+                    if not owner._valid_loopback_host(self):
+                        owner._send_json(self, {"error": "Untrusted Host header."}, status=403)
+                        return
                     parsed = urlparse(self.path)
                     base_path = f"/access/{owner._token}"
                     if parsed.path.startswith(f"{base_path}/bridge"):
@@ -134,8 +143,15 @@ class AccountAccessServer:
                         owner._send_response(self, "", 404)
 
                 def do_POST(self):  # noqa: N802 - required by BaseHTTPRequestHandler
+                    if not owner._valid_loopback_host(self):
+                        owner._send_json(self, {"error": "Untrusted Host header."}, status=403)
+                        return
                     parsed = urlparse(self.path)
                     base_path = f"/access/{owner._token}"
+                    if parsed.path == f"{base_path}/ready":
+                        owner._record_browser(self.headers)
+                        owner._confirm(self)
+                        return
                     origin = owner._bridge_origin(self)
                     if not parsed.path.startswith(f"{base_path}/bridge/capture/"):
                         owner._send_json(self, {"error": "This access link is not valid."}, status=404)
@@ -315,6 +331,25 @@ class AccountAccessServer:
         return True
 
     @staticmethod
+    def _valid_loopback_host(handler) -> bool:
+        raw_host = (handler.headers.get("Host") or "").strip().lower()
+        if not raw_host:
+            return True
+        if raw_host.startswith("["):
+            host_only = raw_host.split("]")[0] + "]"
+        else:
+            host_only = raw_host.split(":")[0].strip()
+        return host_only in ("127.0.0.1", "localhost", "[::1]")
+
+    @staticmethod
+    def _is_prefetch_request(handler) -> bool:
+        for hdr in ("Purpose", "Sec-Purpose", "X-Moz"):
+            val = (handler.headers.get(hdr) or "").strip().lower()
+            if "prefetch" in val or "preview" in val:
+                return True
+        return False
+
+    @staticmethod
     def _bridge_origin(handler) -> Optional[str]:
         origin = handler.headers.get("Origin", "").strip()
         if not origin:
@@ -341,7 +376,8 @@ class AccountAccessServer:
         if detected_browser:
             browser_note = f'<p class="note">Browser detected: <strong>{escape(detected_browser.label)}</strong>.</p>'
         with self._lock:
-            source_url = self.source_url
+            raw_source = self.source_url.strip()
+            source_url = raw_source if raw_source.startswith(("http://", "https://")) else ""
         source_steps = (
             f"""
             <ol>

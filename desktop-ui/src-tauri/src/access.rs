@@ -774,6 +774,34 @@ fn handle_connection(mut stream: TcpStream, token: &str, state: &ServeState) {
         }
     };
     let base = format!("/access/{token}");
+    if let Some(host_hdr) = header_value(&request.headers, "host") {
+        let host_only = if host_hdr.starts_with('[') {
+            host_hdr
+                .split(']')
+                .next()
+                .map(|part| format!("{part}]"))
+                .unwrap_or_default()
+        } else {
+            host_hdr
+                .split(':')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase()
+        };
+        if !host_only.is_empty()
+            && !matches!(host_only.as_str(), "127.0.0.1" | "localhost" | "[::1]")
+        {
+            send_json(
+                &mut stream,
+                403,
+                "Forbidden",
+                &json!({"error": "The loopback bridge rejected an untrusted Host header."})
+                    .to_string(),
+            );
+            return;
+        }
+    }
     if request.method == "OPTIONS" && request.path.starts_with(&base) {
         match bridge_origin(&request.headers) {
             Ok(Some(origin)) => send_json_cors(&mut stream, 200, "OK", &origin, "{}"),
@@ -787,7 +815,20 @@ fn handle_connection(mut stream: TcpStream, token: &str, state: &ServeState) {
         }
         return;
     }
-    if request.method == "GET" && request.path == format!("{base}/ready") {
+    if (request.method == "GET" || request.method == "POST")
+        && request.path == format!("{base}/ready")
+    {
+        let is_prefetch = header_value(&request.headers, "purpose")
+            .or_else(|| header_value(&request.headers, "sec-purpose"))
+            .or_else(|| header_value(&request.headers, "x-moz"))
+            .is_some_and(|val| {
+                let lower = val.to_ascii_lowercase();
+                lower.contains("prefetch") || lower.contains("preview")
+            });
+        if is_prefetch {
+            send_json(&mut stream, 204, "No Content", "{}");
+            return;
+        }
         let signal = browser_signal_from_headers(&request.headers);
         let label = resolve_browser_label(&signal, default_browser.as_deref());
         if let Ok(mut value) = browser.lock() {
@@ -1336,7 +1377,11 @@ fn handle_connection(mut stream: TcpStream, token: &str, state: &ServeState) {
         if let Ok(mut value) = browser.lock() {
             *value = Some(detection.clone());
         }
-        let source_url = source.lock().ok().and_then(|value| value.clone());
+        let source_url = source
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
+            .filter(|url| url.starts_with("http://") || url.starts_with("https://"));
         let content = if let Some(source_url) = source_url {
             format!(
                 r#"<div class="eyebrow">Temporary browser access</div><h1>JaneConverter account access</h1><p class="lead">Use this temporary page in the browser where the media session is already signed in. Browser Capture lets you send only the media you choose back to JaneConverter.</p><div class="card"><h2>How Browser Capture works</h2><ol class="steps"><li>Open the source page below and sign in normally if the site asks.</li><li>Return here and select <strong>Confirm Access</strong>.</li><li>On the media page, open the JaneConverter Browser Capture extension and choose <strong>Capture current media</strong> for one item or <strong>Capture story sequence</strong> for a sequence.</li><li>Return to JaneConverter. The selected media appears in <strong>Media Capturer</strong>, ready to convert.</li></ol></div><p class="privacy">Only media you explicitly capture is sent to JaneConverter. The extension does not read or store passwords, cookies, cache, or browser profile data. This temporary access ends when JaneConverter closes or access is cleared.</p><p class="actions"><a class="primary" href="{}" target="_blank" rel="noreferrer">Open source page</a><a class="confirm" href="/access/{token}/ready">Confirm Access</a></p><p class="note">Browser Capture is optional and is intended for private or browser-only media. Public URLs and local files can continue through the normal conversion flow.</p>"#,

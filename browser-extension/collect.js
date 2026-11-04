@@ -180,8 +180,12 @@
     }
     const source = currentUrl(element);
     if (!source || !/^https?:/i.test(source)) throw new Error("The browser protected the rendered story image.");
-    const response = await globalThis.JaneMediaUtils.fetchBounded(source, { credentials: "include", cache: "no-store" }, 8000, MAX_BYTES);
+    const response = await globalThis.JaneMediaUtils.fetchBounded(source, { credentials: "same-origin", cache: "no-store", redirect: "error" }, 8000, MAX_BYTES);
     if (!response.ok) throw new Error("The story image could not be read.");
+    const responseType = String(response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+    if (responseType && !responseType.startsWith("image/") && responseType !== "application/octet-stream") {
+      throw new Error("The story image response was not a valid image.");
+    }
     blob = await response.blob();
     return { payload: await encodeBlob(blob, "browser-collect-" + Date.now() + ".png", "page-fetch"), visualHash: await visualHashForBlob(blob) };
   }

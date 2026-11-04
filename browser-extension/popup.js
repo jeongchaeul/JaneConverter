@@ -857,10 +857,15 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index, d
       await requestOriginPermission(item.mediaUrl);
       const mediaUrl = new URL(item.mediaUrl);
       setStatus("Reading " + (mode === "sequence" ? "story item " + (index + 1) : "the selected media") + " from " + mediaUrl.host + "...", "warning");
-      mediaResponse = await fetchWithTimeout(item.mediaUrl, { credentials: "include", cache: "no-store" }, remaining());
+      mediaResponse = await fetchWithTimeout(item.mediaUrl, { credentials: "include", cache: "no-store", redirect: "error" }, remaining());
       if (!mediaResponse.ok || !mediaResponse.body) throw new Error("HTTP " + mediaResponse.status);
       contentLength = Number(mediaResponse.headers.get("content-length") || 0);
       responseMime = String(mediaResponse.headers.get("content-type") || "").split(";")[0].toLowerCase();
+      if (globalThis.JaneMediaUtils && typeof globalThis.JaneMediaUtils.isExpectedMediaResponse === "function") {
+        if (!globalThis.JaneMediaUtils.isExpectedMediaResponse(item.mediaKind, responseMime)) {
+          throw new Error("Unexpected response MIME type: " + responseMime);
+        }
+      }
       method = "direct-fetch";
       return true;
     } catch (error) {
@@ -881,8 +886,12 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index, d
           const controller = new AbortController();
           const timer = setTimeout(function () { controller.abort(); }, timeoutMs);
           try {
-            const response = await fetch(url, { credentials: "include", cache: "no-store", signal: controller.signal });
+            const response = await fetch(url, { credentials: "same-origin", cache: "no-store", redirect: "error", signal: controller.signal });
             if (!response.ok || !response.body) throw new Error("HTTP " + response.status);
+            const rawMime = String(response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+            if (/^(?:text\/html|application\/xhtml\+xml|application\/json)\b/i.test(rawMime)) {
+              throw new Error("Unexpected non-media response.");
+            }
             const reader = response.body.getReader();
             const chunks = [];
             let size = 0;
