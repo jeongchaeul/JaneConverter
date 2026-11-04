@@ -15,7 +15,7 @@ import time
 from typing import Any, Dict, Optional
 
 from .binaries import get_ffmpeg_binary
-from .constants import LOUDNORM_FILTER, sanitize_time_offset
+from .constants import LOUDNORM_FILTER, SAFE_FFMPEG_PROTOCOLS, sanitize_time_offset
 
 def build_loudnorm_filter(measured: Optional[Dict[str, str]] = None) -> str:
     """
@@ -110,6 +110,7 @@ def measure_audio_loudness(
         cmd.extend(["-ss", safe_start])
     if safe_end:
         cmd.extend(["-to", safe_end])
+    cmd.extend(["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS])
     cmd.extend([
         "-i", input_path,
         "-vn", "-sn",

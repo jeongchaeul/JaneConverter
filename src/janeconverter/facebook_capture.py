@@ -17,7 +17,7 @@ from typing import Any, Callable, Optional
 import requests
 from PIL import Image
 
-from .auth import detect_running_browsers, get_ordered_browser_candidates
+from .auth import detect_running_browsers, filter_cookie_jar_for_domains, get_ordered_browser_candidates
 from .cookie_unlocker import patch_yt_dlp_cookie_database_reader
 from .extractor import clean_windows_path, sanitize_filename
 from .image_format import convert_image_format
@@ -1090,8 +1090,8 @@ def fetch_facebook_manifest(
         for attempt in range(3):
             try:
                 ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
-                cand_jar = ydl.cookiejar
-                if cand_jar:
+                cand_jar = filter_cookie_jar_for_domains(ydl.cookiejar, ("facebook.com", "fbcdn.net"))
+                if cand_jar and len(list(cand_jar)) > 0:
                     break
             except Exception:
                 if attempt < 2 and b in running:

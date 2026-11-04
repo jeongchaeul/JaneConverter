@@ -380,3 +380,19 @@ def test_cleanup_stale_staging_directories(tmp_path):
     assert unrelated.exists()
 
 
+
+
+def test_build_ffmpeg_args_protocol_sandboxing():
+    from janeconverter.constants import SAFE_FFMPEG_PROTOCOLS
+    
+    # 1. Transcode mode
+    cmd_transcode = build_ffmpeg_args("input.mp4", "output.mp3", "mp3")
+    assert "-protocol_whitelist" in cmd_transcode
+    assert cmd_transcode[cmd_transcode.index("-protocol_whitelist") + 1] == SAFE_FFMPEG_PROTOCOLS
+    assert cmd_transcode.index("-protocol_whitelist") < cmd_transcode.index("-i")
+
+    # 2. Stream copy mode
+    cmd_copy = build_ffmpeg_args("input.mp3", "output.mp3", "mp3", stream_copy=True)
+    assert "-protocol_whitelist" in cmd_copy
+    assert cmd_copy[cmd_copy.index("-protocol_whitelist") + 1] == SAFE_FFMPEG_PROTOCOLS
+    assert cmd_copy.index("-protocol_whitelist") < cmd_copy.index("-i")

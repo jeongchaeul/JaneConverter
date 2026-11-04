@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 
 from .binaries import get_ffprobe_binary
 from .constants import (
+    SAFE_FFMPEG_PROTOCOLS,
     SUPPORTED_AUDIO_FORMATS,
     SUPPORTED_IMAGE_FORMATS,
     SUPPORTED_VIDEO_FORMATS,
@@ -53,8 +54,8 @@ def probe_media_duration(input_path: str) -> Optional[float]:
         probe_cmd = [get_ffprobe_binary(), "-v", "error"]
         if input_path.startswith(("http://", "https://")):
             probe_cmd.extend(["-protocol_whitelist", "http,https,tcp,tls,crypto"])
-        elif input_path.lower().endswith((".m3u8", ".mpd")):
-            probe_cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+        else:
+            probe_cmd.extend(["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS])
         probe_cmd.extend(["-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", input_path])
         res = subprocess.run(
             probe_cmd,
@@ -91,8 +92,7 @@ def probe_media_streams(input_path: str) -> Optional[Dict[str, Any]]:
             get_ffprobe_binary(),
             "-v", "error",
         ]
-        if input_path.lower().endswith((".m3u8", ".mpd")) or input_path.startswith(("http://", "https://")):
-            info_cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+        info_cmd.extend(["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS])
         info_cmd.extend([
             "-show_format",
             "-show_streams",

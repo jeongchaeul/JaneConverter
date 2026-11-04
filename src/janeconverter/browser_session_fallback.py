@@ -3,6 +3,7 @@ import threading
 from urllib.parse import urlparse
 
 from .auth import (
+    filter_cookie_jar_for_domains,
     detect_browser_profiles,
     detect_default_browser_session,
     detect_installed_browser_sessions,
@@ -168,22 +169,19 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                         pass
 
                 jar = None
+                raw_jar = None
                 authenticated = None
                 try:
                     import yt_dlp
                     with _COOKIE_EXTRACT_LOCK:
                         authenticated = yt_dlp.YoutubeDL(opts)
-                        jar = getattr(authenticated, "_cookiejar", None) or authenticated.cookiejar
-                        matching_count = 0
-                        if jar is not None:
-                            for cookie in list(jar):
-                                raw_domain = getattr(cookie, "domain", None) or ""
-                                host = raw_domain.lstrip(".").lower()
-                                if not host or not any(host == root or host.endswith("." + root) for root in domains):
-                                    jar.clear(getattr(cookie, "domain", None), getattr(cookie, "path", None), getattr(cookie, "name", None))
-                                else:
-                                    cookie.secure = True
-                                    matching_count += 1
+                        raw_jar = getattr(authenticated, "_cookiejar", None) or authenticated.cookiejar
+                        jar = filter_cookie_jar_for_domains(raw_jar, domains)
+                        if hasattr(authenticated, "_cookiejar"):
+                            authenticated._cookiejar = jar
+                        if hasattr(authenticated, "cookiejar"):
+                            authenticated.cookiejar = jar
+                        matching_count = len(list(jar))
 
                     if not jar or matching_count == 0:
                         # No usable session for this profile, try next
@@ -235,6 +233,11 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                         raise BrowserSessionError(detail) from None
                     continue
                 finally:
+                    if raw_jar is not None:
+                        try:
+                            raw_jar.clear()
+                        except (AttributeError, RuntimeError):
+                            pass
                     if jar is not None:
                         try:
                             jar.clear()

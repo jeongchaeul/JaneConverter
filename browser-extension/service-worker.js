@@ -26,9 +26,38 @@ async function readJson(response) {
   }
 }
 
+const ACCESS_URL_KEY = "janeLastAccessUrl";
+
+async function saveConfirmedAccessUrl(url) {
+  if (!url || typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+  try {
+    const clean = url.replace(/\/ready\/?$/, "");
+    await chrome.storage.local.set({ [ACCESS_URL_KEY]: clean });
+  } catch (_) {}
+}
+
+async function getStoredAccessTab() {
+  if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return null;
+  try {
+    const stored = await chrome.storage.local.get({ [ACCESS_URL_KEY]: null });
+    const url = stored[ACCESS_URL_KEY];
+    if (url && typeof url === "string" && (url.startsWith("http://127.0.0.1:") || url.startsWith("http://localhost:"))) {
+      return { url: url, active: false, id: -1 };
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function clearStoredAccessUrl() {
+  if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+  try {
+    await chrome.storage.local.remove(ACCESS_URL_KEY);
+  } catch (_) {}
+}
+
 async function findConfirmedAccess() {
   const tabs = await chrome.tabs.query({});
-  const candidates = tabs.filter(function (tab) {
+  let candidates = tabs.filter(function (tab) {
     if (!tab.url) return false;
     try {
       const url = new URL(tab.url);
@@ -38,6 +67,16 @@ async function findConfirmedAccess() {
       return false;
     }
   });
+
+  if (candidates.length > 0) {
+    void saveConfirmedAccessUrl(candidates[0].url);
+  } else {
+    const stored = await getStoredAccessTab();
+    if (stored) {
+      candidates = [stored];
+    }
+  }
+
   let lastError;
   for (const tab of candidates) {
     try {
@@ -45,14 +84,31 @@ async function findConfirmedAccess() {
       const value = await readJson(response);
       if (response.ok && value.bridgeToken) {
         globalThis.JaneMediaUtils.requireCompatibleBridge(value);
+        void saveConfirmedAccessUrl(tab.url);
         return { tab: tab, challenge: value };
       }
       lastError = new Error(value.error || "JaneConverter has not confirmed browser access.");
     } catch (error) {
+      if (tab.id === -1) {
+        void clearStoredAccessUrl();
+      }
       lastError = error;
     }
   }
   throw lastError || new Error("Open and confirm the JaneConverter access link first.");
+}
+
+if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.onUpdated) {
+  chrome.tabs.onUpdated.addListener(function (_tabId, _changeInfo, tab) {
+    if (tab && tab.url) {
+      try {
+        const url = new URL(tab.url);
+        if ((url.hostname === "127.0.0.1" || url.hostname === "localhost") && /^\/access\/[^/]+(?:\/ready)?\/?$/.test(url.pathname)) {
+          void saveConfirmedAccessUrl(tab.url);
+        }
+      } catch (_) {}
+    }
+  });
 }
 
 function decodeBase64(value) {

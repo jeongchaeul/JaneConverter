@@ -584,14 +584,14 @@ def fetch_pinterest_collection_manifest(
 
     if not jar:
         report(0.04, "Searching desktop browsers for an active Pinterest session...")
-        from .auth import get_ordered_browser_candidates, detect_running_browsers
+        from .auth import get_ordered_browser_candidates, detect_running_browsers, filter_cookie_jar_for_domains
         running = detect_running_browsers()
         candidates = get_ordered_browser_candidates(preferred=browser, running=running)
 
         for b in candidates:
             try:
                 ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
-                candidate_jar = ydl.cookiejar
+                candidate_jar = filter_cookie_jar_for_domains(ydl.cookiejar, ("pinterest.com", "pinimg.com"))
                 p_cookies = [c for c in candidate_jar if "pinterest" in getattr(c, "domain", "")]
                 if p_cookies and any(getattr(c, "name", None) in ("_pinterest_sess", "_auth") for c in p_cookies):
                     jar = candidate_jar
@@ -1005,14 +1005,14 @@ def fetch_instagram_manifest(
 
         if not jar:
             report(0.05, "Searching desktop browsers for an active Instagram session...")
-            from .auth import get_ordered_browser_candidates, detect_running_browsers
+            from .auth import get_ordered_browser_candidates, detect_running_browsers, filter_cookie_jar_for_domains
             running = detect_running_browsers()
             candidates = get_ordered_browser_candidates(preferred=browser, running=running)
 
             for b in candidates:
                 try:
                     ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
-                    candidate_jar = ydl.cookiejar
+                    candidate_jar = filter_cookie_jar_for_domains(ydl.cookiejar, ("instagram.com", "cdninstagram.com"))
                     ig_cookies = [c for c in candidate_jar if "instagram" in getattr(c, "domain", "")]
                     if ig_cookies and any(getattr(c, "name", None) in ("sessionid", "ds_user_id") for c in ig_cookies):
                         jar = candidate_jar

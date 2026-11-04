@@ -11,6 +11,9 @@ from typing import Optional
 # Industry standard EBU R128 loudness normalization targets
 LOUDNORM_FILTER = "loudnorm=I=-14:TP=-1.5:LRA=11"
 
+# Universal safe protocol whitelist for FFmpeg/FFprobe to prevent protocol injection and SSRF
+SAFE_FFMPEG_PROTOCOLS = "file,http,https,tcp,tls,crypto,pipe"
+
 SUPPORTED_AUDIO_FORMATS = {
     "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus", "aiff", "aif",
     "alac", "ac3", "mp2", "wma", "caf", "au",

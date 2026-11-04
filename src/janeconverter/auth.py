@@ -9,7 +9,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Mapping, Optional, Tuple
+from typing import Any, Iterable, Mapping, Optional, Tuple
 
 
 PUBLIC_SESSION_LABEL = "Public only"
@@ -185,6 +185,37 @@ def detect_browser_profiles(selection: Optional[str]) -> list[str]:
                     pass
     return profiles
 
+
+
+
+def filter_cookie_jar_for_domains(jar: Any, allowed_domains: Iterable[str]) -> Any:
+    """Create a new, isolated CookieJar containing strictly cookies matching allowed_domains.
+
+    All extraneous cookies (e.g. Google, Twitter, banking, email, etc.) are purged
+    immediately from memory and from the input jar to prevent cross-origin credential retention.
+    """
+    import http.cookiejar
+    isolated = http.cookiejar.CookieJar()
+    if not jar:
+        return isolated
+
+    normalized_allowed = [d.lstrip(".").lower() for d in allowed_domains if d]
+    for cookie in list(jar):
+        raw_domain = getattr(cookie, "domain", None) or ""
+        host = raw_domain.lstrip(".").lower()
+        if host and any(host == d or host.endswith("." + d) for d in normalized_allowed):
+            try:
+                cookie.secure = True
+            except Exception:
+                pass
+            isolated.set_cookie(cookie)
+        else:
+            if hasattr(jar, "clear"):
+                try:
+                    jar.clear(getattr(cookie, "domain", None), getattr(cookie, "path", None), getattr(cookie, "name", None))
+                except Exception:
+                    pass
+    return isolated
 
 def yt_dlp_cookie_option(selection: Optional[str], profile: Optional[str] = None) -> Optional[Tuple[str, Optional[str], None, None]]:
     """Build yt-dlp's in-memory browser-cookie option without creating a file."""

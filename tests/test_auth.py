@@ -234,3 +234,43 @@ def test_describe_authenticated_extraction_failure_unavailable_video():
     )
     assert "unavailable or has been removed" in msg
     assert "Vivaldi" not in msg
+
+
+def test_filter_cookie_jar_for_domains_isolates_matching_domains_and_purges_unrelated():
+    from http.cookiejar import Cookie, CookieJar
+    from janeconverter.auth import filter_cookie_jar_for_domains
+
+    jar = CookieJar()
+    jar.set_cookie(Cookie(
+        version=0, name="auth_token", value="secret123", port=None, port_specified=False,
+        domain=".twitter.com", domain_specified=True, domain_initial_dot=True,
+        path="/", path_specified=True, secure=True, expires=None, discard=False,
+        comment=None, comment_url=None, rest={}, rfc2109=False
+    ))
+    jar.set_cookie(Cookie(
+        version=0, name="session", value="bank_session", port=None, port_specified=False,
+        domain="mybank.com", domain_specified=True, domain_initial_dot=False,
+        path="/", path_specified=True, secure=True, expires=None, discard=False,
+        comment=None, comment_url=None, rest={}, rfc2109=False
+    ))
+    jar.set_cookie(Cookie(
+        version=0, name="c_user", value="10001", port=None, port_specified=False,
+        domain=".facebook.com", domain_specified=True, domain_initial_dot=True,
+        path="/", path_specified=True, secure=False, expires=None, discard=False,
+        comment=None, comment_url=None, rest={}, rfc2109=False
+    ))
+    jar.set_cookie(Cookie(
+        version=0, name="xs", value="fb_secret", port=None, port_specified=False,
+        domain="sub.fbcdn.net", domain_specified=True, domain_initial_dot=False,
+        path="/", path_specified=True, secure=False, expires=None, discard=False,
+        comment=None, comment_url=None, rest={}, rfc2109=False
+    ))
+
+    filtered = filter_cookie_jar_for_domains(jar, ("facebook.com", "fbcdn.net"))
+    cookies = list(filtered)
+    assert len(cookies) == 2
+    cookie_names = {c.name for c in cookies}
+    assert cookie_names == {"c_user", "xs"}
+    assert all("facebook.com" in c.domain or "fbcdn.net" in c.domain for c in cookies)
+    assert not any("twitter" in c.domain or "bank" in c.domain for c in cookies)
+    assert all(c.secure for c in cookies)

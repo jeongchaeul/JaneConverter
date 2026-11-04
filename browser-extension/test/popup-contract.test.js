@@ -71,3 +71,10 @@ test("captures story items while they are still visible", () => {
   assert.match(popupSource, /Capturing story item/);
   assert.match(popupSource, /await inspectCurrentMedia\(sourceTab, Math\.min\(deadline/);
 });
+
+
+test("auto-reconnects by persisting and reusing the confirmed access URL", () => {
+  assert.match(popupSource, /const ACCESS_URL_KEY = "janeLastAccessUrl"/);
+  assert.match(popupSource, /async function getStoredAccessTab\(\)/);
+  assert.match(popupSource, /async function saveConfirmedAccessUrl\(/);
+});

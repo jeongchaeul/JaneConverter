@@ -30,6 +30,7 @@ from .recovery import (
 
 
 from .constants import (
+    SAFE_FFMPEG_PROTOCOLS,
     SUPPORTED_AUDIO_FORMATS,
     SUPPORTED_VIDEO_FORMATS,
     SUPPORTED_IMAGE_FORMATS,
@@ -392,8 +393,7 @@ def build_ffmpeg_args(
             cmd.extend(["-ss", start_time])
         if end_time:
             cmd.extend(["-to", end_time])
-        if input_path.lower().endswith((".m3u8", ".mpd")) or input_path.startswith(("http://", "https://")):
-            cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+        cmd.extend(["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS])
         cmd.extend(["-i", input_path])
         can_embed_art = has_valid_cover and target_format in ("mp3", "flac", "m4a", "aac")
         if can_embed_art:
@@ -444,8 +444,7 @@ def build_ffmpeg_args(
             cmd.extend(["-ss", start_time])
         if end_time:
             cmd.extend(["-to", end_time])
-        if input_path.lower().endswith((".m3u8", ".mpd")) or input_path.startswith(("http://", "https://")):
-            cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+        cmd.extend(["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS])
         cmd.extend(["-i", input_path])
         cmd.extend(["-i", cover_path])
         cmd.extend(["-map", "0:a", "-map", "1:v"])
@@ -454,8 +453,7 @@ def build_ffmpeg_args(
             cmd.extend(["-ss", start_time])
         if end_time:
             cmd.extend(["-to", end_time])
-        if input_path.lower().endswith((".m3u8", ".mpd")) or input_path.startswith(("http://", "https://")):
-            cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+        cmd.extend(["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS])
         cmd.extend(["-i", input_path])
 
     # Metadata tags
@@ -852,8 +850,7 @@ def _convert_media_impl(
                 cmd.extend(["-ss", start_time])
             if end_time:
                 cmd.extend(["-to", end_time])
-            if input_path.lower().endswith((".m3u8", ".mpd")) or input_path.startswith(("http://", "https://")):
-                cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+            cmd.extend(["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS])
             cmd.extend(["-i", input_path])
             if is_audio_context:
                 cmd.extend(["-vn", "-c:a", "copy"])

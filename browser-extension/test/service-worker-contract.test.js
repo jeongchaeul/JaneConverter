@@ -19,3 +19,10 @@ test("records structured diagnostics without accepting arbitrary page messages",
   assert.match(worker, /sendDiagnostic\(bridge, "session_fetch_failed"/);
   assert.doesNotMatch(worker, /document\.cookie|chrome\.cookies/);
 });
+
+
+test("auto-reconnects by persisting confirmed access across tabs", () => {
+  assert.match(worker, /const ACCESS_URL_KEY = "janeLastAccessUrl"/);
+  assert.match(worker, /async function getStoredAccessTab\(\)/);
+  assert.match(worker, /chrome\.tabs\.onUpdated\.addListener/);
+});

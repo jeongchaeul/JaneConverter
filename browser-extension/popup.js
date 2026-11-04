@@ -41,9 +41,38 @@ function setStatus(message, kind) {
   statusElement.className = kind || "";
 }
 
+const ACCESS_URL_KEY = "janeLastAccessUrl";
+
+async function saveConfirmedAccessUrl(url) {
+  if (!url || typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+  try {
+    const clean = url.replace(/\/ready\/?$/, "");
+    await chrome.storage.local.set({ [ACCESS_URL_KEY]: clean });
+  } catch (_) {}
+}
+
+async function getStoredAccessTab() {
+  if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return null;
+  try {
+    const stored = await chrome.storage.local.get({ [ACCESS_URL_KEY]: null });
+    const url = stored[ACCESS_URL_KEY];
+    if (url && typeof url === "string" && (url.startsWith("http://127.0.0.1:") || url.startsWith("http://localhost:"))) {
+      return { url: url, active: false, id: -1 };
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function clearStoredAccessUrl() {
+  if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+  try {
+    await chrome.storage.local.remove(ACCESS_URL_KEY);
+  } catch (_) {}
+}
+
 async function findAccessTabs() {
   const tabs = await chrome.tabs.query({});
-  return tabs.filter(function (tab) {
+  const matched = tabs.filter(function (tab) {
     if (!tab.url) return false;
     try {
       const url = new URL(tab.url);
@@ -55,6 +84,17 @@ async function findAccessTabs() {
   }).sort(function (left, right) {
     return Number(Boolean(right.active)) - Number(Boolean(left.active));
   });
+
+  if (matched.length > 0) {
+    void saveConfirmedAccessUrl(matched[0].url);
+    return matched;
+  }
+
+  const stored = await getStoredAccessTab();
+  if (stored) {
+    return [stored];
+  }
+  return [];
 }
 
 function accessEndpoint(tab, suffix) {
@@ -1167,10 +1207,17 @@ async function capture(mode) {
           accessTab = candidate;
           globalThis.JaneMediaUtils.requireCompatibleBridge(value);
           challenge = value;
+          void saveConfirmedAccessUrl(candidate.url);
           break;
+        }
+        if (candidate.id === -1) {
+          void clearStoredAccessUrl();
         }
         lastError = new Error(value.error || "JaneConverter has not confirmed access yet.");
       } catch (error) {
+        if (candidate.id === -1) {
+          void clearStoredAccessUrl();
+        }
         lastError = error;
       }
     }
@@ -1245,8 +1292,14 @@ async function resolveConfirmedSession() {
     try {
       const response = await bridgeFetch(accessEndpoint(accessTab, "/bridge/challenge"), { cache: "no-store" }, "JaneConverter bridge request");
       const challenge = await readJson(response);
-        if (response.ok) globalThis.JaneMediaUtils.requireCompatibleBridge(challenge);
+        if (response.ok) {
+        globalThis.JaneMediaUtils.requireCompatibleBridge(challenge);
+        void saveConfirmedAccessUrl(accessTab.url);
+      }
       if (!response.ok) {
+        if (accessTab.id === -1) {
+          void clearStoredAccessUrl();
+        }
         lastError = new Error(challenge.error || "JaneConverter has not confirmed access yet.");
         continue;
       }
