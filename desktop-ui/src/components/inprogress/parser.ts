@@ -58,6 +58,82 @@ export function inferMediaKind(category?: Category, format?: string, filename?: 
   return "audio";
 }
 
+function getTransientProgressSignature(event: ConverterEvent): string | null {
+  if (event.kind !== "progress") return null;
+  const rawMsg = event.message.trim();
+  if (
+    !rawMsg ||
+    rawMsg.startsWith("[+]") ||
+    rawMsg.startsWith("[*]") ||
+    rawMsg.startsWith("[!]") ||
+    rawMsg.startsWith("===") ||
+    rawMsg.startsWith("PLAYLIST") ||
+    rawMsg.startsWith("DONE!") ||
+    rawMsg.startsWith("Ready") ||
+    rawMsg.startsWith("Target Directory:") ||
+    rawMsg.startsWith("Export Directory:")
+  ) {
+    return null;
+  }
+  const pMatch = PLAYLIST_ITEM_RE.exec(rawMsg);
+  if (pMatch) {
+    const trackIdx = pMatch[3] || pMatch[4] || pMatch[1];
+    const detail = (pMatch[6] || "").toLowerCase();
+    if (detail.includes("transcoding")) return `${event.jobId}:track:${trackIdx}:transcode`;
+    if (detail.includes("download") || detail.includes("fetching")) return `${event.jobId}:track:${trackIdx}:download`;
+    return null;
+  }
+  if (rawMsg.includes("[download]") || rawMsg.includes("Downloading stream:")) {
+    return `${event.jobId}:single:download`;
+  }
+  if (rawMsg.startsWith("Transcoding ") || rawMsg.includes("Transcoding ")) {
+    return `${event.jobId}:single:transcode`;
+  }
+  return null;
+}
+
+export function appendOrCollapseProgressEvent(
+  current: ConverterEvent[],
+  next: ConverterEvent,
+  maxLen = 10000,
+): ConverterEvent[] {
+  if (current.length > 0) {
+    const prev = current[current.length - 1];
+    if (prev.jobId === next.jobId) {
+      const prevSig = getTransientProgressSignature(prev);
+      if (prevSig && prevSig === getTransientProgressSignature(next)) {
+        const copy = current.slice(-(maxLen));
+        copy[copy.length - 1] = next;
+        return copy;
+      }
+    }
+  }
+  return [...current.slice(-(maxLen - 1)), next];
+}
+
+export function extractDistinctJobIds(
+  events: ConverterEvent[],
+  jobId?: string | null,
+  running?: boolean,
+  category?: Category,
+  format?: string,
+): string[] {
+  const rawIds: string[] = [];
+  for (const evt of events) {
+    if (evt.jobId && evt.jobId !== "ui" && evt.jobId !== "browser-session" && !rawIds.includes(evt.jobId)) {
+      rawIds.push(evt.jobId);
+    }
+  }
+  if (jobId && jobId !== "ui" && jobId !== "browser-session" && !rawIds.includes(jobId)) {
+    rawIds.push(jobId);
+  }
+  return rawIds.filter((id) => {
+    if (running && jobId && id === jobId) return true;
+    const parsed = parseConversionEvents(events, category, format, undefined, id, false);
+    return parsed.items.length > 0;
+  });
+}
+
 export function parseConversionEvents(
   events: ConverterEvent[],
   defaultCategory?: Category,

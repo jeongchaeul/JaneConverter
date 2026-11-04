@@ -75,7 +75,11 @@ def session_domains(source):
 
 def needs_browser_session(error):
     message = str(error).casefold()
-    if any(word in message for word in ("drm", "geo-restricted", "geo restricted", "not available in your country", "removed", "deleted")):
+    if any(word in message for word in (
+        "drm", "geo-restricted", "geo restricted", "not available in your country",
+        "removed", "deleted", "video unavailable", "this video is not available",
+        "no longer available", "has been terminated", "account has been terminated",
+    )):
         return False
     return any(word in message for word in (
         "sign in", "login required", "log in", "age-restricted", "use --cookies", "cookies are required",

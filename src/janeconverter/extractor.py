@@ -431,6 +431,9 @@ def resolve_entry_thumbnail(entry: Dict[str, Any], fallback_cover: str = "") -> 
 
 _THUMBNAIL_SESSION: Optional[requests.Session] = None
 _THUMBNAIL_SESSION_LOCK = threading.Lock()
+_THUMBNAIL_BYTES_CACHE: Dict[str, bytes] = {}
+_MAX_THUMBNAIL_CACHE_ENTRIES = 16
+_SAFE_THUMBNAIL_FORMATS = ["JPEG", "PNG", "WEBP", "GIF", "BMP", "MPO"]
 
 
 def _get_thumbnail_session() -> requests.Session:
@@ -460,12 +463,21 @@ def download_and_convert_thumbnail(thumbnail_url: str, output_path: str) -> Opti
         from PIL import Image
         import io
 
+        Image.MAX_IMAGE_PIXELS = max(getattr(Image, "MAX_IMAGE_PIXELS", 0) or 0, MAX_THUMBNAIL_PIXELS)
+        abs_out = os.path.abspath(output_path)
+
         if is_url(thumbnail_url):
-            current_url = thumbnail_url.strip()
+            cache_key = thumbnail_url.strip()
+            with _THUMBNAIL_SESSION_LOCK:
+                cached_jpeg = _THUMBNAIL_BYTES_CACHE.get(cache_key)
+            if cached_jpeg:
+                os.makedirs(os.path.dirname(abs_out), exist_ok=True)
+                with open(abs_out, "wb") as f:
+                    f.write(cached_jpeg)
+                return abs_out
+
+            current_url = cache_key
             session = _get_thumbnail_session()
-            session.headers.update({
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            })
             downloaded_bytes = bytearray()
             for _ in range(MAX_REDIRECTS + 1):
                 if not _is_safe_public_url(current_url):
@@ -496,7 +508,7 @@ def download_and_convert_thumbnail(thumbnail_url: str, output_path: str) -> Opti
 
             if not downloaded_bytes:
                 return None
-            img = Image.open(io.BytesIO(downloaded_bytes))
+            img = Image.open(io.BytesIO(downloaded_bytes), formats=_SAFE_THUMBNAIL_FORMATS)
         elif os.path.isfile(thumbnail_url):
             if os.path.getsize(thumbnail_url) > MAX_THUMBNAIL_BYTES:
                 return None
@@ -511,9 +523,19 @@ def download_and_convert_thumbnail(thumbnail_url: str, output_path: str) -> Opti
                 return None
             converted = img.convert("RGB")
 
-        abs_out = os.path.abspath(output_path)
         os.makedirs(os.path.dirname(abs_out), exist_ok=True)
-        converted.save(abs_out, "JPEG", quality=95)
+        if is_url(thumbnail_url):
+            buf = io.BytesIO()
+            converted.save(buf, "JPEG", quality=95)
+            jpeg_bytes = buf.getvalue()
+            with open(abs_out, "wb") as f:
+                f.write(jpeg_bytes)
+            with _THUMBNAIL_SESSION_LOCK:
+                if len(_THUMBNAIL_BYTES_CACHE) >= _MAX_THUMBNAIL_CACHE_ENTRIES:
+                    _THUMBNAIL_BYTES_CACHE.pop(next(iter(_THUMBNAIL_BYTES_CACHE)))
+                _THUMBNAIL_BYTES_CACHE[thumbnail_url.strip()] = jpeg_bytes
+        else:
+            converted.save(abs_out, "JPEG", quality=95)
         return abs_out
     except Exception as e:
         print(f"[Thumbnail] Could not process cover image: {e}")
@@ -1246,48 +1268,10 @@ def fetch_media_stream(
                     break
                 except KeyboardInterrupt:
                     raise
-                except BrowserSessionError as bse:
-                    last_error = bse
-                    is_yt_item = source_type == "youtube" or any(yt in str(query_item).lower() for yt in ("youtube.com", "youtu.be"))
-                    if is_yt_item and is_youtube_gated_error(bse) and not gated_fallback_attempted:
-                        gated_fallback_attempted = True
-                        m_id = re.search(r'(?:v=|youtu\.be/|shorts/|embed/)([a-zA-Z0-9_-]{11})', str(query_item))
-                        if m_id:
-                            excluded_video_ids.add(m_id.group(1))
-                        m_src = re.search(r'(?:v=|youtu\.be/|shorts/|embed/)([a-zA-Z0-9_-]{11})', str(source))
-                        if m_src:
-                            excluded_video_ids.add(m_src.group(1))
-
-                        oe = resolve_youtube_oembed_metadata(query_item) if is_url(str(query_item)) else {}
-                        gated_title = fallback_title or oe.get("title")
-                        gated_artist = fallback_artist or oe.get("artist") or "Unknown Artist"
-                        gated_thumb = oe.get("thumbnail")
-                        if gated_title:
-                            report(
-                                0.14,
-                                f"YouTube track is restricted to Music Premium members. Locating alternate public audio stream for '{gated_artist} - {gated_title}'...",
-                                force=True,
-                            )
-                            catalog_meta = {
-                                "title": gated_title,
-                                "artist": gated_artist,
-                                "album": "",
-                                "year": "",
-                                "thumbnail": gated_thumb,
-                                "search_candidates": build_search_candidates(gated_artist, gated_title),
-                            }
-                            recovery_candidates = build_search_candidates(gated_artist, gated_title)
-                            remaining_candidates = recovery_candidates + remaining_candidates
-                            continue
-
-                    if (is_tiktok_source or catalog_meta) and remaining_candidates:
-                        continue
-                    if is_tiktok_source or archival_fallback:
-                        break
-                    raise
                 except Exception as ex:
                     last_error = ex
-                    if is_tiktok_source:
+                    is_bse = isinstance(ex, BrowserSessionError)
+                    if is_tiktok_source and not is_bse:
                         if remaining_candidates:
                             continue
                         break
@@ -1295,34 +1279,36 @@ def fetch_media_stream(
                     is_yt_item = source_type == "youtube" or any(yt in str(query_item).lower() for yt in ("youtube.com", "youtu.be"))
                     if is_yt_item and is_youtube_gated_error(ex) and not gated_fallback_attempted:
                         gated_fallback_attempted = True
-                        m_id = re.search(r'(?:v=|youtu\.be/|shorts/|embed/)([a-zA-Z0-9_-]{11})', str(query_item))
-                        if m_id:
-                            excluded_video_ids.add(m_id.group(1))
-                        m_src = re.search(r'(?:v=|youtu\.be/|shorts/|embed/)([a-zA-Z0-9_-]{11})', str(source))
-                        if m_src:
-                            excluded_video_ids.add(m_src.group(1))
-
+                        for raw_q in (str(query_item), str(source)):
+                            m_id = re.search(r'(?:v=|youtu\.be/|shorts/|embed/)([a-zA-Z0-9_-]{11})', raw_q)
+                            if m_id:
+                                excluded_video_ids.add(m_id.group(1))
                         oe = resolve_youtube_oembed_metadata(query_item) if is_url(str(query_item)) else {}
                         gated_title = fallback_title or oe.get("title")
                         gated_artist = fallback_artist or oe.get("artist") or "Unknown Artist"
-                        gated_thumb = oe.get("thumbnail")
                         if gated_title:
                             report(
                                 0.14,
                                 f"YouTube track is restricted to Music Premium members. Locating alternate public audio stream for '{gated_artist} - {gated_title}'...",
                                 force=True,
                             )
+                            recovery_candidates = build_search_candidates(gated_artist, gated_title)
                             catalog_meta = {
                                 "title": gated_title,
                                 "artist": gated_artist,
                                 "album": "",
                                 "year": "",
-                                "thumbnail": gated_thumb,
-                                "search_candidates": build_search_candidates(gated_artist, gated_title),
+                                "thumbnail": oe.get("thumbnail"),
+                                "search_candidates": recovery_candidates,
                             }
-                            recovery_candidates = build_search_candidates(gated_artist, gated_title)
                             remaining_candidates = recovery_candidates + remaining_candidates
                             continue
+                    if is_bse:
+                        if (is_tiktok_source or catalog_meta) and remaining_candidates:
+                            continue
+                        if is_tiktok_source or archival_fallback:
+                            break
+                        raise
                     if classify_extraction(ex) in (ExtractionCategory.ACCESS, ExtractionCategory.REMOVED, ExtractionCategory.RATE_LIMIT, ExtractionCategory.NETWORK):
                         if (source_type == "tiktok" or catalog_meta) and remaining_candidates:
                             continue
@@ -1341,8 +1327,14 @@ def fetch_media_stream(
                         report=report,
                         preexisting_stream_files=preexisting_stream_files,
                     )
-                # 1. Standalone Native Page Sniffer (discovers hidden streams or 3D models without extension)
-                if is_url(source) and source_type not in ("spotify", "apple_music") and not is_tiktok_source:
+                # 1. Standalone Native Page Sniffer (skip on YouTube and permanently removed media)
+                if (
+                    is_url(source)
+                    and source_type not in ("spotify", "apple_music", "youtube")
+                    and not is_tiktok_source
+                    and not is_youtube_source
+                    and classify_extraction(last_error) != ExtractionCategory.REMOVED
+                ):
                     try:
                         from .sniffer import sniff_webpage, download_sniffed_asset
                         sniffed = sniff_webpage(source, report=report)

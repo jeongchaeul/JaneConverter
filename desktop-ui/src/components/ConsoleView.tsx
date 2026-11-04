@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, Check, Clipboard, Download, Filter, Layers, Pause, Play, Search, Square, TerminalSquare, Trash2, X } from "lucide-react";
 import { bridge, type Category, type ConverterEvent, type ConversionHistoryItem, type ConverterSettings } from "../bridge";
 import { InProgressView } from "./InProgressView";
-import { parseConversionEvents } from "./inprogress/parser";
+import { extractDistinctJobIds } from "./inprogress/parser";
 import type { InProgressItem } from "./inprogress/types";
 
 export function ConsoleView({
@@ -75,22 +75,10 @@ export function ConsoleView({
   const [userHasScrolledUp, setUserHasScrolledUp] = useState(false);
   const logContainerRef = useRef<HTMLDivElement>(null);
 
-  const distinctJobIds = useMemo(() => {
-    const rawIds: string[] = [];
-    for (const evt of events) {
-      if (evt.jobId && evt.jobId !== "ui" && evt.jobId !== "browser-session" && !rawIds.includes(evt.jobId)) {
-        rawIds.push(evt.jobId);
-      }
-    }
-    if (jobId && jobId !== "ui" && jobId !== "browser-session" && !rawIds.includes(jobId)) {
-      rawIds.push(jobId);
-    }
-    return rawIds.filter((id) => {
-      if (running && jobId && id === jobId) return true;
-      const parsed = parseConversionEvents(events, category, format, undefined, id, false);
-      return parsed.items.length > 0;
-    });
-  }, [events, jobId, running, category, format]);
+  const distinctJobIds = useMemo(
+    () => extractDistinctJobIds(events, jobId, running, category, format),
+    [events, jobId, running, category, format],
+  );
 
   const isOngoing = Boolean(running || paused);
   const hasNoPages = distinctJobIds.length <= 0;

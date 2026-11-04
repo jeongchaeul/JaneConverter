@@ -764,24 +764,15 @@ def _convert_media_impl(
         return os.path.abspath(final_dest)
     target_format = target_format.lower().strip(".")
     if _recovery is None:
-        try:
-            from .paths import APP_DATA_DIR
-            ev_path = os.path.join(APP_DATA_DIR, "recovery-evidence.json")
-        except Exception:
-            ev_path = None
-        _recovery = RecoveryCoordinator(OutputIntent(
-            target_format=target_format, quality=bitrate, sample_rate=sample_rate,
+        _recovery = _create_recovery_coordinator(
+            target_format=target_format, bitrate=bitrate, sample_rate=sample_rate,
             resolution=resolution, normalize_audio=normalize_audio, fps=fps,
-            cover_required=bool(cover_path),
-            gpu_allowed=bool((use_gpu if use_gpu is not None else use_nvenc)
-                             and target_format in HARDWARE_VIDEO_FORMATS),
-            allow_png_fallback=allow_lossless_png_recovery,
-            metadata=tuple((key, value) for key, value in (metadata or {}).items() if value),
-            start_time=start_time,
-            end_time=end_time,
+            cover_path=cover_path, use_gpu=use_gpu, use_nvenc=use_nvenc,
+            allow_lossless_png_recovery=allow_lossless_png_recovery, metadata=metadata,
+            start_time=start_time, end_time=end_time,
             reconstruct_frequency_loss=reconstruct_frequency_loss,
             expected_category=expected_category,
-        ), evidence_path=ev_path)
+        )
 
     if target_format in ("source", "original", ""):
         _recovery.start("source-preserve")
@@ -991,17 +982,17 @@ def _convert_media_impl(
 
     require_ffmpeg()
 
-    audio_probe = (
+    media_probe = (
         probe_media_streams(input_path)
-        if target_format in SUPPORTED_AUDIO_FORMATS
+        if (target_format in SUPPORTED_AUDIO_FORMATS or allow_stream_copy)
         else None
     )
     input_sample_rate = None
-    if audio_probe:
+    if media_probe:
         input_sample_rate = next(
             (
                 int(stream["sample_rate"])
-                for stream in audio_probe.get("streams", [])
+                for stream in media_probe.get("streams", [])
                 if stream.get("codec_type") == "audio"
                 and stream.get("sample_rate")
                 and str(stream["sample_rate"]).isdigit()
@@ -1016,7 +1007,7 @@ def _convert_media_impl(
         normalize_audio=normalize_audio,
         resolution=resolution,
         cover_path=cover_path,
-        probed_info=audio_probe,
+        probed_info=media_probe,
         reconstruct_frequency_loss=reconstruct_frequency_loss,
     )
     method = _method_override or ("stream-copy" if can_copy else "gpu-transcode" if active_gpu and target_format in HARDWARE_VIDEO_FORMATS else "cpu-transcode")
@@ -1103,7 +1094,16 @@ def _convert_media_impl(
                 except (OSError, ValueError):
                     pass
 
-            duration = probe_media_duration(input_path)
+            duration = None
+            if media_probe and isinstance(media_probe.get("format"), dict):
+                raw_dur = media_probe["format"].get("duration")
+                if raw_dur is not None:
+                    try:
+                        duration = float(raw_dur)
+                    except (TypeError, ValueError):
+                        duration = None
+            if duration is None:
+                duration = probe_media_duration(input_path)
             if duration and duration > 0:
                 s_sec = parse_time_offset_seconds(start_time) if start_time else None
                 e_sec = parse_time_offset_seconds(end_time) if end_time else None
@@ -1338,6 +1338,51 @@ def _convert_media_impl(
     return destination_path
 
 
+_STAGING_CLEANUP_LOCK = threading.Lock()
+_LAST_STAGING_CLEANUP: Dict[str, float] = {}
+
+
+def _create_recovery_coordinator(
+    target_format: str,
+    bitrate: str,
+    sample_rate: int,
+    resolution: str,
+    normalize_audio: bool,
+    fps: Optional[int],
+    cover_path: Optional[str],
+    use_gpu: Optional[bool],
+    use_nvenc: bool,
+    allow_lossless_png_recovery: bool,
+    metadata: Optional[Dict[str, str]],
+    start_time: Optional[str],
+    end_time: Optional[str],
+    reconstruct_frequency_loss: bool,
+    expected_category: Optional[str],
+) -> RecoveryCoordinator:
+    try:
+        from .paths import APP_DATA_DIR
+        ev_path = os.path.join(APP_DATA_DIR, "recovery-evidence.json")
+    except Exception:
+        ev_path = None
+    norm_fmt = target_format.lower().strip(".")
+    return RecoveryCoordinator(OutputIntent(
+        target_format=norm_fmt,
+        quality=bitrate,
+        sample_rate=sample_rate,
+        resolution=resolution,
+        normalize_audio=normalize_audio,
+        fps=fps,
+        cover_required=bool(cover_path),
+        gpu_allowed=bool((use_gpu if use_gpu is not None else use_nvenc) and norm_fmt in HARDWARE_VIDEO_FORMATS),
+        allow_png_fallback=allow_lossless_png_recovery,
+        metadata=tuple((key, value) for key, value in (metadata or {}).items() if value),
+        start_time=start_time,
+        end_time=end_time,
+        reconstruct_frequency_loss=reconstruct_frequency_loss,
+        expected_category=expected_category,
+    ), evidence_path=ev_path)
+
+
 def cleanup_stale_staging_directories(directory: str, max_age_seconds: float = 86400.0) -> int:
     """Remove orphaned .janeconverter-convert-* temporary staging folders older than max_age_seconds."""
     if not os.path.isdir(directory):
@@ -1398,30 +1443,25 @@ def convert_media(
     start_time = sanitize_time_offset(start_time)
     end_time = sanitize_time_offset(end_time)
     if _recovery is None:
-        try:
-            from .paths import APP_DATA_DIR
-            ev_path = os.path.join(APP_DATA_DIR, "recovery-evidence.json")
-        except Exception:
-            ev_path = None
-        _recovery = RecoveryCoordinator(OutputIntent(
-            target_format=target_format.lower().strip("."),
-            quality=bitrate,
-            sample_rate=sample_rate,
-            resolution=resolution,
-            normalize_audio=normalize_audio,
-            fps=fps,
-            cover_required=bool(cover_path),
-            gpu_allowed=bool((use_gpu if use_gpu is not None else use_nvenc)
-                             and target_format.lower().strip(".") in HARDWARE_VIDEO_FORMATS),
-            allow_png_fallback=allow_lossless_png_recovery,
-            metadata=tuple((key, value) for key, value in (metadata or {}).items() if value),
-            start_time=start_time,
-            end_time=end_time,
+        _recovery = _create_recovery_coordinator(
+            target_format=target_format, bitrate=bitrate, sample_rate=sample_rate,
+            resolution=resolution, normalize_audio=normalize_audio, fps=fps,
+            cover_path=cover_path, use_gpu=use_gpu, use_nvenc=use_nvenc,
+            allow_lossless_png_recovery=allow_lossless_png_recovery, metadata=metadata,
+            start_time=start_time, end_time=end_time,
             reconstruct_frequency_loss=reconstruct_frequency_loss,
             expected_category=expected_category,
-        ), evidence_path=ev_path)
+        )
 
-    cleanup_stale_staging_directories(output_dir)
+    abs_out_dir = os.path.abspath(output_dir)
+    now_mono = time.monotonic()
+    should_clean = False
+    with _STAGING_CLEANUP_LOCK:
+        if now_mono - _LAST_STAGING_CLEANUP.get(abs_out_dir, -9999.0) >= 600.0:
+            _LAST_STAGING_CLEANUP[abs_out_dir] = now_mono
+            should_clean = True
+    if should_clean:
+        cleanup_stale_staging_directories(output_dir)
 
     def staged_progress(value: float, message: str) -> None:
         if progress_callback and value < 1.0:

@@ -13,7 +13,7 @@ import { FetchedMediaView } from "./components/FetchedMediaView";
 import { UpdatePromptHeader, isAppUpdateAvailable } from "./components/UpdatePromptHeader";
 import { UpdateChangesModal } from "./components/UpdateChangesModal";
 import { findPresetName, formatBytes, formatElapsedMs } from "./options";
-import { extractYouTubeUrlFromThumbnail } from "./components/inprogress/parser";
+import { appendOrCollapseProgressEvent, extractYouTubeUrlFromThumbnail } from "./components/inprogress/parser";
 import { clearAppearanceStorage, loadAppearanceFromStorage, saveAppearanceToStorage, type AppearanceSettings } from "./utils/appearanceStorage";
 
 const defaultSettings: ConverterSettings = {
@@ -542,7 +542,7 @@ export default function App() {
     let cleanup: (() => void) | undefined;
     void bridge.subscribe((event) => {
       if (!mounted) return;
-      setEvents((current) => [...current.slice(-9999), event]);
+      setEvents((current) => appendOrCollapseProgressEvent(current, event, 10000));
       setRawEvents((current) => [...current.slice(-9999), event]);
       if (event.kind === "started" && !activeJobRef.current) {
         activeJobRef.current = event.jobId;

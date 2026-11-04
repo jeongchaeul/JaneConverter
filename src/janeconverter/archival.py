@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import urllib.parse
 from typing import Any, Callable, Dict, Optional
 import requests
@@ -27,6 +28,8 @@ ARCHIVE_TIMEOUT = 2.5
 
 _ARCHIVAL_CACHE: Dict[str, Optional['ArchivalStreamResult']] = {}
 _DISK_CACHE_LOCK = threading.Lock()
+_MAX_DISK_CACHE_ENTRIES = 500
+_DISK_CACHE_MEM: Optional[Dict[str, Any]] = None
 
 
 def _get_disk_cache_path() -> str:
@@ -41,16 +44,22 @@ def _get_disk_cache_path() -> str:
 
 def _load_from_disk_cache(video_id: str) -> Optional[tuple[bool, Optional['ArchivalStreamResult']]]:
     """Check persistent on-disk cache. Returns (is_cached, result) or None if absent/expired."""
+    global _DISK_CACHE_MEM
     disk_path = _get_disk_cache_path()
-    if not disk_path or not os.path.exists(disk_path):
+    if not disk_path:
         return None
     with _DISK_CACHE_LOCK:
         try:
-            with open(disk_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            if _DISK_CACHE_MEM is None or not os.path.exists(disk_path):
+                if not os.path.exists(disk_path):
+                    _DISK_CACHE_MEM = {}
+                    return None
+                with open(disk_path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                _DISK_CACHE_MEM = loaded if isinstance(loaded, dict) else {}
+            data = _DISK_CACHE_MEM
             if video_id in data:
                 entry = data[video_id]
-                # Negative cache expires after 7 days
                 if not entry.get("found"):
                     if time.time() - float(entry.get("ts", 0)) < 7 * 86400:
                         return (True, None)
@@ -75,18 +84,23 @@ def _load_from_disk_cache(video_id: str) -> Optional[tuple[bool, Optional['Archi
 
 def _save_to_disk_cache(video_id: str, res: Optional['ArchivalStreamResult']) -> None:
     """Save positive or negative archival probe outcome to disk cache for sub-millisecond future hits."""
+    global _DISK_CACHE_MEM
     disk_path = _get_disk_cache_path()
     if not disk_path:
         return
     with _DISK_CACHE_LOCK:
         try:
-            data = {}
-            if os.path.exists(disk_path):
-                try:
-                    with open(disk_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except Exception:
-                    data = {}
+            if _DISK_CACHE_MEM is None:
+                if os.path.exists(disk_path):
+                    try:
+                        with open(disk_path, "r", encoding="utf-8") as f:
+                            loaded = json.load(f)
+                        _DISK_CACHE_MEM = loaded if isinstance(loaded, dict) else {}
+                    except Exception:
+                        _DISK_CACHE_MEM = {}
+                else:
+                    _DISK_CACHE_MEM = {}
+            data = _DISK_CACHE_MEM
             if res is None:
                 data[video_id] = {"found": False, "ts": time.time()}
             else:
@@ -104,17 +118,38 @@ def _save_to_disk_cache(video_id: str, res: Optional['ArchivalStreamResult']) ->
                     "item_identifier": res.item_identifier,
                     "ts": time.time(),
                 }
-            with open(disk_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+            if len(data) > _MAX_DISK_CACHE_ENTRIES:
+                sorted_keys = sorted(
+                    data.keys(),
+                    key=lambda k: float(data[k].get("ts", 0)) if isinstance(data.get(k), dict) else 0.0,
+                    reverse=True,
+                )
+                _DISK_CACHE_MEM = {k: data[k] for k in sorted_keys[:_MAX_DISK_CACHE_ENTRIES]}
+                data = _DISK_CACHE_MEM
+            cache_dir = os.path.dirname(os.path.abspath(disk_path))
+            os.makedirs(cache_dir, exist_ok=True)
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=cache_dir, delete=False) as tf:
+                json.dump(data, tf, separators=(",", ":"))
+                temp_name = tf.name
+            try:
+                os.replace(temp_name, disk_path)
+            finally:
+                if os.path.exists(temp_name):
+                    try:
+                        os.remove(temp_name)
+                    except OSError:
+                        pass
         except Exception as exc:
             logger.debug(f"Failed to write archival disk cache: {exc}")
 
 
 def clear_archival_cache() -> None:
+    global _DISK_CACHE_MEM
     _ARCHIVAL_CACHE.clear()
     disk_path = _get_disk_cache_path()
-    if disk_path and os.path.exists(disk_path):
-        with _DISK_CACHE_LOCK:
+    with _DISK_CACHE_LOCK:
+        _DISK_CACHE_MEM = None
+        if disk_path and os.path.exists(disk_path):
             try:
                 os.remove(disk_path)
             except Exception:
@@ -536,34 +571,6 @@ def query_wayback_machine_stream(
     except Exception as exc:
         logger.debug(f"Wayback googlevideo CDX error: {exc}")
 
-    # 2. Check for archived YouTube watch URL that yt-dlp's WaybackMachineIE can extract
-    try:
-        cdx_watch_url = (
-            f"https://web.archive.org/cdx/search/cdx?"
-            f"url=youtube.com/watch?v={video_id}&fl=timestamp,original,statuscode&filter=statuscode:200&limit=5&output=json"
-        )
-        resp = requests.get(cdx_watch_url, headers=ARCHIVE_HEADERS, timeout=ARCHIVE_TIMEOUT)
-        if resp.status_code == 200:
-            rows = resp.json()
-            if len(rows) > 1:
-                latest = rows[-1]
-                ts, orig_url = latest[0], latest[1]
-                wayback_watch_url = f"https://web.archive.org/web/{ts}/{orig_url}"
-                return ArchivalStreamResult(
-                    found=True,
-                    source_name="Wayback Machine",
-                    stream_url=wayback_watch_url,
-                    title=metadata.title or f"Wayback Snapshot ({video_id})",
-                    uploader=metadata.uploader or "Wayback Machine",
-                    description=metadata.description or "Recovered via Wayback Machine watch page snapshot.",
-                    ext="mp4",
-                    duration=metadata.duration,
-                    thumbnail_url=metadata.thumbnail_url,
-                    is_direct_media=False,  # Can be ingested by yt-dlp's WaybackMachineIE
-                )
-    except Exception as exc:
-        logger.debug(f"Wayback watch CDX error: {exc}")
-
     return None
 
 
@@ -722,58 +729,6 @@ def _probe_archival_vaults_sequential(
     _save_to_disk_cache(video_id, None)
     return None
 
-    if video_id in _ARCHIVAL_CACHE:
-        return _ARCHIVAL_CACHE[video_id]
-
-    if report:
-        report(0.16, f"Initiating Archival Recovery Protocol for '{video_id}'...", force=True)
-
-    # Phase 1: Metadata Fingerprinting
-    metadata = lookup_historical_metadata(video_id, report=report)
-    if metadata.title and report:
-        report(
-            0.22,
-            f"Identified original metadata via {metadata.source_service}: '{metadata.title}'"
-            + (f" by {metadata.uploader}" if metadata.uploader else ""),
-            force=True,
-        )
-
-    # Phase 2: Direct Media Stream Recovery
-    # Step A: Archive.org Collections (ArchiveTeam & YouTube collections)
-    res = query_archive_org_collections(video_id, metadata, report=report)
-    if res and res.found:
-        if report:
-            report(0.40, f"Found preserved media in Internet Archive item '{res.item_identifier}'!", force=True)
-        _ARCHIVAL_CACHE[video_id] = res
-        return res
-
-    # Step B: Ghostarchive
-    res = query_ghostarchive(video_id, metadata, report=report)
-    if res and res.found:
-        if report:
-            report(0.40, "Found preserved media in Ghostarchive vault!", force=True)
-        _ARCHIVAL_CACHE[video_id] = res
-        return res
-
-    # Step C: Wayback Machine Direct Stream / Watch Capture
-    res = query_wayback_machine_stream(video_id, metadata, report=report)
-    if res and res.found:
-        if report:
-            report(0.40, f"Found capture in {res.source_name}!", force=True)
-        _ARCHIVAL_CACHE[video_id] = res
-        return res
-
-    if report:
-        meta_info = f"'{metadata.title}'" if metadata.title else f"ID {video_id}"
-        report(
-            0.45,
-            f"Archival search complete: no preserved video streams found across public archives for {meta_info}.",
-            force=True,
-        )
-
-    _ARCHIVAL_CACHE[video_id] = None
-    return None
-
 
 def download_archival_stream(
     stream_result: ArchivalStreamResult,
@@ -795,10 +750,12 @@ def download_archival_stream(
     if progress_callback:
         progress_callback(0.45, f"Downloading recovered stream from {stream_result.source_name}...")
 
+    from .extractor import _is_safe_public_url
+    from .constants import SAFE_FFMPEG_PROTOCOLS
+    if not _is_safe_public_url(stream_result.stream_url):
+        raise ValueError("Archival stream URL failed public safety verification.")
+
     if stream_result.is_direct_media:
-        from .extractor import _is_safe_public_url
-        if not _is_safe_public_url(stream_result.stream_url):
-            raise ValueError("Archival stream URL failed public safety verification.")
         resp = _safe_request("GET", stream_result.stream_url, headers=ARCHIVE_HEADERS, stream=True, timeout=30)
         try:
             if not _is_safe_response_target(resp):
@@ -840,6 +797,8 @@ def download_archival_stream(
             "outtmpl": os.path.join(output_dir, "%(title)s.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
+            "external_downloader_args": {"ffmpeg_i": ["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS]},
+            "postprocessor_args": {"ffmpeg": ["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS]},
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([stream_result.stream_url])

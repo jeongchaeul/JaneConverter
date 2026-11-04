@@ -192,11 +192,25 @@ def _safe_http_get(
     raise ValueError("Exceeded maximum HTTP redirects.")
 
 
+_ASSET_EXT_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("stream", ("m3u8", "mpd")),
+    ("model", ("glb", "gltf", "obj", "splat", "ply", "fbx")),
+    ("video", ("mp4", "webm", "mkv", "mov")),
+    ("audio", ("mp3", "m4a", "aac", "opus", "ogg", "flac", "wav")),
+)
+
+
+def _classify_asset_path(path_lower: str) -> Optional[Tuple[str, str]]:
+    for kind, exts in _ASSET_EXT_GROUPS:
+        for ext in exts:
+            if path_lower.endswith("." + ext):
+                return (kind, ext)
+    return None
+
+
 def is_direct_asset_url(url: str) -> Optional[SniffedAsset]:
     """Check if the given URL is already a direct stream manifest or 3D asset."""
-    if not url or not isinstance(url, str):
-        return None
-    if not is_public_http_url(url):
+    if not url or not isinstance(url, str) or not is_public_http_url(url):
         return None
     try:
         parsed = urllib.parse.urlparse(url.strip())
@@ -205,55 +219,19 @@ def is_direct_asset_url(url: str) -> Optional[SniffedAsset]:
     if parsed.scheme not in ("http", "https"):
         return None
 
-    path_lower = parsed.path.lower()
-    headers = {"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": url}
+    matched = _classify_asset_path(parsed.path.lower())
+    if not matched:
+        return None
+    kind, ext = matched
     stem = os.path.splitext(os.path.basename(parsed.path))[0] or "Direct Media"
-
-    if path_lower.endswith((".m3u8", ".mpd")):
-        ext = "mpd" if path_lower.endswith(".mpd") else "m3u8"
-        return SniffedAsset(
-            asset_url=url,
-            asset_kind="stream",
-            extension=ext,
-            title=_clean_title(stem),
-            source_page=url,
-            headers=headers,
-        )
-
-    for model_ext in ("glb", "gltf", "obj", "splat", "ply", "fbx"):
-        if path_lower.endswith("." + model_ext):
-            return SniffedAsset(
-                asset_url=url,
-                asset_kind="model",
-                extension=model_ext,
-                title=_clean_title(stem),
-                source_page=url,
-                headers=headers,
-            )
-
-    for video_ext in ("mp4", "webm", "mkv", "mov"):
-        if path_lower.endswith("." + video_ext):
-            return SniffedAsset(
-                asset_url=url,
-                asset_kind="video",
-                extension=video_ext,
-                title=_clean_title(stem),
-                source_page=url,
-                headers=headers,
-            )
-
-    for audio_ext in ("mp3", "m4a", "aac", "opus", "ogg", "flac", "wav"):
-        if path_lower.endswith("." + audio_ext):
-            return SniffedAsset(
-                asset_url=url,
-                asset_kind="audio",
-                extension=audio_ext,
-                title=_clean_title(stem),
-                source_page=url,
-                headers=headers,
-            )
-
-    return None
+    return SniffedAsset(
+        asset_url=url,
+        asset_kind=kind,
+        extension=ext,
+        title=_clean_title(stem),
+        source_page=url,
+        headers={"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": url},
+    )
 
 
 def _find_stream_in_html(html_text: str, base_url: str) -> Optional[str]:
@@ -350,11 +328,6 @@ def _find_in_hydration_json(html_text: str, base_url: str) -> Optional[Tuple[str
         except Exception:
             continue
 
-    stream_exts = (".m3u8", ".mpd")
-    model_exts = ("glb", "gltf", "obj", "splat", "ply", "fbx")
-    video_exts = ("mp4", "webm", "mkv", "mov")
-    audio_exts = ("mp3", "m4a", "aac", "opus", "ogg", "flac", "wav")
-
     def _walk(obj, depth=0):
         if depth > 12:
             return None
@@ -362,22 +335,9 @@ def _find_in_hydration_json(html_text: str, base_url: str) -> Optional[Tuple[str
             val = obj.strip().replace(r"\/", "/")
             if val.startswith(("http://", "https://", "//", "/")):
                 resolved = urllib.parse.urljoin(base_url, val)
-                if not is_public_http_url(resolved):
-                    return None
-                parsed = urllib.parse.urlparse(resolved)
-                path_lower = parsed.path.lower()
-                if any(path_lower.endswith(ext) for ext in stream_exts):
-                    ext = "mpd" if path_lower.endswith(".mpd") else "m3u8"
-                    return (resolved, "stream", ext)
-                for ext in model_exts:
-                    if path_lower.endswith("." + ext):
-                        return (resolved, "model", ext)
-                for ext in video_exts:
-                    if path_lower.endswith("." + ext):
-                        return (resolved, "video", ext)
-                for ext in audio_exts:
-                    if path_lower.endswith("." + ext):
-                        return (resolved, "audio", ext)
+                matched = _classify_asset_path(urllib.parse.urlparse(resolved).path.lower())
+                if matched and is_public_http_url(resolved):
+                    return (resolved, matched[0], matched[1])
             return None
         if isinstance(obj, dict):
             for v in obj.values():
@@ -587,8 +547,14 @@ def download_sniffed_asset(
         report(0.40, f"Connecting to stream manifest ({asset.extension.upper()})...")
         output_file = os.path.join(output_dir, f"{safe_title}.mp4")
 
-        # Build FFmpeg command with network-only protocol whitelist & stream headers
-        header_lines = "".join(f"{k}: {v}\r\n" for k, v in asset.headers.items())
+        # Build FFmpeg command with network-only protocol whitelist & sanitized stream headers
+        from .constants import SAFE_FFMPEG_PROTOCOLS
+        safe_headers = {
+            re.sub(r"[\r\n:]+", "", str(k)).strip(): re.sub(r"[\r\n]+", " ", str(v)).strip()
+            for k, v in asset.headers.items()
+            if k and v
+        }
+        header_lines = "".join(f"{k}: {v}\r\n" for k, v in safe_headers.items())
         cmd = [
             get_ffmpeg_binary(),
             "-y",
@@ -612,9 +578,11 @@ def download_sniffed_asset(
             ydl_opts = {
                 "format": "bestvideo+bestaudio/best",
                 "outtmpl": os.path.join(output_dir, f"{safe_title}.%(ext)s"),
-                "http_headers": asset.headers,
+                "http_headers": safe_headers,
                 "quiet": True,
                 "no_warnings": True,
+                "external_downloader_args": {"ffmpeg_i": ["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS]},
+                "postprocessor_args": {"ffmpeg": ["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS]},
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(asset.asset_url, download=True)
@@ -642,74 +610,39 @@ def download_sniffed_asset(
             "is_local": False,
         }
 
-    # --- Case 2: 3D Model Asset ---
-    if asset.asset_kind == "model":
-        report(0.40, f"Downloading 3D model asset ({asset.extension.upper()})...")
-        model_file = os.path.join(output_dir, f"{safe_title}.{asset.extension}")
-        resp = _safe_http_get(asset.asset_url, headers=asset.headers, stream=True, timeout=30)
-        resp.raise_for_status()
-
-        total = int(resp.headers.get("content-length") or 0)
-        downloaded = 0
-        with open(model_file, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=64 * 1024):
-                if abort_event and abort_event.is_set():
-                    raise KeyboardInterrupt("3D model download cancelled.")
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total > 0:
-                        report(0.40 + 0.45 * (downloaded / total), f"Downloaded {downloaded // 1024} KB of {total // 1024} KB...")
-
-        report(0.90, f"3D model saved: {os.path.basename(model_file)}")
-        return {
-            "media_path": os.path.abspath(model_file),
-            "title": safe_title,
-            "artist": "3D Asset",
-            "album": "",
-            "year": "",
-            "description": f"3D Model captured from {asset.source_page}",
-            "tags": ["3d", asset.extension],
-            "categories": ["3D Model"],
-            "webpage_url": asset.source_page,
-            "thumbnail_url": asset.thumbnail_url,
-            "thumbnail_path": None,
-            "duration": 0,
-            "source_type": "model",
-            "is_local": False,
-        }
-
-    # --- Case 3: Direct Video or Audio URL ---
-    report(0.40, f"Downloading media file ({asset.extension.upper()})...")
-    media_file = os.path.join(output_dir, f"{safe_title}.{asset.extension}")
+    # --- Case 2 & 3: 3D Model Asset or Direct Video/Audio URL ---
+    is_model = asset.asset_kind == "model"
+    label = "3D model asset" if is_model else "media file"
+    report(0.40, f"Downloading {label} ({asset.extension.upper()})...")
+    dest_file = os.path.join(output_dir, f"{safe_title}.{asset.extension}")
     resp = _safe_http_get(asset.asset_url, headers=asset.headers, stream=True, timeout=30)
     resp.raise_for_status()
     total = int(resp.headers.get("content-length") or 0)
     downloaded = 0
-    with open(media_file, "wb") as f:
+    with open(dest_file, "wb") as f:
         for chunk in resp.iter_content(chunk_size=64 * 1024):
             if abort_event and abort_event.is_set():
-                raise KeyboardInterrupt("Media download cancelled.")
+                raise KeyboardInterrupt(f"{'3D model' if is_model else 'Media'} download cancelled.")
             if chunk:
                 f.write(chunk)
                 downloaded += len(chunk)
                 if total > 0:
                     report(0.40 + 0.45 * (downloaded / total), f"Downloaded {downloaded // 1024} KB of {total // 1024} KB...")
 
-    report(0.90, f"Media file saved: {os.path.basename(media_file)}")
+    report(0.90, f"{'3D model' if is_model else 'Media file'} saved: {os.path.basename(dest_file)}")
     return {
-        "media_path": os.path.abspath(media_file),
+        "media_path": os.path.abspath(dest_file),
         "title": safe_title,
-        "artist": "Web Media",
+        "artist": "3D Asset" if is_model else "Web Media",
         "album": "",
         "year": "",
-        "description": f"Captured from {asset.source_page}",
-        "tags": [],
-        "categories": [],
+        "description": f"{'3D Model c' if is_model else 'C'}aptured from {asset.source_page}",
+        "tags": ["3d", asset.extension] if is_model else [],
+        "categories": ["3D Model"] if is_model else [],
         "webpage_url": asset.source_page,
         "thumbnail_url": asset.thumbnail_url,
         "thumbnail_path": None,
         "duration": 0,
-        "source_type": "generic_url",
+        "source_type": "model" if is_model else "generic_url",
         "is_local": False,
     }

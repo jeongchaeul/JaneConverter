@@ -14,6 +14,7 @@ import { ItemCard } from "./inprogress/ItemCard";
 import { ItemContextMenu } from "./inprogress/ItemContextMenu";
 import { SessionHistoryModal } from "./inprogress/SessionHistoryModal";
 import {
+  extractDistinctJobIds,
   extractYouTubeThumbnail,
   inferMediaKind,
   parseConversionEvents,
@@ -113,22 +114,10 @@ export function InProgressView({
   }, [contextMenu]);
 
   // Extract distinct chronological jobs from conversion events
-  const distinctJobIds = useMemo(() => {
-    const rawIds: string[] = [];
-    for (const e of events) {
-      if (e.jobId && e.jobId !== "ui" && e.jobId !== "browser-session" && !rawIds.includes(e.jobId)) {
-        rawIds.push(e.jobId);
-      }
-    }
-    if (jobId && jobId !== "ui" && jobId !== "browser-session" && !rawIds.includes(jobId)) {
-      rawIds.push(jobId);
-    }
-    return rawIds.filter((id) => {
-      if (running && jobId && id === jobId) return true;
-      const parsed = parseConversionEvents(events, category, format, undefined, id, false);
-      return parsed.items.length > 0;
-    });
-  }, [events, jobId, running, category, format]);
+  const distinctJobIds = useMemo(
+    () => extractDistinctJobIds(events, jobId, running, category, format),
+    [events, jobId, running, category, format],
+  );
 
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [page, setPage] = useState(1);

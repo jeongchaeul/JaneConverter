@@ -252,6 +252,21 @@ def write_credits_file(output_path: str, meta: Dict[str, Any]) -> str:
 def _warn_optional_output(label: str, error: Exception) -> None:
     print(f"[!] {label} could not be saved ({type(error).__name__}).")
 
+
+def _print_available_updates(prefix: str = "Update") -> None:
+    engine_info = check_for_engine_updates()
+    if engine_info.get("has_update"):
+        print(
+            f"[{prefix}] Extractor engine update available: "
+            f"v{engine_info.get('current_version')} -> v{engine_info.get('latest_version')}."
+        )
+    ffmpeg_info = check_for_ffmpeg_updates()
+    if ffmpeg_info.get("has_update"):
+        print(
+            f"[{prefix}] FFmpeg transcoder update available: "
+            f"v{ffmpeg_info.get('current_version')} -> v{ffmpeg_info.get('latest_version')}."
+        )
+
 def process_conversion(
     source: str,
     output_dir: Optional[str] = None,
@@ -296,18 +311,7 @@ def process_conversion(
         )
 
     if check_updates:
-        engine_info = check_for_engine_updates()
-        if engine_info.get("has_update"):
-            print(
-                f"[Update] Extractor engine update available: "
-                f"v{engine_info.get('current_version')} -> v{engine_info.get('latest_version')}."
-            )
-        ffmpeg_info = check_for_ffmpeg_updates()
-        if ffmpeg_info.get("has_update"):
-            print(
-                f"[Update] FFmpeg transcoder update available: "
-                f"v{ffmpeg_info.get('current_version')} -> v{ffmpeg_info.get('latest_version')}."
-            )
+        _print_available_updates("Update")
 
     if not output_dir:
         output_dir = DEFAULT_CONVERTED_DIR
@@ -622,18 +626,7 @@ def process_playlist_conversion(
         raise KeyboardInterrupt("Playlist conversion aborted by user.")
 
     if check_updates:
-        engine_info = check_for_engine_updates()
-        if engine_info.get("has_update"):
-            print(
-                f"[Update] Extractor engine update available: "
-                f"v{engine_info.get('current_version')} -> v{engine_info.get('latest_version')}."
-            )
-        ffmpeg_info = check_for_ffmpeg_updates()
-        if ffmpeg_info.get("has_update"):
-            print(
-                f"[Update] FFmpeg transcoder update available: "
-                f"v{ffmpeg_info.get('current_version')} -> v{ffmpeg_info.get('latest_version')}."
-            )
+        _print_available_updates("Update")
 
     if not output_dir:
         output_dir = DEFAULT_CONVERTED_DIR
@@ -916,7 +909,7 @@ def process_playlist_conversion(
                     "error": str(e),
                     "attempts": 1 if conversion_started else fetch_attempts,
                 })
-                if not conversion_started:
+                if not conversion_started and classify_extraction(e) not in (ExtractionCategory.ACCESS, ExtractionCategory.REMOVED):
                     deferred_queue.append((entry, raw_title, artist, clean_title, ordered_filename, idx))
                 if active_gpu_state[0] and any(w in str(e).lower() for w in ("nvenc", "amf", "qsv", "cuda", "hardware device", "no capable devices")):
                     print("[!] Hardware encoder failure detected. Adaptive Engine: Adapting session to CPU encoding for remaining tracks.", flush=True)
@@ -1532,18 +1525,7 @@ def main():
         parser.error(str(error))
 
     if not args.no_update:
-        engine_info = check_for_engine_updates()
-        if engine_info.get("has_update"):
-            print(
-                f"[AutoUpdate] Extractor engine update available: "
-                f"v{engine_info.get('current_version')} -> v{engine_info.get('latest_version')}."
-            )
-        ffmpeg_info = check_for_ffmpeg_updates()
-        if ffmpeg_info.get("has_update"):
-            print(
-                f"[AutoUpdate] FFmpeg transcoder update available: "
-                f"v{ffmpeg_info.get('current_version')} -> v{ffmpeg_info.get('latest_version')}."
-            )
+        _print_available_updates("AutoUpdate")
 
     save_cover = not args.no_cover_art
     save_meta = not args.no_metadata
