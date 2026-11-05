@@ -369,6 +369,7 @@ def _apply_video_quality_to_encoder_args(
         nvenc_args.extend([
             "-rc:v", "vbr",
             "-cq", crf,
+            "-b:v", "0",
             "-qmin", crf,
             "-qmax", str(int(crf) + 4),
             "-maxrate", maxrate,

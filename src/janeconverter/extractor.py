@@ -1170,9 +1170,9 @@ def fetch_media_stream(
         or any("youtube.com" in str(c) or "youtu.be" in str(c) or str(c).startswith("ytsearch") for c in candidates)
     )
     if is_youtube_source:
-        ydl_opts["retries"] = 1
-        ydl_opts["fragment_retries"] = 1
-        ydl_opts["file_access_retries"] = 1
+        ydl_opts["retries"] = 3
+        ydl_opts["fragment_retries"] = 3
+        ydl_opts["file_access_retries"] = 3
         if "extractor_args" not in ydl_opts:
             ydl_opts["extractor_args"] = {}
         if "youtube" not in ydl_opts["extractor_args"]:

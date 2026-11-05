@@ -103,7 +103,7 @@ def measure_audio_loudness(
         filters.append("aexciter=freq=7500:ceil=20000:amount=2.5:drive=8.5:blend=0")
     filters.append("loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json")
 
-    cmd = [ffmpeg, "-hide_banner", "-nostats"]
+    cmd = [ffmpeg, "-nostdin", "-hide_banner", "-nostats"]
     safe_start = sanitize_time_offset(start_time) if start_time else None
     safe_end = sanitize_time_offset(end_time) if end_time else None
     if safe_start:
@@ -124,6 +124,7 @@ def measure_audio_loudness(
         if abort_event is not None:
             proc = subprocess.Popen(
                 cmd,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 creationflags=no_window,
@@ -151,6 +152,7 @@ def measure_audio_loudness(
         else:
             res = subprocess.run(
                 cmd,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 creationflags=no_window,
@@ -186,6 +188,7 @@ def has_soxr_support() -> bool:
             res = subprocess.run(
                 [get_ffmpeg_binary(), "-f", "lavfi", "-i", "sine=duration=0.05",
                  "-af", "aresample=resampler=soxr:precision=28", "-f", "null", "-"],
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 timeout=5.0, creationflags=no_win
             )

@@ -21,6 +21,10 @@ def classify_extraction(error):
     )):
         return ExtractionCategory.LAYOUT
     if any(word in message for word in (
+        "http error 403", "403: forbidden", "403 forbidden", "token expired or throttled",
+    )):
+        return ExtractionCategory.RATE_LIMIT
+    if any(word in message for word in (
         "drm", "private video", "sign in", "login", "log in", "401", "403", "age-restricted", "geo restricted", "captcha",
         "error code: 152", "code: 152", "152 - 18", "watch video on youtube", "confirm your age", "the page needs to be reloaded",
     )):

@@ -412,7 +412,7 @@ def build_ffmpeg_args(
     # Fast-path: Instant zero-loss stream copy when safe and requested
     if stream_copy:
         ffmpeg_bin = get_ffmpeg_binary()
-        cmd = [ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
+        cmd = [ffmpeg_bin, "-y", "-nostdin", "-hide_banner", "-loglevel", "error"]
         if start_time:
             cmd.extend(["-ss", start_time])
         if end_time:
@@ -451,7 +451,7 @@ def build_ffmpeg_args(
     can_embed_art = has_valid_cover and target_format in ("mp3", "flac", "m4a", "aac")
 
     ffmpeg_bin = get_ffmpeg_binary()
-    cmd = [ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "info" if normalize_audio else "error"]
+    cmd = [ffmpeg_bin, "-y", "-nostdin", "-hide_banner", "-loglevel", "info" if normalize_audio else "error"]
 
     # Resolve the encoder once so decode acceleration and encode args stay consistent
     enc_spec = None
@@ -1138,6 +1138,7 @@ def _convert_media_impl(
                 active_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
                 creationflags=no_window
             )
 
@@ -1171,8 +1172,8 @@ def _convert_media_impl(
             cur_speed = [""]
 
             def read_progress():
-                try:
-                    for raw_line in iter(proc.stdout.readline, b""):
+                for raw_line in iter(proc.stdout.readline, b""):
+                    try:
                         line = raw_line.decode("ascii", errors="ignore").strip()
                         if not line or "=" not in line:
                             continue
@@ -1180,7 +1181,10 @@ def _convert_media_impl(
                         if key == "speed":
                             cur_speed[0] = value.strip()
                         if key == "progress" and value == "end":
-                            report(transcode_base + transcode_span, "Transcode finishing up...")
+                            try:
+                                report(transcode_base + transcode_span, "Transcode finishing up...")
+                            except Exception:
+                                pass
                             continue
                         if duration and duration > 0 and key in ("out_time_us", "out_time_ms"):
                             try:
@@ -1192,22 +1196,28 @@ def _convert_media_impl(
                             if frac > 0 and now - last_report_time[0] >= 0.5:
                                 last_report_time[0] = now
                                 spd_info = f" (speed {cur_speed[0]})" if cur_speed[0] else ""
-                                report(
-                                    transcode_base + transcode_span * frac,
-                                    f"Transcoding {target_format.upper()}: {int(frac * 100)}%{spd_info}"
-                                )
+                                try:
+                                    report(
+                                        transcode_base + transcode_span * frac,
+                                        f"Transcoding {target_format.upper()}: {int(frac * 100)}%{spd_info}"
+                                    )
+                                except Exception:
+                                    pass
                         elif not duration and key == "out_time":
                             now = time.time()
                             if now - last_report_time[0] >= 1.0:
                                 last_report_time[0] = now
                                 time_val = value.strip().split(".")[0]
                                 spd_info = f" speed {cur_speed[0]}" if cur_speed[0] else ""
-                                report(
-                                    0.75,
-                                    f"Transcoding {target_format.upper()} (time {time_val}{spd_info})..."
-                                )
-                except (OSError, ValueError):
-                    pass
+                                try:
+                                    report(
+                                        0.75,
+                                        f"Transcoding {target_format.upper()} (time {time_val}{spd_info})..."
+                                    )
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
 
             reader_thread = threading.Thread(target=read_stderr, daemon=True)
             reader_thread.start()
