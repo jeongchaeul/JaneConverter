@@ -666,6 +666,16 @@ def process_playlist_conversion(
     except (TypeError, ValueError):
         worker_count = max(1, min(4, total_items))
 
+    # Adaptive Concurrency: Detect rate-sensitive social platforms or authenticated sessions
+    is_sensitive_source = (
+        allow_ephemeral_stories
+        or any("instagram.com" in str(e.get("url", "")).lower() or "facebook.com" in str(e.get("url", "")).lower() for e in selected_entries)
+        or (auth_browser and str(auth_browser).lower() not in ("none", "disabled", "off", "public", "public only"))
+    )
+    if is_sensitive_source and worker_count > 1:
+        print("[*] Adaptive Engine: Rate-sensitive authenticated session detected (Instagram / Facebook). Adapting to safe sequential execution to prevent session throttling.", flush=True)
+        worker_count = 1
+
     enc_info = get_best_hardware_encoder()
     gpu_desc = f"{enc_info['short_name']} ({enc_info['encoder_label']})" if active_gpu and enc_info["has_gpu"] else "CPU Multi-Core"
 
@@ -918,7 +928,10 @@ def process_playlist_conversion(
                 if active_gpu_state[0] and any(w in str(e).lower() for w in ("nvenc", "amf", "qsv", "cuda", "hardware device", "no capable devices")):
                     print("[!] Hardware encoder failure detected. Adaptive Engine: Adapting session to CPU encoding for remaining tracks.", flush=True)
                     active_gpu_state[0] = False
-                is_net_err = any(word in str(e).lower() for word in ("connection reset", "connection refused", "name or service not known", "nodename nor servname", "network is unreachable", "timed out"))
+                is_net_err = (
+                    any(word in str(e).lower() for word in ("connection reset", "connection refused", "name or service not known", "nodename nor servname", "network is unreachable", "timed out"))
+                    and not any(word in str(e).lower() for word in ("ffmpeg", "frame extraction", "transcode", "encoder"))
+                )
                 if is_net_err:
                     consecutive_network_failures[0] += 1
                     if consecutive_network_failures[0] >= MAX_CONSECUTIVE_NETWORK_FAILURES:

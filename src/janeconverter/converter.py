@@ -697,7 +697,7 @@ def build_ffmpeg_args(
         if image_encoder == "mjpeg":
             cmd.extend(["-c:v", image_encoder, "-q:v", "2"])
         elif image_encoder == "png":
-            cmd.extend(["-c:v", image_encoder, "-compression_level", "9"])
+            cmd.extend(["-c:v", image_encoder, "-compression_level", "6"])
         elif image_encoder == "libwebp":
             image_quality = {"best": "95", "high": "90", "balanced": "80", "small": "65"}.get(
                 (bitrate or "").lower(), "90"
@@ -737,7 +737,7 @@ def _extract_png_frame(input_path: str, output_path: str, abort_event: Optional[
     )
 
     start_extract = time.monotonic()
-    max_frame_wait = 30.0
+    max_frame_wait = 120.0
     while True:
         if abort_event and abort_event.is_set():
             process.kill()

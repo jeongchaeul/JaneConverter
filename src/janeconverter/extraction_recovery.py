@@ -62,6 +62,8 @@ def humanize_extraction_error(error: object) -> str:
     if any(k in lmsg for k in ("not available", "is not available", "video unavailable", "video deleted", "deleted video", "no matching streams returned", "not archived or indexed")):
         return "Video is dead or unavailable on YouTube"
     if any(k in lmsg for k in ("timed out", "timeout", "connection reset", "network is unreachable")):
+        if any(k in lmsg for k in ("ffmpeg", "frame extraction", "transcode", "encoder")):
+            return "Media processing timed out"
         return "Network connection timed out"
 
     if msg.startswith("ERROR: "):
