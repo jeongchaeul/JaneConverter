@@ -1,6 +1,5 @@
 """Tests for robust Windows cookie database reading and handle duplication."""
 
-import os
 import sqlite3
 from unittest.mock import Mock
 

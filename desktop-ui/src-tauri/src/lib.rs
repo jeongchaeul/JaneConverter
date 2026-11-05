@@ -52,7 +52,7 @@ pub(crate) type SocialManifestStore =
 #[derive(Clone)]
 pub struct AppState {
     pub(crate) active_child: Arc<Mutex<Option<Arc<Mutex<std::process::Child>>>>>,
-    pub(crate) active_stdin: Arc<Mutex<Option<Arc<Mutex<std::process::ChildStdin>>>>>,
+    pub(crate) active_stdin: process::SharedChildStdinSlot,
     pub(crate) active_cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     pub(crate) playlist_cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     pub(crate) active_paused: Arc<AtomicBool>,

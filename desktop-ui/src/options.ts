@@ -12,6 +12,7 @@ export const imageFormats = [
   "jpg", "jpeg", "jfif", "png", "webp", "bmp", "tif", "tiff", "gif",
   "ico", "tga", "ppm", "pgm", "pbm",
 ];
+export const allFormats = ["source", ...Array.from(new Set([...videoFormats, ...audioFormats, ...imageFormats]))];
 export const resolutions = ["original", "4k", "1440p", "1080p", "720p", "480p"];
 
 const AUDIO_INPUT_EXTENSIONS = new Set([
@@ -79,7 +80,7 @@ export function imageQualityLabel(value: string, format: string): string {
 export function formatsFor(category: Category): string[] {
   if (category === "Video") return ["source", ...videoFormats];
   if (category === "Image") return ["source", ...imageFormats];
-  if (category === "Miscellaneous") return ["source", ...new Set([...videoFormats, ...audioFormats, ...imageFormats])];
+  if (category === "Miscellaneous") return allFormats;
   return ["source", ...audioFormats];
 }
 

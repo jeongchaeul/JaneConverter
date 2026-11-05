@@ -558,6 +558,7 @@ def download_sniffed_asset(
         cmd = [
             get_ffmpeg_binary(),
             "-y",
+            "-nostdin",
             "-hide_banner",
             "-loglevel", "error",
             "-protocol_whitelist", "http,https,tcp,tls,crypto",

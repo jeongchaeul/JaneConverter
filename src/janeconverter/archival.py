@@ -7,23 +7,22 @@ provides a multi-stage archival recovery pipeline:
   Phase 2: Stream & Media Recovery (Archive.org collections, Ghostarchive, Wayback CDX streams)
 """
 
+import concurrent.futures
 from dataclasses import dataclass
 import json
 import logging
 import os
 import re
 import tempfile
-import urllib.parse
+import threading
+import time
 from typing import Any, Callable, Dict, Optional
+import urllib.parse
 import requests
 
 logger = logging.getLogger(__name__)
 
 # Common timeout for archival HTTP queries to avoid hanging
-import concurrent.futures
-import threading
-import time
-
 ARCHIVE_TIMEOUT = 2.5
 
 _ARCHIVAL_CACHE: Dict[str, Optional['ArchivalStreamResult']] = {}

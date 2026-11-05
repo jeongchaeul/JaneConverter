@@ -3,11 +3,10 @@ Unit tests for playlist detection, extraction, and sequential ordered formatting
 """
 
 import os
-import re
 import shutil
 import pytest
 
-from janeconverter.extractor import is_playlist_url, format_duration, fetch_playlist_entries, sanitize_filename
+from janeconverter.extractor import is_playlist_url, format_duration, fetch_playlist_entries
 from janeconverter.cli import process_playlist_conversion, strip_playlist_track_prefix
 
 def test_is_playlist_url():

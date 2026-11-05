@@ -62,6 +62,7 @@ export function ParametersPanel({
   isSourceFormat,
   hardwareAccelerationDisabled,
 }: ParametersPanelProps) {
+  const effectivePlaylistMode = settings.playlistMode ?? (activeCategory === "Image" ? "concurrent" : "linear");
   return (
     <section className="panel p-4">
       <div className="flex items-center justify-between gap-3">
@@ -148,7 +149,7 @@ export function ParametersPanel({
               type="button"
               onClick={() => update({ playlistMode: "linear", concurrency: 1 })}
               className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                (settings.playlistMode ?? (activeCategory === "Image" ? "concurrent" : "linear")) === "linear"
+                effectivePlaylistMode === "linear"
                   ? "bg-white/[0.12] text-zinc-100 shadow-sm"
                   : "text-zinc-400 hover:text-zinc-200"
               }`}
@@ -160,7 +161,7 @@ export function ParametersPanel({
               type="button"
               onClick={() => update({ playlistMode: "concurrent", concurrency: 4 })}
               className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                (settings.playlistMode ?? (activeCategory === "Image" ? "concurrent" : "linear")) === "concurrent"
+                effectivePlaylistMode === "concurrent"
                   ? "bg-white/[0.12] text-zinc-100 shadow-sm"
                   : "text-zinc-400 hover:text-zinc-200"
               }`}
@@ -172,12 +173,12 @@ export function ParametersPanel({
           <span
             className="mt-1.5 block text-[10px] leading-relaxed text-zinc-500 truncate"
             title={
-              (settings.playlistMode ?? (activeCategory === "Image" ? "concurrent" : "linear")) === "linear"
+              effectivePlaylistMode === "linear"
                 ? "Sequential downloads with dedicated error recovery (recommended for albums & video playlists)."
                 : "Parallel downloads (recommended for high-speed photo albums & image galleries)."
             }
           >
-            {(settings.playlistMode ?? (activeCategory === "Image" ? "concurrent" : "linear")) === "linear"
+            {effectivePlaylistMode === "linear"
               ? "Sequential with adaptive recovery (albums & videos)"
               : "Parallel downloads (faster for photo albums)"}
           </span>

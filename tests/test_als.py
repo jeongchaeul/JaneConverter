@@ -8,7 +8,6 @@ import pytest
 
 from janeconverter.als import (
     AlsParseError,
-    inspect_als,
     inspect_als_file,
     migrate_als_bytes,
     migrate_als_file,

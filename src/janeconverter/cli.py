@@ -667,14 +667,20 @@ def process_playlist_conversion(
         worker_count = max(1, min(4, total_items))
 
     # Adaptive Concurrency: Detect rate-sensitive social platforms or authenticated sessions
+    all_pre_extracted = bool(selected_entries) and all(e.get("_info_dict") for e in selected_entries)
     is_sensitive_source = (
         allow_ephemeral_stories
         or any("instagram.com" in str(e.get("url", "")).lower() or "facebook.com" in str(e.get("url", "")).lower() for e in selected_entries)
         or (auth_browser and str(auth_browser).lower() not in ("none", "disabled", "off", "public", "public only"))
     )
     if is_sensitive_source and worker_count > 1:
-        print("[*] Adaptive Engine: Rate-sensitive authenticated session detected (Instagram / Facebook). Adapting to safe sequential execution to prevent session throttling.", flush=True)
-        worker_count = 1
+        if all_pre_extracted:
+            worker_count = max(1, min(int(concurrency), total_items, 2))
+            print(f"[*] Adaptive Engine: Direct CDN stream manifests resolved. Pipeline concurrency set to {worker_count} worker(s).", flush=True)
+        else:
+            reason = "social media (Instagram / Facebook)" if (allow_ephemeral_stories or any("instagram.com" in str(e.get("url", "")).lower() or "facebook.com" in str(e.get("url", "")).lower() for e in selected_entries)) else f"authenticated session ({auth_browser})"
+            print(f"[*] Adaptive Engine: Rate-sensitive {reason} detected. Adapting to safe sequential execution to prevent session throttling.", flush=True)
+            worker_count = 1
 
     enc_info = get_best_hardware_encoder()
     gpu_desc = f"{enc_info['short_name']} ({enc_info['encoder_label']})" if active_gpu and enc_info["has_gpu"] else "CPU Multi-Core"
@@ -790,7 +796,8 @@ def process_playlist_conversion(
             msg_detail = f" — {sub_msg}" if sub_msg else f" ({int(sub_frac * 100)}%)"
             report_overall(overall_frac, f"[{done}/{total_items}] #{idx}: {clean_title}{msg_detail}")
 
-        if item_url and is_url(item_url):
+        pre_extracted_info = entry.get("_info_dict")
+        if item_url and is_url(item_url) and not pre_extracted_info:
             pace_request(item_url, abort_event=abort_event)
 
         current_frac, current_done = get_overall_progress()
@@ -820,6 +827,7 @@ def process_playlist_conversion(
                     archival_fallback=archival_fallback,
                     target_format=target_format,
                     save_cover_art=save_cover_art,
+                    pre_extracted_info=pre_extracted_info,
                 )
             except Exception:
                 if not keep_temp and track_work_dir and os.path.exists(track_work_dir):

@@ -80,6 +80,13 @@ FLAC_BIT_DEPTHS = {
 FLAC_DEFAULT_DEPTH = "s32"
 WAV_DEFAULT_CODEC = "pcm_s24le"
 
+CONTAINER_AUDIO_CODECS = {
+    "mp4": {"aac", "mp3", "opus"},
+    "mkv": {"aac", "mp3", "opus", "flac", "vorbis", "alac", "ac3", "eac3", "pcm_s16le", "pcm_s24le"},
+    "webm": {"opus", "vorbis"},
+    "mov": {"aac", "pcm_s16le", "pcm_s24le", "alac", "mp3"},
+}
+
 VAAPI_ENCODER_ARGS = ["-vaapi_device", "/dev/dri/renderD128", "-c:v", "h264_vaapi", "-qp", "23"]
 
 def sanitize_time_offset(value: Optional[str]) -> Optional[str]:

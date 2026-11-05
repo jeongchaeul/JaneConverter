@@ -645,11 +645,13 @@ fn normalize_browser_session_arg(value: &str) -> Result<String, String> {
     ))
 }
 
+pub type SharedChildStdinSlot = Arc<Mutex<Option<Arc<Mutex<ChildStdin>>>>>;
+
 pub struct ConversionSlots {
     pub child: Arc<Mutex<Option<Arc<Mutex<Child>>>>>,
     pub cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     pub facebook_refresh: Option<FacebookRefreshHandler>,
-    pub stdin: Option<Arc<Mutex<Option<Arc<Mutex<std::process::ChildStdin>>>>>>,
+    pub stdin: Option<SharedChildStdinSlot>,
 }
 
 #[allow(clippy::too_many_arguments)]

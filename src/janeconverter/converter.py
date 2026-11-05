@@ -43,6 +43,7 @@ from .constants import (
     FLAC_BIT_DEPTHS,
     FLAC_DEFAULT_DEPTH,
     WAV_DEFAULT_CODEC,
+    CONTAINER_AUDIO_CODECS,
     VAAPI_ENCODER_ARGS,
     LOUDNORM_FILTER,
     VIDEO_QUALITY_SETTINGS,
@@ -128,15 +129,7 @@ def is_audio_codec_compatible_with_container(audio_codec: Optional[str], contain
         return True
     c = audio_codec.lower().strip()
     fmt = container_format.lower().strip(".")
-    if fmt == "mp4":
-        return c in ("aac", "mp3", "opus")
-    if fmt == "mkv":
-        return c in ("aac", "mp3", "opus", "flac", "vorbis", "alac", "ac3", "eac3", "pcm_s16le", "pcm_s24le")
-    if fmt == "webm":
-        return c in ("opus", "vorbis")
-    if fmt == "mov":
-        return c in ("aac", "pcm_s16le", "pcm_s24le", "alac", "mp3")
-    return False
+    return c in CONTAINER_AUDIO_CODECS.get(fmt, set())
 
 
 def is_stream_copy_safe(
@@ -223,21 +216,13 @@ def is_stream_copy_safe(
         a_sr = audio_streams[0].get("sample_rate") if audio_streams else None
 
         if target_format == "mp4":
-            v_ok = v_codec in ("h264", "hevc", "av1")
-            a_ok = a_codec is None or a_codec in ("aac", "mp3", "opus")
-            return v_ok and a_ok
+            return v_codec in ("h264", "hevc", "av1") and is_audio_codec_compatible_with_container(a_codec, target_format)
         if target_format == "mkv":
-            v_ok = v_codec in ("h264", "hevc", "vp8", "vp9", "av1")
-            a_ok = a_codec is None or a_codec in ("aac", "mp3", "opus", "flac", "vorbis")
-            return v_ok and a_ok
+            return v_codec in ("h264", "hevc", "vp8", "vp9", "av1") and is_audio_codec_compatible_with_container(a_codec, target_format)
         if target_format == "webm":
-            v_ok = v_codec in ("vp8", "vp9", "av1")
-            a_ok = a_codec is None or a_codec in ("opus", "vorbis")
-            return v_ok and a_ok
+            return v_codec in ("vp8", "vp9", "av1") and is_audio_codec_compatible_with_container(a_codec, target_format)
         if target_format == "mov":
-            v_ok = v_codec in ("h264", "hevc", "prores")
-            a_ok = a_codec is None or a_codec in ("aac", "pcm_s16le", "pcm_s24le")
-            return v_ok and a_ok
+            return v_codec in ("h264", "hevc", "prores") and is_audio_codec_compatible_with_container(a_codec, target_format)
 
     return False
 
@@ -888,7 +873,7 @@ def _convert_media_impl(
         remux_succeeded = False
         if preferred_ext != actual_ext or start_time or end_time:
             report_raw(0.70, f"Preserving source quality: exporting raw {preferred_ext.upper()} stream without re-encoding...")
-            cmd = [get_ffmpeg_binary(), "-y", "-hide_banner", "-loglevel", "error"]
+            cmd = [get_ffmpeg_binary(), "-y", "-nostdin", "-hide_banner", "-loglevel", "error"]
             if start_time:
                 cmd.extend(["-ss", start_time])
             if end_time:
@@ -902,6 +887,7 @@ def _convert_media_impl(
             cmd.extend(["-threads", "0", destination_path])
             res = subprocess.run(
                 cmd,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -1131,6 +1117,9 @@ def _convert_media_impl(
     command_adapted = False
 
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    proc: Optional[subprocess.Popen] = None
+    reader_thread: Optional[threading.Thread] = None
+    progress_thread: Optional[threading.Thread] = None
 
     try:
         while True:
@@ -1284,11 +1273,13 @@ def _convert_media_impl(
             raise subprocess.CalledProcessError(proc.returncode, active_cmd, output=b"", stderr=stderr)
 
     except KeyboardInterrupt:
-        if proc.poll() is None:
+        if proc is not None and proc.poll() is None:
             proc.kill()
             proc.wait()
-            reader_thread.join(timeout=1.0)
-            progress_thread.join(timeout=1.0)
+            if reader_thread is not None:
+                reader_thread.join(timeout=1.0)
+            if progress_thread is not None:
+                progress_thread.join(timeout=1.0)
         if os.path.exists(destination_path):
             try:
                 os.remove(destination_path)
