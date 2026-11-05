@@ -95,7 +95,7 @@ def probe_hardware_encoder(encoder: str) -> bool:
         return False
     cmd = [
         ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
-        "-f", "lavfi", "-i", "color=s=32x32:d=0.04",
+        "-f", "lavfi", "-i", "color=s=256x256:d=0.04",
         "-c:v", encoder, "-frames:v", "1", "-f", "null", "-",
     ]
     try:
