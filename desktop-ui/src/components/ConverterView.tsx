@@ -1123,6 +1123,10 @@ export function ConverterView({
     }
     if (selectedPresetId === null) presetBaselineRef.current = settings;
 
+    const isImagePreset = (preset.preserveQuality ? activeCategory : preset.category) === "Image";
+    const autoMode = isImagePreset ? "concurrent" : "linear";
+    const autoConcurrency = isImagePreset ? 4 : 1;
+
     if (preset.preserveQuality) {
       onSettings({
         ...settings,
@@ -1133,6 +1137,8 @@ export function ConverterView({
         useGpu: settings.useGpu,
         bitrate: qualitiesFor(preset.format)[0],
         archivalFallback: preset.archivalFallback ?? false,
+        playlistMode: autoMode,
+        concurrency: autoConcurrency,
       });
       setSelectedPresetId(preset.id);
       onStatus(`Applied ${preset.name} preset: ${preset.description}.`);
@@ -1149,6 +1155,8 @@ export function ConverterView({
       normalize: preset.normalize,
       useGpu: settings.useGpu || preset.useGpu,
       archivalFallback: preset.archivalFallback ?? false,
+      playlistMode: autoMode,
+      concurrency: autoConcurrency,
     });
     setSelectedPresetId(preset.id);
     onStatus(`Applied ${preset.name} preset: ${preset.description}.`);

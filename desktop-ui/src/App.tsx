@@ -36,8 +36,8 @@ const defaultSettings: ConverterSettings = {
   endTime: "",
   allowStoryExtraction: false,
   archivalFallback: false,
-  playlistMode: "concurrent",
-  concurrency: 4,
+  playlistMode: "linear",
+  concurrency: 1,
   audioBitrate: "original",
 };
 

@@ -82,7 +82,14 @@ export function ParametersPanel({
               key={category}
               type="button"
               aria-pressed={presetCategory === category}
-              onClick={() => update({ category })}
+              onClick={() => {
+                const isImg = category === "Image";
+                update({
+                  category,
+                  playlistMode: isImg ? "concurrent" : "linear",
+                  concurrency: isImg ? 4 : 1,
+                });
+              }}
               className="preset-category-button min-h-9 border-b-2 border-transparent px-3 text-xs font-medium text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-3px]"
             >
               {category}
@@ -141,7 +148,7 @@ export function ParametersPanel({
               type="button"
               onClick={() => update({ playlistMode: "linear", concurrency: 1 })}
               className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                (settings.playlistMode ?? "linear") === "linear"
+                (settings.playlistMode ?? (activeCategory === "Image" ? "concurrent" : "linear")) === "linear"
                   ? "bg-white/[0.12] text-zinc-100 shadow-sm"
                   : "text-zinc-400 hover:text-zinc-200"
               }`}
@@ -153,7 +160,7 @@ export function ParametersPanel({
               type="button"
               onClick={() => update({ playlistMode: "concurrent", concurrency: 4 })}
               className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                settings.playlistMode === "concurrent"
+                (settings.playlistMode ?? (activeCategory === "Image" ? "concurrent" : "linear")) === "concurrent"
                   ? "bg-white/[0.12] text-zinc-100 shadow-sm"
                   : "text-zinc-400 hover:text-zinc-200"
               }`}
@@ -165,12 +172,12 @@ export function ParametersPanel({
           <span
             className="mt-1.5 block text-[10px] leading-relaxed text-zinc-500 truncate"
             title={
-              (settings.playlistMode ?? "linear") === "linear"
+              (settings.playlistMode ?? (activeCategory === "Image" ? "concurrent" : "linear")) === "linear"
                 ? "Sequential downloads with dedicated error recovery (recommended for albums & video playlists)."
                 : "Parallel downloads (recommended for high-speed photo albums & image galleries)."
             }
           >
-            {(settings.playlistMode ?? "linear") === "linear"
+            {(settings.playlistMode ?? (activeCategory === "Image" ? "concurrent" : "linear")) === "linear"
               ? "Sequential with adaptive recovery (albums & videos)"
               : "Parallel downloads (faster for photo albums)"}
           </span>
