@@ -305,7 +305,37 @@ describe("Converter account access feedback", () => {
     expect(view.container.querySelector<HTMLSelectElement>('select[aria-label="Video quality"]')?.disabled).toBe(false);
     expect(view.container.querySelector<HTMLSelectElement>('select[aria-label="Video resolution"]')?.disabled).toBe(false);
     expect(view.container.querySelector<HTMLSelectElement>('select[aria-label="Audio bitrate"]')?.disabled).toBe(false);
-    expect(view.container.querySelector<HTMLSelectElement>('select[aria-label="Audio sample rate"]')?.disabled).toBe(true);
+    expect(view.container.querySelector<HTMLSelectElement>('select[aria-label="Audio sample rate"]')).toBeNull();
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("exposes playlist download strategy outside advanced settings and switches modes", async () => {
+    const onSettings = vi.fn();
+    const view = renderView(undefined, undefined, undefined, null, onSettings);
+
+    const concurrentBtn = Array.from(view.container.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("Concurrent (Parallel)"),
+    );
+    expect(concurrentBtn).toBeDefined();
+
+    await act(async () => {
+      concurrentBtn?.click();
+      await Promise.resolve();
+    });
+    expect(onSettings).toHaveBeenLastCalledWith(expect.objectContaining({ playlistMode: "concurrent", concurrency: 4 }));
+
+    const linearBtn = Array.from(view.container.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("Linear (Sequential)"),
+    );
+    expect(linearBtn).toBeDefined();
+
+    await act(async () => {
+      linearBtn?.click();
+      await Promise.resolve();
+    });
+    expect(onSettings).toHaveBeenLastCalledWith(expect.objectContaining({ playlistMode: "linear", concurrency: 1 }));
 
     await act(async () => { view.root.unmount(); });
     view.container.remove();

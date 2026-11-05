@@ -120,7 +120,7 @@ export function ParametersPanel({
       </div>
 
       {/* Primary Controls */}
-      <div className="mt-3 grid gap-2 md:grid-cols-2">
+      <div className="mt-3 grid gap-3 md:grid-cols-[minmax(180px,1fr)_minmax(280px,1.3fr)_auto] items-start">
         <SelectField
           label="Container format"
           value={activeFormat}
@@ -134,27 +134,73 @@ export function ParametersPanel({
           }
           onChange={(format) => update({ format, bitrate: qualitiesFor(format, activeCategory)[0] })}
         />
-        <div className="flex items-end">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={showAdvanced}
-            aria-controls="advanced-conversion-parameters"
-            onClick={() => setShowAdvanced((v) => !v)}
-            className="advanced-settings-switch inline-flex min-h-9 items-center gap-2 rounded-lg px-1 text-xs text-zinc-300 transition-colors hover:text-white focus-visible:outline focus-visible:outline-2"
+        <div>
+          <span className="mb-2 block text-[11px] font-medium text-zinc-500">Playlist download strategy</span>
+          <div className="flex rounded-lg border border-white/[0.08] bg-black/30 p-1 min-h-[42px] items-center">
+            <button
+              type="button"
+              onClick={() => update({ playlistMode: "linear", concurrency: 1 })}
+              className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                (settings.playlistMode ?? "linear") === "linear"
+                  ? "bg-white/[0.12] text-zinc-100 shadow-sm"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+              title="Linear (Sequential): Recommended for music albums, video series, and streaming playlists (Spotify, YouTube, SoundCloud) so each item receives full adaptive error recovery and avoids rate limits."
+            >
+              Linear (Sequential)
+            </button>
+            <button
+              type="button"
+              onClick={() => update({ playlistMode: "concurrent", concurrency: 4 })}
+              className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                settings.playlistMode === "concurrent"
+                  ? "bg-white/[0.12] text-zinc-100 shadow-sm"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+              title="Concurrent (Parallel): Recommended for high-speed bulk photo downloading (e.g. Pinterest boards, Facebook photo albums). May encounter rate limits or cookie locks on streaming video/audio."
+            >
+              Concurrent (Parallel)
+            </button>
+          </div>
+          <span
+            className="mt-1.5 block text-[10px] leading-relaxed text-zinc-500 truncate"
+            title={
+              (settings.playlistMode ?? "linear") === "linear"
+                ? "Sequential downloads with dedicated error recovery (recommended for albums & video playlists)."
+                : "Parallel downloads (recommended for high-speed photo albums & image galleries)."
+            }
           >
-            <span
-              aria-hidden="true"
-              className="advanced-settings-track relative h-5 w-9 rounded-full bg-zinc-700 transition-colors"
+            {(settings.playlistMode ?? "linear") === "linear"
+              ? "Sequential with adaptive recovery (albums & videos)"
+              : "Parallel downloads (faster for photo albums)"}
+          </span>
+        </div>
+        <div className="flex flex-col justify-start">
+          <span className="mb-2 hidden text-[11px] font-medium text-transparent select-none md:block" aria-hidden="true">
+            &nbsp;
+          </span>
+          <div className="flex min-h-[42px] items-center">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showAdvanced}
+              aria-controls="advanced-conversion-parameters"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="advanced-settings-switch inline-flex min-h-9 items-center gap-2 rounded-lg px-2 text-xs text-zinc-300 transition-colors hover:text-white focus-visible:outline focus-visible:outline-2"
             >
               <span
-                className={`absolute left-0.5 top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform ${
-                  showAdvanced ? "translate-x-4" : ""
-                }`}
-              />
-            </span>
-            Advanced settings
-          </button>
+                aria-hidden="true"
+                className="advanced-settings-track relative h-5 w-9 rounded-full bg-zinc-700 transition-colors"
+              >
+                <span
+                  className={`absolute left-0.5 top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform ${
+                    showAdvanced ? "translate-x-4" : ""
+                  }`}
+                />
+              </span>
+              Advanced settings
+            </button>
+          </div>
         </div>
       </div>
 
@@ -169,7 +215,7 @@ export function ParametersPanel({
             className="overflow-hidden"
           >
             <div className="mt-3 border-t border-white/[0.06] pt-3">
-              <div className={`grid gap-2 ${isVideo ? "md:grid-cols-2 lg:grid-cols-4" : "md:grid-cols-3"}`}>
+              <div className={`grid gap-2 ${isVideo ? "md:grid-cols-3" : isAudio ? "md:grid-cols-2" : "max-w-xs"}`}>
                 <SelectField
                   label={isVideo ? "Video quality" : isImage ? "Image quality" : "Audio bitrate / quality"}
                   value={isImage ? "best" : settings.bitrate}
@@ -191,21 +237,21 @@ export function ParametersPanel({
                       : undefined
                   }
                 />
-                <SelectField
-                  label="Video resolution"
-                  value={settings.resolution}
-                  values={resolutions}
-                  formatValue={(v) => resolutionLabel(String(v))}
-                  onChange={(resolution) => update({ resolution })}
-                  disabled={!isVideo || isSourceFormat}
-                  hint={
-                    !isVideo
-                      ? "Available for video output."
-                      : isSourceFormat
-                      ? "Source output keeps its original dimensions."
-                      : undefined
-                  }
-                />
+                {isVideo && (
+                  <SelectField
+                    label="Video resolution"
+                    value={settings.resolution}
+                    values={resolutions}
+                    formatValue={(v) => resolutionLabel(String(v))}
+                    onChange={(resolution) => update({ resolution })}
+                    disabled={isSourceFormat}
+                    hint={
+                      isSourceFormat
+                        ? "Source output keeps its original dimensions."
+                        : undefined
+                    }
+                  />
+                )}
                 {isVideo && (
                   <SelectField
                     label="Audio bitrate"
@@ -221,116 +267,81 @@ export function ParametersPanel({
                     }
                   />
                 )}
-                <SelectField
-                  label="Audio sample rate"
-                  value={settings.sampleRate}
-                  values={[44100, 48000, 96000]}
-                  onChange={(sampleRate) => update({ sampleRate: Number(sampleRate) })}
-                  disabled={!isAudio || isSourceFormat}
-                  hint={
-                    !isAudio
-                      ? "Available for audio output."
-                      : isSourceFormat
-                      ? "Source output keeps its original audio."
-                      : undefined
-                  }
-                />
+                {isAudio && (
+                  <SelectField
+                    label="Audio sample rate"
+                    value={settings.sampleRate}
+                    values={[44100, 48000, 96000]}
+                    onChange={(sampleRate) => update({ sampleRate: Number(sampleRate) })}
+                    disabled={isSourceFormat}
+                    hint={
+                      isSourceFormat
+                        ? "Source output keeps its original audio."
+                        : undefined
+                    }
+                  />
+                )}
               </div>
               <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                <Toggle
-                  checked={settings.reconstructFrequencyLoss ?? false}
-                  onChange={(reconstructFrequencyLoss) => update({ reconstructFrequencyLoss })}
-                  label="Harmonic Exciter (High-End Sparkle)"
-                  hint={
-                    isAudio
-                      ? "Applies an audio exciter filter to synthesize subtle high-frequency air (7.5–20 kHz)"
-                      : "Available for audio output."
-                  }
-                  disabled={!isAudio || isSourceFormat}
-                />
-                <Toggle
-                  checked={settings.normalize}
-                  onChange={(normalize) => update({ normalize })}
-                  label="EBU R128 normalization"
-                  hint={isAudio ? "-14 LUFS streaming target" : "Available for audio output."}
-                  disabled={!isAudio || isSourceFormat}
-                />
-                <Toggle
-                  checked={settings.saveCover}
-                  onChange={(saveCover) => update({ saveCover })}
-                  label="Embed and save cover art"
-                  hint={isImage ? "Available for audio and video sources." : "Artwork or thumbnail when available"}
-                  disabled={isImage}
-                />
+                {isAudio && (
+                  <Toggle
+                    checked={settings.reconstructFrequencyLoss ?? false}
+                    onChange={(reconstructFrequencyLoss) => update({ reconstructFrequencyLoss })}
+                    label="Harmonic Exciter (High-End Sparkle)"
+                    hint="Applies an audio exciter filter to synthesize subtle high-frequency air (7.5–20 kHz)"
+                    disabled={isSourceFormat}
+                  />
+                )}
+                {isAudio && (
+                  <Toggle
+                    checked={settings.normalize}
+                    onChange={(normalize) => update({ normalize })}
+                    label="EBU R128 normalization"
+                    hint="-14 LUFS streaming target"
+                    disabled={isSourceFormat}
+                  />
+                )}
+                {!isImage && (
+                  <Toggle
+                    checked={settings.saveCover}
+                    onChange={(saveCover) => update({ saveCover })}
+                    label="Embed and save cover art"
+                    hint="Artwork or thumbnail when available"
+                  />
+                )}
                 <Toggle
                   checked={settings.saveMetadata}
                   onChange={(saveMetadata) => update({ saveMetadata })}
                   label="Export metadata and credits"
                   hint="Human-readable .txt metadata"
                 />
-                <Toggle
-                  checked={settings.useGpu}
-                  onChange={(useGpu) => update({ useGpu })}
-                  label="Hardware acceleration"
-                  hint={
-                    hardwareAccelerationDisabled
-                      ? !isVideo || isSourceFormat
-                        ? "Available for encoded video output."
-                        : activeFormat === "gif"
-                        ? "GIF output uses its own frame conversion."
-                        : "No supported GPU detected. CPU mode is available."
-                      : runtime?.gpuLabel || "Use the available video hardware encoder."
-                  }
-                  disabled={hardwareAccelerationDisabled}
-                />
-                <Toggle
-                  checked={settings.archivalFallback ?? false}
-                  onChange={(archivalFallback) => update({ archivalFallback })}
-                  label="Search archival vaults for unavailable media"
-                  hint="Index Wayback Machine, Archive.org, Ghostarchive, and Filmot if a video is deleted or private"
-                />
-                <div className="mt-3 border-t border-white/[0.06] pt-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <span className="block text-xs font-medium text-zinc-300">Playlist Download Strategy</span>
-                      <span className="mt-0.5 block text-[11px] text-zinc-500">
-                        Linear processes items sequentially with dedicated recovery; Concurrent downloads in parallel.
-                      </span>
-                    </div>
-                    <div className="flex rounded-lg border border-white/[0.08] bg-black/30 p-0.5">
-                      <button
-                        type="button"
-                        onClick={() => update({ playlistMode: "linear", concurrency: 1 })}
-                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                          (settings.playlistMode ?? "linear") === "linear"
-                            ? "bg-white/[0.12] text-zinc-100 shadow-sm"
-                            : "text-zinc-400 hover:text-zinc-200"
-                        }`}
-                      >
-                        Linear (Sequential)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => update({ playlistMode: "concurrent", concurrency: 4 })}
-                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                          settings.playlistMode === "concurrent"
-                            ? "bg-white/[0.12] text-zinc-100 shadow-sm"
-                            : "text-zinc-400 hover:text-zinc-200"
-                        }`}
-                      >
-                        Concurrent (Parallel)
-                      </button>
-                    </div>
-                  </div>
-                  <p className="mt-2 text-[11px] leading-relaxed text-zinc-400">
-                    <strong className="text-zinc-300">Strategy tip:</strong>{" "}
-                    {(settings.playlistMode ?? "linear") === "linear"
-                      ? "Recommended for music albums, video series, and streaming playlists (Spotify, YouTube, SoundCloud) so each item receives full adaptive error recovery and avoids rate limits."
-                      : "Recommended for high-speed bulk photo downloading (e.g. Pinterest boards, Facebook photo albums). May encounter rate limits or cookie locks on streaming video/audio."}
-                  </p>
-                </div>
+                {isVideo && (
+                  <Toggle
+                    checked={settings.useGpu}
+                    onChange={(useGpu) => update({ useGpu })}
+                    label="Hardware acceleration"
+                    hint={
+                      hardwareAccelerationDisabled
+                        ? isSourceFormat
+                          ? "Source format preserves stream directly."
+                          : activeFormat === "gif"
+                          ? "GIF output uses its own frame conversion."
+                          : "No supported GPU detected. CPU mode is available."
+                        : runtime?.gpuLabel || "Use the available video hardware encoder."
+                    }
+                    disabled={hardwareAccelerationDisabled}
+                  />
+                )}
+                {!isImage && (
+                  <Toggle
+                    checked={settings.archivalFallback ?? false}
+                    onChange={(archivalFallback) => update({ archivalFallback })}
+                    label="Search archival vaults for unavailable media"
+                    hint="Index Wayback Machine, Archive.org, Ghostarchive, and Filmot if a video is deleted or private"
+                  />
+                )}
               </div>
-              {settings.archivalFallback && (
+              {!isImage && settings.archivalFallback && (
                 <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] p-3 text-xs leading-relaxed text-zinc-300">
                   <div className="font-medium text-amber-300 mb-1 flex items-center gap-1.5">
                     <span>Archival Vault Indexing (Wayback Machine, Archive.org & Ghostarchive)</span>
@@ -370,38 +381,40 @@ export function ParametersPanel({
                   </p>
                 </div>
               )}
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <label className="block min-w-0">
-                  <span className="mb-2 block text-[11px] font-medium text-zinc-500">
-                    Trim start time (optional)
-                  </span>
-                  <input
-                    type="text"
-                    placeholder="e.g. 00:15 or 90"
-                    value={settings.startTime ?? ""}
-                    onChange={(e) => update({ startTime: e.target.value })}
-                    className="field w-full px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600"
-                  />
-                  <span className="mt-1.5 block text-[10px] leading-relaxed text-zinc-600">
-                    Start timestamp (HH:MM:SS, MM:SS, or seconds)
-                  </span>
-                </label>
-                <label className="block min-w-0">
-                  <span className="mb-2 block text-[11px] font-medium text-zinc-500">
-                    Trim end time (optional)
-                  </span>
-                  <input
-                    type="text"
-                    placeholder="e.g. 02:45 or 165"
-                    value={settings.endTime ?? ""}
-                    onChange={(e) => update({ endTime: e.target.value })}
-                    className="field w-full px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600"
-                  />
-                  <span className="mt-1.5 block text-[10px] leading-relaxed text-zinc-600">
-                    End timestamp (HH:MM:SS, MM:SS, or seconds)
-                  </span>
-                </label>
-              </div>
+              {!isImage && (
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <label className="block min-w-0">
+                    <span className="mb-2 block text-[11px] font-medium text-zinc-500">
+                      Trim start time (optional)
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="e.g. 00:15 or 90"
+                      value={settings.startTime ?? ""}
+                      onChange={(e) => update({ startTime: e.target.value })}
+                      className="field w-full px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600"
+                    />
+                    <span className="mt-1.5 block text-[10px] leading-relaxed text-zinc-600">
+                      Start timestamp (HH:MM:SS, MM:SS, or seconds)
+                    </span>
+                  </label>
+                  <label className="block min-w-0">
+                    <span className="mb-2 block text-[11px] font-medium text-zinc-500">
+                      Trim end time (optional)
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="e.g. 02:45 or 165"
+                      value={settings.endTime ?? ""}
+                      onChange={(e) => update({ endTime: e.target.value })}
+                      className="field w-full px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600"
+                    />
+                    <span className="mt-1.5 block text-[10px] leading-relaxed text-zinc-600">
+                      End timestamp (HH:MM:SS, MM:SS, or seconds)
+                    </span>
+                  </label>
+                </div>
+              )}
               {isImage && isSourceFormat && (
                 <div className="mt-3 max-w-md">
                   <Toggle
