@@ -295,6 +295,7 @@ def process_conversion(
     reconstruct_frequency_loss: bool = False,
     allow_ephemeral_stories: bool = False,
     archival_fallback: bool = False,
+    audio_bitrate: Optional[str] = None,
 ) -> str:
     """
     Orchestrates downloading/extracting stream, embedding cover art, exporting credits,
@@ -547,6 +548,7 @@ def process_conversion(
             end_time=end_time,
             reconstruct_frequency_loss=reconstruct_frequency_loss,
             expected_category=content_category,
+            audio_bitrate=audio_bitrate,
         )
 
         report(1.0, f"Ready! File exported to: {os.path.basename(result_path)}")
@@ -617,6 +619,7 @@ def process_playlist_conversion(
     allow_ephemeral_stories: bool = False,
     archival_fallback: bool = False,
     concurrency: int = 4,
+    audio_bitrate: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Batch-downloads and transcodes selected playlist items into a dedicated playlist folder.
@@ -879,6 +882,7 @@ def process_playlist_conversion(
                     progress_callback=item_progress_hook,
                     reconstruct_frequency_loss=reconstruct_frequency_loss,
                     expected_category=content_category,
+                    audio_bitrate=audio_bitrate,
                 ),
                 f"Track #{idx} conversion",
                 0  # convert_media already selects and bounds distinct recovery methods
@@ -1131,6 +1135,7 @@ def process_playlist_conversion(
                     abort_event=abort_event,
                     reconstruct_frequency_loss=reconstruct_frequency_loss,
                     expected_category=content_category,
+                    audio_bitrate=audio_bitrate,
                 )
                 converted_files.append(result_path)
                 failed_files = [f for f in failed_files if f.get("index") != idx]
@@ -1215,7 +1220,8 @@ CLI_CATEGORIES = ("Music", "Audio", "Video", "Image", "Miscellaneous")
 CLI_BITRATES = {"320k", "256k", "192k", "128k"}
 CLI_BIT_DEPTHS = {"16-bit", "24-bit", "32-bit", "32-bit float"}
 CLI_OGG_QUALITIES = {"q10", "q8", "q6", "q4"}
-CLI_VIDEO_QUALITIES = {"best", "high", "balanced", "small"}
+CLI_VIDEO_QUALITIES = {"original", "best", "high", "balanced", "small"}
+CLI_AUDIO_BITRATES = {"original", "320k", "256k", "192k", "128k", "96k", "auto"}
 CLI_SAMPLE_RATES = {44100, 48000, 96000}
 CLI_RESOLUTIONS = {"original", "4k", "1440p", "1080p", "720p", "480p"}
 
@@ -1261,9 +1267,8 @@ def validate_cli_args(args, parser: argparse.ArgumentParser):
             )
     elif fmt in SUPPORTED_VIDEO_FORMATS:
         if bitrate == "320k":
-            # Preserve the audio-oriented CLI default while making a bare
-            # ``--format mp4`` invocation choose a sensible video preset.
-            bitrate = "balanced"
+            # Video mode defaults to original quality unless overridden
+            bitrate = "original"
         if bitrate not in CLI_VIDEO_QUALITIES:
             parser.error(
                 f"Invalid video quality '{args.bitrate}'. Choose from: {', '.join(sorted(CLI_VIDEO_QUALITIES))}"
@@ -1283,6 +1288,14 @@ def validate_cli_args(args, parser: argparse.ArgumentParser):
     else:
         if bitrate not in CLI_BITRATES:
             parser.error(f"Invalid bitrate '{args.bitrate}'. Choose from: {', '.join(sorted(CLI_BITRATES))}")
+
+    if getattr(args, "audio_bitrate", None):
+        a_br = args.audio_bitrate.lower().strip()
+        if a_br not in CLI_AUDIO_BITRATES:
+            parser.error(
+                f"Invalid audio bitrate '{args.audio_bitrate}'. Choose from: {', '.join(sorted(CLI_AUDIO_BITRATES))}"
+            )
+        args.audio_bitrate = a_br
 
     if args.sample_rate not in CLI_SAMPLE_RATES:
         parser.error(f"Invalid sample rate {args.sample_rate}. Choose from: {', '.join(str(r) for r in sorted(CLI_SAMPLE_RATES))}")
@@ -1322,7 +1335,8 @@ def main():
     parser.add_argument("--source", "-s", help="Media URL (YouTube, Spotify, Apple Music, SoundCloud, TikTok, Twitter, etc.) or local file path")
     parser.add_argument("--format", "-f", default="mp3", help=f"Target output format ({', '.join(CLI_FORMATS)})")
     parser.add_argument("--output", "-o", default=DEFAULT_CONVERTED_DIR, help="Destination directory for converted files")
-    parser.add_argument("--bitrate", "-b", default="320k", help="Audio bitrate, lossless bit depth, OGG quality, or video quality (best, high, balanced, small)")
+    parser.add_argument("--bitrate", "-b", default="320k", help="Audio bitrate, lossless bit depth, OGG quality, or video quality (original, best, high, balanced, small)")
+    parser.add_argument("--audio-bitrate", default=None, help="Audio bitrate for video conversions (original, 320k, 256k, 192k, 128k, 96k)")
     parser.add_argument("--sample-rate", "-r", type=int, default=48000, help="Audio sample rate in Hz (44100, 48000, 96000)")
     parser.add_argument("--normalize", "-n", action="store_true", help="Apply EBU R128 loudness normalization")
     parser.add_argument(
@@ -1592,6 +1606,7 @@ def main():
             allow_ephemeral_stories=args.allow_ephemeral_stories,
             archival_fallback=args.archival_fallback,
             concurrency=args.concurrency,
+            audio_bitrate=args.audio_bitrate,
         )
         failed = summary.get("failed_count", 0)
         successful = summary.get("successful_count", 0)
@@ -1651,6 +1666,7 @@ def main():
             reconstruct_frequency_loss=args.reconstruct_frequency_loss,
             allow_ephemeral_stories=args.allow_ephemeral_stories,
             archival_fallback=args.archival_fallback,
+            audio_bitrate=args.audio_bitrate,
         )
 
 if __name__ == "__main__":

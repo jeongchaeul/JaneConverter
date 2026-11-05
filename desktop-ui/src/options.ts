@@ -29,11 +29,27 @@ const IMAGE_INPUT_EXTENSIONS = new Set([
 ]);
 
 const VIDEO_QUALITY_LABELS: Record<string, string> = {
+  original: "Original bitrate — do not compress / untouched",
   best: "Highest quality / least compression",
   high: "High quality / light compression",
   balanced: "Balanced quality / recommended",
   small: "Smaller file / more compression / less detail",
 };
+
+export const videoAudioBitrates = ["original", "320k", "256k", "192k", "128k", "96k"];
+
+const VIDEO_AUDIO_BITRATE_LABELS: Record<string, string> = {
+  original: "Original — untouched audio bitrate",
+  "320k": "320 kbps (Studio High)",
+  "256k": "256 kbps (High)",
+  "192k": "192 kbps (Standard)",
+  "128k": "128 kbps (Compact)",
+  "96k": "96 kbps (Speech / Low)",
+};
+
+export function videoAudioBitrateLabel(value: string): string {
+  return VIDEO_AUDIO_BITRATE_LABELS[value] ?? value;
+}
 
 const RESOLUTION_LABELS: Record<string, string> = {
   original: "Keep original size — do not resize",
@@ -74,7 +90,7 @@ export function qualitiesFor(format: string, category?: Category): string[] {
   if (["aiff", "aif", "alac", "caf", "au"].includes(format)) return ["best"];
   if (format === "ogg") return ["q10", "q8", "q6", "q4"];
   if (category === "Image" && imageFormats.includes(format)) return ["best"];
-  if (videoFormats.includes(format)) return ["best", "high", "balanced", "small"];
+  if (videoFormats.includes(format)) return ["original", "best", "high", "balanced", "small"];
   if (imageFormats.includes(format)) return ["best"];
   return ["320k", "256k", "192k", "128k"];
 }
@@ -87,6 +103,7 @@ export interface IntentPreset {
   category: Category;
   format: string;
   bitrate: string;
+  audioBitrate?: string;
   sampleRate: number;
   resolution: string;
   normalize: boolean;
@@ -170,11 +187,12 @@ export const intentPresets: IntentPreset[] = [
   {
     id: "universal-video",
     name: "Universal Video",
-    description: "Standard 1080p Full HD MP4 with recommended picture quality",
+    description: "Standard 1080p Full HD MP4 with original source video and audio quality",
     group: "Video",
     category: "Video",
     format: "mp4",
-    bitrate: "balanced",
+    bitrate: "original",
+    audioBitrate: "original",
     sampleRate: 48000,
     resolution: "1080p",
     normalize: false,
@@ -184,11 +202,12 @@ export const intentPresets: IntentPreset[] = [
   {
     id: "studio-cinematic",
     name: "Studio Cinematic",
-    description: "Source-resolution MKV at the highest quality; preserves original video and audio streams when compatible",
+    description: "Source-resolution MKV preserving original video and audio streams untouched",
     group: "Video",
     category: "Video",
     format: "mkv",
-    bitrate: "best",
+    bitrate: "original",
+    audioBitrate: "original",
     sampleRate: 48000,
     resolution: "original",
     normalize: false,
@@ -198,11 +217,12 @@ export const intentPresets: IntentPreset[] = [
   {
     id: "av1-archive",
     name: "AV1 Next-Gen Archive",
-    description: "Modern high-efficiency AV1 video encoding with GPU acceleration (NVENC/AMF/QSV) or SVT-AV1 CPU",
+    description: "Modern high-efficiency AV1 video encoding at original source quality",
     group: "Video",
     category: "Video",
     format: "av1",
-    bitrate: "balanced",
+    bitrate: "original",
+    audioBitrate: "original",
     sampleRate: 48000,
     resolution: "original",
     normalize: false,
@@ -266,6 +286,7 @@ export function findPresetName(settings: {
   category: Category;
   format: string;
   bitrate: string;
+  audioBitrate?: string;
   sampleRate: number;
   resolution: string;
   normalize: boolean;
@@ -276,10 +297,12 @@ export function findPresetName(settings: {
     const categoryMatches =
       preset.category === settings.category ||
       (preset.category === "Audio" && settings.category === "Music");
+    const audioBitrateMatches = !preset.audioBitrate || preset.audioBitrate === (settings.audioBitrate ?? "original");
     return (
       categoryMatches &&
       preset.format === settings.format &&
       preset.bitrate === settings.bitrate &&
+      audioBitrateMatches &&
       preset.sampleRate === settings.sampleRate &&
       preset.resolution === settings.resolution &&
       preset.normalize === settings.normalize

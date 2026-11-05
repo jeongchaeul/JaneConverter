@@ -531,6 +531,10 @@ pub fn settings_get_internal() -> ConverterSettings {
             .get("concurrency")
             .and_then(|value| value.parse().ok())
             .or(Some(1)),
+        audio_bitrate: values
+            .get("audio_bitrate")
+            .cloned()
+            .or_else(|| Some("original".into())),
     }
 }
 
@@ -563,6 +567,12 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
             .unwrap_or_else(|| "linear".into()),
     );
     let concurrency = settings.concurrency.unwrap_or(1).clamp(1, 16).to_string();
+    let audio_bitrate = clean(
+        &settings
+            .audio_bitrate
+            .clone()
+            .unwrap_or_else(|| "original".into()),
+    );
     let body = [
         ("output_dir", output_dir.as_str()),
         ("fetched_dir", fetched_dir.as_str()),
@@ -635,6 +645,7 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
         ("browser_session", browser_session.as_str()),
         ("playlist_mode", playlist_mode.as_str()),
         ("concurrency", concurrency.as_str()),
+        ("audio_bitrate", audio_bitrate.as_str()),
     ]
     .iter()
     .map(|(key, value)| format!("{key}={value}\n"))

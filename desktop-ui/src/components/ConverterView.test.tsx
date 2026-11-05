@@ -304,6 +304,7 @@ describe("Converter account access feedback", () => {
     expect(advancedSwitch?.getAttribute("aria-checked")).toBe("true");
     expect(view.container.querySelector<HTMLSelectElement>('select[aria-label="Video quality"]')?.disabled).toBe(false);
     expect(view.container.querySelector<HTMLSelectElement>('select[aria-label="Video resolution"]')?.disabled).toBe(false);
+    expect(view.container.querySelector<HTMLSelectElement>('select[aria-label="Audio bitrate"]')?.disabled).toBe(false);
     expect(view.container.querySelector<HTMLSelectElement>('select[aria-label="Audio sample rate"]')?.disabled).toBe(true);
 
     await act(async () => { view.root.unmount(); });

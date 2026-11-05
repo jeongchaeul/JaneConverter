@@ -396,3 +396,18 @@ def test_build_ffmpeg_args_protocol_sandboxing():
     assert "-protocol_whitelist" in cmd_copy
     assert cmd_copy[cmd_copy.index("-protocol_whitelist") + 1] == SAFE_FFMPEG_PROTOCOLS
     assert cmd_copy.index("-protocol_whitelist") < cmd_copy.index("-i")
+
+
+def test_video_conversion_with_original_and_custom_audio_bitrate():
+    cmd_orig = build_ffmpeg_args(
+        input_path="input.mov", output_path="output.mp4", target_format="mp4",
+        bitrate="original", resolution="original", use_gpu=False, audio_bitrate="original"
+    )
+    assert cmd_orig[cmd_orig.index("-preset") + 1] == "slow"
+    assert cmd_orig[cmd_orig.index("-crf") + 1] == "16"
+
+    cmd_custom = build_ffmpeg_args(
+        input_path="input.mov", output_path="output.mp4", target_format="mp4",
+        bitrate="original", resolution="original", use_gpu=False, audio_bitrate="320k"
+    )
+    assert cmd_custom[cmd_custom.index("-b:a") + 1] == "320k"

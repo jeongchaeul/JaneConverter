@@ -123,6 +123,22 @@ __all__ = [
     "_encoder_cache",
     "_encoder_cache_lock",
 ]
+def is_audio_codec_compatible_with_container(audio_codec: Optional[str], container_format: str) -> bool:
+    if not audio_codec:
+        return True
+    c = audio_codec.lower().strip()
+    fmt = container_format.lower().strip(".")
+    if fmt == "mp4":
+        return c in ("aac", "mp3", "opus")
+    if fmt == "mkv":
+        return c in ("aac", "mp3", "opus", "flac", "vorbis", "alac", "ac3", "eac3", "pcm_s16le", "pcm_s24le")
+    if fmt == "webm":
+        return c in ("opus", "vorbis")
+    if fmt == "mov":
+        return c in ("aac", "pcm_s16le", "pcm_s24le", "alac", "mp3")
+    return False
+
+
 def is_stream_copy_safe(
     input_path: str,
     target_format: str,
@@ -132,6 +148,8 @@ def is_stream_copy_safe(
     cover_path: Optional[str] = None,
     probed_info: Optional[Dict[str, Any]] = None,
     reconstruct_frequency_loss: bool = False,
+    bitrate: Optional[str] = None,
+    audio_bitrate: Optional[str] = None,
 ) -> bool:
     """
     Determines if stream copy (-c copy) is safe without quality loss or container corruption.
@@ -145,6 +163,11 @@ def is_stream_copy_safe(
     6. reconstruct_frequency_loss must be False (requires harmonic exciter filter).
     """
     if normalize_audio or reconstruct_frequency_loss:
+        return False
+
+    if bitrate and bitrate.lower() in ("high", "balanced", "small"):
+        return False
+    if audio_bitrate and audio_bitrate.lower() in ("320k", "256k", "192k", "128k", "96k"):
         return False
 
     target_format = target_format.lower().strip(".")
@@ -376,6 +399,7 @@ def build_ffmpeg_args(
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     reconstruct_frequency_loss: bool = False,
+    audio_bitrate: Optional[str] = None,
 ) -> list:
     """Constructs command line argument list for FFmpeg transcode or instant stream remuxing."""
     target_format = target_format.lower().strip(".")
@@ -586,6 +610,17 @@ def build_ffmpeg_args(
             if audio_filters:
                 cmd.extend(["-af", ",".join(audio_filters)])
 
+            eff_a_bitrate = (audio_bitrate or video_quality.get("audio_bitrate", "original")).lower().strip()
+            can_copy_audio = False
+            if eff_a_bitrate in ("original", "source", "copy") and not normalize_audio and not reconstruct_frequency_loss:
+                info = probe_media_streams(input_path) if input_path and os.path.exists(input_path) else None
+                a_streams = [s for s in (info.get("streams", []) if info else []) if s.get("codec_type") == "audio"]
+                if a_streams:
+                    a_codec = (a_streams[0].get("codec_name") or "").lower()
+                    can_copy_audio = is_audio_codec_compatible_with_container(a_codec, target_format)
+                elif not info and not os.path.exists(input_path):
+                    can_copy_audio = False
+
             if target_format == "webm":
                 cmd.extend([
                     "-c:v", "libvpx-vp9",
@@ -593,9 +628,17 @@ def build_ffmpeg_args(
                     "-cpu-used", "4",
                     "-crf", str(video_quality["crf"]),
                     "-b:v", "0",
-                    "-c:a", "libopus",
-                    "-b:a", video_quality["audio_bitrate"]
                 ])
+                if can_copy_audio:
+                    cmd.extend(["-c:a", "copy"])
+                else:
+                    target_a_bitrate = "320k" if eff_a_bitrate in ("original", "source", "copy") else eff_a_bitrate
+                    cmd.extend([
+                        "-c:a", "libopus",
+                        "-b:a", target_a_bitrate
+                    ])
+                    if sample_rate:
+                        cmd.extend(["-ar", str(sample_rate)])
             else:
                 if enc_spec is not None:
                     if enc_spec["encoder"] == "h264_vaapi":
@@ -607,11 +650,12 @@ def build_ffmpeg_args(
                     )
                     cmd.extend(encoder_args)
                 else:
-                    video_codec, audio_codec = VIDEO_ENCODER_PROFILES.get(
+                    video_codec, _ = VIDEO_ENCODER_PROFILES.get(
                         target_format, ("libx264", "aac")
                     )
                     if video_codec == "libx264":
                         cpu_preset = {
+                            "original": "slow",
                             "best": "slow",
                             "high": "medium",
                             "balanced": "veryfast",
@@ -622,17 +666,23 @@ def build_ffmpeg_args(
                             "-crf", str(video_quality["crf"]), "-pix_fmt", "yuv420p"
                         ])
                     else:
-                        quantizer = {"best": "2", "high": "3", "balanced": "5", "small": "8"}.get(
+                        quantizer = {"original": "2", "best": "2", "high": "3", "balanced": "5", "small": "8"}.get(
                             (bitrate or "").lower(), "5"
                         )
                         cmd.extend(["-c:v", video_codec, "-q:v", quantizer, "-pix_fmt", "yuv420p"])
 
                 if target_format not in ("webm",):
                     _, audio_codec = VIDEO_ENCODER_PROFILES.get(target_format, ("libx264", "aac"))
-                    cmd.extend([
-                        "-c:a", audio_codec,
-                        "-b:a", video_quality["audio_bitrate"]
-                    ])
+                    if can_copy_audio:
+                        cmd.extend(["-c:a", "copy"])
+                    else:
+                        target_a_bitrate = "320k" if eff_a_bitrate in ("original", "source", "copy") else eff_a_bitrate
+                        cmd.extend([
+                            "-c:a", audio_codec,
+                            "-b:a", target_a_bitrate
+                        ])
+                        if sample_rate:
+                            cmd.extend(["-ar", str(sample_rate)])
 
             if video_filters:
                 cmd.extend(["-vf", ",".join(video_filters)])
@@ -745,6 +795,7 @@ def _convert_media_impl(
     _method_override: Optional[str] = None,
     _recovery: Optional[RecoveryCoordinator] = None,
     expected_category: Optional[str] = None,
+    audio_bitrate: Optional[str] = None,
 ) -> str:
     """
     Transcodes or stream-remuxes input_path into the specified target format and writes to output_dir.
@@ -772,6 +823,7 @@ def _convert_media_impl(
             start_time=start_time, end_time=end_time,
             reconstruct_frequency_loss=reconstruct_frequency_loss,
             expected_category=expected_category,
+            audio_bitrate=audio_bitrate,
         )
 
     if target_format in ("source", "original", ""):
@@ -1009,6 +1061,8 @@ def _convert_media_impl(
         cover_path=cover_path,
         probed_info=media_probe,
         reconstruct_frequency_loss=reconstruct_frequency_loss,
+        bitrate=bitrate,
+        audio_bitrate=audio_bitrate,
     )
     method = _method_override or ("stream-copy" if can_copy else "gpu-transcode" if active_gpu and target_format in HARDWARE_VIDEO_FORMATS else "cpu-transcode")
     _recovery.start(method)
@@ -1069,6 +1123,7 @@ def _convert_media_impl(
             start_time=start_time,
             end_time=end_time,
             reconstruct_frequency_loss=reconstruct_frequency_loss,
+            audio_bitrate=audio_bitrate,
         )
     # Request machine-readable progress on stdout (inserted before the output path)
     cmd = cmd[:-1] + ["-progress", "pipe:1", "-nostats"] + [cmd[-1]]
@@ -1358,6 +1413,7 @@ def _create_recovery_coordinator(
     end_time: Optional[str],
     reconstruct_frequency_loss: bool,
     expected_category: Optional[str],
+    audio_bitrate: Optional[str] = None,
 ) -> RecoveryCoordinator:
     try:
         from .paths import APP_DATA_DIR
@@ -1380,6 +1436,7 @@ def _create_recovery_coordinator(
         end_time=end_time,
         reconstruct_frequency_loss=reconstruct_frequency_loss,
         expected_category=expected_category,
+        audio_bitrate=audio_bitrate,
     ), evidence_path=ev_path)
 
 
@@ -1429,6 +1486,7 @@ def convert_media(
     _method_override: Optional[str] = None,
     _recovery: Optional[RecoveryCoordinator] = None,
     expected_category: Optional[str] = None,
+    audio_bitrate: Optional[str] = None,
 ) -> str:
     """Stage and validate every attempt before publishing one completed output."""
     os.makedirs(output_dir, exist_ok=True)
@@ -1451,6 +1509,7 @@ def convert_media(
             start_time=start_time, end_time=end_time,
             reconstruct_frequency_loss=reconstruct_frequency_loss,
             expected_category=expected_category,
+            audio_bitrate=audio_bitrate,
         )
 
     abs_out_dir = os.path.abspath(output_dir)
@@ -1477,6 +1536,7 @@ def convert_media(
             start_time=start_time, end_time=end_time,
             reconstruct_frequency_loss=reconstruct_frequency_loss,
             expected_category=expected_category,
+            audio_bitrate=audio_bitrate,
         )
         effective_target = target_format.lower().strip(".")
         try:

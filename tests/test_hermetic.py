@@ -310,6 +310,7 @@ def _make_parser():
     parser.add_argument("--sample-rate", type=int, default=48000)
     parser.add_argument("--resolution", default="original")
     parser.add_argument("--playlist", action="store_true")
+    parser.add_argument("--audio-bitrate", default=None)
     return parser
 
 
@@ -442,3 +443,25 @@ def test_version_constant_is_semver_like():
     )
 
     assert re.fullmatch(pattern, __version__)
+
+
+def test_validate_cli_args_video_defaults_to_original_bitrate():
+    parser = _make_parser()
+    fmt, bitrate = validate_cli_args(_args(parser, format="mp4"), parser)
+    assert fmt == "mp4"
+    assert bitrate == "original"
+
+
+def test_validate_cli_args_video_accepts_audio_bitrate():
+    parser = _make_parser()
+    args = _args(parser, format="mp4", bitrate="original", audio_bitrate="320k")
+    fmt, bitrate = validate_cli_args(args, parser)
+    assert fmt == "mp4"
+    assert bitrate == "original"
+    assert args.audio_bitrate == "320k"
+
+
+def test_validate_cli_args_video_rejects_invalid_audio_bitrate():
+    parser = _make_parser()
+    with pytest.raises(SystemExit):
+        validate_cli_args(_args(parser, format="mp4", bitrate="original", audio_bitrate="999k"), parser)

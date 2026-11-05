@@ -38,6 +38,7 @@ const defaultSettings: ConverterSettings = {
   archivalFallback: false,
   playlistMode: "concurrent",
   concurrency: 4,
+  audioBitrate: "original",
 };
 
 const HISTORY_STORAGE_KEY = "janeconverter.conversionHistory";
@@ -119,7 +120,9 @@ function describeOutputFormatAndQuality(
   }
   if (effectiveSettings.category === "Video") {
     const res = effectiveSettings.resolution === "original" ? "Original Res" : effectiveSettings.resolution.toUpperCase();
-    return { formatLabel, qualityLabel: `${effectiveSettings.bitrate.toUpperCase()} • ${res}` };
+    const vBitrate = effectiveSettings.bitrate === "original" ? "Original Quality" : effectiveSettings.bitrate.toUpperCase();
+    const aBitrate = effectiveSettings.audioBitrate && effectiveSettings.audioBitrate !== "original" ? ` • ${effectiveSettings.audioBitrate}` : "";
+    return { formatLabel, qualityLabel: `${vBitrate} • ${res}${aBitrate}` };
   }
   const khz = `${(effectiveSettings.sampleRate / 1000).toFixed(1).replace(/\.0$/, "")}kHz`;
   return { formatLabel, qualityLabel: `${effectiveSettings.bitrate} • ${khz}` };
@@ -822,7 +825,8 @@ export default function App() {
           ...effectiveSettings,
           category: "Video",
           format: effectiveSettings.format === "source" ? "source" : "mp4",
-          bitrate: effectiveSettings.format === "source" ? "best" : "balanced",
+          bitrate: effectiveSettings.format === "source" ? "best" : "original",
+          audioBitrate: "original",
         };
         forcedVideoFallback = true;
         setSettings(effectiveSettings);

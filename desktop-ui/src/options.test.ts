@@ -6,6 +6,8 @@ import {
   detectCategoryFromPath,
   resolutionLabel,
   videoQualityLabel,
+  videoAudioBitrates,
+  videoAudioBitrateLabel,
   formatBytes,
 } from "./options";
 
@@ -26,6 +28,13 @@ describe("converter option parity", () => {
   it("keeps legacy quality controls mapped by output format", () => {
     expect(qualitiesFor("mp3")).toContain("320k");
     expect(qualitiesFor("mp4")).toContain("balanced");
+    expect(qualitiesFor("mp4")[0]).toBe("original");
+  });
+
+  it("offers audio bitrates for video conversion", () => {
+    expect(videoAudioBitrates).toContain("original");
+    expect(videoAudioBitrates).toContain("320k");
+    expect(videoAudioBitrateLabel("original")).toContain("untouched");
   });
 
   it("explains video quality choices in consumer language", () => {
@@ -49,6 +58,8 @@ describe("converter option parity", () => {
 
     const video = intentPresets.find((p) => p.id === "universal-video");
     expect(video?.format).toBe("mp4");
+    expect(video?.bitrate).toBe("original");
+    expect(video?.audioBitrate).toBe("original");
     expect(video?.useGpu).toBe(true);
 
     const image = intentPresets.find((p) => p.id === "lossless-image");

@@ -376,7 +376,9 @@ export function InProgressView({
     if (settings) {
       if (settings.category === "Video") {
         const res = settings.resolution === "original" ? "Original Res" : settings.resolution.toUpperCase();
-        return `${settings.bitrate.toUpperCase()} • ${res}`;
+        const vBitrate = settings.bitrate === "original" ? "Original Quality" : settings.bitrate.toUpperCase();
+        const aBitrate = settings.audioBitrate && settings.audioBitrate !== "original" ? ` • ${settings.audioBitrate}` : "";
+        return `${vBitrate} • ${res}${aBitrate}`;
       }
       if (settings.category === "Image") {
         return settings.format === "png" ? "Lossless" : `${settings.bitrate.toUpperCase()} Quality`;

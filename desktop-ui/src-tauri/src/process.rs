@@ -506,6 +506,15 @@ pub fn build_conversion_args_with_capture(
         request.retries.min(5).to_string(),
         "--no-update".into(),
     ]);
+    if let Some(ref a_br) = request.audio_bitrate {
+        let trimmed = a_br.trim();
+        if trimmed.starts_with('-') {
+            return Err("Unsupported audio_bitrate value.".into());
+        }
+        if !trimmed.is_empty() {
+            args.extend(["--audio-bitrate".into(), trimmed.into()]);
+        }
+    }
     if !request.use_gpu {
         args.push("--no-gpu".into());
     }
@@ -1144,6 +1153,46 @@ mod tests {
     }
 
     #[test]
+    fn forwards_audio_bitrate_when_specified() {
+        let request = ConversionRequest {
+            source: "https://example.com/video.mp4".into(),
+            output_dir: "out".into(),
+            temp_dir: None,
+            category: "Video".into(),
+            format: "mp4".into(),
+            bitrate: "original".into(),
+            sample_rate: 48000,
+            resolution: "original".into(),
+            normalize: false,
+            use_gpu: false,
+            save_cover: true,
+            save_metadata: true,
+            allow_png_fallback: false,
+            reconstruct_frequency_loss: false,
+            retries: 2,
+            playlist_indexes: None,
+            read_browser_cookies: false,
+            browser_session: None,
+            browser_capture_path: None,
+            facebook_capture_id: None,
+            social_capture_id: None,
+            start_time: None,
+            end_time: None,
+            allow_story_extraction: false,
+            archival_fallback: false,
+            playlist_mode: None,
+            concurrency: None,
+            audio_bitrate: Some("320k".into()),
+        };
+        let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
+        let idx = args
+            .iter()
+            .position(|v| v == "--audio-bitrate")
+            .expect("audio bitrate flag should be present");
+        assert_eq!(args[idx + 1], "320k");
+    }
+
+    #[test]
     fn normalizes_display_browser_label_for_python_cli() {
         let mut request = ConversionRequest {
             source: "https://example.com/private-media".into(),
@@ -1173,6 +1222,7 @@ mod tests {
             archival_fallback: false,
             playlist_mode: None,
             concurrency: None,
+            audio_bitrate: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false)
             .expect("display labels should be accepted");
@@ -1219,6 +1269,7 @@ mod tests {
             archival_fallback: false,
             playlist_mode: None,
             concurrency: None,
+            audio_bitrate: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, true).unwrap();
 
@@ -1265,6 +1316,7 @@ mod tests {
             archival_fallback: false,
             playlist_mode: None,
             concurrency: None,
+            audio_bitrate: None,
         };
 
         let args =
@@ -1308,6 +1360,7 @@ mod tests {
             archival_fallback: false,
             playlist_mode: None,
             concurrency: None,
+            audio_bitrate: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false)
             .expect("public conversion should be valid");
@@ -1345,6 +1398,7 @@ mod tests {
             archival_fallback: false,
             playlist_mode: None,
             concurrency: None,
+            audio_bitrate: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         let s_pos = args
@@ -1389,6 +1443,7 @@ mod tests {
             archival_fallback: false,
             playlist_mode: None,
             concurrency: None,
+            audio_bitrate: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         let session_pos = args
@@ -1434,6 +1489,7 @@ mod tests {
             archival_fallback: false,
             playlist_mode: None,
             concurrency: None,
+            audio_bitrate: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         assert!(args.contains(&"--reconstruct-frequency-loss".into()));
@@ -1473,6 +1529,7 @@ mod tests {
             archival_fallback: false,
             playlist_mode: None,
             concurrency: None,
+            audio_bitrate: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         assert!(args.contains(&"--allow-ephemeral-stories".into()));
@@ -1512,6 +1569,7 @@ mod tests {
             archival_fallback: true,
             playlist_mode: None,
             concurrency: None,
+            audio_bitrate: None,
         };
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();
         assert!(args.contains(&"--archival-fallback".into()));
@@ -1551,6 +1609,7 @@ mod tests {
             archival_fallback: false,
             playlist_mode: None,
             concurrency: None,
+            audio_bitrate: None,
         };
         // Default music category: linear concurrency 1
         let args = build_conversion_args_with_capture(&request, None, None, false).unwrap();

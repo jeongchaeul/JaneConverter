@@ -124,6 +124,7 @@ def parse_time_offset_seconds(val: Optional[str]) -> Optional[float]:
     return None
 
 VIDEO_QUALITY_SETTINGS = {
+    "original": {"crf": 16, "audio_bitrate": "original", "gif_fps": 30},
     "best": {"crf": 16, "audio_bitrate": "192k", "gif_fps": 30},
     "high": {"crf": 18, "audio_bitrate": "160k", "gif_fps": 24},
     "balanced": {"crf": 23, "audio_bitrate": "128k", "gif_fps": 15},

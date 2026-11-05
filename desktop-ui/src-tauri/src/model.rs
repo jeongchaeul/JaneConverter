@@ -37,6 +37,8 @@ pub struct ConverterSettings {
     pub playlist_mode: Option<String>,
     #[serde(default)]
     pub concurrency: Option<u8>,
+    #[serde(default)]
+    pub audio_bitrate: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -79,6 +81,8 @@ pub struct ConversionRequest {
     pub playlist_mode: Option<String>,
     #[serde(default)]
     pub concurrency: Option<u8>,
+    #[serde(default)]
+    pub audio_bitrate: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

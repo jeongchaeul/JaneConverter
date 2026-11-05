@@ -12,6 +12,8 @@ import {
   type IntentPreset,
   qualitiesFor,
   videoQualityLabel,
+  videoAudioBitrates,
+  videoAudioBitrateLabel,
   imageQualityLabel,
   resolutionLabel,
 } from "../../options";
@@ -167,7 +169,7 @@ export function ParametersPanel({
             className="overflow-hidden"
           >
             <div className="mt-3 border-t border-white/[0.06] pt-3">
-              <div className="grid gap-2 md:grid-cols-3">
+              <div className={`grid gap-2 ${isVideo ? "md:grid-cols-2 lg:grid-cols-4" : "md:grid-cols-3"}`}>
                 <SelectField
                   label={isVideo ? "Video quality" : isImage ? "Image quality" : "Audio bitrate / quality"}
                   value={isImage ? "best" : settings.bitrate}
@@ -185,7 +187,7 @@ export function ParametersPanel({
                     isSourceFormat
                       ? "Source output keeps the original quality settings."
                       : isVideo
-                      ? "Controls compression and file size; resolution is set separately."
+                      ? "Controls video compression. Original keeps source stream untouched."
                       : undefined
                   }
                 />
@@ -204,6 +206,21 @@ export function ParametersPanel({
                       : undefined
                   }
                 />
+                {isVideo && (
+                  <SelectField
+                    label="Audio bitrate"
+                    value={settings.audioBitrate ?? "original"}
+                    values={videoAudioBitrates}
+                    formatValue={(v) => videoAudioBitrateLabel(String(v))}
+                    onChange={(audioBitrate) => update({ audioBitrate })}
+                    disabled={isSourceFormat}
+                    hint={
+                      isSourceFormat
+                        ? "Source output keeps original audio."
+                        : "Bitrate for video's audio track. Original keeps audio stream untouched."
+                    }
+                  />
+                )}
                 <SelectField
                   label="Audio sample rate"
                   value={settings.sampleRate}

@@ -60,6 +60,7 @@ export interface ConverterSettings {
   archivalFallback?: boolean;
   playlistMode?: "linear" | "concurrent";
   concurrency?: number;
+  audioBitrate?: string;
 }
 
 export interface UpdateCheckResult {
@@ -324,6 +325,7 @@ const demoSettings: ConverterSettings = {
   endTime: "",
   allowStoryExtraction: false,
   archivalFallback: true,
+  audioBitrate: "original",
 };
 
 const demoBridge: JaneBridge = {

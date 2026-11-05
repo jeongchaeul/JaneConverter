@@ -338,8 +338,9 @@ def _apply_video_quality_to_encoder_args(
 
     if encoder == "h264_nvenc":
         quality_name = (quality_name or "").lower()
-        # NVENC p7 is the slowest preset; use faster presets for balanced and small output.
+        # NVENC p7 is the slowest/highest-quality preset; use faster presets for balanced and small output.
         nvenc_preset = {
+            "original": "p7",
             "best": "p7",
             "high": "p5",
             "balanced": "p4",
@@ -363,7 +364,7 @@ def _apply_video_quality_to_encoder_args(
             bufsize = "120M"
 
         nvenc_args = ["-c:v", "h264_nvenc", "-preset", nvenc_preset]
-        if quality_name in ("best", "high"):
+        if quality_name in ("original", "best", "high"):
             nvenc_args.extend(["-tune", "hq"])
         nvenc_args.extend([
             "-rc:v", "vbr",
@@ -381,12 +382,13 @@ def _apply_video_quality_to_encoder_args(
     elif encoder == "h264_qsv":
         replace_value("-global_quality", crf)
     elif encoder == "av1_qsv":
-        crf_val = {"best": "20", "high": "24", "balanced": "28", "small": "34"}.get((quality_name or "").lower(), "28")
+        crf_val = {"original": "20", "best": "20", "high": "24", "balanced": "28", "small": "34"}.get((quality_name or "").lower(), "28")
         replace_value("-global_quality", crf_val)
     elif encoder == "h264_vaapi":
         replace_value("-qp", crf)
     elif encoder == "h264_amf":
         replace_value("-quality", {
+            "original": "quality",
             "best": "quality",
             "high": "quality",
             "balanced": "balanced",
@@ -394,6 +396,7 @@ def _apply_video_quality_to_encoder_args(
         }.get((quality_name or "").lower(), "balanced"))
     elif encoder == "av1_amf":
         replace_value("-quality", {
+            "original": "quality",
             "best": "quality",
             "high": "quality",
             "balanced": "balanced",
@@ -401,19 +404,20 @@ def _apply_video_quality_to_encoder_args(
         }.get((quality_name or "").lower(), "balanced"))
     elif encoder == "av1_nvenc":
         quality_name = (quality_name or "").lower()
-        nvenc_preset = {"best": "p7", "high": "p5", "balanced": "p4", "small": "p2"}.get(quality_name, "p4")
-        cq_val = {"best": "20", "high": "24", "balanced": "28", "small": "34"}.get(quality_name, "28")
+        nvenc_preset = {"original": "p7", "best": "p7", "high": "p5", "balanced": "p4", "small": "p2"}.get(quality_name, "p4")
+        cq_val = {"original": "20", "best": "20", "high": "24", "balanced": "28", "small": "34"}.get(quality_name, "28")
         return [
             "-c:v", "av1_nvenc", "-preset", nvenc_preset,
             "-rc:v", "vbr", "-cq", cq_val, "-b:v", "0",
             "-spatial-aq", "1", "-temporal-aq", "1", "-pix_fmt", "yuv420p"
         ]
     elif encoder == "libsvtav1":
-        preset = {"best": "4", "high": "5", "balanced": "6", "small": "8"}.get((quality_name or "").lower(), "6")
-        crf_val = {"best": "20", "high": "24", "balanced": "28", "small": "34"}.get((quality_name or "").lower(), "28")
+        preset = {"original": "4", "best": "4", "high": "5", "balanced": "6", "small": "8"}.get((quality_name or "").lower(), "6")
+        crf_val = {"original": "20", "best": "20", "high": "24", "balanced": "28", "small": "34"}.get((quality_name or "").lower(), "28")
         return ["-c:v", "libsvtav1", "-preset", preset, "-crf", crf_val, "-pix_fmt", "yuv420p"]
     elif encoder == "h264_videotoolbox":
         replace_value("-q:v", {
+            "original": "75",
             "best": "75",
             "high": "65",
             "balanced": "55",
@@ -421,5 +425,3 @@ def _apply_video_quality_to_encoder_args(
         }.get((quality_name or "").lower(), "55"))
 
     return args
-
-

@@ -50,6 +50,7 @@ class OutputIntent:
     start_time: str | None = None
     end_time: str | None = None
     expected_category: str | None = None
+    audio_bitrate: str | None = None
 
     @property
     def mode(self) -> IntentMode:

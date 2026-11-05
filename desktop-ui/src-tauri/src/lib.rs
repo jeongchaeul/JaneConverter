@@ -306,6 +306,7 @@ mod tests {
             archival_fallback: false,
             playlist_mode: None,
             concurrency: None,
+            audio_bitrate: None,
         };
         assert!(
             crate::process::build_conversion_args_with_capture(&request, None, None, false)
