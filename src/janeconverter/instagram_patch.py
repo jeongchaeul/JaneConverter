@@ -38,6 +38,8 @@ def patch_instagram_story_extractor() -> None:
 
             def patched_real_extract(self: Any, url: str) -> Any:
                 username, story_id = self._match_valid_url(url).group("user", "id")
+                if not story_id and username and username.isdigit():
+                    story_id = username
                 if username == "highlights" and not story_id:
                     raise ExtractorError("Input URL is missing a highlight ID", expected=True)
                 display_id = story_id or username
@@ -62,6 +64,7 @@ def patch_instagram_story_extractor() -> None:
                     api_headers["X-CSRFToken"] = csrf
                 api_headers["X-Requested-With"] = "XMLHttpRequest"
                 api_headers["Referer"] = "https://www.instagram.com/"
+                api_headers["X-IG-App-ID"] = "936619743392459"
 
                 # Strategy 1: Direct single-story media info API if story_id is present
                 if story_id and username != "highlights":

@@ -193,11 +193,21 @@ def filter_cookie_jar_for_domains(jar: Any, allowed_domains: Iterable[str]) -> A
 
     All extraneous cookies (e.g. Google, Twitter, banking, email, etc.) are purged
     immediately from memory and from the input jar to prevent cross-origin credential retention.
+    Preserves yt-dlp's YoutubeDLCookieJar type and get_cookies_for_url method if present.
     """
-    import http.cookiejar
-    isolated = http.cookiejar.CookieJar()
     if not jar:
-        return isolated
+        import http.cookiejar
+        return http.cookiejar.CookieJar()
+
+    try:
+        isolated = type(jar)()
+    except Exception:
+        try:
+            from yt_dlp.cookies import YoutubeDLCookieJar
+            isolated = YoutubeDLCookieJar()
+        except ImportError:
+            import http.cookiejar
+            isolated = http.cookiejar.CookieJar()
 
     normalized_allowed = [d.lstrip(".").lower() for d in allowed_domains if d]
     for cookie in list(jar):
