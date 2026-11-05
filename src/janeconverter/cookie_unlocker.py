@@ -110,8 +110,12 @@ def clean_nt_path(path: str) -> str:
     return path
 
 
-# Windows named-pipe access masks known to deadlock GetFileType / NtQueryObject on synchronous pipes.
-SYNCHRONOUS_PIPE_ACCESS_MASKS = frozenset({0x0012019F, 0x00120189, 0x001A019F})
+# Access masks known to deadlock kernel calls on synchronous pipes.
+# Note: Do not block standard Win32 generic access masks like 0x0012019F (GENERIC_READ | GENERIC_WRITE)
+# or 0x00120189 (GENERIC_READ) because disk files (such as Chromium / Vivaldi SQLite databases)
+# are opened with these exact masks. Disk handles are safely verified via GetFileType(h) == FILE_TYPE_DISK
+# before any path or handle inspection occurs.
+SYNCHRONOUS_PIPE_ACCESS_MASKS: frozenset[int] = frozenset()
 
 
 def is_safe_candidate_handle_entry(

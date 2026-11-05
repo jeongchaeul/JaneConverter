@@ -135,8 +135,11 @@ def test_patch_yt_dlp_cookie_database_reader_applies_patch():
 
 
 def test_is_safe_candidate_handle_entry_skips_synchronous_pipes_and_non_file_types():
+    # Browser SQLite databases open with standard generic read/write masks
+    assert cookie_unlocker.is_safe_candidate_handle_entry(0x0012019F, 37)
+    assert cookie_unlocker.is_safe_candidate_handle_entry(0x00120189, 37)
+    assert cookie_unlocker.is_safe_candidate_handle_entry(0x00120089, 37)
+    assert cookie_unlocker.is_safe_candidate_handle_entry(0x0012019F, 37, file_object_type_index=37)
+    assert not cookie_unlocker.is_safe_candidate_handle_entry(0x0012019F, 12, file_object_type_index=37)
     for mask in cookie_unlocker.SYNCHRONOUS_PIPE_ACCESS_MASKS:
         assert not cookie_unlocker.is_safe_candidate_handle_entry(mask, 37)
-    assert cookie_unlocker.is_safe_candidate_handle_entry(0x00120089, 37)
-    assert cookie_unlocker.is_safe_candidate_handle_entry(0x00120089, 37, file_object_type_index=37)
-    assert not cookie_unlocker.is_safe_candidate_handle_entry(0x00120089, 12, file_object_type_index=37)
