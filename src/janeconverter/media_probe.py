@@ -73,12 +73,34 @@ def probe_media_duration(input_path: str) -> Optional[float]:
         pass
     return None
 
+def is_html_document(file_path: str) -> bool:
+    """Detect whether a file is an HTML document or web challenge payload rather than media."""
+    if not file_path or not os.path.isfile(file_path):
+        return False
+    try:
+        with open(file_path, "rb") as f:
+            header = f.read(2048).lower()
+        if b"<!doctype html" in header or b"<html" in header:
+            return True
+        if b"<head" in header and b"</html>" in header:
+            return True
+        if b"cloudflare" in header and (
+            b"attention required" in header
+            or b"just a moment" in header
+            or b"access denied" in header
+        ):
+            return True
+    except OSError:
+        pass
+    return False
+
+
 def probe_media_streams(input_path: str) -> Optional[Dict[str, Any]]:
     """
     Returns media information (format and streams) via ffprobe as a parsed dict,
     or None if probing fails or the input is invalid.
     """
-    if not input_path or not os.path.exists(input_path):
+    if not input_path or not os.path.exists(input_path) or is_html_document(input_path):
         return None
     try:
         st = os.stat(input_path)

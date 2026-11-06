@@ -587,3 +587,342 @@ def test_adapt_ffmpeg_command_handles_av_sync_discontinuity():
     assert adapted is not None
     assert "-fps_mode" in adapted
     assert adapted[adapted.index("-fps_mode") + 1] == "cfr"
+
+
+# ==============================================================================
+# RULE OF 7: ADAPTIVE RESILIENCE STRESS-TEST BATTERY
+# ==============================================================================
+
+def test_rule_of_7_stress_context_1_video_preset_on_audio_only_media_reroutes(tmp_path, monkeypatch):
+    """Stress-test 1: Audio source given with video preset reroutes to high-fidelity audio."""
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"\xff\xfb\x90\x44" + b"\x00" * 2048)
+    out_dir = tmp_path / "converted"
+
+    # Mock probe to indicate audio stream only (no video)
+    def mock_probe(path):
+        if "song.mp3" in str(path):
+            return {
+                "streams": [{"codec_type": "audio", "codec_name": "mp3", "sample_rate": "44100", "channels": 2}],
+                "format": {"duration": "10.0"},
+            }
+        return {
+            "streams": [{"codec_type": "audio", "codec_name": "aac", "sample_rate": "44100", "channels": 2}],
+            "format": {"duration": "10.0"},
+        }
+
+    monkeypatch.setattr(converter, "probe_media_streams", mock_probe)
+    monkeypatch.setattr("janeconverter.media_probe._active_probe_media_streams", mock_probe)
+
+    call_count = [0]
+
+    def mock_impl(*args, **kwargs):
+        call_count[0] += 1
+        tf = kwargs.get("target_format", "")
+        # First call with video preset 'mp4' triggers validation failure
+        if tf == "mp4" and call_count[0] == 1:
+            raise RuntimeError("ValidationFailed: output file does not contain a video stream.")
+        # Second call with rerouted audio preset 'm4a' succeeds
+        out_f = os.path.join(kwargs["output_dir"], f"song.{tf}")
+        with open(out_f, "wb") as f:
+            f.write(b"M4A DUMMY HEADER")
+        return out_f
+
+    monkeypatch.setattr(converter, "_convert_media_impl", mock_impl)
+    monkeypatch.setattr(converter, "validate_output_intent", lambda in_p, out_p, intent: None)
+    monkeypatch.setattr(converter, "validate_image_intent", lambda in_p, out_p, tf: None)
+
+    progress_reports = []
+    res = converter.convert_media(
+        input_path=str(input_audio),
+        output_dir=str(out_dir),
+        output_filename="song.mp4",
+        target_format="mp4",
+        progress_callback=lambda p, msg: progress_reports.append(msg),
+    )
+
+    assert os.path.isfile(res)
+    assert res.endswith(".m4a")
+    assert any("Adaptive Preset Reroute" in msg for msg in progress_reports)
+
+
+def test_rule_of_7_stress_context_2_preset_rejection_adapts_or_strips_preset():
+    """Stress-test 2: Incompatible -preset flag adapts to numeric or is stripped."""
+    # 2a: SVT-AV1 with string preset adapts to integer '6'
+    cmd_svt = ["ffmpeg", "-y", "-i", "in.mp4", "-c:v", "libsvtav1", "-preset", "veryfast", "out.mkv"]
+    stderr_svt = b"[libsvtav1 @ 0x123] Error: Option preset veryfast is not valid"
+    adapted_svt = converter.adapt_ffmpeg_command(cmd_svt, stderr_svt)
+    assert adapted_svt is not None
+    assert adapted_svt[adapted_svt.index("-preset") + 1] == "6"
+
+    # 2b: Codec without preset support (mpeg4) strips -preset
+    cmd_mpeg4 = ["ffmpeg", "-y", "-i", "in.mp4", "-c:v", "mpeg4", "-preset", "slow", "out.avi"]
+    stderr_mpeg4 = b"[mpeg4 @ 0x456] Option preset not found."
+    adapted_mpeg4 = converter.adapt_ffmpeg_command(cmd_mpeg4, stderr_mpeg4)
+    assert adapted_mpeg4 is not None
+    assert "-preset" not in adapted_mpeg4
+
+
+def test_rule_of_7_stress_context_3_container_codec_tag_mismatch_adapts():
+    """Stress-test 3: Codec/container tag mismatch automatically switches codec."""
+    # Audio tag mismatch in MP4
+    cmd_mp4 = ["ffmpeg", "-y", "-i", "in.mkv", "-c:v", "copy", "-c:a", "copy", "out.mp4"]
+    stderr_mp4 = b"Could not find tag for codec vorbis in stream #0:1, codec not currently supported in container"
+    adapted_mp4 = converter.adapt_ffmpeg_command(cmd_mp4, stderr_mp4)
+    assert adapted_mp4 is not None
+    assert adapted_mp4[adapted_mp4.index("-c:a") + 1] == "aac"
+
+    # Video tag mismatch in WebM
+    cmd_webm = ["ffmpeg", "-y", "-i", "in.mp4", "-c:v", "copy", "-c:a", "copy", "out.webm"]
+    stderr_webm = b"Could not find tag for codec h264 in stream #0:0, codec not currently supported in container"
+    adapted_webm = converter.adapt_ffmpeg_command(cmd_webm, stderr_webm)
+    assert adapted_webm is not None
+    assert adapted_webm[adapted_webm.index("-c:v") + 1] == "libvpx-vp9"
+
+
+def test_rule_of_7_stress_context_4_unrecognized_crf_adapts_to_quantizer():
+    """Stress-test 4: Unrecognized CRF option replaces -crf with -q:v."""
+    cmd = ["ffmpeg", "-y", "-i", "in.mp4", "-c:v", "mpeg4", "-crf", "23", "out.avi"]
+    stderr = b"Codec 'mpeg4' does not support -crf"
+    adapted = converter.adapt_ffmpeg_command(cmd, stderr)
+    assert adapted is not None
+    assert "-crf" not in adapted
+    assert "-q:v" in adapted
+    assert adapted[adapted.index("-q:v") + 1] == "2"
+
+
+def test_rule_of_7_stress_context_5_unsupported_sample_rate_adapts():
+    """Stress-test 5: Unsupported sample rate adjusts to standard 48000 Hz."""
+    cmd = ["ffmpeg", "-y", "-i", "in.wav", "-c:a", "libopus", "-ar", "44100", "out.opus"]
+    stderr = b"[libopus @ 0x789] Specified sample rate 44100 is not supported"
+    adapted = converter.adapt_ffmpeg_command(cmd, stderr)
+    assert adapted is not None
+    assert "-ar" in adapted
+    assert adapted[adapted.index("-ar") + 1] == "48000"
+
+
+def test_rule_of_7_stress_context_6_subtitle_and_data_muxing_drops_streams():
+    """Stress-test 6: Unmuxable subtitles and data streams inject -sn -dn."""
+    cmd = ["ffmpeg", "-y", "-i", "in.mkv", "-c:v", "libx264", "-c:a", "aac", "out.mp4"]
+    stderr = b"Could not find tag for codec subrip in stream #0:2, codec not currently supported in container"
+    adapted = converter.adapt_ffmpeg_command(cmd, stderr)
+    assert adapted is not None
+    assert "-sn" in adapted
+    assert "-dn" in adapted
+
+
+def test_rule_of_7_stress_context_7_cpu_transcode_cascade_universal_fallback():
+    """Stress-test 7: Specialized video preset total failure triggers universal-transcode."""
+    intent_av1 = OutputIntent(
+        target_format="av1", quality="best", sample_rate=48000,
+        resolution="original", normalize_audio=False, fps=None,
+        cover_required=False, gpu_allowed=False,
+    )
+    recovery = RecoveryCoordinator(intent_av1)
+    recovery.start("cpu-transcode")
+
+    # When cpu-transcode encounters an ENCODER failure on AV1, it transitions to universal-transcode!
+    assert recovery.next_method(FailureCategory.ENCODER) == "universal-transcode"
+
+    # And for a container failure on a non-mp4 video format:
+    recovery_webm = RecoveryCoordinator(OutputIntent(
+        target_format="webm", quality="best", sample_rate=48000,
+        resolution="original", normalize_audio=False, fps=None,
+        cover_required=False, gpu_allowed=False,
+    ))
+    recovery_webm.start("cpu-transcode")
+    assert recovery_webm.next_method(FailureCategory.CONTAINER) == "universal-transcode"
+
+
+def test_windows_reserved_and_illegal_filename_sanitization(tmp_path):
+    """Verifies that Windows reserved names and illegal path characters are safely sanitized."""
+    from janeconverter.paths import sanitize_filename
+
+    assert sanitize_filename("aux.mp3") == "_aux.mp3"
+    assert sanitize_filename("CON.mp4") == "_CON.mp4"
+    assert sanitize_filename("nul.wav") == "_nul.wav"
+    assert sanitize_filename("com1.flac") == "_com1.flac"
+    assert sanitize_filename("track..mp3") == "track.mp3"
+    assert sanitize_filename("track .wav") == "track.wav"
+    assert sanitize_filename("bad:name*with?chars.mp3") == "bad_name_with_chars.mp3"
+    assert sanitize_filename("...") == "media"
+    assert sanitize_filename("") == "media"
+
+    # Verify get_unique_target_path uses sanitized filename
+    path = converter.get_unique_target_path(str(tmp_path), "aux.mp3")
+    assert os.path.basename(path) == "_aux.mp3"
+
+
+def test_html_soft_200_payload_interception(tmp_path):
+    """Verifies that HTML challenge pages saved as media are detected and intercepted immediately."""
+    from janeconverter.media_probe import is_html_document
+
+    html_file = tmp_path / "song.mp4"
+    html_file.write_bytes(
+        b"<!DOCTYPE html><html><head><title>Just a moment...</title></head>"
+        b"<body>Cloudflare Ray ID: 12345</body></html>"
+    )
+
+    assert is_html_document(str(html_file)) is True
+
+    with pytest.raises(RuntimeError, match="InputInvalid:.*HTML document"):
+        converter.convert_media(
+            input_path=str(html_file),
+            output_dir=str(tmp_path / "out"),
+            output_filename="song.mp3",
+            target_format="mp3",
+        )
+
+    # Recovery classifier should categorize HTML payload errors as INVALID_INPUT
+    assert classify_ffmpeg_failure("source is an HTML document or web challenge payload") == FailureCategory.INVALID_INPUT
+
+
+def test_cmyk_cover_art_normalization_resilience(tmp_path):
+    """Verifies CMYK cover art is safely converted to sRGB without 'cannot write mode CMYK as PNG'."""
+    from PIL import Image, ImageOps
+
+    cmyk_img = Image.new("CMYK", (200, 200), (0, 100, 100, 0))
+    cover_path = tmp_path / "cover_cmyk.jpg"
+    cmyk_img.save(str(cover_path), "JPEG")
+
+    # In converter._convert_media_impl, 'cover-normalized' method converts CMYK to RGB
+    with Image.open(str(cover_path)) as img:
+        c_img = ImageOps.exif_transpose(img.copy())
+        if c_img.mode in ("CMYK", "P", "1", "LA") or c_img.mode == "RGBA":
+            c_img = c_img.convert("RGB")
+        out_png = tmp_path / "normalized_cover.png"
+        c_img.save(str(out_png), "PNG")
+
+    assert os.path.isfile(str(out_png))
+    with Image.open(str(out_png)) as res_img:
+        assert res_img.mode == "RGB"
+
+
+def test_multichannel_downmixing_phase_resilience():
+    """Verifies 5.1 and 7.1 surround audio streams inject ITU-R BS.775 phase-resilient downmix filter."""
+    probe_5_1 = {
+        "streams": [{"codec_type": "audio", "codec_name": "ac3", "channels": 6, "sample_rate": "48000"}],
+        "format": {"duration": "10.0"},
+    }
+    cmd_5_1 = converter.build_ffmpeg_args(
+        input_path="dummy.mkv",
+        output_path="out.mp3",
+        target_format="mp3",
+        probed_info=probe_5_1,
+    )
+    assert "-af" in cmd_5_1
+    af_val = cmd_5_1[cmd_5_1.index("-af") + 1]
+    assert "pan=stereo|FL < 1.0*FL + 0.707*FC + 0.707*BL | FR < 1.0*FR + 0.707*FC + 0.707*BR" in af_val
+
+    # 7.1 audio downmix
+    probe_7_1 = {
+        "streams": [{"codec_type": "audio", "codec_name": "truehd", "channels": 8, "sample_rate": "48000"}],
+        "format": {"duration": "10.0"},
+    }
+    cmd_7_1 = converter.build_ffmpeg_args(
+        input_path="dummy.mkv",
+        output_path="out.mp3",
+        target_format="mp3",
+        probed_info=probe_7_1,
+    )
+    assert "-af" in cmd_7_1
+    af_7_1 = cmd_7_1[cmd_7_1.index("-af") + 1]
+    assert "0.5*SL" in af_7_1
+
+
+def test_32bit_float_clipping_guard_alimiter():
+    """Verifies that 32-bit float audio without normalization receives transparent lookahead limiter."""
+    probe_f32 = {
+        "streams": [{"codec_type": "audio", "codec_name": "pcm_f32le", "sample_fmt": "fltp", "channels": 2, "sample_rate": "44100"}],
+        "format": {"duration": "10.0"},
+    }
+    # Without normalization: alimiter guard is injected to prevent integer distortion
+    cmd_f32 = converter.build_ffmpeg_args(
+        input_path="stem.wav",
+        output_path="stem.flac",
+        target_format="flac",
+        normalize_audio=False,
+        probed_info=probe_f32,
+    )
+    assert "-af" in cmd_f32
+    assert "alimiter=limit=0.999" in cmd_f32[cmd_f32.index("-af") + 1]
+
+    # With normalization: loudnorm is used instead
+    cmd_norm = converter.build_ffmpeg_args(
+        input_path="stem.wav",
+        output_path="stem.flac",
+        target_format="flac",
+        normalize_audio=True,
+        probed_info=probe_f32,
+    )
+    assert "-af" in cmd_norm
+    assert "loudnorm" in cmd_norm[cmd_norm.index("-af") + 1]
+    assert "alimiter" not in cmd_norm[cmd_norm.index("-af") + 1]
+
+
+def test_vfr_video_auto_enforces_cfr():
+    """Verifies that Variable Frame Rate video streams proactively inject -fps_mode cfr."""
+    probe_vfr = {
+        "streams": [{
+            "codec_type": "video",
+            "codec_name": "h264",
+            "r_frame_rate": "30/1",
+            "avg_frame_rate": "29.412/1",
+        }],
+        "format": {"duration": "10.0"},
+    }
+    cmd_vfr = converter.build_ffmpeg_args(
+        input_path="screen_recording.mp4",
+        output_path="out.mp4",
+        target_format="mp4",
+        use_nvenc=False,
+        probed_info=probe_vfr,
+    )
+    assert "-fps_mode" in cmd_vfr
+    assert cmd_vfr[cmd_vfr.index("-fps_mode") + 1] == "cfr"
+
+    # Explicit fps argument also enforces cfr
+    cmd_fps = converter.build_ffmpeg_args(
+        input_path="video.mp4",
+        output_path="out.mp4",
+        target_format="mp4",
+        fps=60,
+        use_nvenc=False,
+        probed_info={"streams": [{"codec_type": "video", "r_frame_rate": "60/1", "avg_frame_rate": "60/1"}]},
+    )
+    assert "-r" in cmd_fps
+    assert cmd_fps[cmd_fps.index("-r") + 1] == "60"
+    assert cmd_fps[cmd_fps.index("-fps_mode") + 1] == "cfr"
+
+
+def test_corrupt_stream_packet_repair_adaptation():
+    """Verifies that corrupt or truncated input streams adapt by injecting -fflags +discardcorrupt and -err_detect ignore_err."""
+    cmd = ["ffmpeg", "-y", "-i", "corrupt.mp4", "-c:v", "libx264", "-c:a", "aac", "out.mp4"]
+    stderr = b"Invalid data found when processing input"
+    adapted = converter.adapt_ffmpeg_command(cmd, stderr)
+    assert adapted is not None
+    assert "-err_detect" in adapted
+    assert adapted[adapted.index("-err_detect") + 1] == "ignore_err"
+    assert "-fflags" in adapted
+    assert "+genpts+discardcorrupt" in adapted[adapted.index("-fflags") + 1]
+    assert adapted.index("-fflags") < adapted.index("-i")
+
+
+def test_incompatible_colorspace_stripping_adaptation():
+    """Verifies that invalid color range or primaries flags are stripped when FFmpeg rejects them."""
+    cmd = ["ffmpeg", "-y", "-i", "in.mp4", "-c:v", "libx264", "-color_range", "tv", "-colorspace", "bt709", "out.mp4"]
+    stderr = b"Unsupported color range or matrix not supported"
+    adapted = converter.adapt_ffmpeg_command(cmd, stderr)
+    assert adapted is not None
+    assert "-color_range" not in adapted
+    assert "-colorspace" not in adapted
+
+
+def test_downmix_failure_adapts_to_phase_resilient_pan():
+    """Verifies that downmixing errors adapt by injecting phase-resilient pan downmix filter."""
+    cmd = ["ffmpeg", "-y", "-i", "in.mkv", "-c:v", "copy", "-c:a", "aac", "out.mp4"]
+    stderr = b"Cannot downmix 6 channels to 2 channels: unable to downmix"
+    adapted = converter.adapt_ffmpeg_command(cmd, stderr)
+    assert adapted is not None
+    assert "-af" in adapted
+    assert "pan=stereo|FL < 1.0*FL" in adapted[adapted.index("-af") + 1]

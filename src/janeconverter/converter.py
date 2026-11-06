@@ -16,7 +16,7 @@ import tempfile
 from dataclasses import replace
 from typing import Optional, Dict, Any, Callable
 
-from .paths import ensure_extended_length_path
+from .paths import ensure_extended_length_path, sanitize_filename
 from .recovery import (
     FailureCategory,
     FailureEvidence,
@@ -64,6 +64,7 @@ from .audio_dsp import (
     has_soxr_support,
 )
 from .media_probe import (
+    is_html_document,
     probe_media_duration,
     probe_media_streams,
     format_video_dimensions,
@@ -228,11 +229,12 @@ def is_stream_copy_safe(
 
 def get_unique_target_path(directory: str, filename: str) -> str:
     """Appends an incrementing counter if a file already exists to prevent overwriting."""
-    base_target = os.path.join(directory, filename)
+    clean_filename = sanitize_filename(filename)
+    base_target = os.path.join(directory, clean_filename)
     if not os.path.exists(ensure_extended_length_path(base_target)):
         return base_target
 
-    stem, ext = os.path.splitext(filename)
+    stem, ext = os.path.splitext(clean_filename)
     counter = 1
     while True:
         candidate = os.path.join(directory, f"{stem}_{counter}{ext}")
@@ -243,8 +245,9 @@ def get_unique_target_path(directory: str, filename: str) -> str:
 
 def _publish_staged_file(staged_path: str, output_dir: str, filename: str) -> str:
     """Atomically publish a staged file without replacing a concurrent output."""
-    stem, extension = os.path.splitext(filename)
-    candidate = os.path.join(output_dir, filename)
+    clean_filename = sanitize_filename(filename)
+    stem, extension = os.path.splitext(clean_filename)
+    candidate = os.path.join(output_dir, clean_filename)
     counter = 0
     while True:
         try:
@@ -359,6 +362,203 @@ def adapt_ffmpeg_command(cmd: list[str], stderr: bytes | str | None) -> Optional
         else:
             mutated.insert(-1, "-vf")
             mutated.insert(-1, pad_filter)
+            changed = True
+
+    # 7. Preset option rejection or invalid preset for codec
+    preset_errors = (
+        "preset not found", "option preset", "unrecognized option 'preset'",
+        "invalid preset", "preset is not valid", "not a valid preset",
+    )
+    if (any(err in text for err in preset_errors) or ("is not valid" in text and "preset" in text)) and "-preset" in mutated:
+        idx = mutated.index("-preset")
+        v_codec = ""
+        if "-c:v" in mutated:
+            c_idx = mutated.index("-c:v")
+            if c_idx + 1 < len(mutated):
+                v_codec = mutated[c_idx + 1].lower()
+        if "svtav1" in v_codec:
+            # SVT-AV1 requires numeric presets 0-13. Fall back to standard preset '6'
+            if idx + 1 < len(mutated) and mutated[idx + 1] != "6":
+                mutated[idx + 1] = "6"
+                changed = True
+        elif v_codec in ("libx264", "libx265"):
+            if idx + 1 < len(mutated) and mutated[idx + 1] not in ("veryfast", "medium"):
+                mutated[idx + 1] = "veryfast"
+                changed = True
+        else:
+            # Codec does not support presets (e.g. mpeg4, mpeg2video, flv, wmv2)
+            if idx + 1 < len(mutated) and not mutated[idx + 1].startswith("-"):
+                del mutated[idx:idx + 2]
+            else:
+                del mutated[idx:idx + 1]
+            changed = True
+
+    # 8. Unrecognized CRF option / rate control mismatch
+    crf_errors = (
+        "unrecognized option 'crf'", "option crf not found", "does not support -crf",
+        "crf is not valid", "error setting option crf",
+    )
+    if any(err in text for err in crf_errors) and "-crf" in mutated:
+        idx = mutated.index("-crf")
+        if idx + 1 < len(mutated) and not mutated[idx + 1].startswith("-"):
+            del mutated[idx:idx + 2]
+        else:
+            del mutated[idx:idx + 1]
+        if "-q:v" not in mutated and "-b:v" not in mutated:
+            mutated.insert(-1, "-q:v")
+            mutated.insert(-1, "2")
+        changed = True
+
+    # 9. Incompatible codec / container tag mismatch (e.g. stream-copy or transcode)
+    tag_errors = (
+        "could not find tag for codec", "codec not currently supported in container",
+        "tag is not compatible", "codec is not supported by the container",
+        "not supported in container", "only pcm_s16le",
+    )
+    if any(err in text for err in tag_errors):
+        out_ext = os.path.splitext(mutated[-1])[1].lower().lstrip(".") if mutated else ""
+        # Check audio stream tag mismatch
+        if any(w in text for w in ("in stream #0:1", "codec vorbis", "codec opus", "codec flac", "audio", "pcm")):
+            if "-c:a" in mutated:
+                a_idx = mutated.index("-c:a")
+                if out_ext in ("mp4", "mov", "m4v"):
+                    target_a_codec = "aac"
+                elif out_ext == "webm":
+                    target_a_codec = "libopus"
+                elif out_ext in ("avi", "flv"):
+                    target_a_codec = "libmp3lame"
+                else:
+                    target_a_codec = "aac"
+                if a_idx + 1 < len(mutated) and mutated[a_idx + 1] != target_a_codec:
+                    mutated[a_idx + 1] = target_a_codec
+                    changed = True
+        # Check video stream tag mismatch
+        if any(w in text for w in ("in stream #0:0", "video")) and "in stream #0:1" not in text:
+            if "-c:v" in mutated:
+                v_idx = mutated.index("-c:v")
+                if out_ext == "webm":
+                    target_v_codec = "libvpx-vp9"
+                elif out_ext in ("mp4", "mkv", "mov", "m4v"):
+                    target_v_codec = "libx264"
+                elif out_ext == "avi":
+                    target_v_codec = "mpeg4"
+                else:
+                    target_v_codec = "libx264"
+                if v_idx + 1 < len(mutated) and mutated[v_idx + 1] != target_v_codec:
+                    mutated[v_idx + 1] = target_v_codec
+                    changed = True
+
+    # 10. Unsupported audio sample rate for codec
+    sr_errors = (
+        "sample rate not supported", "specified sample rate", "sample rate is not supported",
+        "only 48000hz", "only 44100hz",
+    )
+    if any(err in text for err in sr_errors):
+        if "-ar" in mutated:
+            idx = mutated.index("-ar")
+            if idx + 1 < len(mutated) and mutated[idx + 1] != "48000":
+                mutated[idx + 1] = "48000"
+                changed = True
+        else:
+            mutated.insert(-1, "-ar")
+            mutated.insert(-1, "48000")
+            changed = True
+
+    # 11. Subtitle / data / attachment multiplexing failure
+    sub_errors = (
+        "automatic muxing for", "subtitle encoding not supported",
+        "could not find tag for codec", "data stream",
+    )
+    is_sub_or_data = any(w in text for w in ("subtitle", "subrip", "data", "teletext", "ass", "srt", "pgssub", "dvd_subtitle", "in stream #0:2"))
+    if any(err in text for err in sub_errors) and is_sub_or_data:
+        if "-sn" not in mutated:
+            mutated.insert(-1, "-sn")
+            changed = True
+        if "-dn" not in mutated:
+            mutated.insert(-1, "-dn")
+            changed = True
+
+    # 12. Container header / moov atom writing failure
+    header_errors = ("could not write header", "error writing header", "starting new cluster")
+    if any(err in text for err in header_errors):
+        out_ext = os.path.splitext(mutated[-1])[1].lower().lstrip(".") if mutated else ""
+        if out_ext in ("mp4", "mov", "m4v") and "-movflags" not in mutated:
+            mutated.insert(-1, "-movflags")
+            mutated.insert(-1, "+faststart")
+            changed = True
+
+    # 13. Filter configuration failure (e.g. soxr resampler or loudnorm)
+    filter_errors = (
+        "soxr resampler not found", "error initializing filter 'aresample'",
+        "filter 'loudnorm' failed", "linear normalization failed", "failed to configure filter",
+    )
+    if any(err in text for err in filter_errors) and "-af" in mutated:
+        idx = mutated.index("-af")
+        if idx + 1 < len(mutated):
+            af_val = mutated[idx + 1]
+            if "aresample=resampler=soxr" in af_val:
+                af_val = af_val.replace("aresample=resampler=soxr:precision=28:cutoff=0.99:dither_method=triangular", "aresample=48000")
+            if "loudnorm" in af_val:
+                parts = [f for f in af_val.split(",") if not f.startswith("loudnorm")]
+                af_val = ",".join(parts)
+            if af_val:
+                mutated[idx + 1] = af_val
+            else:
+                del mutated[idx:idx + 2]
+            changed = True
+
+    # 14. Profile or level incompatibility
+    profile_errors = ("profile not supported", "level is not supported", "level higher than max", "selected profile is not supported")
+    if any(err in text for err in profile_errors) and "-profile:v" in mutated:
+        idx = mutated.index("-profile:v")
+        if idx + 1 < len(mutated) and not mutated[idx + 1].startswith("-"):
+            del mutated[idx:idx + 2]
+        else:
+            del mutated[idx:idx + 1]
+        changed = True
+
+    # 15. Corrupt / truncated stream packet errors or invalid input packets
+    stream_corrupt_errors = (
+        "invalid data found when processing input", "error while decoding stream",
+        "corrupt input packet", "header missing", "moov atom not found",
+        "end of file", "error reading header", "missing keyframe",
+    )
+    if any(err in text for err in stream_corrupt_errors) and "+discardcorrupt" not in " ".join(mutated):
+        if "-i" in mutated:
+            i_idx = mutated.index("-i")
+            mutated.insert(i_idx, "-fflags")
+            mutated.insert(i_idx + 1, "+genpts+discardcorrupt")
+            mutated.insert(i_idx + 2, "-err_detect")
+            mutated.insert(i_idx + 3, "ignore_err")
+            changed = True
+
+    # 16. Incompatible color range / matrix / primaries
+    color_errors = (
+        "unsupported color range", "color matrix not supported", "invalid color primaries",
+        "color transfer not supported", "incompatible colorspace",
+    )
+    if any(err in text for err in color_errors):
+        for col_flag in ("-color_range", "-colorspace", "-color_primaries", "-color_trc"):
+            if col_flag in mutated:
+                idx = mutated.index(col_flag)
+                if idx + 1 < len(mutated) and not mutated[idx + 1].startswith("-"):
+                    del mutated[idx:idx + 2]
+                else:
+                    del mutated[idx:idx + 1]
+                changed = True
+
+    # 17. Audio downmix channel matrix fallback
+    downmix_errors = ("cannot downmix", "no downmixing", "unable to downmix", "downmix not supported")
+    if any(err in text for err in downmix_errors):
+        pan_downmix = "pan=stereo|FL < 1.0*FL + 0.707*FC + 0.707*BL | FR < 1.0*FR + 0.707*FC + 0.707*BR"
+        if "-af" in mutated:
+            idx = mutated.index("-af")
+            if "pan=" not in mutated[idx + 1]:
+                mutated[idx + 1] = f"{pan_downmix},{mutated[idx + 1]}"
+                changed = True
+        else:
+            mutated.insert(-1, "-af")
+            mutated.insert(-1, pan_downmix)
             changed = True
 
     return mutated if changed else None
@@ -486,6 +686,27 @@ def build_ffmpeg_args(
             and sample_rate
             and int(input_sample_rate) == int(sample_rate)
         )
+
+        info = probed_info if probed_info is not None else (probe_media_streams(input_path) if input_path and os.path.exists(input_path) else None)
+        a_streams = [s for s in (info.get("streams", []) if info else []) if s.get("codec_type") == "audio"]
+        input_channels = 2
+        input_sample_fmt = ""
+        if a_streams:
+            try:
+                input_channels = int(a_streams[0].get("channels", 2) or 2)
+            except (ValueError, TypeError):
+                input_channels = 2
+            input_sample_fmt = str(a_streams[0].get("sample_fmt", "") or "").lower()
+
+        # Multi-channel phase-safe downmixing to stereo (ITU-R BS.775 with auto-attenuation)
+        if input_channels > 2:
+            if input_channels == 6:
+                audio_filters.append("pan=stereo|FL < 1.0*FL + 0.707*FC + 0.707*BL | FR < 1.0*FR + 0.707*FC + 0.707*BR")
+            elif input_channels == 8:
+                audio_filters.append("pan=stereo|FL < 1.0*FL + 0.707*FC + 0.5*BL + 0.5*SL | FR < 1.0*FR + 0.707*FC + 0.5*BR + 0.5*SR")
+            else:
+                audio_filters.append("pan=stereo|c0 < c0 + 0.707*c2 + 0.5*c4 | c1 < c1 + 0.707*c2 + 0.5*c5")
+
         # Avoid a resampler pass when the output rate already matches the source stream.
         if sample_rate and not source_rate_matches and has_soxr_support():
             audio_filters.append("aresample=resampler=soxr:precision=28:cutoff=0.99:dither_method=triangular")
@@ -496,6 +717,10 @@ def build_ffmpeg_args(
         if normalize_audio:
             # Request linear processing and read FFmpeg's actual mode after encoding.
             audio_filters.append(build_loudnorm_filter(measured_loudness))
+        elif input_sample_fmt in ("flt", "fltp", "dbl", "dblp"):
+            # 32-bit float clipping guard: transparent lookahead limiter preventing distortion
+            # when converting floating-point audio to integer formats
+            audio_filters.append("alimiter=limit=0.999:attack=5:release=50:asc=1")
 
         if audio_filters:
             cmd.extend(["-af", ",".join(audio_filters)])
@@ -577,6 +802,17 @@ def build_ffmpeg_args(
             vf = f"fps={gif_fps},{scale_filter}split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3"
             cmd.extend(["-vf", vf])
         else:
+            if fps:
+                cmd.extend(["-r", str(fps), "-fps_mode", "cfr"])
+            else:
+                info = probed_info if probed_info is not None else (probe_media_streams(input_path) if input_path and os.path.exists(input_path) else None)
+                v_streams = [s for s in (info.get("streams", []) if info else []) if s.get("codec_type") == "video"]
+                if v_streams:
+                    r_fps = v_streams[0].get("r_frame_rate", "")
+                    avg_fps = v_streams[0].get("avg_frame_rate", "")
+                    if r_fps and avg_fps and r_fps != avg_fps and avg_fps != "0/0":
+                        cmd.extend(["-fps_mode", "cfr"])
+
             video_filters = []
             if resolution == "4k":
                 video_filters.append("scale=-2:2160")
@@ -590,6 +826,22 @@ def build_ffmpeg_args(
                 video_filters.append("scale=-2:480")
 
             audio_filters = []
+            v_info = probed_info if probed_info is not None else (probe_media_streams(input_path) if input_path and os.path.exists(input_path) else None)
+            v_a_streams = [s for s in (v_info.get("streams", []) if v_info else []) if s.get("codec_type") == "audio"]
+            input_channels = 2
+            if v_a_streams:
+                try:
+                    input_channels = int(v_a_streams[0].get("channels", 2) or 2)
+                except (ValueError, TypeError):
+                    input_channels = 2
+            if input_channels > 2:
+                if input_channels == 6:
+                    audio_filters.append("pan=stereo|FL < 1.0*FL + 0.707*FC + 0.707*BL | FR < 1.0*FR + 0.707*FC + 0.707*BR")
+                elif input_channels == 8:
+                    audio_filters.append("pan=stereo|FL < 1.0*FL + 0.707*FC + 0.5*BL + 0.5*SL | FR < 1.0*FR + 0.707*FC + 0.5*BR + 0.5*SR")
+                else:
+                    audio_filters.append("pan=stereo|c0 < c0 + 0.707*c2 + 0.5*c4 | c1 < c1 + 0.707*c2 + 0.5*c5")
+
             if normalize_audio:
                 audio_filters.append(build_loudnorm_filter(measured_loudness))
 
@@ -598,7 +850,7 @@ def build_ffmpeg_args(
 
             eff_a_bitrate = (audio_bitrate or video_quality.get("audio_bitrate", "original")).lower().strip()
             can_copy_audio = False
-            if eff_a_bitrate in ("original", "source", "copy") and not normalize_audio and not reconstruct_frequency_loss:
+            if eff_a_bitrate in ("original", "source", "copy") and not audio_filters and not reconstruct_frequency_loss:
                 info = probed_info if probed_info is not None else (probe_media_streams(input_path) if input_path and os.path.exists(input_path) else None)
                 a_streams = [s for s in (info.get("streams", []) if info else []) if s.get("codec_type") == "audio"]
                 if a_streams:
@@ -651,6 +903,10 @@ def build_ffmpeg_args(
                             "-c:v", video_codec, "-preset", cpu_preset,
                             "-crf", str(video_quality["crf"]), "-pix_fmt", "yuv420p"
                         ])
+                    elif video_codec == "libsvtav1":
+                        svt_preset = {"original": "4", "best": "4", "high": "5", "balanced": "6", "small": "8"}.get((bitrate or "").lower(), "6")
+                        svt_crf = {"original": "20", "best": "20", "high": "24", "balanced": "28", "small": "34"}.get((bitrate or "").lower(), "28")
+                        cmd.extend(["-c:v", video_codec, "-preset", svt_preset, "-crf", svt_crf, "-pix_fmt", "yuv420p"])
                     else:
                         quantizer = {"original": "2", "best": "2", "high": "3", "balanced": "5", "small": "8"}.get(
                             (bitrate or "").lower(), "5"
@@ -1117,7 +1373,8 @@ def _convert_media_impl(
     # Request machine-readable progress on stdout (inserted before the output path)
     cmd = cmd[:-1] + ["-progress", "pipe:1", "-nostats"] + [cmd[-1]]
     active_cmd = list(cmd)
-    command_adapted = False
+    adaptations_performed = 0
+    max_command_adaptations = 3
 
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     proc: Optional[subprocess.Popen] = None
@@ -1260,7 +1517,7 @@ def _convert_media_impl(
                     report(0.99, f"Normalization mode: {mode}." + (" FFmpeg used dynamic processing to meet the loudness and peak targets." if mode == "dynamic" else ""))
                 break
 
-            if not command_adapted:
+            if adaptations_performed < max_command_adaptations:
                 adapted = adapt_ffmpeg_command(active_cmd, stderr)
                 if adapted is not None and adapted != active_cmd:
                     if os.path.exists(destination_path):
@@ -1270,7 +1527,7 @@ def _convert_media_impl(
                             pass
                     report(0.72, "Adaptive JIT Recovery: Rewriting command parameters to resolve runtime flag incompatibility...")
                     active_cmd = adapted
-                    command_adapted = True
+                    adaptations_performed += 1
                     continue
 
             raise subprocess.CalledProcessError(proc.returncode, active_cmd, output=b"", stderr=stderr)
@@ -1328,7 +1585,10 @@ def _convert_media_impl(
                         with Image.open(cover_path) as cover_image:
                             if getattr(cover_image, "n_frames", 1) != 1:
                                 raise ValueError("animated cover")
-                            ImageOps.exif_transpose(cover_image.copy()).save(normalized_cover, "PNG")
+                            c_img = ImageOps.exif_transpose(cover_image.copy())
+                            if c_img.mode in ("CMYK", "P", "1", "LA") or c_img.mode == "RGBA":
+                                c_img = c_img.convert("RGB")
+                            c_img.save(normalized_cover, "PNG")
                     except (OSError, ValueError) as cover_error:
                         raise RuntimeError("InputInvalid: requested cover art could not be normalized without loss.") from cover_error
                     return convert_media(
@@ -1345,6 +1605,60 @@ def _convert_media_impl(
                         reconstruct_frequency_loss=reconstruct_frequency_loss,
                         _method_override="cover-normalized", _recovery=_recovery,
                     )
+            elif next_method == "universal-transcode":
+                universal_target = "mp4"
+                report(0.75, f"Adaptive Preset Reroute: Specialized video preset failed ({category.value}); rerouting to universal {universal_target.upper()} transcode...")
+                return convert_media(
+                    input_path=input_path,
+                    output_dir=output_dir,
+                    output_filename=output_filename,
+                    target_format=universal_target,
+                    bitrate="balanced",
+                    sample_rate=sample_rate,
+                    normalize_audio=normalize_audio,
+                    resolution=resolution,
+                    use_nvenc=False,
+                    use_gpu=False,
+                    metadata=metadata,
+                    cover_path=cover_path,
+                    abort_event=abort_event,
+                    progress_callback=progress_callback,
+                    fps=fps,
+                    allow_stream_copy=False,
+                    allow_lossless_png_recovery=allow_lossless_png_recovery,
+                    start_time=start_time,
+                    end_time=end_time,
+                    reconstruct_frequency_loss=reconstruct_frequency_loss,
+                    _method_override="cpu-transcode",
+                    _recovery=_recovery,
+                )
+            elif next_method == "audio-transcode":
+                audio_target = "flac" if target_format in {"flac", "wav"} else "mp3"
+                report(0.75, f"Adaptive Audio Reroute: Audio transcode failed ({category.value}); rerouting to universal {audio_target.upper()}...")
+                return convert_media(
+                    input_path=input_path,
+                    output_dir=output_dir,
+                    output_filename=output_filename,
+                    target_format=audio_target,
+                    bitrate="320k" if audio_target == "mp3" else "24-bit",
+                    sample_rate=sample_rate,
+                    normalize_audio=normalize_audio,
+                    resolution=resolution,
+                    use_nvenc=False,
+                    use_gpu=False,
+                    metadata=metadata,
+                    cover_path=cover_path,
+                    abort_event=abort_event,
+                    progress_callback=progress_callback,
+                    fps=fps,
+                    allow_stream_copy=False,
+                    allow_lossless_png_recovery=allow_lossless_png_recovery,
+                    start_time=start_time,
+                    end_time=end_time,
+                    reconstruct_frequency_loss=reconstruct_frequency_loss,
+                    _method_override="cpu-transcode",
+                    _recovery=_recovery,
+                )
             return convert_media(
                 input_path=input_path,
                 output_dir=output_dir,
@@ -1494,6 +1808,11 @@ def convert_media(
 ) -> str:
     """Stage and validate every attempt before publishing one completed output."""
     os.makedirs(output_dir, exist_ok=True)
+    if os.path.isfile(input_path) and is_html_document(input_path):
+        raise RuntimeError(
+            f"InputInvalid: source '{os.path.basename(input_path)}' is an HTML document or web challenge payload, not a valid media file."
+        )
+    output_filename = sanitize_filename(output_filename or os.path.basename(input_path))
     _, input_ext = os.path.splitext(input_path)
     if input_ext.lower() in (".glb", ".gltf", ".obj", ".splat", ".ply", ".fbx"):
         stem = os.path.splitext(output_filename)[0]
@@ -1589,6 +1908,32 @@ def convert_media(
                     audio_target = "flac"
                     staged_progress(0.72, f"Preserve Quality fallback: raw stream preservation failed ({error}). Transcoding to lossless {audio_target.upper()}...")
                     failure = FailureEvidence("source-validation", FailureCategory.VALIDATION, True, "audio:source-validation")
+                    _recovery.start("audio-transcode")
+                    audio_recovery = RecoveryCoordinator(replace(
+                        _recovery.intent, target_format=audio_target, allow_png_fallback=False,
+                    ), evidence_path=_recovery.evidence_path)
+                    staged_path = _convert_media_impl(
+                        **common, target_format=audio_target, allow_stream_copy=False,
+                        allow_lossless_png_recovery=False, _recovery=audio_recovery,
+                    )
+                    effective_target = audio_target
+                elif effective_target in SUPPORTED_VIDEO_FORMATS and is_audio_context and has_audio and str(error).startswith("ValidationFailed:"):
+                    # Video format preset chosen on audio-only media!
+                    # Adaptively reroute to proper high-fidelity audio format
+                    audio_target = {
+                        "mp4": "m4a",
+                        "mov": "m4a",
+                        "m4v": "m4a",
+                        "webm": "opus",
+                        "mkv": "flac",
+                        "av1": "flac",
+                        "avi": "mp3",
+                        "flv": "mp3",
+                        "wmv": "mp3",
+                        "asf": "mp3",
+                    }.get(effective_target, "mp3")
+                    staged_progress(0.72, f"Adaptive Preset Reroute: Video preset ({effective_target.upper()}) is incompatible with audio-only media. Rerouting to {audio_target.upper()}...")
+                    failure = FailureEvidence("video-preset-validation", FailureCategory.VALIDATION, True, "video:audio-only-source")
                     _recovery.start("audio-transcode")
                     audio_recovery = RecoveryCoordinator(replace(
                         _recovery.intent, target_format=audio_target, allow_png_fallback=False,

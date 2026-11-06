@@ -8,8 +8,10 @@ and a safe per-user fallback are still supported for protected locations.
 
 import os
 import filecmp
+import re
 import shutil
 import tempfile
+import unicodedata
 from pathlib import Path
 
 
@@ -21,6 +23,54 @@ BASE_DIR = str(
 )
 _local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
 LEGACY_APP_DATA_DIR = os.path.join(_local_app_data, "JaneConverter") if _local_app_data else ""
+
+WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+}
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize a filename to be safe across Windows, macOS, and Linux filesystems.
+
+    1. Removes or replaces reserved characters (< > : " / \\ | ? * and ASCII controls).
+    2. Strips trailing dots and spaces that cause Win32 filesystem path truncation or lockouts.
+    3. Handles Windows reserved DOS device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9).
+    4. Limits maximum stem length to prevent MAX_PATH or filesystem 255-byte overflows.
+    5. Fallbacks to 'media' if the stem becomes completely empty.
+    """
+    if not filename or not isinstance(filename, str):
+        return "media"
+
+    # Normalize unicode (NFKC) to prevent combining character oddities
+    filename = unicodedata.normalize("NFKC", filename)
+
+    # Strip leading directory components if accidentally passed
+    filename = os.path.basename(filename)
+
+    # Separate stem and extension
+    stem, ext = os.path.splitext(filename)
+
+    # Replace forbidden Windows characters: < > : " / \ | ? * and control chars (0-31)
+    stem = re.sub(r'[\x00-\x1f<>:"/\\|?*]', '_', stem)
+    ext = re.sub(r'[\x00-\x1f<>:"/\\|?*]', '_', ext)
+
+    # Strip trailing periods and whitespace from stem (Windows filesystem limitation)
+    stem = stem.rstrip(". ").lstrip()
+    if not stem:
+        stem = "media"
+
+    # Check for Windows reserved device names (e.g. aux.mp3, con.mp4, com1.wav)
+    if stem.upper() in WINDOWS_RESERVED_NAMES:
+        stem = f"_{stem}"
+
+    # Limit stem length to 180 characters to leave headroom for extensions and counters
+    if len(stem.encode("utf-8")) > 180:
+        stem = stem[:180].rstrip(". ")
+
+    return f"{stem}{ext}"
 
 
 def ensure_extended_length_path(path: str) -> str:

@@ -39,7 +39,7 @@ def _prepare_frame(image: Image.Image, target_format: str, extension: str) -> Im
     alpha = _has_alpha(image)
     if target_format == "JPEG":
         if image.mode == "CMYK":
-            return image.copy()
+            return image.convert("RGB")
         rgba = image.convert("RGBA")
         output = Image.new("RGB", rgba.size, "white")
         output.paste(rgba, mask=rgba.getchannel("A"))

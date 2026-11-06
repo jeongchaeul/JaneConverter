@@ -85,6 +85,12 @@ CONTAINER_AUDIO_CODECS = {
     "mkv": {"aac", "mp3", "opus", "flac", "vorbis", "alac", "ac3", "eac3", "pcm_s16le", "pcm_s24le"},
     "webm": {"opus", "vorbis"},
     "mov": {"aac", "pcm_s16le", "pcm_s24le", "alac", "mp3"},
+    "m4v": {"aac", "mp3", "ac3"},
+    "ts": {"aac", "mp3", "mp2", "ac3"},
+    "m2ts": {"aac", "ac3", "pcm_bluray"},
+    "avi": {"mp3", "ac3", "pcm_s16le"},
+    "flv": {"mp3", "aac"},
+    "3gp": {"aac", "amr_nb", "amr_wb"},
 }
 
 VAAPI_ENCODER_ARGS = ["-vaapi_device", "/dev/dri/renderD128", "-c:v", "h264_vaapi", "-qp", "23"]

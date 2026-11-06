@@ -12,7 +12,7 @@ import { SettingsView } from "./components/SettingsView";
 import { FetchedMediaView } from "./components/FetchedMediaView";
 import { UpdatePromptHeader, isAppUpdateAvailable } from "./components/UpdatePromptHeader";
 import { UpdateChangesModal } from "./components/UpdateChangesModal";
-import { findPresetName, formatBytes, formatElapsedMs } from "./options";
+import { detectCategoryFromPath, findPresetName, formatBytes, formatElapsedMs } from "./options";
 import { appendOrCollapseProgressEvent, extractYouTubeUrlFromThumbnail } from "./components/inprogress/parser";
 import { clearAppearanceStorage, loadAppearanceFromStorage, saveAppearanceToStorage, type AppearanceSettings } from "./utils/appearanceStorage";
 
@@ -78,7 +78,7 @@ function extractExportedPathFromMessage(message: string): string | null {
   return null;
 }
 
-function detectFallbackNote(logs: string[], forcedVideoFallback: boolean): string | null {
+function detectFallbackNote(logs: string[], forcedVideoFallback: boolean, forcedAudioFallback: boolean = false): string | null {
   for (let i = logs.length - 1; i >= 0; i -= 1) {
     const line = logs[i];
     if (/Normalization mode: dynamic/i.test(line)) return "FFmpeg used dynamic loudness normalization to meet the requested targets.";
@@ -88,9 +88,16 @@ function detectFallbackNote(logs: string[], forcedVideoFallback: boolean): strin
       return `Forced fallback to ${pngMatch[2].toUpperCase()} (${pngMatch[3]}) after source format recovery.`;
     }
     const recoveryMatch = line.match(/Conversion complete using\s+(.+?)\s+after bounded recovery\.?$/i);
+    const rerouteMatch = line.match(/Adaptive Preset Reroute:\s+(.+?)(?:\.\.\.|\.?$)/i);
+    if (rerouteMatch) return `Adaptive preset reroute: ${rerouteMatch[1]}.`;
+    const audioRerouteMatch = line.match(/Adaptive Audio Reroute:\s+(.+?)(?:\.\.\.|\.?$)/i);
+    if (audioRerouteMatch) return `Adaptive audio reroute: ${audioRerouteMatch[1]}.`;
     if (recoveryMatch) {
       return `Forced fallback to ${recoveryMatch[1]} to complete conversion.`;
     }
+  }
+  if (forcedAudioFallback) {
+    return "Forced fallback from Video to Audio preset because the source contained only audio media.";
   }
   if (forcedVideoFallback) {
     return "Forced fallback from Image to Video preset because the post contained video media.";
@@ -134,6 +141,7 @@ interface ActiveJobContext {
   effectiveSettings: ConverterSettings;
   presetName: string;
   forcedVideoFallback: boolean;
+  forcedAudioFallback?: boolean;
   logs: string[];
   exportedPath: string;
 }
@@ -585,7 +593,7 @@ export default function App() {
           );
           const fallbackNote = isPartial
             ? event.message || "Partial conversion: some media items failed to convert."
-            : detectFallbackNote(ctx?.logs ?? [], ctx?.forcedVideoFallback ?? false);
+            : detectFallbackNote(ctx?.logs ?? [], ctx?.forcedVideoFallback ?? false, ctx?.forcedAudioFallback ?? false);
           const { formatLabel, qualityLabel } = describeOutputFormatAndQuality(effective, exportPath, fallbackNote);
           const fileName = baseNameFromPath(exportPath) || baseNameFromPath(ctx?.source || "") || "Converted media";
           setFailure(null);
@@ -637,7 +645,7 @@ export default function App() {
         if (event.kind === "failed") {
           const effective = ctx?.effectiveSettings ?? settingsRef.current;
           const elapsedMs = Math.max(1, Date.now() - (ctx?.startedAtMs ?? Date.now()));
-          const fallbackNote = detectFallbackNote(ctx?.logs ?? [], ctx?.forcedVideoFallback ?? false);
+          const fallbackNote = detectFallbackNote(ctx?.logs ?? [], ctx?.forcedVideoFallback ?? false, ctx?.forcedAudioFallback ?? false);
           const { formatLabel, qualityLabel } = describeOutputFormatAndQuality(effective, ctx?.exportedPath || "", fallbackNote);
           setSuccess(null);
           if (!captureBusyRef.current) {
@@ -820,6 +828,8 @@ export default function App() {
           ? effectiveSettings.browserSession
           : undefined;
       let forcedVideoFallback = false;
+      let forcedAudioFallback = false;
+      const detectedCat = detectCategoryFromPath(normalizedSource);
       if (detectedMediaKind === "video" && effectiveSettings.category === "Image") {
         effectiveSettings = {
           ...effectiveSettings,
@@ -830,6 +840,15 @@ export default function App() {
         };
         forcedVideoFallback = true;
         setSettings(effectiveSettings);
+      } else if (detectedCat === "Audio" && effectiveSettings.category === "Video") {
+        effectiveSettings = {
+          ...effectiveSettings,
+          category: "Audio",
+          format: effectiveSettings.format === "source" ? "source" : "mp3",
+          bitrate: effectiveSettings.format === "source" ? "best" : "320k",
+        };
+        forcedAudioFallback = true;
+        setSettings(effectiveSettings);
       }
       activeJobSuggestLosslessRef.current = effectiveSettings.format === "source" && effectiveSettings.category === "Image" && !forcedVideoFallback;
       activeJobContextRef.current = {
@@ -838,6 +857,7 @@ export default function App() {
         effectiveSettings,
         presetName: findPresetName(effectiveSettings),
         forcedVideoFallback,
+        forcedAudioFallback,
         logs: [],
         exportedPath: "",
       };

@@ -86,6 +86,7 @@ class FailureEvidence:
                 FailureCategory.HARDWARE,
                 FailureCategory.ARTWORK,
                 FailureCategory.ENCODER,
+                FailureCategory.DECODER,
                 FailureCategory.UNKNOWN,
             },
             diagnostic=f"ffmpeg:{category.value}",
@@ -112,7 +113,9 @@ STRATEGIES = {
     "audio-transcode": Strategy("audio-transcode", "audio", "flac", "ffprobe-contract",
                                 (("source-preserve", FailureCategory.VALIDATION),
                                  ("source-preserve", FailureCategory.CONTAINER),
-                                 ("source-preserve", FailureCategory.DECODER))),
+                                 ("source-preserve", FailureCategory.DECODER),
+                                 ("cpu-transcode", FailureCategory.CONTAINER),
+                                 ("cpu-transcode", FailureCategory.ENCODER))),
     "stream-copy": Strategy("stream-copy", "audio-video", "none", "ffprobe-contract"),
     "gpu-transcode": Strategy("gpu-transcode", "video", "none", "ffprobe-contract",
                               (("stream-copy", FailureCategory.CONTAINER),)),
@@ -121,6 +124,11 @@ STRATEGIES = {
                                ("gpu-transcode", FailureCategory.HARDWARE),
                                ("gpu-transcode", FailureCategory.ENCODER),
                                ("gpu-transcode", FailureCategory.UNKNOWN))),
+    "universal-transcode": Strategy("universal-transcode", "video", "mp4", "ffprobe-contract",
+                                    (("cpu-transcode", FailureCategory.CONTAINER),
+                                     ("cpu-transcode", FailureCategory.ENCODER),
+                                     ("cpu-transcode", FailureCategory.HARDWARE),
+                                     ("cpu-transcode", FailureCategory.UNKNOWN))),
     "cover-normalized": Strategy("cover-normalized", "audio", "none", "ffprobe-contract",
                                  (("cpu-transcode", FailureCategory.ARTWORK),
                                   ("gpu-transcode", FailureCategory.ARTWORK))),
@@ -138,7 +146,7 @@ def classify_ffmpeg_failure(stderr: bytes | str | None) -> FailureCategory:
         return FailureCategory.PERMISSION
     if any(word in value for word in ("no space left", "disk full", "out of memory", "cannot allocate memory")):
         return FailureCategory.RESOURCE
-    if any(word in value for word in ("invalid data found", "could not find codec parameters")):
+    if any(word in value for word in ("invalid data found", "could not find codec parameters", "is an html document", "html web page")):
         return FailureCategory.INVALID_INPUT
     if any(word in value for word in ("connection reset", "connection timed out", "temporary failure", "i/o error")):
         return FailureCategory.TRANSIENT_IO
@@ -146,9 +154,9 @@ def classify_ffmpeg_failure(stderr: bytes | str | None) -> FailureCategory:
         return FailureCategory.ARTWORK
     if any(word in value for word in ("nvenc", "vaapi", "videotoolbox", "qsv", "amf", "hardware device", "no capable devices", "cuda", "cuinit", "nvcuda")):
         return FailureCategory.HARDWARE
-    if any(word in value for word in ("not supported in container", "could not write header", "tag ", "incorrect codec parameters", "moov atom not found")) or ("codec" in value and "not supported" in value):
+    if any(word in value for word in ("not supported in container", "could not write header", "tag ", "incorrect codec parameters", "moov atom not found", "could not find tag for codec")) or ("codec" in value and "not supported" in value):
         return FailureCategory.CONTAINER
-    if any(word in value for word in ("unknown encoder", "encoder not found", "error while opening encoder", "unrecognized option", "option not found")):
+    if any(word in value for word in ("unknown encoder", "encoder not found", "error while opening encoder", "unrecognized option", "option not found", "preset not found", "invalid preset", "error setting option")):
         return FailureCategory.ENCODER
     if any(word in value for word in ("error while decoding", "decoder not found")):
         return FailureCategory.DECODER
@@ -201,8 +209,18 @@ class RecoveryCoordinator:
                 or not self.intent.allow_png_fallback
             ):
                 continue
-            if candidate == "audio-transcode" and (
-                self.intent.expected_category and self.intent.expected_category.lower() not in ("audio", "music")
+            if candidate == "audio-transcode":
+                is_audio = bool(
+                    (self.intent.expected_category and self.intent.expected_category.lower() in ("audio", "music"))
+                    or self.intent.target_format in {"mp3", "flac", "wav", "aac", "ogg", "opus", "m4a", "aiff", "alac", "ac3", "wma", "caf", "au"}
+                    or (self.intent.target_format in {"source", "original", ""} and (not self.intent.expected_category or self.intent.expected_category.lower() in ("audio", "music")))
+                )
+                if not is_audio:
+                    continue
+            if candidate == "universal-transcode" and (
+                self.intent.target_format == "mp4"
+                or (self.intent.expected_category and self.intent.expected_category.lower() in ("audio", "music"))
+                or self.intent.target_format in {"mp3", "flac", "wav", "aac", "ogg", "opus", "m4a", "aiff", "alac", "ac3", "wma", "caf", "au"}
             ):
                 continue
             if candidate == "cover-normalized" and (
@@ -273,7 +291,7 @@ def _record_local_success_locked(path: str, coordinator: RecoveryCoordinator) ->
         return
     first = coordinator.attempts[0]
     final = coordinator.attempts[-1]
-    if first.result is None or final.method not in {"cpu-transcode", "gpu-transcode", "cover-normalized", "image-ffmpeg-frame", "image-png"}:
+    if first.result is None or final.method not in {"cpu-transcode", "gpu-transcode", "cover-normalized", "image-ffmpeg-frame", "image-png", "universal-transcode", "audio-transcode"}:
         return
     key = f"{target}|{first.result.value}|{final.method}"
     entries = {}
@@ -291,7 +309,7 @@ def _record_local_success_locked(path: str, coordinator: RecoveryCoordinator) ->
                         "updated": max(0, int(item_value.get("updated", 0))),
                     }
                     for item_key, item_value in previous["entries"].items()
-                    if re.fullmatch(r"[a-z0-9]{2,6}\|[a-z_]+\|(?:cpu-transcode|gpu-transcode|cover-normalized|image-ffmpeg-frame|image-png)", item_key)
+                    if re.fullmatch(r"[a-z0-9]{2,6}\|[a-z_]+\|(?:cpu-transcode|gpu-transcode|cover-normalized|image-ffmpeg-frame|image-png|universal-transcode|audio-transcode)", item_key)
                     and isinstance(item_value, dict)
                 }
     except (OSError, ValueError, TypeError, AttributeError):
@@ -336,7 +354,7 @@ def _record_local_failure_locked(
     if not re.fullmatch(r"[a-z0-9]{2,6}", target):
         return
     cat_str = category.value if isinstance(category, FailureCategory) else str(category)
-    if failed_method not in {"cpu-transcode", "gpu-transcode", "cover-normalized", "image-ffmpeg-frame", "image-png"}:
+    if failed_method not in {"cpu-transcode", "gpu-transcode", "cover-normalized", "image-ffmpeg-frame", "image-png", "universal-transcode", "audio-transcode"}:
         return
     key = f"{target}|{cat_str}|{failed_method}"
     entries = {}
@@ -352,7 +370,7 @@ def _record_local_failure_locked(
                         "updated": max(0, int(item_value.get("updated", 0))),
                     }
                     for item_key, item_value in previous["entries"].items()
-                    if re.fullmatch(r"[a-z0-9]{2,6}\|[a-z_]+\|(?:cpu-transcode|gpu-transcode|cover-normalized|image-ffmpeg-frame|image-png)", item_key)
+                    if re.fullmatch(r"[a-z0-9]{2,6}\|[a-z_]+\|(?:cpu-transcode|gpu-transcode|cover-normalized|image-ffmpeg-frame|image-png|universal-transcode|audio-transcode)", item_key)
                     and isinstance(item_value, dict)
                 }
     except (OSError, ValueError, TypeError, AttributeError):
