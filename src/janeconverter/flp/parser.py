@@ -35,10 +35,8 @@ def parse_varint(stream: BinaryIO) -> int:
     return value
 
 
-def parse_flp(data: bytes) -> FLPProject:
-    """Parse raw FLP bytes into an FLPProject instance."""
-    stream = io.BytesIO(data)
-
+def parse_flp_stream(stream: BinaryIO, total_len: int) -> FLPProject:
+    """Parse an open binary stream into an FLPProject instance."""
     # 1. Read FLhd chunk
     flhd_magic = stream.read(4)
     if flhd_magic != b"FLhd":
@@ -59,7 +57,6 @@ def parse_flp(data: bytes) -> FLPProject:
 
     # 2. Find and read FLdt chunk(s)
     events = []
-    total_len = len(data)
     while True:
         chunk_magic = stream.read(4)
         if not chunk_magic:
@@ -119,6 +116,11 @@ def parse_flp(data: bytes) -> FLPProject:
     )
 
 
+def parse_flp(data: bytes) -> FLPProject:
+    """Parse raw FLP bytes into an FLPProject instance."""
+    return parse_flp_stream(io.BytesIO(data), len(data))
+
+
 def parse_flp_file(path: str) -> FLPProject:
     """Read and parse an FLP file from a local file path with size boundary enforcement."""
     if not os.path.exists(path):
@@ -129,5 +131,4 @@ def parse_flp_file(path: str) -> FLPProject:
             f"FLP project file size ({file_size} bytes) exceeds maximum safe parsing limit ({MAX_FLP_FILE_SIZE} bytes)."
         )
     with open(path, "rb") as f:
-        data = f.read()
-    return parse_flp(data)
+        return parse_flp_stream(f, file_size)

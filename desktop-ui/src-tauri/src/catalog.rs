@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 static CATALOG_LOCK: Mutex<()> = Mutex::new(());
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize, Clone)]
 pub struct Catalog {
     pub version: u32,
     #[serde(default)]
@@ -21,6 +21,15 @@ pub struct Catalog {
     #[serde(skip)]
     pub warning: Option<String>,
 }
+
+#[derive(Clone)]
+struct CachedCatalog {
+    mtime: Option<std::time::SystemTime>,
+    len: u64,
+    catalog: Catalog,
+}
+
+static CATALOG_CACHE: Mutex<Option<(std::path::PathBuf, CachedCatalog)>> = Mutex::new(None);
 
 fn decode(bytes: &[u8]) -> Result<Catalog, String> {
     let catalog: Catalog =
@@ -35,7 +44,18 @@ fn decode(bytes: &[u8]) -> Result<Catalog, String> {
 }
 
 fn load(path: &Path) -> Result<Catalog, String> {
-    match fs::read(path) {
+    if let Ok(metadata) = fs::metadata(path) {
+        let mtime = metadata.modified().ok();
+        let len = metadata.len();
+        if let Ok(cache) = CATALOG_CACHE.lock() {
+            if let Some((cached_path, cached_data)) = cache.as_ref() {
+                if cached_path == path && cached_data.mtime == mtime && cached_data.len == len {
+                    return Ok(cached_data.catalog.clone());
+                }
+            }
+        }
+    }
+    let loaded = match fs::read(path) {
         Ok(bytes) => {
             match decode(&bytes) {
                 Ok(catalog) => Ok(catalog),
@@ -61,7 +81,21 @@ fn load(path: &Path) -> Result<Catalog, String> {
             })
         }
         Err(error) => Err(format!("Could not read the local catalog: {error}")),
+    }?;
+
+    if let Ok(metadata) = fs::metadata(path) {
+        if let Ok(mut cache) = CATALOG_CACHE.lock() {
+            *cache = Some((
+                path.to_path_buf(),
+                CachedCatalog {
+                    mtime: metadata.modified().ok(),
+                    len: metadata.len(),
+                    catalog: loaded.clone(),
+                },
+            ));
+        }
     }
+    Ok(loaded)
 }
 
 fn save(path: &Path, catalog: &Catalog) -> Result<(), String> {
@@ -105,6 +139,20 @@ fn save(path: &Path, catalog: &Catalog) -> Result<(), String> {
     })();
     if result.is_err() {
         let _ = fs::remove_file(staging);
+        if let Ok(mut cache) = CATALOG_CACHE.lock() {
+            *cache = None;
+        }
+    } else if let Ok(metadata) = fs::metadata(path) {
+        if let Ok(mut cache) = CATALOG_CACHE.lock() {
+            *cache = Some((
+                path.to_path_buf(),
+                CachedCatalog {
+                    mtime: metadata.modified().ok(),
+                    len: metadata.len(),
+                    catalog: catalog.clone(),
+                },
+            ));
+        }
     }
     result.map_err(|error| {
         format!("Could not save the local catalog: {error}. Your media files were preserved.")

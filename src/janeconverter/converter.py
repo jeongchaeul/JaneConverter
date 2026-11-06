@@ -377,6 +377,7 @@ def build_ffmpeg_args(
     gpu_codec: Optional[str] = None,
     metadata: Optional[Dict[str, str]] = None,
     cover_path: Optional[str] = None,
+    probed_info: Optional[Dict[str, Any]] = None,
     fps: Optional[int] = None,
     stream_copy: bool = False,
     input_sample_rate: Optional[int] = None,
@@ -598,7 +599,7 @@ def build_ffmpeg_args(
             eff_a_bitrate = (audio_bitrate or video_quality.get("audio_bitrate", "original")).lower().strip()
             can_copy_audio = False
             if eff_a_bitrate in ("original", "source", "copy") and not normalize_audio and not reconstruct_frequency_loss:
-                info = probe_media_streams(input_path) if input_path and os.path.exists(input_path) else None
+                info = probed_info if probed_info is not None else (probe_media_streams(input_path) if input_path and os.path.exists(input_path) else None)
                 a_streams = [s for s in (info.get("streams", []) if info else []) if s.get("codec_type") == "audio"]
                 if a_streams:
                     a_codec = (a_streams[0].get("codec_name") or "").lower()
@@ -1067,6 +1068,7 @@ def _convert_media_impl(
             use_gpu=False,
             metadata=metadata,
             cover_path=cover_path,
+            probed_info=media_probe,
             input_sample_rate=input_sample_rate,
             fps=fps,
             stream_copy=True,
@@ -1102,6 +1104,7 @@ def _convert_media_impl(
             gpu_codec=gpu_codec,
             metadata=metadata,
             cover_path=cover_path,
+            probed_info=media_probe,
             input_sample_rate=input_sample_rate,
             fps=fps,
             stream_copy=False,

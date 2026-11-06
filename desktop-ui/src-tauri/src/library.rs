@@ -903,6 +903,7 @@ fn render_preview_at(path: &Path, seek_sec: Option<&str>) -> Option<Vec<u8>> {
     command.stdout(Stdio::piped()).stderr(Stdio::null());
     prepare_command(&mut command);
     let mut child = command.spawn().ok()?;
+    crate::process::register_child_process(&child);
     let stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();

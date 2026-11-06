@@ -82,6 +82,123 @@ fn flash_windows_taskbar(window: &tauri::WebviewWindow) {
     }
 }
 
+#[cfg(target_os = "windows")]
+mod win_job {
+    use std::os::windows::io::{AsRawHandle, RawHandle};
+    use std::sync::OnceLock;
+
+    #[repr(C)]
+    struct IoCounters {
+        read_operation_count: u64,
+        write_operation_count: u64,
+        other_operation_count: u64,
+        read_transfer_count: u64,
+        write_transfer_count: u64,
+        other_transfer_count: u64,
+    }
+
+    #[repr(C)]
+    struct JobobjectBasicLimitInformation {
+        per_process_user_time_limit: i64,
+        per_job_user_time_limit: i64,
+        limit_flags: u32,
+        minimum_working_set_size: usize,
+        maximum_working_set_size: usize,
+        active_process_limit: u32,
+        affinity: usize,
+        priority_class: u32,
+        scheduling_class: u32,
+    }
+
+    #[repr(C)]
+    struct JobobjectExtendedLimitInformation {
+        basic_limit_information: JobobjectBasicLimitInformation,
+        io_info: IoCounters,
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory_used: usize,
+        peak_job_memory_used: usize,
+    }
+
+    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
+    const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: i32 = 9;
+
+    extern "system" {
+        fn CreateJobObjectW(
+            lp_job_attributes: *mut std::ffi::c_void,
+            lp_name: *const u16,
+        ) -> RawHandle;
+        fn SetInformationJobObject(
+            h_job: RawHandle,
+            job_object_info_class: i32,
+            lp_job_object_info: *const std::ffi::c_void,
+            cb_job_object_info_length: u32,
+        ) -> i32;
+        fn AssignProcessToJobObject(h_job: RawHandle, h_process: RawHandle) -> i32;
+        fn CloseHandle(h_object: RawHandle) -> i32;
+    }
+
+    struct JobHandle(RawHandle);
+    unsafe impl Send for JobHandle {}
+    unsafe impl Sync for JobHandle {}
+
+    impl Drop for JobHandle {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe {
+                    let _ = CloseHandle(self.0);
+                }
+            }
+        }
+    }
+
+    fn get_global_job() -> Option<RawHandle> {
+        static GLOBAL_JOB: OnceLock<Option<JobHandle>> = OnceLock::new();
+        GLOBAL_JOB
+            .get_or_init(|| unsafe {
+                let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+                if job.is_null() {
+                    return None;
+                }
+                let mut info: JobobjectExtendedLimitInformation = std::mem::zeroed();
+                info.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let ret = SetInformationJobObject(
+                    job,
+                    JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
+                    &info as *const _ as *const std::ffi::c_void,
+                    std::mem::size_of::<JobobjectExtendedLimitInformation>() as u32,
+                );
+                if ret == 0 {
+                    let _ = CloseHandle(job);
+                    return None;
+                }
+                Some(JobHandle(job))
+            })
+            .as_ref()
+            .map(|jh| jh.0)
+    }
+
+    pub fn assign_child_to_job(child: &std::process::Child) {
+        if let Some(job) = get_global_job() {
+            unsafe {
+                let handle = child.as_raw_handle();
+                let _ = AssignProcessToJobObject(job, handle);
+            }
+        }
+    }
+}
+
+pub fn register_child_process(child: &std::process::Child) {
+    #[cfg(target_os = "windows")]
+    {
+        win_job::assign_child_to_job(child);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = child;
+    }
+}
+
 pub fn notify_user_attention(app: &tauri::AppHandle) {
     use tauri::Manager;
     if let Some(window) = app.get_webview_window("main") {
@@ -710,6 +827,7 @@ pub fn start_conversion(
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not start the Python engine: {error}"))?;
+    register_child_process(&child);
     let mut stdin_writer = child.stdin.take();
     let mut facebook_stdin = None;
     if let Some(manifest_json) = manifest_json {
@@ -928,6 +1046,7 @@ pub fn bounded_output(
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not start operation: {error}"))?;
+    register_child_process(&child);
     fn drain(mut pipe: impl Read + Send + 'static) -> std::sync::mpsc::Receiver<Vec<u8>> {
         let (sender, receiver) = std::sync::mpsc::channel();
         thread::spawn(move || {

@@ -63,7 +63,12 @@ def probe_media_duration(input_path: str) -> Optional[float]:
             text=True, encoding="utf-8", errors="replace", timeout=15.0, creationflags=no_window
         )
         if res.returncode == 0 and res.stdout.strip():
-            return float(res.stdout.strip())
+            val = float(res.stdout.strip())
+            if cache_key is not None:
+                with _PROBE_CACHE_LOCK:
+                    entry = _PROBE_CACHE.setdefault(cache_key, {})
+                    entry.setdefault("format", {})["duration"] = str(val)
+            return val
     except (subprocess.SubprocessError, ValueError, OSError):
         pass
     return None
