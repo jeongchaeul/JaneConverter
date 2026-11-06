@@ -549,6 +549,7 @@ def process_conversion(
             reconstruct_frequency_loss=reconstruct_frequency_loss,
             expected_category=content_category,
             audio_bitrate=audio_bitrate,
+            source_duration=stream_info.get("duration"),
         )
 
         report(1.0, f"Ready! File exported to: {os.path.basename(result_path)}")
@@ -901,6 +902,7 @@ def process_playlist_conversion(
                     reconstruct_frequency_loss=reconstruct_frequency_loss,
                     expected_category=content_category,
                     audio_bitrate=audio_bitrate,
+                    source_duration=stream_info.get("duration") or entry.get("duration"),
                 ),
                 f"Track #{idx} conversion",
                 0  # convert_media already selects and bounds distinct recovery methods
@@ -1157,6 +1159,7 @@ def process_playlist_conversion(
                     reconstruct_frequency_loss=reconstruct_frequency_loss,
                     expected_category=content_category,
                     audio_bitrate=audio_bitrate,
+                    source_duration=stream_info.get("duration") or entry.get("duration"),
                 )
                 converted_files.append(result_path)
                 failed_files = [f for f in failed_files if f.get("index") != idx]

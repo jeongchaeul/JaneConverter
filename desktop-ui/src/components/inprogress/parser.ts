@@ -411,7 +411,11 @@ export function parseConversionEvents(
       if (detail) {
         item.detailMessage = detail;
         const speedMatch = /(?:at\s+([\d\.]+\s*[KMGT]?i?B\/s)|speed\s+([\d\.]+x))/i.exec(detail);
-        if (speedMatch) item.speed = speedMatch[1] || speedMatch[2];
+        if (speedMatch) {
+          item.speed = speedMatch[1] || speedMatch[2];
+        } else if (detail.toLowerCase().includes("transcoding") && item.speed && !item.speed.endsWith("x")) {
+          item.speed = undefined;
+        }
 
         const etaMatch = /ETA\s+([\d:]+)/i.exec(detail);
         if (etaMatch) item.eta = etaMatch[1];
@@ -572,7 +576,12 @@ export function parseConversionEvents(
         const pctMatch = /(\d+(?:\.\d+)?)\s*%/i.exec(rawMsg);
         if (pctMatch) singleProgress = parseFloat(pctMatch[1]) / 100;
         const spdMatch = /speed\s+([\d\.]+x)/i.exec(rawMsg);
-        if (spdMatch) singleSpeed = spdMatch[1];
+        if (spdMatch) {
+          singleSpeed = spdMatch[1];
+        } else if (!singleSpeed || !singleSpeed.endsWith("x")) {
+          singleSpeed = undefined;
+        }
+        singleEta = undefined;
         singleDetail = rawMsg;
       } else if (rawMsg.startsWith("[!] Error") || event.kind === "failed") {
         isSingleMedia = true;

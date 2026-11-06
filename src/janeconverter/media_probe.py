@@ -44,6 +44,8 @@ def probe_media_duration(input_path: str) -> Optional[float]:
             cached = _PROBE_CACHE.get(cache_key)
             if cached:
                 dur_str = cached.get("format", {}).get("duration")
+                if not dur_str:
+                    dur_str = next((s.get("duration") for s in cached.get("streams", []) if s.get("duration")), None)
                 if dur_str:
                     try:
                         return float(dur_str)
@@ -56,19 +58,27 @@ def probe_media_duration(input_path: str) -> Optional[float]:
             probe_cmd.extend(["-protocol_whitelist", "http,https,tcp,tls,crypto"])
         else:
             probe_cmd.extend(["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS])
-        probe_cmd.extend(["-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", input_path])
+        probe_cmd.extend(["-show_entries", "format=duration:stream=duration", "-of", "default=noprint_wrappers=1:nokey=1", input_path])
         res = subprocess.run(
             probe_cmd,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             text=True, encoding="utf-8", errors="replace", timeout=15.0, creationflags=no_window
         )
         if res.returncode == 0 and res.stdout.strip():
-            val = float(res.stdout.strip())
-            if cache_key is not None:
-                with _PROBE_CACHE_LOCK:
-                    entry = _PROBE_CACHE.setdefault(cache_key, {})
-                    entry.setdefault("format", {})["duration"] = str(val)
-            return val
+            for line in res.stdout.strip().splitlines():
+                line = line.strip()
+                if not line or line.upper() == "N/A":
+                    continue
+                try:
+                    val = float(line)
+                    if val > 0:
+                        if cache_key is not None:
+                            with _PROBE_CACHE_LOCK:
+                                entry = _PROBE_CACHE.setdefault(cache_key, {})
+                                entry.setdefault("format", {})["duration"] = str(val)
+                        return val
+                except (ValueError, TypeError):
+                    continue
     except (subprocess.SubprocessError, ValueError, OSError):
         pass
     return None

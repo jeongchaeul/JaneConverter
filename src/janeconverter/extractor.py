@@ -1101,9 +1101,30 @@ def fetch_media_stream(
     # 3. Web Stream Download via yt-dlp
     report(0.15, "Connecting to stream provider and parsing media formats...")
 
+    emitted_thumbnail_url = [False]
+
+    def _maybe_emit_thumbnail(t_url: Optional[str]) -> None:
+        if not t_url or emitted_thumbnail_url[0]:
+            return
+        if str(t_url).startswith("http://") or str(t_url).startswith("https://"):
+            emitted_thumbnail_url[0] = True
+            print(f"[*] Media Thumbnail URL: {t_url}", flush=True)
+
+    init_thumb = (
+        (spotify_meta.get("thumbnail") if spotify_meta else None)
+        or (apple_meta.get("thumbnail") if apple_meta else None)
+    )
+    _maybe_emit_thumbnail(init_thumb)
+
     def progress_hook(d):
         if abort_event and abort_event.is_set():
             raise KeyboardInterrupt("Stream download aborted by user.")
+        info_dict = d.get("info_dict")
+        if isinstance(info_dict, dict) and not emitted_thumbnail_url[0]:
+            t_url = info_dict.get("thumbnail")
+            if not t_url and isinstance(info_dict.get("thumbnails"), list) and info_dict["thumbnails"]:
+                t_url = info_dict["thumbnails"][-1].get("url")
+            _maybe_emit_thumbnail(t_url)
         if progress_callback and d.get("status") == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             downloaded = d.get("downloaded_bytes", 0)
@@ -1174,6 +1195,7 @@ def fetch_media_stream(
         ydl_opts["retries"] = 3
         ydl_opts["fragment_retries"] = 3
         ydl_opts["file_access_retries"] = 3
+        ydl_opts["concurrent_fragment_downloads"] = 8
         if "extractor_args" not in ydl_opts:
             ydl_opts["extractor_args"] = {}
         if "youtube" not in ydl_opts["extractor_args"]:
@@ -1457,8 +1479,7 @@ def fetch_media_stream(
                 v_id = str(info.get("id") or "").strip()
                 if v_id and len(v_id) == 11 and re.match(r'^[a-zA-Z0-9_-]{11}$', v_id):
                     thumb_url = f"https://i.ytimg.com/vi/{v_id}/hqdefault.jpg"
-            if thumb_url and (thumb_url.startswith("http://") or thumb_url.startswith("https://")):
-                print(f"[*] Media Thumbnail URL: {thumb_url}", flush=True)
+            _maybe_emit_thumbnail(thumb_url)
             thumbnail_local_path = None
             if save_cover_art and thumb_url:
                 local_thumb_file = os.path.join(output_dir, "cover.jpg")

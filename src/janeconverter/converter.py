@@ -731,6 +731,8 @@ def build_ffmpeg_args(
         # Codecs and cover art mapping
         if target_format == "mp3":
             cmd.extend(["-c:a", "libmp3lame", "-b:a", bitrate, "-cutoff", "20000"])
+            if not normalize_audio:
+                cmd.extend(["-compression_level", "4"])
             if can_embed_art:
                 cmd.extend([
                     "-c:v", "copy",
@@ -1038,6 +1040,7 @@ def _convert_media_impl(
     _recovery: Optional[RecoveryCoordinator] = None,
     expected_category: Optional[str] = None,
     audio_bitrate: Optional[str] = None,
+    source_duration: Optional[float] = None,
 ) -> str:
     """
     Transcodes or stream-remuxes input_path into the specified target format and writes to output_dir.
@@ -1409,6 +1412,11 @@ def _convert_media_impl(
                         duration = None
             if duration is None:
                 duration = probe_media_duration(input_path)
+            if (duration is None or duration <= 0) and source_duration and source_duration > 0:
+                try:
+                    duration = float(source_duration)
+                except (TypeError, ValueError):
+                    pass
             if duration and duration > 0:
                 s_sec = parse_time_offset_seconds(start_time) if start_time else None
                 e_sec = parse_time_offset_seconds(end_time) if end_time else None
@@ -1416,7 +1424,7 @@ def _convert_media_impl(
                 effective_end = min(duration, e_sec) if e_sec is not None else duration
                 if effective_end > effective_start:
                     duration = effective_end - effective_start
-            transcode_base, transcode_span = 0.70, 0.25
+            transcode_base, transcode_span = 0.75, 0.24
             last_report_time = [0.0]
             cur_speed = [""]
 
@@ -1431,7 +1439,7 @@ def _convert_media_impl(
                             cur_speed[0] = value.strip()
                         if key == "progress" and value == "end":
                             try:
-                                report(transcode_base + transcode_span, "Transcode finishing up...")
+                                report(0.99, "Transcode finishing up...")
                             except Exception:
                                 pass
                             continue
@@ -1805,6 +1813,7 @@ def convert_media(
     _recovery: Optional[RecoveryCoordinator] = None,
     expected_category: Optional[str] = None,
     audio_bitrate: Optional[str] = None,
+    source_duration: Optional[float] = None,
 ) -> str:
     """Stage and validate every attempt before publishing one completed output."""
     os.makedirs(output_dir, exist_ok=True)
@@ -1860,6 +1869,7 @@ def convert_media(
             reconstruct_frequency_loss=reconstruct_frequency_loss,
             expected_category=expected_category,
             audio_bitrate=audio_bitrate,
+            source_duration=source_duration,
         )
         effective_target = target_format.lower().strip(".")
         try:
@@ -1956,6 +1966,17 @@ def convert_media(
                 raise KeyboardInterrupt("Conversion aborted by user.")
             try:
                 final_path = _publish_staged_file(staged_path, output_dir, os.path.basename(staged_path))
+                try:
+                    from .media_probe import _PROBE_CACHE, _PROBE_CACHE_LOCK
+                    st_final = os.stat(final_path)
+                    with _PROBE_CACHE_LOCK:
+                        staged_key = (os.path.abspath(staged_path), st_final.st_mtime_ns, st_final.st_size)
+                        cached = _PROBE_CACHE.get(staged_key)
+                        if cached:
+                            final_key = (os.path.abspath(final_path), st_final.st_mtime_ns, st_final.st_size)
+                            _PROBE_CACHE[final_key] = cached
+                except OSError:
+                    pass
                 break
             except PermissionError as error:
                 if getattr(error, "winerror", None) not in (32, 33) or attempt == 4:
