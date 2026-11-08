@@ -248,3 +248,35 @@ test("single photo post navigates to viewer and completes with single photo", as
   });
 });
 
+
+test("profile photostream enters grid mode and captures uncategorized photos", async () => {
+  const profileHtml = `<!doctype html><html><head><title>Artist Profile - Facebook</title></head><body>
+    <div role="main">
+      <a href="https://www.facebook.com/photo/?fbid=888111222&set=pb.61557058889808.-2207520000"><img src="https://scontent.fbcdn.net/p1.jpg"></a>
+      <a href="https://www.facebook.com/photo/?fbid=888333444&set=pb.61557058889808.-2207520000"><img src="https://scontent.fbcdn.net/p2.jpg"></a>
+    </div>
+  </body></html>`;
+  const session = replay(profileHtml, "/profile.php?id=61557058889808&sk=photos_by");
+  sessions.push(session);
+  await session.advance(150);
+  expect(session.window.sessionStorage.getItem("janeFacebookCaptureMode")).toBe("grid");
+
+  await session.advance(350);
+  expect(session.message()).toMatchObject({
+    kind: "photos",
+    sequence: 1,
+    photos: [
+      { id: "888111222", url: "https://scontent.fbcdn.net/p1.jpg" },
+      { id: "888333444", url: "https://scontent.fbcdn.net/p2.jpg" },
+    ],
+  });
+  session.window.__JANE_FACEBOOK_ACK__fixture = 1;
+  await session.advance(5000);
+
+  expect(session.message()).toMatchObject({
+    kind: "done",
+    count: 2,
+    countSource: "grid-end",
+    endConfirmed: true,
+  });
+});

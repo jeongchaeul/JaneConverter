@@ -368,6 +368,7 @@ def is_facebook_post_url(value: str) -> bool:
         url = urllib.parse.urlsplit(str(value or "").strip())
         host = (url.hostname or "").lower()
         path = url.path.lower()
+        query = url.query.lower()
         if host in ("fb.watch", "www.fb.watch"):
             return True
         return (host == "facebook.com" or host.endswith(".facebook.com")) and (
@@ -375,22 +376,27 @@ def is_facebook_post_url(value: str) -> bool:
             or "/permalink" in path
             or "/posts/" in path
             or path.endswith("/story.php")
-            or "/photos/" in path
+            or "/photos" in path
             or "/photo" in path
             or "/media/set" in path
+            or "/people/" in path
+            or "sk=photos" in query
         )
     except Exception:
         return False
 
 
-def resolve_facebook_share_url(url: str, session: Optional[requests.Session] = None) -> str:
-    """Resolve Facebook share links (/share/p/..., /share/v/...) to their canonical permalink target."""
-    if not url or "/share/" not in str(url):
+def resolve_facebook_canonical_url(url: str, session: Optional[requests.Session] = None) -> str:
+    """Resolve Facebook share links (/share/p/...) or profile URLs (/profile.php?id=...) to their canonical target."""
+    if not url:
         return str(url)
+    u_str = str(url).strip()
+    if "/share/" not in u_str and "/profile.php" not in u_str:
+        return u_str
     sess = session or requests.Session()
     try:
         resp = sess.get(
-            str(url).strip(),
+            u_str,
             headers={"User-Agent": "facebookexternalhit/1.1"},
             allow_redirects=False,
             timeout=(5, 12),
@@ -401,7 +407,10 @@ def resolve_facebook_share_url(url: str, session: Optional[requests.Session] = N
                 return loc
     except Exception:
         pass
-    return str(url)
+    return u_str
+
+
+resolve_facebook_share_url = resolve_facebook_canonical_url
 
 
 def _extract_balanced_json(text: str, start_char: str = "{", end_char: str = "}") -> Optional[str]:
@@ -998,7 +1007,31 @@ def _fetch_facebook_manifest_with_session(
                     cand_id = id_match.group(1)
                 _add_photo(cand_id, og_uri, 1080)
 
-    # 4. If URL requested a specific fbid (e.g. photo.php?fbid=...)
+    # 4. For profile photostreams or photo lists, extract all unique Photo nodes from scripts
+    if not photos and ("sk=photos" in url.lower() or "/photos" in url.lower() or "sk=photos" in final_url.lower() or "/photos" in final_url.lower()):
+        for script_match in re.finditer(r'"__typename"\s*:\s*"Photo"', html):
+            pos = script_match.start()
+            chunk = html[max(0, pos - 100):min(len(html), pos + 2500)]
+            id_m = re.search(r'"id"\s*:\s*"(\d{5,30})"', chunk)
+            if not id_m:
+                continue
+            p_id = id_m.group(1)
+            uri_m = (
+                re.search(r'"viewer_image"\s*:\s*\{[^}]*?"uri"\s*:\s*"(https:[^"]*?(?:fbcdn\.net|fbsbx\.com)[^"]*?)"', chunk)
+                or re.search(r'"photo_image"\s*:\s*\{[^}]*?"uri"\s*:\s*"(https:[^"]*?(?:fbcdn\.net|fbsbx\.com)[^"]*?)"', chunk)
+                or re.search(r'"image"\s*:\s*\{[^}]*?"uri"\s*:\s*"(https:[^"]*?(?:fbcdn\.net|fbsbx\.com)[^"]*?)"', chunk)
+            )
+            if uri_m:
+                raw_val = uri_m.group(1)
+                try:
+                    raw_uri = json.loads(f'"{raw_val}"')
+                except Exception:
+                    raw_uri = raw_val.replace(r"\/", "/")
+                w_m = re.search(r'"width"\s*:\s*(\d+)', chunk)
+                w = int(w_m.group(1)) if w_m else 1080
+                _add_photo(p_id, raw_uri, w)
+
+    # 5. If URL requested a specific fbid (e.g. photo.php?fbid=...)
     if target_fbid and target_fbid in photos:
         photos = {target_fbid: photos[target_fbid]}
     elif target_fbid and not photos:

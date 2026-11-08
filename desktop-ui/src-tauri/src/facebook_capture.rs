@@ -78,6 +78,7 @@ pub fn validate_post_url(value: &str) -> Result<Url, String> {
         Url::parse(value.trim()).map_err(|_| "Paste a valid Facebook post link.".to_string())?;
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
     let path = url.path().to_ascii_lowercase();
+    let query = url.query().unwrap_or_default().to_ascii_lowercase();
     if url.scheme() != "https"
         || !(host == "facebook.com" || host.ends_with(".facebook.com"))
         || !(path.starts_with("/share/")
@@ -85,8 +86,10 @@ pub fn validate_post_url(value: &str) -> Result<Url, String> {
             || path.contains("/posts/")
             || path.ends_with("/story.php")
             || path.contains("/photo")
-            || path.contains("/photos/")
-            || path.contains("/media/set"))
+            || path.contains("/photos")
+            || path.contains("/media/set")
+            || path.contains("/people/")
+            || query.contains("sk=photos"))
     {
         return Err("Paste a public Facebook post link to capture its photos.".into());
     }
@@ -244,6 +247,15 @@ mod tests {
         assert!(validate_post_url("https://www.facebook.com/groups/42/permalink/123/").is_ok());
         assert!(validate_post_url("https://www.facebook.com/photo/?fbid=123").is_ok());
         assert!(validate_post_url("https://www.facebook.com/user/photos/456").is_ok());
+        assert!(validate_post_url("https://www.facebook.com/user/photos_by").is_ok());
+        assert!(validate_post_url(
+            "https://www.facebook.com/profile.php?id=61557058889808&sk=photos_by"
+        )
+        .is_ok());
+        assert!(validate_post_url(
+            "https://www.facebook.com/people/user-name/61557058889808/?sk=photos_by"
+        )
+        .is_ok());
         assert!(validate_post_url("https://www.facebook.com/media/set/?set=pcb.123").is_ok());
         assert!(validate_post_url("http://www.facebook.com/share/p/abc123/").is_err());
         assert!(validate_post_url("https://example.com/posts/123").is_err());

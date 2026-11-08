@@ -745,3 +745,68 @@ def test_fetch_facebook_manifest_single_photo_post(monkeypatch):
     assert "sample_photo.jpg" in photo["url"]
     assert photo["width"] >= 1040
 
+
+
+def test_is_facebook_post_url_photostream():
+    assert facebook_capture.is_facebook_post_url("https://www.facebook.com/profile.php?id=61557058889808&sk=photos_by")
+    assert facebook_capture.is_facebook_post_url("https://www.facebook.com/people/user/61557058889808/?sk=photos_by")
+    assert facebook_capture.is_facebook_post_url("https://www.facebook.com/user/photos_by")
+    assert facebook_capture.is_facebook_post_url("https://www.facebook.com/user/photos")
+    assert facebook_capture.is_facebook_post_url("https://www.facebook.com/user/photos_all")
+
+
+def test_resolve_facebook_canonical_url_profile(monkeypatch):
+    class _MockSession:
+        def __init__(self):
+            self.headers = {}
+
+        def get(self, url, headers=None, allow_redirects=False, timeout=None):
+            class _Resp:
+                status_code = 301
+                headers = {"Location": "https://www.facebook.com/people/artist/61557058889808/?sk=photos_by"}
+            return _Resp()
+
+    session = _MockSession()
+    resolved = facebook_capture.resolve_facebook_canonical_url(
+        "https://www.facebook.com/profile.php?id=61557058889808&sk=photos_by",
+        session=session,
+    )
+    assert resolved == "https://www.facebook.com/people/artist/61557058889808/?sk=photos_by"
+
+
+def test_fetch_facebook_manifest_profile_photostream(monkeypatch):
+    photostream_html = (
+        '<!doctype html><html><head>'
+        '<title>Profile Photostream Title - Facebook</title>'
+        '<meta property="og:title" content="Profile Photostream Title">'
+        '</head><body>'
+        '<script type="application/json">{"require":[["ScheduledServerJS","handle",null,[{"__typename":"Photo","id":"111222333","viewer_image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/v\\/t39.30808-6\\/scattered_1.jpg","width":1166,"height":1166}}]]}</script>'
+        '<script type="application/json">{"require":[["ScheduledServerJS","handle",null,[{"__typename":"Photo","id":"444555666","viewer_image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/v\\/t39.30808-6\\/scattered_2.jpg","width":1170,"height":1170}}]]}</script>'
+        '</body></html>'
+    )
+
+    class _MockPhotostreamSession:
+        def __init__(self):
+            self.headers = {}
+            self.cookies = type("MockCookies", (), {"set": lambda *args, **kwargs: None})()
+
+        def get(self, url, **kwargs):
+            class _Resp:
+                status_code = 200
+                text = photostream_html
+                url = "https://www.facebook.com/people/artist/61557058889808/?sk=photos_by"
+            return _Resp()
+
+    session = _MockPhotostreamSession()
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session)
+
+    manifest = facebook_capture.fetch_facebook_manifest(
+        "https://www.facebook.com/profile.php?id=61557058889808&sk=photos_by",
+        browser="guest",
+    )
+    assert manifest is not None
+    assert manifest["title"] == "Profile Photostream Title"
+    assert len(manifest["photos"]) == 2
+    photo_ids = [p["id"] for p in manifest["photos"]]
+    assert "111222333" in photo_ids
+    assert "444555666" in photo_ids

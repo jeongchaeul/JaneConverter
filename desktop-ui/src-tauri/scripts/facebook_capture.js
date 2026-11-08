@@ -71,7 +71,7 @@
   window[refreshFunctionKey] = (requestId, photoId) => {
     if (!/^[a-f0-9]{32}$/i.test(requestId || "") || !/^[0-9]{5,30}$/.test(photoId || "")) return false;
     const albumSet = sessionStorage.getItem(albumSetKey) || new URL(location.href).searchParams.get("set") || "";
-    if (!albumSet.startsWith("pcb.")) return false;
+    if (!albumSet.startsWith("pcb.") && !albumSet.startsWith("a.") && !albumSet.startsWith("pb.")) return false;
     sessionStorage.setItem(pendingRefreshKey, JSON.stringify({requestId,photoId}));
     const target = new URL("/photo/", location.href);
     target.searchParams.set("fbid", photoId);
@@ -132,7 +132,9 @@
   };
   const discoverExpectedPhotoCount = () => {
     discoverPostPhotoIds();
-    const onAlbumPage = location.pathname.toLowerCase().includes("/media/set/");
+    const onAlbumPage = location.pathname.toLowerCase().includes("/media/set/")
+      || location.search.toLowerCase().includes("sk=photos")
+      || location.pathname.toLowerCase().includes("/photos");
     const sources = [
       {value: readPageTitle(), includeUnqualifiedCounts: !onAlbumPage},
       {value: document.querySelector('meta[property="og:title"]')?.content || "", includeUnqualifiedCounts: !onAlbumPage},
@@ -296,12 +298,12 @@
   };
   const findAlbumSet = () => {
     const currentSet = new URL(location.href).searchParams.get("set") || "";
-    if (currentSet.startsWith("pcb.")) return currentSet;
-    for (const anchor of document.querySelectorAll('a[href*="fbid="]')) {
+    if (currentSet.startsWith("pcb.") || currentSet.startsWith("a.") || currentSet.startsWith("pb.")) return currentSet;
+    for (const anchor of document.querySelectorAll('a[href*="fbid="], a[href*="/photo/"], a[href*="/photo.php"]')) {
       try {
         const href = new URL(anchor.href, location.href);
         const set = href.searchParams.get("set");
-        if (set && set.startsWith("pcb.")) return set;
+        if (set && (set.startsWith("pcb.") || set.startsWith("a.") || set.startsWith("pb."))) return set;
       } catch (_) {}
     }
     return "";
@@ -311,8 +313,8 @@
     if (domSet) return domSet;
     for (const script of document.scripts) {
       const text = script.textContent || "";
-      if (!text.includes("pcb.")) continue;
-      const match = /(?:"mediaset_token"\s*:\s*"|[?&]set=)(pcb\.[0-9]{5,30})/.exec(text);
+      if (!text.includes("pcb.") && !text.includes("set=a.") && !text.includes("set=pb.")) continue;
+      const match = /(?:"mediaset_token"\s*:\s*"|[?&]set=)((?:pcb|a|pb)\.[0-9_.-]{5,50})/.exec(text);
       if (match) return match[1];
     }
     const pathMatch = /\/(?:permalink|posts)\/([0-9]{5,30})/.exec(location.pathname);
@@ -418,7 +420,12 @@
     if (!photoId && candidate) {
       const anchor = candidate.image.closest('a[href*="fbid="]');
       if (anchor) {
-        try { photoId = new URL(anchor.href, location.href).searchParams.get("fbid") || ""; }
+        try { const href = new URL(anchor.href, location.href);
+          photoId = href.searchParams.get("fbid") || "";
+          if (!photoId) {
+            const m = /\/photos\/(?:[^/]+\/)?([0-9]{5,30})/.exec(href.pathname);
+            if (m) photoId = m[1];
+          } }
         catch (_) {}
       }
     }
@@ -546,7 +553,7 @@
   };
   const findAlbumScroller = () => {
     const candidates = Array.from(document.querySelectorAll("div"))
-      .filter((element) => element.querySelector('a[href*="fbid="]'))
+      .filter((element) => element.querySelector('a[href*="fbid="], a[href*="/photo/"], a[href*="/photo.php"], a[href*="/photos/"]'))
       .filter((element) => {
         const overflowY = getComputedStyle(element).overflowY;
         return element.clientHeight > 0
@@ -601,7 +608,7 @@
       if (!page.pathname.toLowerCase().includes("/photo")
         || page.searchParams.get("fbid") !== refresh.photoId) {
         const albumSet = sessionStorage.getItem(albumSetKey) || page.searchParams.get("set") || "";
-        if (!albumSet.startsWith("pcb.")) {
+        if (!(albumSet.startsWith("pcb.") || albumSet.startsWith("a.") || albumSet.startsWith("pb."))) {
           sessionStorage.removeItem(pendingRefreshKey);
           send({kind:"refresh",requestId:refresh.requestId,photos:[]});
           return;
@@ -656,7 +663,7 @@
     }
     if (location.pathname.toLowerCase().includes("/login")) {
       const albumSet = sessionStorage.getItem(albumSetKey) || "";
-      if (captureMode === "viewer" && albumSet.startsWith("pcb.")) {
+      if (captureMode === "viewer" && (albumSet.startsWith("pcb.") || albumSet.startsWith("a.") || albumSet.startsWith("pb."))) {
         const albumUrl = new URL("/media/set/", location.href);
         albumUrl.searchParams.set("set", albumSet);
         sessionStorage.setItem(captureModeKey, "grid");
@@ -668,14 +675,23 @@
       send({kind:"error",error:"Facebook redirected the post or photo viewer to a sign-in page before JaneConverter could reach its public photos."});
       return;
     }
-    const onAlbumPage = location.pathname.toLowerCase().includes("/media/set/");
+    const onAlbumPage = location.pathname.toLowerCase().includes("/media/set/")
+      || location.search.toLowerCase().includes("sk=photos")
+      || location.pathname.toLowerCase().includes("/photos");
     if (captureMode === "") {
       sessionStorage.setItem("janeFacebookCaptureTitle", pageTitle());
+      if (onAlbumPage) {
+        const set = findAlbumSet() || new URL(location.href).searchParams.get("set") || "";
+        if (set) sessionStorage.setItem(albumSetKey, set);
+        sessionStorage.setItem(captureModeKey, "grid");
+        scheduleScan(VIEWER_POLL_MS);
+        return;
+      }
       const startPhoto = findAlbumStartPhoto();
       if (startPhoto && (startPhoto.needsDirectNavigation || hasVisiblePublicPhoto())) {
         const photoUrl = new URL(startPhoto.url);
         const albumSet = photoUrl.searchParams.get("set") || "";
-        if (albumSet.startsWith("pcb.")) sessionStorage.setItem(albumSetKey, albumSet);
+        if (albumSet.startsWith("pcb.") || albumSet.startsWith("a.") || albumSet.startsWith("pb.")) sessionStorage.setItem(albumSetKey, albumSet);
         sessionStorage.setItem(captureModeKey, "viewer");
         sessionStorage.setItem(scannedIdsKey, JSON.stringify(Array.from(scanned)));
         if (expectedCount) sessionStorage.setItem(expectedCountKey, String(expectedCount));
@@ -802,7 +818,7 @@
                 return;
               }
               const albumSet = sessionStorage.getItem(albumSetKey) || "";
-              if (expectedCount > scanned.size && unchanged >= 6 && albumSet.startsWith("pcb.")) {
+              if (expectedCount > scanned.size && unchanged >= 6 && (albumSet.startsWith("pcb.") || albumSet.startsWith("a.") || albumSet.startsWith("pb."))) {
                 sessionStorage.setItem(captureModeKey, "grid");
                 sessionStorage.setItem(attemptsKey, "0");
                 const albumUrl = new URL("/media/set/", location.href);
@@ -829,13 +845,20 @@
           }
         }
       }
-    } else if (onAlbumPage) {
+    } else if (onAlbumPage || captureMode === "grid") {
       const savedTitle = sessionStorage.getItem("janeFacebookCaptureTitle");
       const albumTitle = pageTitle();
       const title = savedTitle || (albumTitle && albumTitle !== "Facebook" ? albumTitle : "Facebook Photo Album");
-      for (const anchor of document.querySelectorAll('a[href*="fbid="]')) {
+      for (const anchor of document.querySelectorAll('a[href*="fbid="], a[href*="/photo/"], a[href*="/photo.php"], a[href*="/photos/"]')) {
         let photoId = "";
-        try { photoId = new URL(anchor.href, location.href).searchParams.get("fbid") || ""; } catch (_) {}
+        try {
+          const href = new URL(anchor.href, location.href);
+          photoId = href.searchParams.get("fbid") || "";
+          if (!photoId) {
+            const m = /\/photos\/(?:[^/]+\/)?([0-9]{5,30})/.exec(href.pathname);
+            if (m) photoId = m[1];
+          }
+        } catch (_) {}
         if (!/^[0-9]{5,30}$/.test(photoId) || scanned.has(photoId)) continue;
         const image = anchor.querySelector("img");
         const selected = image && chooseImage(image);
