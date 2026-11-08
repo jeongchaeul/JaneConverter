@@ -371,7 +371,7 @@ def is_facebook_post_url(value: str) -> bool:
         if host in ("fb.watch", "www.fb.watch"):
             return True
         return (host == "facebook.com" or host.endswith(".facebook.com")) and (
-            path.startswith("/share/p/")
+            path.startswith("/share/")
             or "/permalink" in path
             or "/posts/" in path
             or path.endswith("/story.php")
@@ -381,6 +381,27 @@ def is_facebook_post_url(value: str) -> bool:
         )
     except Exception:
         return False
+
+
+def resolve_facebook_share_url(url: str, session: Optional[requests.Session] = None) -> str:
+    """Resolve Facebook share links (/share/p/..., /share/v/...) to their canonical permalink target."""
+    if not url or "/share/" not in str(url):
+        return str(url)
+    sess = session or requests.Session()
+    try:
+        resp = sess.get(
+            str(url).strip(),
+            headers={"User-Agent": "facebookexternalhit/1.1"},
+            allow_redirects=False,
+            timeout=(5, 12),
+        )
+        if resp.status_code in (301, 302, 303, 307, 308):
+            loc = resp.headers.get("Location")
+            if loc:
+                return loc
+    except Exception:
+        pass
+    return str(url)
 
 
 def _extract_balanced_json(text: str, start_char: str = "{", end_char: str = "}") -> Optional[str]:
@@ -511,6 +532,8 @@ def _fetch_facebook_manifest_with_session(
         if original_report:
             original_report(pct, msg)
 
+    url = resolve_facebook_share_url(url, session)
+
     session.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -530,6 +553,16 @@ def _fetch_facebook_manifest_with_session(
     except Exception as exc:
         report(0.08, f"Facebook request failed: {exc}")
         return None
+
+    if response.status_code != 200:
+        try:
+            fb_headers = dict(session.headers)
+            fb_headers["User-Agent"] = "facebookexternalhit/1.1"
+            retry_resp = session.get(url, headers=fb_headers, allow_redirects=True, timeout=(10, 25))
+            if retry_resp.status_code == 200:
+                response = retry_resp
+        except Exception:
+            pass
 
     if response.status_code != 200:
         return None
@@ -924,6 +957,47 @@ def _fetch_facebook_manifest_with_session(
                     except Exception:
                         pass
 
+    # 3. Inspect singular "attachment" object for single-photo posts
+    if not photos:
+        for b in scoped_search_blocks:
+            for m in re.finditer(r'"attachment"\s*:\s*(\{)', b):
+                start_pos = m.start(1)
+                obj_str = _extract_balanced_json(b[start_pos:], "{", "}")
+                if obj_str:
+                    try:
+                        att_data = json.loads(obj_str)
+                        media = att_data.get("media") or {}
+                        if media.get("is_playable") or media.get("__typename") == "Video":
+                            has_video = True
+                        p_id = str(media.get("id") or att_data.get("target", {}).get("id") or "").strip()
+                        viewer_img = media.get("viewer_image") or {}
+                        img = media.get("photo_image") or media.get("image") or {}
+                        raw_uri = viewer_img.get("uri") or img.get("uri") or ""
+                        w = int(viewer_img.get("width") or img.get("width") or 0)
+                        h = int(viewer_img.get("height") or img.get("height") or 0)
+                        if p_id and raw_uri:
+                            _add_photo(p_id, raw_uri, w, h)
+                        if photos and target_blocks:
+                            break
+                    except Exception:
+                        pass
+
+    # 4. Fallback to OpenGraph / Twitter meta tags for single photo posts
+    if not photos:
+        og_img_m = re.search(
+            r'<meta\s+(?:property=["\']og:image["\']|name=["\']twitter:image["\'])\s+content=["\']([^"\']+)["\']',
+            html,
+            re.IGNORECASE,
+        )
+        if og_img_m:
+            og_uri = og_img_m.group(1).replace("&amp;", "&").replace(r"\/", "/")
+            if "fbcdn.net" in og_uri or "fbsbx.com" in og_uri:
+                cand_id = target_post_id or target_fbid or "photo_1"
+                id_match = re.search(r'_(\d{10,25})_', og_uri)
+                if id_match:
+                    cand_id = id_match.group(1)
+                _add_photo(cand_id, og_uri, 1080)
+
     # 4. If URL requested a specific fbid (e.g. photo.php?fbid=...)
     if target_fbid and target_fbid in photos:
         photos = {target_fbid: photos[target_fbid]}
@@ -948,7 +1022,14 @@ def _fetch_facebook_manifest_with_session(
             pass
 
     if not photos:
-        if has_video or '"playable_url"' in html or '"video_id"' in html:
+        scoped_html = "".join(target_blocks) if target_blocks else html
+        target_has_video = (
+            has_video
+            or '"playable_url_quality_hd"' in scoped_html
+            or '"dash_manifest"' in scoped_html
+            or (target_blocks and ('"playable_url"' in scoped_html or '"video_id"' in scoped_html))
+        )
+        if target_has_video:
             return {"platform": "facebook", "title": title, "photos": [], "media_kind": "video"}
         return None
 
@@ -1005,6 +1086,7 @@ def fetch_facebook_manifest(
     abort_event: Optional[Any] = None,
 ) -> Optional[dict[str, Any]]:
     """Extract photo metadata from a Facebook post using guest requests or local browser session cookies."""
+    url = resolve_facebook_share_url(url)
     patch_yt_dlp_cookie_database_reader()
     import yt_dlp
 
@@ -1149,8 +1231,15 @@ def fetch_facebook_manifest(
     else:
         report(0.06, "Connecting to Facebook via guest session...")
 
-    return _fetch_facebook_manifest_with_session(
+    manifest = _fetch_facebook_manifest_with_session(
         session, url, found_browser=found_browser, report=report, abort_event=abort_event
     )
+    if not manifest and found_browser and not is_explicit_browser:
+        report(0.06, f"Facebook session via {found_browser.title()} returned no media. Trying guest session...")
+        guest_session = requests.Session()
+        manifest = _fetch_facebook_manifest_with_session(
+            guest_session, url, found_browser=None, report=report, abort_event=abort_event
+        )
+    return manifest
 
 

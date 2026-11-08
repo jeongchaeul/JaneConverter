@@ -103,22 +103,29 @@
     return total;
   };
   const discoverPostPhotoIds = () => {
-    for (const anchor of document.querySelectorAll('a[href*="fbid="]')) {
+    for (const anchor of document.querySelectorAll('a[href*="fbid="], a[href*="/photo/"], a[href*="/photo.php"], a[href*="/photos/"]')) {
       try {
         const href = new URL(anchor.href, location.href);
         const photoId = href.searchParams.get("fbid") || "";
         if (photoId) recordKnownId(photoId);
+        else {
+          const m = /\/photos\/(?:[^/]+\/)?([0-9]{5,30})/.exec(href.pathname);
+          if (m) recordKnownId(m[1]);
+        }
       } catch (_) {}
     }
     for (const script of document.scripts) {
       if (seenScripts.has(script)) continue;
       seenScripts.add(script);
       const text = script.textContent || "";
-      if (!text.includes("fbid=") && !text.includes("nextMediaAfterNodeId") && !text.includes("all_subattachments")) continue;
-      for (const match of text.matchAll(/photo\.php\?fbid=([0-9]{5,30})/g)) {
+      if (!text.includes("fbid=") && !text.includes("nextMediaAfterNodeId") && !text.includes("all_subattachments") && !text.includes('"Photo"') && !text.includes("viewer_image")) continue;
+      for (const match of text.matchAll(/(?:photo(?:\.php)?\/?\?fbid=|fbid=)([0-9]{5,30})/g)) {
         recordKnownId(match[1]);
       }
       for (const match of text.matchAll(/"nextMediaAfterNodeId"\s*:\s*\{\s*"__typename"\s*:\s*"Photo"\s*,\s*"id"\s*:\s*"([0-9]{5,30})"/g)) {
+        recordKnownId(match[1]);
+      }
+      for (const match of text.matchAll(/"(?:attachment|target|currMedia)"\s*:\s*\{[\s\S]{0,400}?"__typename"\s*:\s*"Photo"[\s\S]{0,400}?"id"\s*:\s*"([0-9]{5,30})"/g)) {
         recordKnownId(match[1]);
       }
     }
@@ -144,7 +151,7 @@
     ).filter(Boolean));
     const exact = exactCounts.size === 1 ? [...exactCounts][0] : 0;
     let lowerBound = 0;
-    if (knownIds.length >= 2 && knownIds.length <= MAX_PHOTOS) {
+    if (knownIds.length >= 1 && knownIds.length <= MAX_PHOTOS) {
       lowerBound = Math.max(lowerBound, knownIds.length);
     }
     const galleryLinks = Array.from(document.querySelectorAll('a[href*="fbid="][href*="set=pcb."], a[href*="fbid="][href*="set=gm."]'));
@@ -157,11 +164,15 @@
     if (!onAlbumPage && !location.pathname.toLowerCase().includes("/photo")) {
       for (const script of document.scripts) {
         const text = script.textContent || "";
-        if (!text.includes("all_subattachments")) continue;
-        const match = /"all_subattachments"\s*:\s*\{\s*"count"\s*:\s*(\d{1,3})/.exec(text);
-        if (match) {
-          const count = Number(match[1]);
-          if (count >= 1 && count <= MAX_PHOTOS) lowerBound = Math.max(lowerBound, count);
+        if (text.includes("all_subattachments")) {
+          const match = /"all_subattachments"\s*:\s*\{\s*"count"\s*:\s*(\d{1,3})/.exec(text);
+          if (match) {
+            const count = Number(match[1]);
+            if (count >= 1 && count <= MAX_PHOTOS) lowerBound = Math.max(lowerBound, count);
+          }
+        }
+        if (lowerBound === 0 && text.includes('"Photo"') && (text.includes('"attachment"') || text.includes('"currMedia"'))) {
+          lowerBound = Math.max(lowerBound, 1);
         }
       }
     }
@@ -219,19 +230,24 @@
   const hasVisiblePublicPhoto = () => {
     if (new URL(location.href).pathname.toLowerCase().includes("/photo"))
       return !!findCurrentViewerPhoto();
-    return Array.from(document.querySelectorAll('a[href*="fbid="] img')).some((image) => {
+    if (knownIds.length > 0) return true;
+    const images = Array.from(document.querySelectorAll(
+      'a[href*="fbid="] img, a[href*="/photo"] img, [data-visualcompletion*="media"] img, [role="article"] img, [role="main"] img, article img'
+    ));
+    return images.some((image) => {
       const rect = image.getBoundingClientRect();
       return rect.width >= 80 && rect.height >= 80 && chooseImage(image);
     });
   };
   const hasVideoPost = () => {
+    if (hasVisiblePublicPhoto() || knownIds.length > 0) return false;
     const root = document.querySelector('[role="article"], article, main') || document;
     const visibleVideo = Array.from(root.querySelectorAll('video')).some((video) => {
       const rect = video.getBoundingClientRect();
       return rect.width >= 160 && rect.height >= 90
         && (video.currentSrc || video.readyState > 0 || video.poster);
     });
-    return visibleVideo || !!document.querySelector('meta[property="og:video"], meta[property="og:video:url"]');
+    return visibleVideo || (!document.querySelector('meta[property="og:image"]') && !!document.querySelector('meta[property="og:video"], meta[property="og:video:url"]'));
   };
   const closeGuestPrompt = () => {
     // Facebook also labels the photo viewer's close button "Close". Only
@@ -318,53 +334,54 @@
   };
   const findAlbumStartPhoto = () => {
     const pageSet = new URL(location.href).searchParams.get("set") || findPostAlbumSet() || "";
-    for (const anchor of document.querySelectorAll('a[href*="fbid="]')) {
+    for (const anchor of document.querySelectorAll('a[href*="fbid="], a[href*="/photo/"], a[href*="/photo.php"]')) {
       try {
         const href = new URL(anchor.href, location.href);
         const photoId = href.searchParams.get("fbid") || "";
         const rawSet = href.searchParams.get("set") || "";
         const set = rawSet.startsWith("pcb.") ? rawSet : (pageSet.startsWith("pcb.") ? pageSet : rawSet);
-        if (/^[0-9]{5,30}$/.test(photoId) && (set.startsWith("pcb.") || set.startsWith("gm.") || set.startsWith("a."))) {
+        if (/^[0-9]{5,30}$/.test(photoId) && (!set || set.startsWith("pcb.") || set.startsWith("gm.") || set.startsWith("a."))) {
           const normalized = normalizeFacebookUrl(href.href);
           if (normalized) {
             const photoUrl = new URL("/photo/", normalized);
             photoUrl.searchParams.set("fbid", photoId);
             if (set) photoUrl.searchParams.set("set", set);
-            return {anchor, url:photoUrl.href, needsDirectNavigation: rawSet !== set};
+            return {anchor, url:photoUrl.href, needsDirectNavigation: rawSet !== set || !set};
           }
         }
       } catch (_) {}
     }
-    if (pageSet.startsWith("pcb.")) {
-      for (const script of document.scripts) {
-        const text = script.textContent || "";
-        if (!text.includes("fbid=") && !text.includes("all_subattachments")) continue;
-        const hrefMatch = /photo\.php\?fbid=([0-9]{5,30})&(?:amp;)?set=((?:pcb|gm|a)\.[0-9]{5,30})/.exec(text);
-        const subMatch = !hrefMatch && /"all_subattachments"\s*:\s*\{[\s\S]{0,1200}?"__typename"\s*:\s*"Photo"[\s\S]{0,1200}?"id"\s*:\s*"([0-9]{5,30})"/.exec(text);
-        const photoId = hrefMatch ? hrefMatch[1] : (subMatch ? subMatch[1] : "");
-        if (photoId) {
-          const photoUrl = new URL("/photo/", location.href);
-          photoUrl.searchParams.set("fbid", photoId);
-          photoUrl.searchParams.set("set", pageSet);
-          return {anchor: null, url: photoUrl.href, needsDirectNavigation: true};
-        }
-      }
-      if (knownIds.length > 0) {
+    for (const script of document.scripts) {
+      const text = script.textContent || "";
+      if (!text.includes("fbid=") && !text.includes("all_subattachments") && !text.includes('"Photo"') && !text.includes("viewer_image")) continue;
+      const hrefMatch = /photo\.php\?fbid=([0-9]{5,30})&(?:amp;)?set=((?:pcb|gm|a)\.[0-9]{5,30})/.exec(text);
+      const subMatch = !hrefMatch && /"all_subattachments"\s*:\s*\{[\s\S]{0,1200}?"__typename"\s*:\s*"Photo"[\s\S]{0,1200}?"id"\s*:\s*"([0-9]{5,30})"/.exec(text);
+      const singleMatch = !hrefMatch && !subMatch && /(?:photo(?:\.php)?\/?\?fbid=|fbid=)([0-9]{5,30})/.exec(text);
+      const photoId = hrefMatch ? hrefMatch[1] : (subMatch ? subMatch[1] : (singleMatch ? singleMatch[1] : ""));
+      const set = hrefMatch ? hrefMatch[2] : (pageSet || "");
+      if (photoId) {
         const photoUrl = new URL("/photo/", location.href);
-        photoUrl.searchParams.set("fbid", knownIds[0]);
-        photoUrl.searchParams.set("set", pageSet);
+        photoUrl.searchParams.set("fbid", photoId);
+        if (set) photoUrl.searchParams.set("set", set);
         return {anchor: null, url: photoUrl.href, needsDirectNavigation: true};
       }
     }
-    return "";
+    if (knownIds.length > 0) {
+      const photoUrl = new URL("/photo/", location.href);
+      photoUrl.searchParams.set("fbid", knownIds[0]);
+      if (pageSet) photoUrl.searchParams.set("set", pageSet);
+      return {anchor: null, url: photoUrl.href, needsDirectNavigation: true};
+    }
+    return null;
   };
   const findScriptViewerPhoto = (expectedId) => {
     if (!/^[0-9]{5,30}$/.test(expectedId || "")) return null;
     for (const script of document.scripts) {
       const text = script.textContent || "";
       if (!text.includes(expectedId)) continue;
-      const idIdx = text.indexOf(`"id":"${expectedId}"`);
-      if (idIdx === -1) continue;
+      const idMatch = new RegExp(`"(?:id|photo_id|fbid)"\\s*:\\s*"${expectedId}"`).exec(text);
+      if (!idMatch) continue;
+      const idIdx = idMatch.index;
       const window = text.slice(Math.max(0, idIdx - 200), Math.min(text.length, idIdx + 1500));
       const uriMatch = /"(?:viewer_image|image|photo_image)"\s*:\s*\{[^}]*?"uri"\s*:\s*"([^"]+)"/.exec(window);
       const widthMatch = /"width"\s*:\s*(\d+)/.exec(window);
@@ -682,7 +699,7 @@
           return;
         }
       }
-      if (attempts >= 3 && !startPhoto && !findPostAlbumSet() && hasVideoPost()) {
+      if (attempts >= 3 && !startPhoto && !findPostAlbumSet() && !hasVisiblePublicPhoto() && hasVideoPost()) {
         finished = true;
         send({kind:"video",title:pageTitle()});
         return;
@@ -793,8 +810,10 @@
                 location.replace(albumUrl.href);
                 return;
               }
-              if (unchanged >= 3 && Date.now() - lastRelevantMutationAt >= 2500)
+              if (unchanged >= 3 && (Date.now() - lastRelevantMutationAt >= 2500 || expectedCount === 1))
                 endConfirmed = true;
+              else
+                scheduleScan(VIEWER_POLL_MS);
             }
           }
           if (endConfirmed && !countConflict && scanned.size >= 1

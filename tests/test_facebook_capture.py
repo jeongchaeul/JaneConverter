@@ -691,8 +691,57 @@ def test_manifest_concurrent_downloads_preserves_order_and_naming(tmp_path, monk
         with Image.open(path) as img:
             assert img.size == (8, 8)
 
+def test_resolve_facebook_share_url_returns_redirect_target(monkeypatch):
+    class _MockSession:
+        def __init__(self):
+            self.headers = {}
+
+        def get(self, url, headers=None, allow_redirects=False, timeout=None):
+            class _Resp:
+                status_code = 302
+                headers = {"Location": "https://www.facebook.com/permalink.php?story_fbid=pfbid123&id=456"}
+            return _Resp()
+
+    session = _MockSession()
+    resolved = facebook_capture.resolve_facebook_share_url("https://www.facebook.com/share/p/1FfgatjfC9/", session=session)
+    assert resolved == "https://www.facebook.com/permalink.php?story_fbid=pfbid123&id=456"
 
 
+def test_fetch_facebook_manifest_single_photo_post(monkeypatch):
+    single_photo_html = (
+        '<!doctype html><html><head>'
+        '<title>Single Photo Post Title</title>'
+        '<meta property="og:title" content="Single Photo Post Title">'
+        '<meta property="og:image" content="https://scontent.xx.fbcdn.net/v/t39.30808-6/sample_photo.jpg?_nc_cat=100&cstp=mx1040x2048">'
+        '</head><body>'
+        '<script type="application/json">{"attachment":{"media":{"__typename":"Photo","id":"987654321","image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/v\\/t39.30808-6\\/sample_photo.jpg?_nc_cat=100&cstp=mx1040x2048","width":1040,"height":2048}}}}</script>'
+        '</body></html>'
+    )
 
+    class _MockSinglePhotoSession:
+        def __init__(self):
+            self.headers = {}
+            self.cookies = type("MockCookies", (), {"set": lambda *args, **kwargs: None})()
 
+        def get(self, url, **kwargs):
+            class _Resp:
+                status_code = 200
+                text = single_photo_html
+                url = "https://www.facebook.com/permalink.php?story_fbid=pfbid123&id=456"
+            return _Resp()
+
+    session = _MockSinglePhotoSession()
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session)
+
+    manifest = facebook_capture.fetch_facebook_manifest(
+        "https://www.facebook.com/permalink.php?story_fbid=pfbid123&id=456",
+        browser="guest",
+    )
+    assert manifest is not None
+    assert manifest["title"] == "Single Photo Post Title"
+    assert len(manifest["photos"]) == 1
+    photo = manifest["photos"][0]
+    assert photo["id"] == "987654321"
+    assert "sample_photo.jpg" in photo["url"]
+    assert photo["width"] >= 1040
 

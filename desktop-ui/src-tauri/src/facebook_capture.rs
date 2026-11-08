@@ -80,7 +80,7 @@ pub fn validate_post_url(value: &str) -> Result<Url, String> {
     let path = url.path().to_ascii_lowercase();
     if url.scheme() != "https"
         || !(host == "facebook.com" || host.ends_with(".facebook.com"))
-        || !(path.starts_with("/share/p/")
+        || !(path.starts_with("/share/")
             || path.contains("/permalink/")
             || path.contains("/posts/")
             || path.ends_with("/story.php")

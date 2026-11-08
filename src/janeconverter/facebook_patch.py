@@ -159,13 +159,15 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
 
     if matching_targets:
         selected_targets = matching_targets
-    else:
-        # If no explicit match, isolate by the first video's identity so we never mix streams across different videos
+    elif not any(post_marker in (url or "").lower() for post_marker in ("/posts/", "/permalink", "/share/p/", "/share/")):
+        # If no explicit match and not a post permalink, isolate by the first video's identity so we never mix streams across different videos
         first_group_id = all_targets[0][0][0] if all_targets[0][0] else None
         if first_group_id:
             selected_targets = [t for t in all_targets if t[0] and t[0][0] == first_group_id]
         else:
             selected_targets = [all_targets[0]]
+    else:
+        return None
 
     formats = []
     q = qualities(["sd", "hd"])
