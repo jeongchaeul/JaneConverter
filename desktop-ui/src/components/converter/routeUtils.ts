@@ -105,15 +105,18 @@ export function isFacebookPostLink(value: string): boolean {
     const url = new URL(value.trim());
     const host = url.hostname.toLowerCase();
     const path = url.pathname.toLowerCase();
+    const query = url.search.toLowerCase();
     return (
       (host === "facebook.com" || host.endsWith(".facebook.com")) &&
-      (path.startsWith("/share/p/") ||
+      (path.startsWith("/share/") ||
         path.includes("/permalink/") ||
         path.includes("/posts/") ||
         path.endsWith("/story.php") ||
         path.includes("/photo") ||
-        path.includes("/photos/") ||
-        path.includes("/media/set"))
+        path.includes("/photos") ||
+        path.includes("/media/set") ||
+        path.includes("/people/") ||
+        query.includes("sk=photos"))
     );
   } catch {
     return false;

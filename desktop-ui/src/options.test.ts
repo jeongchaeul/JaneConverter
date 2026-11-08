@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { isFacebookPostLink } from "./components/converter/routeUtils";
+import { parseConversionEvents } from "./components/inprogress/parser";
 import {
   formatsFor,
   qualitiesFor,
@@ -91,5 +93,29 @@ describe("converter option parity", () => {
     expect(formatBytes(26214400)).toBe("25.0 MB");
     expect(formatBytes(1073741824)).toBe("1.0 GB");
     expect(formatBytes(2684354560)).toBe("2.5 GB");
+  });
+
+  it("identifies Facebook post and photostream links across formats", () => {
+    expect(isFacebookPostLink("https://www.facebook.com/profile.php?id=61557058889808&sk=photos_by")).toBe(true);
+    expect(isFacebookPostLink("https://www.facebook.com/people/artist/61557058889808/?sk=photos_by")).toBe(true);
+    expect(isFacebookPostLink("https://www.facebook.com/user/photos_by")).toBe(true);
+    expect(isFacebookPostLink("https://www.facebook.com/user/photos")).toBe(true);
+    expect(isFacebookPostLink("https://www.facebook.com/share/p/1FfgatjfC9/")).toBe(true);
+    expect(isFacebookPostLink("https://www.facebook.com/groups/123/permalink/456/")).toBe(true);
+    expect(isFacebookPostLink("https://example.com/not-facebook")).toBe(false);
+  });
+
+  it("preserves source URL on single in-progress items for retry", () => {
+    const testUrl = "https://www.facebook.com/profile.php?id=61557058889808&sk=photos_by";
+    const parsed = parseConversionEvents(
+      [{ kind: "progress", jobId: "job-1", message: "Downloading...", progress: 0.5 }],
+      "Image",
+      "png",
+      testUrl,
+      "job-1",
+      true
+    );
+    expect(parsed.items.length).toBe(1);
+    expect(parsed.items[0].url).toBe(testUrl);
   });
 });

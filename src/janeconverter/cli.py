@@ -350,9 +350,10 @@ def process_conversion(
     if facebook_photo_manifest is None and is_facebook_post_url(source):
         try:
             report(0.02, "Reading Facebook album / post...")
+            fb_browser = auth_browser if auth_browser and auth_browser.lower() not in ("none", "disabled", "off", "false") else "guest"
             fb_manifest = fetch_facebook_manifest(
                 source,
-                browser=auth_browser,
+                browser=fb_browser,
                 progress_callback=report,
                 abort_event=abort_event,
             )
@@ -360,6 +361,12 @@ def process_conversion(
                 facebook_photo_manifest = fb_manifest
         except Exception as fb_err:
             report(0.05, f"Facebook browser session bypassed ({type(fb_err).__name__}). Proceeding to standard stream extractor...")
+
+    if facebook_photo_manifest is None and is_facebook_post_url(source) and is_image_target:
+        raise RuntimeError(
+            "Could not extract photos from this Facebook post or profile. "
+            "If this content requires a logged-in account, enable browser session access in Settings."
+        )
 
     if facebook_photo_manifest is not None:
         photo_format = target_format if is_image_target else None

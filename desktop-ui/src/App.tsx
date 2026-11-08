@@ -175,6 +175,7 @@ export default function App() {
   const activeJobRef = useRef("");
   const activeJobSuggestLosslessRef = useRef(false);
   const activeJobContextRef = useRef<ActiveJobContext | null>(null);
+  const lastJobContextRef = useRef<ActiveJobContext | null>(null);
   const [failure, setFailure] = useState<{ title: string; message: string; suggestLossless: boolean; elapsedMs?: number } | null>(null);
   const [success, setSuccess] = useState<SuccessPromptState | null>(null);
   const failureCloseRef = useRef<HTMLButtonElement>(null);
@@ -568,6 +569,7 @@ export default function App() {
             logs: [],
             exportedPath: "",
           };
+          lastJobContextRef.current = activeJobContextRef.current;
         }
       }
       if (event.jobId && event.jobId === activeJobRef.current) {
@@ -861,6 +863,7 @@ export default function App() {
         logs: [],
         exportedPath: "",
       };
+      lastJobContextRef.current = activeJobContextRef.current;
       const nextJob = await bridge.startConversion({ ...effectiveSettings, source, playlistIndexes, browserSession, browserCapturePath: !normalizedSource ? selectedCapture?.path : undefined, facebookCaptureId, socialCaptureId });
       activeJobRef.current = nextJob;
       setJobId(nextJob);
@@ -999,7 +1002,7 @@ export default function App() {
             setRawEvents((prev) => [...prev, ...syntheticEvents]);
           }}
           onRetryItem={async (item) => {
-            const mediaUrl = item.url || extractYouTubeUrlFromThumbnail(item.thumbnail);
+            const mediaUrl = item.url || extractYouTubeUrlFromThumbnail(item.thumbnail) || (item.total === 1 ? lastJobContextRef.current?.source : undefined);
             if (Boolean(jobId)) {
               try {
                 const requeued = await bridge.requeueTrack(item.index, mediaUrl);
@@ -1019,9 +1022,10 @@ export default function App() {
             if (mediaUrl) {
               statusMessage(`Retrying: ${item.title}...`);
               await start(mediaUrl);
-            } else if (activeJobContextRef.current?.source) {
+            } else if (activeJobContextRef.current?.source || lastJobContextRef.current?.source) {
+              const src = activeJobContextRef.current?.source || lastJobContextRef.current?.source || "";
               statusMessage(`Retrying #${item.index}: ${item.title}...`);
-              await start(activeJobContextRef.current.source, String(item.index));
+              await start(src, String(item.index));
             } else {
               statusMessage(`Could not resolve URL to retry ${item.title}`);
             }

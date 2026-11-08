@@ -647,6 +647,7 @@ export function parseConversionEvents(
         index: 1,
         total: 1,
         title: singleTitle || detectedTitle || "Media file",
+        url: initialSource || undefined,
         mediaKind: inferMediaKind(defaultCategory, defaultFormat, singleOutputPath || singleTitle),
         status: singleStatus,
         progress: singleProgress,

@@ -1130,7 +1130,7 @@ def fetch_facebook_manifest(
     raw_browser = str(browser or "").strip().lower()
     if raw_browser in ("none", "disabled", "off", "false"):
         return None
-    is_explicit_guest = raw_browser in ("guest", "public", "public only", "none")
+    is_explicit_guest = raw_browser in ("guest", "public", "public only")
     is_explicit_browser = raw_browser in (
         "vivaldi", "firefox", "chrome", "edge", "brave", "opera", "chromium", "safari"
     )
