@@ -416,6 +416,17 @@ def test_process_playlist_conversion_requeues_track_as_next(tmp_path, monkeypatc
             f.write(b"ID3" + b"\x00" * 32)
         return {"media_path": media_path, "title": "Track", "artist": "Jane"}
 
+    original_print = print
+    requeue_processed = threading.Event()
+
+    def wrapped_print(*args, **kwargs):
+        text = " ".join(str(a) for a in args)
+        if "[*] Requeuing track #2" in text:
+            requeue_processed.set()
+        original_print(*args, **kwargs)
+
+    monkeypatch.setattr("builtins.print", wrapped_print)
+
     def fake_convert(input_path, output_dir, output_filename, target_format, **kwargs):
         executed_order.append(output_filename)
         os.makedirs(output_dir, exist_ok=True)
@@ -425,7 +436,7 @@ def test_process_playlist_conversion_requeues_track_as_next(tmp_path, monkeypatc
         # When track 3 is converting, simulate receiving a requeue command for track 2 via stdin
         if output_filename == "3. Track Three":
             fake_stdin.write("__JANE_REQUEUE__\t2\thttps://example.com/track-2\n")
-            time.sleep(0.05)
+            assert requeue_processed.wait(timeout=5.0), "Requeue was not processed in time"
         return out_path
 
     monkeypatch.setattr(cli.sys, "stdin", fake_stdin)
