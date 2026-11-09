@@ -16,15 +16,7 @@ pub fn project_root() -> PathBuf {
     ROOT.get_or_init(|| {
         if let Ok(executable) = std::env::current_exe() {
             if let Some(directory) = executable.parent() {
-                let mut candidates = vec![
-                    directory.to_path_buf(),
-                    directory.join("resources").join("runtime"),
-                    directory.join("runtime"),
-                    directory.join("resources"),
-                ];
-                if let Some(runtime) = macos_bundle_runtime(directory) {
-                    candidates.insert(0, runtime);
-                }
+                let candidates = project_root_candidates(directory);
                 for candidate in candidates {
                     if is_runtime_root(&candidate) {
                         return candidate;
@@ -39,6 +31,19 @@ pub fn project_root() -> PathBuf {
             .unwrap_or_else(|| PathBuf::from("."))
     })
     .clone()
+}
+
+pub(crate) fn project_root_candidates(directory: &Path) -> Vec<PathBuf> {
+    let mut candidates = vec![
+        directory.join("resources").join("runtime"),
+        directory.join("runtime"),
+        directory.join("resources"),
+        directory.to_path_buf(),
+    ];
+    if let Some(runtime) = macos_bundle_runtime(directory) {
+        candidates.insert(0, runtime);
+    }
+    candidates
 }
 
 fn macos_bundle_runtime(executable_directory: &Path) -> Option<PathBuf> {
@@ -709,5 +714,15 @@ mod tests {
             macos_user_data_root(Path::new("/Users/jane")),
             PathBuf::from("/Users/jane/Library/Application Support/JaneConverter")
         );
+    }
+
+    #[test]
+    fn project_root_candidates_prioritize_private_runtime_over_parent() {
+        let dir = Path::new("/opt/JaneConverter");
+        let candidates = project_root_candidates(dir);
+        assert_eq!(candidates[0], dir.join("resources").join("runtime"));
+        assert_eq!(candidates[1], dir.join("runtime"));
+        assert_eq!(candidates[2], dir.join("resources"));
+        assert_eq!(candidates[3], dir.to_path_buf());
     }
 }
