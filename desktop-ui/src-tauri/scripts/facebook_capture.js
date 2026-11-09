@@ -103,6 +103,11 @@
     return total;
   };
   const discoverPostPhotoIds = () => {
+    try {
+      const currentUrl = new URL(location.href);
+      const urlFbid = currentUrl.searchParams.get("fbid") || currentUrl.searchParams.get("photo_id") || "";
+      if (urlFbid) recordKnownId(urlFbid);
+    } catch (_) {}
     for (const anchor of document.querySelectorAll('a[href*="fbid="], a[href*="/photo/"], a[href*="/photo.php"], a[href*="/photos/"]')) {
       try {
         const href = new URL(anchor.href, location.href);
@@ -684,6 +689,17 @@
         const set = findAlbumSet() || new URL(location.href).searchParams.get("set") || "";
         if (set) sessionStorage.setItem(albumSetKey, set);
         sessionStorage.setItem(captureModeKey, "grid");
+        scheduleScan(VIEWER_POLL_MS);
+        return;
+      }
+      if (location.pathname.toLowerCase().includes("/photo")) {
+        const currentSet = new URL(location.href).searchParams.get("set") || findAlbumSet() || "";
+        if (currentSet.startsWith("pcb.") || currentSet.startsWith("a.") || currentSet.startsWith("pb.")) {
+          sessionStorage.setItem(albumSetKey, currentSet);
+        }
+        sessionStorage.setItem(captureModeKey, "viewer");
+        sessionStorage.setItem(scannedIdsKey, JSON.stringify(Array.from(scanned)));
+        if (expectedCount) sessionStorage.setItem(expectedCountKey, String(expectedCount));
         scheduleScan(VIEWER_POLL_MS);
         return;
       }

@@ -211,6 +211,34 @@ test("public group permalink navigates directly to photo viewer and walks currMe
   await viewer1.advance(350);
   expect(viewer1.window.location.search).toBe("?fbid=222222222&set=pcb.1846379669854104");
 });
+test("direct photo viewer landing from redirected share link transitions to viewer and completes", async () => {
+  const viewerHtml = `<!doctype html><html><head><title>Single Photo Post</title></head><body>
+    <script type="application/json">{"currMedia":{"__typename":"Photo","id":"3761044804047089","image":{"uri":"https:\\/\\/scontent.fbcdn.net\\/photo_single.jpg","width":1040,"height":2048}}}</script>
+  </body></html>`;
+  const viewer = replay(viewerHtml, "/photo/?fbid=3761044804047089&set=a.105543729597233");
+  sessions.push(viewer);
+  await viewer.advance(150);
+
+  expect(viewer.window.sessionStorage.getItem("janeFacebookCaptureMode")).toBe("viewer");
+  await viewer.advance(350);
+
+  expect(viewer.message()).toMatchObject({
+    kind: "photos",
+    sequence: 1,
+    photos: [{ id: "3761044804047089", url: "https://scontent.fbcdn.net/photo_single.jpg" }],
+  });
+  viewer.window.__JANE_FACEBOOK_ACK__fixture = 1;
+  await viewer.advance(3000);
+
+  expect(viewer.message()).toMatchObject({
+    kind: "done",
+    count: 1,
+    expectedCount: 1,
+    endConfirmed: true,
+    countConflict: false,
+  });
+});
+
 test("single photo post navigates to viewer and completes with single photo", async () => {
   const singlePhotoHtml = `<!doctype html><html><head><title>Single Photo Post</title></head><body>
     <script type="application/json">{"attachment":{"media":{"__typename":"Photo","id":"987654321","image":{"uri":"https:\\/\\/scontent.fbcdn.net\\/photo_single.jpg","width":1040,"height":2048}}}}</script>
@@ -229,7 +257,7 @@ test("single photo post navigates to viewer and completes with single photo", as
   const viewer = replay(viewerHtml, "/photo/?fbid=987654321", "viewer");
   sessions.push(viewer);
   viewer.window.sessionStorage.setItem("janeFacebookExpectedCount", "1");
-  await viewer.advance(150);
+  await viewer.advance(350);
 
   expect(viewer.message()).toMatchObject({
     kind: "photos",
