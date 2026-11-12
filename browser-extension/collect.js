@@ -59,8 +59,23 @@
         found.push({ element: element, geometry: geometry, playing: playing, tag: tag });
         if (element.shadowRoot) visit(element.shadowRoot);
       }
-      for (const element of root.querySelectorAll("*")) {
-        if (element.shadowRoot) visit(element.shadowRoot);
+      if (typeof document.createTreeWalker === "function" && typeof NodeFilter === "function") {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node = walker.nextNode();
+        while (node) {
+          if (node.shadowRoot && !seen.has(node)) {
+            seen.add(node);
+            visit(node.shadowRoot);
+          }
+          node = walker.nextNode();
+        }
+      } else {
+        for (const element of root.querySelectorAll("*")) {
+          if (element.shadowRoot && !seen.has(element)) {
+            seen.add(element);
+            visit(element.shadowRoot);
+          }
+        }
       }
     };
     visit(document);

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, AlertTriangle, ArrowRight, Box, Check, CheckCircle2, Copy, ExternalLink, FileAudio, FileImage, FileVideo, FolderOpen, HelpCircle, Inbox, Info, LoaderCircle, LockKeyhole, Radio, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, ArrowRight, Box, Check, CheckCircle2, Copy, ExternalLink, FileAudio, FileImage, FileVideo, FolderOpen, HelpCircle, Info, LoaderCircle, LockKeyhole, Radio, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import type { AccessStatus, ConverterSettings, FetchedMedia } from "../bridge";
 import { bridge } from "../bridge";
+import { baseName, isInside, joinPath, parentPath, pathKey } from "../utils/paths";
 
 function formatBytes(size: number) {
   if (!size) return "0 B";
@@ -16,31 +17,6 @@ function MediaIcon({ kind }: { kind: FetchedMedia["mediaKind"] }) {
   if (kind === "stream") return <Radio className="size-5 text-amber-300" />;
   if (kind === "model") return <Box className="size-5 text-purple-300" />;
   return <FileVideo className="size-5 text-[#d75b88]" />;
-}
-
-function pathKey(value: string) {
-  return value.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
-}
-
-function parentPath(value: string) {
-  const index = Math.max(value.lastIndexOf("\\"), value.lastIndexOf("/"));
-  return index > 0 ? value.slice(0, index) : value;
-}
-
-function baseName(value: string) {
-  const trimmed = value.replace(/[\\/]+$/, "");
-  const index = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
-  return index >= 0 ? trimmed.slice(index + 1) : trimmed;
-}
-
-function joinPath(parent: string, name: string) {
-  return parent.replace(/[\\/]+$/, "") + "\\" + name;
-}
-
-function isInside(root: string, candidate: string) {
-  const rootKey = pathKey(root);
-  const candidateKey = pathKey(candidate);
-  return candidateKey === rootKey || candidateKey.startsWith(rootKey + "\\");
 }
 
 export function FetchedMediaView({ access, settings, onSettings, onSelect, onDiscard, onStatus, onCreateAccess, onClearAccess }: {
@@ -130,6 +106,11 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
   useEffect(() => {
     mountedRef.current = true;
     void refresh();
+    if (!access.active) {
+      return () => {
+        mountedRef.current = false;
+      };
+    }
     const timer = window.setInterval(() => { void refresh(); }, 1000);
     return () => { mountedRef.current = false; window.clearInterval(timer); };
   }, [access.active, access.captureCount]);
@@ -200,7 +181,7 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
         try {
           await bridge.openUrl(nextAccess.link);
         } catch {
-          // May already be opened by onCreateAccess
+          // Best effort if access handler opened link
         }
       }
       setAccessNoticeTone("success");

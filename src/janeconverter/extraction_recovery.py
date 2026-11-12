@@ -25,7 +25,8 @@ def classify_extraction(error):
     )):
         return ExtractionCategory.RATE_LIMIT
     if any(word in message for word in (
-        "drm", "private video", "sign in", "login", "log in", "401", "403", "age-restricted", "geo restricted", "captcha",
+        "drm", "private video", "sign in", "login", "log in", "401", "403", "age-restricted", "geo restricted",
+        "geo-restricted", "geoblocked", "not available in your country", "blocked in your country", "captcha",
         "error code: 152", "code: 152", "152 - 18", "watch video on youtube", "confirm your age", "the page needs to be reloaded",
     )):
         return ExtractionCategory.ACCESS
@@ -80,6 +81,7 @@ def extract_with_recovery(ydl, query, download, abort_event=None, report=None, d
 
     deadline = deadline or time.monotonic() + 45
     original = ydl.params.get("extractor_args") if hasattr(ydl, "params") else None
+    original_format = ydl.params.get("format") if hasattr(ydl, "params") else None
     client_ladder = [
         {"youtube": {"player_client": ["web_embedded", "android"]}},
         {"youtube": {"player_client": ["android", "ios"]}},
@@ -144,3 +146,7 @@ def extract_with_recovery(ydl, query, download, abort_event=None, report=None, d
                 ydl.params.pop("extractor_args", None)
             else:
                 ydl.params["extractor_args"] = original
+            if original_format is None:
+                ydl.params.pop("format", None)
+            else:
+                ydl.params["format"] = original_format

@@ -18,8 +18,6 @@ vi.mock("../bridge", () => ({
     relaunch: relaunch.run,
     chooseFolder: chooseFolder.run,
     setDataRoot: setDataRoot.run,
-    getChromiumCookiePolicy: vi.fn().mockResolvedValue(false),
-    setChromiumCookiePolicy: vi.fn().mockImplementation(async (v) => v),
   },
 }));
 

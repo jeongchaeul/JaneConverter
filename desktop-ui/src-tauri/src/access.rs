@@ -374,16 +374,13 @@ impl AccessServer {
         self.capture_state
             .lock()
             .ok()
-            .and_then(|value| {
-                requested_path
-                    .and_then(|requested| {
-                        value
-                            .paths
-                            .iter()
-                            .find(|path| path.to_string_lossy() == requested)
-                            .cloned()
-                    })
-                    .or_else(|| value.paths.last().cloned())
+            .and_then(|value| match requested_path {
+                Some(requested) => value
+                    .paths
+                    .iter()
+                    .find(|path| path.to_string_lossy() == requested)
+                    .cloned(),
+                None => value.paths.last().cloned(),
             })
             .filter(|path| path.is_file())
     }
@@ -1357,6 +1354,18 @@ fn handle_connection(mut stream: TcpStream, token: &str, state: &ServeState) {
                 return;
             }
         };
+        if state.paths.len() >= MAX_CAPTURE_ITEMS {
+            drop(state);
+            let _ = fs::remove_file(&path);
+            send_json_cors_or_plain(
+                &mut stream,
+                409,
+                "Conflict",
+                origin.as_deref(),
+                &json!({"error": "The browser capture session is full."}).to_string(),
+            );
+            return;
+        }
         state.fetched.push(record);
         state.total_bytes = state.total_bytes.saturating_add(current.bytes_written);
         state.paths.push(path);
@@ -1569,17 +1578,23 @@ fn bridge_origin(headers: &str) -> Result<Option<String>, String> {
     };
     let parsed =
         Url::parse(origin).map_err(|_| "The browser bridge origin was invalid.".to_owned())?;
+    let Some(host) = parsed.host_str() else {
+        return Err("The browser bridge origin was not allowed.".into());
+    };
     if !matches!(
         parsed.scheme(),
         "chrome-extension" | "edge-extension" | "moz-extension" | "safari-web-extension"
-    ) || parsed.host_str().is_none()
-        || (!parsed.path().is_empty() && parsed.path() != "/")
+    ) || (!parsed.path().is_empty() && parsed.path() != "/")
         || parsed.query().is_some()
         || parsed.fragment().is_some()
     {
         return Err("The browser bridge origin was not allowed.".into());
     }
-    Ok(Some(origin.to_owned()))
+    let canonical = match parsed.port() {
+        Some(port) => format!("{}://{host}:{port}", parsed.scheme()),
+        None => format!("{}://{host}", parsed.scheme()),
+    };
+    Ok(Some(canonical))
 }
 
 fn bridge_ready(

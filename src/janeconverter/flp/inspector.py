@@ -11,17 +11,16 @@ from .parser import parse_flp_file
 
 
 def _clean_string(raw: bytes) -> str:
-    """Decode raw bytes into a clean string, attempting UTF-16 LE, UTF-8, and Latin-1."""
+    """Decode raw bytes into a clean string, attempting UTF-16 LE when null-interleaved or BOM-tagged, else UTF-8/Latin-1."""
     if not raw:
         return ""
-    # Try UTF-16 LE first (FL Studio 12+ standard for unicode text)
-    try:
-        decoded = raw.decode("utf-16le").strip("\x00 \t\r\n")
-        # Ensure it looks like readable text rather than misaligned ASCII
-        if decoded and all(ord(c) >= 32 or c in "\n\r\t" for c in decoded):
-            return decoded
-    except UnicodeDecodeError:
-        pass
+    if len(raw) >= 2 and len(raw) % 2 == 0 and (b"\x00" in raw or raw.startswith((b"\xff\xfe", b"\xfe\xff"))):
+        try:
+            decoded = raw.decode("utf-16le").lstrip("\ufeff").strip("\x00 \t\r\n")
+            if decoded and all(ord(c) >= 32 or c in "\n\r\t" for c in decoded):
+                return decoded
+        except UnicodeDecodeError:
+            pass
 
     # Try UTF-8
     try:
@@ -42,6 +41,7 @@ def inspect_flp(project: FLPProject, file_path: Optional[str] = None) -> Dict[st
     registration_name = ""
     registered = True
     bpm = 140.0
+    has_fine_tempo = False
 
     build_num: Optional[int] = None
 
@@ -72,7 +72,7 @@ def inspect_flp(project: FLPProject, file_path: Optional[str] = None) -> Dict[st
                 title_str = clean
 
         # Event 68 (0x44): Main Tempo
-        elif ev.event_id == 68 and len(ev.data) >= 2:
+        elif ev.event_id == 68 and len(ev.data) >= 2 and not has_fine_tempo:
             raw_tempo = struct.unpack("<H", ev.data[:2])[0]
             if raw_tempo > 0:
                 if raw_tempo >= 1000:
@@ -86,6 +86,7 @@ def inspect_flp(project: FLPProject, file_path: Optional[str] = None) -> Dict[st
                 raw_fine = struct.unpack("<I", ev.data[:4])[0]
                 if 10000 <= raw_fine <= 1000000:
                     bpm = round(raw_fine / 1000.0, 3)
+                    has_fine_tempo = True
             except struct.error:
                 pass
 

@@ -90,16 +90,13 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
     def harvest_delivery_targets(
         obj: Any,
         parent_ids: Optional[list[str]] = None,
-        parent_nodes: Optional[list[Any]] = None,
+        node_chain: Any = None,
     ):
         if parent_ids is None:
             parent_ids = []
-        if parent_nodes is None:
-            parent_nodes = []
 
         if isinstance(obj, dict):
-            current_nodes = list(parent_nodes)
-            current_nodes.append(obj)
+            current_chain = (node_chain, obj)
             current_ids = parent_ids
             for k in ("id", "videoId", "video_id", "legacy_token"):
                 val = obj.get(k)
@@ -128,13 +125,19 @@ def _extract_comet_video_data(ie: Any, webpage: str, video_id: str, url: str) ->
                     decoded = decode_fb_story_id(str(payload_id))
                     if decoded and decoded not in target_ids:
                         target_ids.append(decoded)
-                yield (target_ids, fmt_payload, current_nodes)
+                nodes_list = []
+                cur = current_chain
+                while cur is not None:
+                    nodes_list.append(cur[1])
+                    cur = cur[0]
+                nodes_list.reverse()
+                yield (target_ids, fmt_payload, nodes_list)
 
             for v in obj.values():
-                yield from harvest_delivery_targets(v, current_ids, current_nodes)
+                yield from harvest_delivery_targets(v, current_ids, current_chain)
         elif isinstance(obj, list):
             for item in obj:
-                yield from harvest_delivery_targets(item, parent_ids, parent_nodes)
+                yield from harvest_delivery_targets(item, parent_ids, node_chain)
 
     all_targets = []
     for s in raw_scripts:
@@ -551,8 +554,7 @@ def _build_facebook_story_ie():
             if not webpage:
                 self.raise_login_required("This Facebook story is unreachable or requires an active browser session.")
 
-            last_url = getattr(getattr(self, "_downloader", None), "last_url", "") or ""
-            if "/login" in last_url or 'name="login"' in webpage:
+            if 'name="login"' in webpage or 'id="login_form"' in webpage:
                 self.raise_login_required("This Facebook story requires sign-in. Use --browser-session to extract.")
 
             # Extract story cards
@@ -713,5 +715,3 @@ def patch_facebook_story_extractor() -> None:
         except Exception:
             pass
 
-
-patch_facebook_extractors = patch_facebook_story_extractor

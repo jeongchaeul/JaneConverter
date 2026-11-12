@@ -108,6 +108,12 @@ if (Test-Path -LiteralPath $buildRoot) { Remove-Item -LiteralPath $buildRoot -Re
 foreach ($artifact in @($installerOutput, "$installerOutput.sha256", $portableOutput, "$portableOutput.sha256", $updaterOutput, $updaterSignature)) {
     if (Test-Path -LiteralPath $artifact) { Remove-Item -LiteralPath $artifact -Force }
 }
+trap {
+    if (-not $KeepStaging -and (Test-Path -LiteralPath $buildRoot)) {
+        Remove-Item -LiteralPath $buildRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    break
+}
 New-Item -ItemType Directory -Path $runtimeEngine,$runtimeBin,$pyinstallerRoot -Force | Out-Null
 
 $uv = Resolve-Tool "" "uv.exe" "uv"
@@ -329,9 +335,9 @@ if (-not $UpdaterOnly -and -not $SkipPortable) {
 }
 
 if (-not $UpdaterOnly) {
-    Invoke-Checked { uv run --locked python packaging/build_browser_bridge.py --output dist } "Build verified Browser Bridge archive"
+    Invoke-Checked { uv run --locked python packaging/build_browser_bridge.py --output $OutputDirectory } "Build verified Browser Bridge archive"
 }
 
-if (-not $KeepStaging) {
+if (-not $KeepStaging -and (Test-Path -LiteralPath $buildRoot)) {
     Remove-Item -LiteralPath $buildRoot -Recurse -Force
 }

@@ -187,6 +187,7 @@ fn image_extension(path: &Path) -> bool {
             | "jfif"
             | "png"
             | "webp"
+            | "avif"
             | "bmp"
             | "tif"
             | "tiff"
@@ -717,7 +718,19 @@ pub fn delete_inside(root: &str, path: &str) -> Result<(), String> {
     }
 }
 
+const MAX_COPY_DEPTH: usize = 32;
+
 fn copy_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
+    copy_directory_depth(source, destination, 0)
+}
+
+fn copy_directory_depth(source: &Path, destination: &Path, depth: usize) -> std::io::Result<()> {
+    if depth > MAX_COPY_DEPTH {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "folder nesting exceeds maximum depth for a library move",
+        ));
+    }
     fs::create_dir(destination)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
@@ -731,7 +744,7 @@ fn copy_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
             ));
         }
         if kind.is_dir() {
-            copy_directory(&source_child, &destination_child)?;
+            copy_directory_depth(&source_child, &destination_child, depth + 1)?;
         } else if kind.is_file() {
             fs::copy(&source_child, &destination_child)?;
         }
@@ -914,11 +927,8 @@ fn render_preview_at(path: &Path, seek_sec: Option<&str>) -> Option<Vec<u8>> {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                if !status.success() {
-                    return None;
-                }
                 let bytes = reader.join().ok()?;
-                if bytes.is_empty() || bytes.len() > 2 * 1024 * 1024 {
+                if !status.success() || bytes.is_empty() || bytes.len() > 2 * 1024 * 1024 {
                     return None;
                 }
                 return Some(bytes);
@@ -950,13 +960,13 @@ fn render_preview(path: &Path) -> Option<(Vec<u8>, &'static str)> {
         return render_preview_at(path, Some("0")).map(|bytes| (bytes, "image/jpeg"));
     }
 
-    // Direct read for still image files under 25MB to bypass FFmpeg process spawns
+    // Direct read for compact still images under 2MB; resize larger stills via FFmpeg so IPC stays lean
     if matches!(
         extension.as_str(),
         "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" | "avif"
     ) {
         if let Ok(metadata) = fs::metadata(path) {
-            if metadata.is_file() && metadata.len() > 0 && metadata.len() <= 25 * 1024 * 1024 {
+            if metadata.is_file() && metadata.len() > 0 && metadata.len() <= 2 * 1024 * 1024 {
                 if let Ok(bytes) = fs::read(path) {
                     let mime = match extension.as_str() {
                         "png" => "image/png",

@@ -28,10 +28,13 @@ env/
 Thumbs.db
 Desktop.ini
 .zcode/
-.janecoverter-data/
+.janeconverter-data/
 logs/
 config.json
 *.settings
+.wrangler/
+temp_verify/
+ytdlp_cache/
 desktop-ui/.npm-cache/
 desktop-ui/.cargo-target/
 .cargo-local/

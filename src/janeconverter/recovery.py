@@ -225,7 +225,7 @@ class RecoveryCoordinator:
                 continue
             if candidate == "cover-normalized" and (
                 not self.intent.cover_required
-                or self.intent.target_format not in {"mp3", "flac", "m4a", "aac"}
+                or self.intent.target_format not in {"mp3", "flac", "m4a"}
             ):
                 continue
             if not any(item.method == candidate for item in self.attempts):

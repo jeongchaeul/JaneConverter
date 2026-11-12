@@ -23,8 +23,6 @@ interface ActionBarProps {
   pendingQueueCount: number;
   onConvert: () => void;
   source: string;
-  facebookCaptureBusy: boolean;
-  socialCaptureBusy: boolean;
   onAddToQueue: () => void;
   effectivePaused: boolean;
   onPauseToggle: () => void;
@@ -48,8 +46,6 @@ export function ActionBar({
   pendingQueueCount,
   onConvert,
   source,
-  facebookCaptureBusy,
-  socialCaptureBusy,
   onAddToQueue,
   effectivePaused,
   onPauseToggle,

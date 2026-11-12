@@ -282,8 +282,6 @@ describe("Ephemeral Story Extraction integration in ConverterView", () => {
           onSettings={vi.fn()}
           onStart={onStart}
           onCancel={vi.fn()}
-          onCreateAccess={vi.fn()}
-          onClearAccess={vi.fn()}
           onStatus={onStatus}
           onError={vi.fn()}
         />

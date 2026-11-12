@@ -11,13 +11,11 @@ function isColorLight(hex: string): boolean {
 
 import { useEffect, useState } from "react";
 import {
-  AlertCircle,
   BookOpen,
   ExternalLink,
   Globe,
   HardDrive,
   Palette,
-  Sparkles,
   Zap,
 } from "lucide-react";
 import type { ConverterSettings, RuntimeInfo, UpdateCheckResult } from "../bridge";

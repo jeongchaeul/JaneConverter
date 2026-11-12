@@ -43,7 +43,7 @@ JaneConverter is a desktop media processing utility running on local hardware. F
 ### In-Scope Vulnerabilities:
 - Remote Code Execution (RCE) via malformed media, metadata tags, or `.flp` files.
 - Command or argument injection via unsanitized URLs, filenames, or CLI flags.
-- Loopback IPC privilege escalation, unauthorized command dispatch, or arbitrary file access in `desktop-ui` (Tauri bridge) or `browser_bridge.py`.
+- Loopback IPC privilege escalation, unauthorized command dispatch, or arbitrary file access in `desktop-ui` (Tauri Rust bridge / `access.rs`).
 - Server-Side Request Forgery (SSRF) bypassing loopback/private IP filtering for thumbnails or media streams.
 - Tampering or integrity flaws in updater routines (`updater.py`, Tauri updater).
 

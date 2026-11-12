@@ -962,11 +962,6 @@ pub fn start_conversion(
                 "Conversion finished. Your media is ready.".to_string(),
                 Some(1.0),
             )
-        } else if partial_msg.is_some() && resolved_output.is_some() {
-            let msg = failure_msg
-                .map(|value| format!("Partial conversion: {value}"))
-                .unwrap_or_else(|| "Partial conversion completed with some errors.".to_string());
-            ("partial", msg, Some(1.0))
         } else {
             (
                 "failed",

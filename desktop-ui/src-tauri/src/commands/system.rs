@@ -417,7 +417,8 @@ pub fn relaunch(app: tauri::AppHandle) -> Result<(), String> {
     let mut command = Command::new(&launcher);
     command
         .current_dir(&root)
-        .env("JANECONVERTER_DATA_DIR", data_root());
+        .env("JANECONVERTER_DATA_DIR", data_root())
+        .env("JANECONVERTER_RELAUNCH", "1");
     prepare_command(&mut command);
     command
         .spawn()
@@ -442,8 +443,12 @@ pub async fn check_updates(
         command.arg("--check-updates");
     }
     command.current_dir(project_root());
-    let cancel = std::sync::atomic::AtomicBool::new(false);
-    let output_res = crate::process::bounded_output(&mut command, Duration::from_secs(12), &cancel);
+    let output_res = tauri::async_runtime::spawn_blocking(move || {
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        crate::process::bounded_output(&mut command, Duration::from_secs(12), &cancel)
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))?;
     let mut payload = match output_res {
         Ok(output) if output.status.success() => {
             serde_json::from_slice(&output.stdout).unwrap_or_else(|_| serde_json::json!({}))
@@ -601,10 +606,13 @@ pub async fn install_update(
         .take()
         .ok_or_else(|| "Check for updates again before installing.".to_owned())?;
     // Preserve a readable catalog snapshot before the signed installer runs.
-    catalog::backup_for_update(
-        &data_root(),
-        &PathBuf::from(settings_get_internal().fetched_dir),
-    )?;
+    let fetched_dir = PathBuf::from(settings_get_internal().fetched_dir);
+    let backup_root = data_root();
+    tauri::async_runtime::spawn_blocking(move || {
+        catalog::backup_for_update(&backup_root, &fetched_dir)
+    })
+    .await
+    .map_err(|error| format!("Task execution error: {error}"))??;
     update
         .download_and_install(|_, _| {}, || {})
         .await

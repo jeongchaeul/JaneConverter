@@ -239,10 +239,14 @@
     const controller = new AbortController();
     let reader;
     let timer;
+    let completed = false;
     const operation = (async function () {
       const response = await fetch(url, Object.assign({}, options, { signal: controller.signal }));
       if (Number(response.headers.get("content-length")) > maxBytes) throw new Error("Capture exceeds its byte limit.");
-      if (!response.body) return response;
+      if (!response.body) {
+        completed = true;
+        return response;
+      }
       reader = response.body.getReader();
       const chunks = [];
       let size = 0;
@@ -253,6 +257,7 @@
         if (size > maxBytes) throw new Error("Capture exceeds its byte limit.");
         chunks.push(part.value);
       }
+      completed = true;
       return new Response(new Blob(chunks), { status: response.status, statusText: response.statusText, headers: response.headers });
     }());
     try {
@@ -264,8 +269,10 @@
       })]);
     } finally {
       clearTimeout(timer);
-      controller.abort();
-      if (reader) void reader.cancel().catch(function () {});
+      if (!completed) {
+        controller.abort();
+        if (reader) void reader.cancel().catch(function () {});
+      }
     }
   }
 

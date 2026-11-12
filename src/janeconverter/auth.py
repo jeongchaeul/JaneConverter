@@ -8,8 +8,7 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Optional, Tuple
+from typing import Any, Iterable, Optional, Tuple
 
 
 PUBLIC_SESSION_LABEL = "Public only"
@@ -78,55 +77,6 @@ _BROWSER_PROCESS_NAMES = {
     "safari": {"safari"},
     "arc": {"arc"},
 }
-
-
-@dataclass(frozen=True)
-class BrowserDetection:
-    """Browser identity observed from the temporary localhost request."""
-
-    label: str
-    session_browser: Optional[str]
-    user_agent: str = ""
-
-
-def detect_browser_from_headers(headers: Mapping[str, str]) -> BrowserDetection:
-    """Identify the browser that opened the access link from request headers.
-
-    Browser client hints are checked along with the traditional user-agent so
-    Chromium derivatives such as Vivaldi and Brave can be identified when they
-    advertise their brand. This identifies the browser only; it never grants
-    access or reads credentials.
-    """
-    user_agent = str(headers.get("User-Agent", "") or "")
-    client_hints = " ".join(
-        str(headers.get(name, "") or "")
-        for name in ("Sec-CH-UA", "Sec-CH-UA-Full-Version-List", "Sec-CH-UA-Platform")
-    )
-    signal = f"{client_hints} {user_agent}".lower()
-
-    browser_signals = (
-        ("vivaldi", "Vivaldi", "vivaldi"),
-        ("brave", "Brave", "brave"),
-        ("edg/", "Microsoft Edge", "edge"),
-        ("edga/", "Microsoft Edge", "edge"),
-        ("edgios/", "Microsoft Edge", "edge"),
-        ("opr/", "Opera", "opera"),
-        ("opera", "Opera", "opera"),
-        ("firefox", "Firefox", "firefox"),
-        ("fxios", "Firefox", "firefox"),
-        ("crios", "Google Chrome", "chrome"),
-        ("chrome", "Google Chrome", "chrome"),
-        ("chromium", "Chromium", "chromium"),
-        ("safari", "Safari", "safari"),
-    )
-    for marker, label, session_browser in browser_signals:
-        if marker in signal:
-            # Safari appears in many Chromium user-agents; it is only Safari
-            # when no Chromium-family marker was present.
-            if label == "Safari" and any(token in signal for token in ("chrome", "chromium", "edg/", "opr/")):
-                continue
-            return BrowserDetection(label, session_browser, user_agent)
-    return BrowserDetection("Unrecognized browser", None, user_agent)
 
 
 def normalize_browser_session(selection: Optional[str]) -> Optional[str]:
@@ -387,22 +337,35 @@ def detect_running_browsers() -> list[str]:
                     ("szExeFile", ctypes.c_char * 260),
                 ]
 
-            h_snap = ctypes.windll.kernel32.CreateToolhelp32Snapshot(th32cs_snapprocess, 0)
-            if h_snap and h_snap != ctypes.wintypes.HANDLE(-1).value:
-                pe = _PROCESSENTRY32()
-                pe.dwSize = ctypes.sizeof(_PROCESSENTRY32)
-                if ctypes.windll.kernel32.Process32First(h_snap, ctypes.byref(pe)):
-                    while True:
-                        exe = pe.szExeFile.decode("latin1", errors="ignore").lower()
-                        if exe.endswith(".exe"):
-                            exe = exe[:-4]
-                        for b, names in _BROWSER_PROCESS_NAMES.items():
-                            if b not in seen and exe in names:
-                                running.append(b)
-                                seen.add(b)
-                        if not ctypes.windll.kernel32.Process32Next(h_snap, ctypes.byref(pe)):
-                            break
-                ctypes.windll.kernel32.CloseHandle(h_snap)
+            kernel32 = ctypes.windll.kernel32
+            kernel32.CreateToolhelp32Snapshot.argtypes = [ctypes.wintypes.DWORD, ctypes.wintypes.DWORD]
+            kernel32.CreateToolhelp32Snapshot.restype = ctypes.wintypes.HANDLE
+            kernel32.Process32First.argtypes = [ctypes.wintypes.HANDLE, ctypes.POINTER(_PROCESSENTRY32)]
+            kernel32.Process32First.restype = ctypes.wintypes.BOOL
+            kernel32.Process32Next.argtypes = [ctypes.wintypes.HANDLE, ctypes.POINTER(_PROCESSENTRY32)]
+            kernel32.Process32Next.restype = ctypes.wintypes.BOOL
+            kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+            kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+
+            invalid_handle = ctypes.wintypes.HANDLE(-1).value
+            h_snap = kernel32.CreateToolhelp32Snapshot(th32cs_snapprocess, 0)
+            if h_snap and h_snap != invalid_handle:
+                try:
+                    pe = _PROCESSENTRY32()
+                    pe.dwSize = ctypes.sizeof(_PROCESSENTRY32)
+                    if kernel32.Process32First(h_snap, ctypes.byref(pe)):
+                        while True:
+                            exe = pe.szExeFile.decode("latin1", errors="ignore").lower()
+                            if exe.endswith(".exe"):
+                                exe = exe[:-4]
+                            for b, names in _BROWSER_PROCESS_NAMES.items():
+                                if b not in seen and exe in names:
+                                    running.append(b)
+                                    seen.add(b)
+                            if not kernel32.Process32Next(h_snap, ctypes.byref(pe)):
+                                break
+                finally:
+                    kernel32.CloseHandle(h_snap)
                 return running
         except Exception:
             pass
@@ -451,10 +414,6 @@ def get_ordered_browser_candidates(
     for b in running_browsers:
         if b in installed_set and b not in candidates:
             candidates.append(b)
-
-    default_b = detect_default_browser_session()
-    if default_b and default_b not in candidates:
-        candidates.append(default_b)
 
     for b in installed:
         if b not in candidates:
@@ -654,47 +613,5 @@ def _posix_default_browser_signals() -> list[str]:
     except (OSError, subprocess.SubprocessError):
         pass
     return signals
-
-
-def is_chromium_direct_cookie_policy_enabled() -> bool:
-    """Check whether Windows policy allows standard DPAPI decryption for Edge/Chrome."""
-    if os.name != "nt":
-        return False
-    try:
-        import winreg
-        for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
-            for subkey in (r"Software\Policies\Microsoft\Edge", r"Software\Policies\Google\Chrome"):
-                try:
-                    with winreg.OpenKey(root, subkey) as key:
-                        val, _ = winreg.QueryValueEx(key, "ApplicationBoundEncryptionEnabled")
-                        if val == 0:
-                            return True
-                except OSError:
-                    continue
-    except Exception:
-        pass
-    return False
-
-
-def set_chromium_direct_cookie_policy(enabled: bool) -> bool:
-    """Configure or remove the ApplicationBoundEncryptionEnabled policy in HKCU."""
-    if os.name != "nt":
-        return False
-    try:
-        import winreg
-        targets = (r"Software\Policies\Microsoft\Edge", r"Software\Policies\Google\Chrome")
-        for subkey in targets:
-            if enabled:
-                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, subkey) as key:
-                    winreg.SetValueEx(key, "ApplicationBoundEncryptionEnabled", 0, winreg.REG_DWORD, 0)
-            else:
-                try:
-                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey, 0, winreg.KEY_SET_VALUE) as key:
-                        winreg.DeleteValue(key, "ApplicationBoundEncryptionEnabled")
-                except OSError:
-                    pass
-        return True
-    except Exception:
-        return False
 
 

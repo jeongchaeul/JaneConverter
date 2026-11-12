@@ -91,21 +91,23 @@ export async function saveAppearanceToStorage(settings: AppearanceSettings): Pro
   const db = await getDB();
   if (!db) return localStorageSuccess;
 
-  const idbSuccess = await new Promise<boolean>((resolve) => {
-    try {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.put(settings, SETTINGS_KEY);
-      req.onsuccess = () => resolve(true);
-      req.onerror = () => resolve(false);
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
-    } catch {
-      resolve(false);
-    }
-  });
-
-  return idbSuccess;
+  try {
+    return await new Promise<boolean>((resolve) => {
+      try {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.put(settings, SETTINGS_KEY);
+        req.onerror = () => resolve(false);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  } finally {
+    try { db.close(); } catch {}
+  }
 }
 
 /**
@@ -114,17 +116,28 @@ export async function saveAppearanceToStorage(settings: AppearanceSettings): Pro
 export async function loadAppearanceFromStorage(): Promise<Partial<AppearanceSettings> | null> {
   const db = await getDB();
   if (db) {
-    const fromIdb = await new Promise<AppearanceSettings | null>((resolve) => {
-      try {
-        const tx = db.transaction(STORE_NAME, "readonly");
-        const store = tx.objectStore(STORE_NAME);
-        const req = store.get(SETTINGS_KEY);
-        req.onsuccess = () => resolve((req.result as AppearanceSettings) ?? null);
-        req.onerror = () => resolve(null);
-      } catch {
-        resolve(null);
-      }
-    });
+    let fromIdb: AppearanceSettings | null = null;
+    try {
+      fromIdb = await new Promise<AppearanceSettings | null>((resolve) => {
+        try {
+          const tx = db.transaction(STORE_NAME, "readonly");
+          const store = tx.objectStore(STORE_NAME);
+          const req = store.get(SETTINGS_KEY);
+          let result: AppearanceSettings | null = null;
+          req.onsuccess = () => {
+            result = (req.result as AppearanceSettings) ?? null;
+          };
+          req.onerror = () => resolve(null);
+          tx.oncomplete = () => resolve(result);
+          tx.onerror = () => resolve(null);
+          tx.onabort = () => resolve(null);
+        } catch {
+          resolve(null);
+        }
+      });
+    } finally {
+      try { db.close(); } catch {}
+    }
 
     if (fromIdb) {
       return fromIdb;
@@ -190,17 +203,21 @@ export async function clearAppearanceStorage(): Promise<void> {
   const db = await getDB();
   if (!db) return;
 
-  await new Promise<void>((resolve) => {
-    try {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.delete(SETTINGS_KEY);
-      req.onsuccess = () => resolve();
-      req.onerror = () => resolve();
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-    } catch {
-      resolve();
-    }
-  });
+  try {
+    await new Promise<void>((resolve) => {
+      try {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.delete(SETTINGS_KEY);
+        req.onerror = () => resolve();
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+        tx.onabort = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  } finally {
+    try { db.close(); } catch {}
+  }
 }

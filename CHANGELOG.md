@@ -135,6 +135,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - Refactored the Converter sub-navigation and FLP Converter view to strictly inherit the application's global CSS theme tokens (`.panel`, `.field`, `.subtle-button`, `.primary-button`), eliminating visual and styling discrepancies across dark and light modes.
 
+## [2.2.8] - 2026-10-04 - GPU Acceleration, Recovery Pipeline & Signed Continuous Updates
 
 ### Added
 - Added a conversion completion **Success Modal** showing output format and quality summary, elapsed conversion time, automatic fallback notes, and instant **Play / Open file** and **Open folder** actions, paired with host taskbar attention/glow notifications (`FlashWindowEx` / `request_user_attention`) whenever an operation finishes or fails.

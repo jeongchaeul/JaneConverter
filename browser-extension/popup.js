@@ -86,7 +86,6 @@ async function findAccessTabs() {
   });
 
   if (matched.length > 0) {
-    void saveConfirmedAccessUrl(matched[0].url);
     return matched;
   }
 
@@ -114,9 +113,12 @@ async function readJson(response) {
 }
 
 function sameSite(left, right) {
-  left = left.toLowerCase().replace(/\.$/, "");
-  right = right.toLowerCase().replace(/\.$/, "");
-  return left === right || left.endsWith("." + right) || right.endsWith("." + left);
+  if (globalThis.JaneMediaUtils && typeof globalThis.JaneMediaUtils.sameSite === "function") {
+    return globalThis.JaneMediaUtils.sameSite(left, right);
+  }
+  left = String(left || "").toLowerCase().replace(/\.$/, "");
+  right = String(right || "").toLowerCase().replace(/\.$/, "");
+  return Boolean(left && right) && (left === right || left.endsWith("." + right) || right.endsWith("." + left));
 }
 
 async function requestOriginPermission(mediaUrl) {
@@ -743,7 +745,12 @@ async function capturePageMedia(item, maxBytes, deadline = Date.now() + 180000) 
         finish(reject, new Error("The rendered video is larger than JaneConverter's 64 MB browser-capture limit."));
         return;
       }
-        finish(resolve, await encodeCapture(blob, blob.type || mimeType, item.fileName.replace(/\.[^.]+$/, "") + ".webm"));
+      try {
+        const ext = (blob.type || mimeType).toLowerCase().includes("ogg") ? ".ogg" : ".webm";
+        finish(resolve, await encodeCapture(blob, blob.type || mimeType, item.fileName.replace(/\.[^.]+$/, "") + ext));
+      } catch (err) {
+        finish(reject, err);
+      }
     };
     const stop = function () {
       if (recorder.state !== "inactive") recorder.stop();
@@ -961,7 +968,16 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index, d
         throw new Error("The source page returned no media bytes.");
       }
       contentLength = pageFetched.buffer.byteLength;
-      responseMime = String(pageFetched.contentType || "").split(";")[0].toLowerCase();
+      responseMime = String(pageFetched.contentType || "").split(";")[0].trim().toLowerCase();
+      if (
+        responseMime &&
+        responseMime !== "application/octet-stream" &&
+        globalThis.JaneMediaUtils &&
+        typeof globalThis.JaneMediaUtils.isExpectedMediaResponse === "function" &&
+        !globalThis.JaneMediaUtils.isExpectedMediaResponse(item.mediaKind, responseMime)
+      ) {
+        throw new Error("Unexpected response MIME type: " + responseMime);
+      }
       method = "page-fetch";
       return true;
     } catch (error) {

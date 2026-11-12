@@ -156,11 +156,6 @@ class SessionPacer:
 
         return wait_time
 
-    def reset(self) -> None:
-        """Reset all scheduled request timestamps."""
-        with self._lock:
-            self._last_scheduled.clear()
-
 
 SESSION_PACER = SessionPacer()
 

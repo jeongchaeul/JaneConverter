@@ -270,6 +270,23 @@ pub fn initialization_script(nonce: &str, platform: SocialPlatform, target_url: 
         .replace("__TARGET_URL_JSON__", &target_url_json)
 }
 
+pub enum CaptureOutcome {
+    Photos(SocialPhotoManifest),
+    Video(String),
+}
+
+pub fn manifest(
+    platform: SocialPlatform,
+    title: String,
+    photos: Vec<FacebookPhoto>,
+) -> SocialPhotoManifest {
+    SocialPhotoManifest {
+        platform: platform.key().to_string(),
+        title,
+        photos,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,22 +505,5 @@ mod tests {
 
         message.count = 14;
         assert!(validate_completion(&message, 15).is_err());
-    }
-}
-
-pub enum CaptureOutcome {
-    Photos(SocialPhotoManifest),
-    Video(String),
-}
-
-pub fn manifest(
-    platform: SocialPlatform,
-    title: String,
-    photos: Vec<FacebookPhoto>,
-) -> SocialPhotoManifest {
-    SocialPhotoManifest {
-        platform: platform.key().to_string(),
-        title,
-        photos,
     }
 }

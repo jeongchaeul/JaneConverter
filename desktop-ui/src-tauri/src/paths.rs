@@ -344,7 +344,13 @@ pub fn run_command(program: &str, args: &[&str]) -> io::Result<Output> {
 }
 
 pub fn command_available(program: &str) -> bool {
-    ["--version", "-version"].iter().any(|flag| {
+    let lower = program.to_ascii_lowercase();
+    let flags: [&str; 2] = if lower.contains("ffmpeg") || lower.contains("ffprobe") {
+        ["-version", "--version"]
+    } else {
+        ["--version", "-version"]
+    };
+    flags.iter().any(|flag| {
         run_command(program, &[flag])
             .map(|output| output.status.success())
             .unwrap_or(false)
@@ -479,6 +485,7 @@ pub fn settings_get_internal() -> ConverterSettings {
     let category = match values.get("category").map(String::as_str) {
         Some("Video") => "Video",
         Some("Image") => "Image",
+        Some("Audio") => "Audio",
         Some("Miscellaneous") => "Miscellaneous",
         _ => "Music",
     };
@@ -516,6 +523,7 @@ pub fn settings_get_internal() -> ConverterSettings {
         save_cover: parse_bool(&values, "save_cover", true),
         save_metadata: parse_bool(&values, "save_metadata", true),
         allow_png_fallback: parse_bool(&values, "allow_png_fallback", false),
+        reconstruct_frequency_loss: parse_bool(&values, "reconstruct_frequency_loss", false),
         open_in_browser: parse_bool(&values, "open_in_browser", false),
         read_browser_cookies: parse_bool(&values, "read_browser_cookies", true),
         allow_story_extraction: parse_bool(&values, "allow_story_extraction", false),
@@ -607,6 +615,14 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
         (
             "allow_png_fallback",
             if settings.allow_png_fallback {
+                "true"
+            } else {
+                "false"
+            },
+        ),
+        (
+            "reconstruct_frequency_loss",
+            if settings.reconstruct_frequency_loss {
                 "true"
             } else {
                 "false"

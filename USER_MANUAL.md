@@ -32,7 +32,7 @@ A comprehensive guide to getting the most out of JaneConverter — the sovereign
    - [When Cookies Are Required](#when-cookies-are-required)
    - [Direct Edge & Chrome Cookie Access (Chromium 127+)](#direct-edge--chrome-cookie-access-chromium-127)
    - [Non-Chromium Browsers](#non-chromium-browsers)
-   - [Volatile Memory Safety & Privacy Guarantees](#volatile-memory-safety--privacy-guarantees)
+   - [Volatile Memory Safety & Privacy Guarantees](#ephemeral-session-privacy-guarantees)
 8. [FL Studio (.flp) Project Downgrader](#8-fl-studio-flp-project-downgrader)
    - [The Collaboration Lockout Problem](#the-collaboration-lockout-problem)
    - [Downgrading Workflow](#downgrading-workflow)
@@ -141,7 +141,7 @@ JaneConverter is **not limited to the platforms above**. Its ingestion engine is
 - **Thousands of Unlisted & Niche Websites:** Powered by `yt-dlp`'s 1,800+ extractors, a generic media stream sniffer, and HLS (`.m3u8`) / DASH segment assemblers. Niche video portals, forums, news archives, and educational sites work out of the box.
 - **Adult & 18+ Platforms:** Natively supports and downloads from adult platforms (Pornhub, XVideos, SpankBang, RedTube, Chaturbate recordings, etc.) via underlying stream extractors.
 - **Operational Reality:** Outside Tier 1 certified sites, open web and adult sites are expected to work via generic extraction without individual per-site certification.
-- **Browser Bridge Sniffing:** For sites with aggressive bot guards or custom web players, clicking **Send to JaneConverter** in the Browser Bridge extension pipes authenticated streams directly from your active browser tab.
+- **Browser Bridge Sniffing:** For sites with aggressive bot guards or custom web players, clicking **Capture current media** (or **Enable Network Compatibility Mode**) in the Browser Bridge extension pipes authenticated streams directly from your active browser tab.
 
 ### Zero-Loss Stream Copy Mode
 When input codecs match the requested output container (e.g. H.264 + AAC into an MP4 container) with no resizing or audio filters requested:

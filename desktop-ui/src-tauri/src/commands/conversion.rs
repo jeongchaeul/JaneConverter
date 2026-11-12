@@ -52,15 +52,20 @@ pub fn start_conversion(
     if request.facebook_capture_id.is_some() && request.social_capture_id.is_some() {
         return Err("Use only one public photo capture for a conversion.".into());
     }
-    close_all_social_captures(&state.social_captures);
     if state
         .active_child
         .lock()
         .map_err(|_| "The conversion registry is unavailable.")?
         .is_some()
+        || state
+            .active_job
+            .lock()
+            .map_err(|_| "The conversion registry is unavailable.")?
+            .is_some()
     {
         return Err("A conversion is already running.".into());
     }
+    close_all_social_captures(&state.social_captures);
     state.active_paused.store(false, Ordering::Relaxed);
     let facebook_capture_id = request.facebook_capture_id.clone();
     let social_capture_id = request.social_capture_id.clone();
@@ -126,7 +131,8 @@ pub fn start_conversion(
             .social_manifests
             .lock()
             .map_err(|_| "The public photo manifest registry is unavailable.")?
-            .remove(&capture_id)
+            .get(&capture_id)
+            .cloned()
             .ok_or_else(|| {
                 "The public photo capture has expired. Capture the post again.".to_string()
             })?;
@@ -219,6 +225,11 @@ pub fn start_conversion(
     drop(storage_guard);
     if let Some(capture_id) = facebook_capture_id.as_deref() {
         if let Ok(mut manifests) = state.facebook_manifests.lock() {
+            manifests.remove(capture_id);
+        }
+    }
+    if let Some(capture_id) = social_capture_id.as_deref() {
+        if let Ok(mut manifests) = state.social_manifests.lock() {
             manifests.remove(capture_id);
         }
     }
@@ -485,15 +496,24 @@ pub async fn requeue_track(
         guard.as_ref().cloned()
     };
     if let Some(stdin_arc) = stdin_opt {
-        let mut stdin = stdin_arc.lock().map_err(|_| "Engine stdin is locked.")?;
-        let payload = format!("__JANE_REQUEUE__\t{}\t{}\n", index, url.unwrap_or_default());
-        stdin
-            .write_all(payload.as_bytes())
-            .map_err(|err| format!("Failed to send requeue to engine: {err}"))?;
-        stdin
-            .flush()
-            .map_err(|err| format!("Failed to flush engine stdin: {err}"))?;
-        Ok(true)
+        let clean_url: String = url
+            .unwrap_or_default()
+            .chars()
+            .filter(|ch| !matches!(ch, '\r' | '\n' | '\t'))
+            .collect();
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut stdin = stdin_arc.lock().map_err(|_| "Engine stdin is locked.")?;
+            let payload = format!("__JANE_REQUEUE__\t{index}\t{clean_url}\n");
+            stdin
+                .write_all(payload.as_bytes())
+                .map_err(|err| format!("Failed to send requeue to engine: {err}"))?;
+            stdin
+                .flush()
+                .map_err(|err| format!("Failed to flush engine stdin: {err}"))?;
+            Ok(true)
+        })
+        .await
+        .map_err(|err| format!("Task execution error: {err}"))?
     } else {
         Ok(false)
     }

@@ -26,6 +26,7 @@ import type {
   MediaKind,
   SessionSummary,
 } from "./inprogress/types";
+import { cleanPath, isAbsolutePath, joinPath } from "../utils/paths";
 
 export type {
   InProgressBatchSummary,
@@ -338,10 +339,12 @@ export function InProgressView({
     return undefined;
   }
 
+  const scopedDeletedKey = (itemId: string) => `${currentJobId || "default"}:${itemId}`;
+
   // Remaining active items excluding deleted ones
   const remainingItems = useMemo(
-    () => items.filter((it) => !deletedItemIds.has(it.id)),
-    [items, deletedItemIds]
+    () => items.filter((it) => !deletedItemIds.has(`${currentJobId || "default"}:${it.id}`)),
+    [items, deletedItemIds, currentJobId]
   );
   const totalCount = remainingItems.length;
   const doneCount = useMemo(
@@ -523,17 +526,10 @@ export function InProgressView({
     }
   }
 
-  function cleanPath(value: string) {
-    return value.trim().replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "");
-  }
-
   function getItemFullPath(item: InProgressItem): string | undefined {
     // 1. If item.outputPath is already an absolute path, clean and return it
-    if (item.outputPath) {
-      const cleaned = cleanPath(item.outputPath);
-      if (cleaned.includes(":\\") || cleaned.startsWith("/") || cleaned.startsWith("\\\\")) {
-        return cleaned;
-      }
+    if (item.outputPath && isAbsolutePath(item.outputPath)) {
+      return cleanPath(item.outputPath);
     }
 
     // 2. Check historyItems for exact disk exportPath
@@ -553,8 +549,8 @@ export function InProgressView({
         return histExport;
       }
       // If history entry is a directory containing this item
-      if (itemFilename && !/\.[a-zA-Z0-9]{2,5}$/.test(histExport)) {
-        return `${histExport.replace(/[\\/]+$/, "")}\\${item.outputPath}`;
+      if (item.outputPath && itemFilename && !/\.[a-zA-Z0-9]{2,5}$/.test(histExport)) {
+        return joinPath(histExport, item.outputPath);
       }
       // Direct match on title if history is a file
       if (hist.fileName && hist.fileName.toLowerCase() === itemTitle && /\.[a-zA-Z0-9]{2,5}$/.test(histExport)) {
@@ -574,11 +570,11 @@ export function InProgressView({
     const raw = item.outputPath || (item.coverPath && !item.coverPath.startsWith("http") && !item.coverPath.startsWith("data:") ? item.coverPath : undefined);
     if (!raw) return dir || undefined;
     const cleaned = cleanPath(raw);
-    if (cleaned.includes(":\\") || cleaned.startsWith("/") || cleaned.startsWith("\\\\")) {
+    if (isAbsolutePath(cleaned)) {
       return cleaned;
     }
     if (!dir) return cleaned;
-    return `${dir.replace(/[\\/]+$/, "")}\\${cleaned}`;
+    return joinPath(dir, cleaned);
   }
 
   async function openItemFile(item: InProgressItem) {
@@ -606,26 +602,29 @@ export function InProgressView({
   }
 
   async function deleteItemFile(item: InProgressItem) {
-    if (deletingItemIds.has(item.id)) return;
+    const itemKey = scopedDeletedKey(item.id);
+    if (deletingItemIds.has(itemKey)) return;
     const fullPath = getItemFullPath(item);
     const root = settings?.outputDir || outputDir || summary.outputDir;
     if (!fullPath) {
       onStatus("No file path available to delete.");
       return;
     }
-    setDeletingItemIds((prev) => new Set(prev).add(item.id));
+    if (!root) {
+      onStatus("No output directory configured to delete this file.");
+      return;
+    }
+    setDeletingItemIds((prev) => new Set(prev).add(itemKey));
     try {
-      if (root) {
-        await bridge.deleteLibraryEntry(root, fullPath);
-      }
-      setDeletedItemIds((prev) => new Set(prev).add(item.id));
+      await bridge.deleteLibraryEntry(root, fullPath);
+      setDeletedItemIds((prev) => new Set(prev).add(itemKey));
       onStatus(`Deleted: ${item.title}`);
     } catch (err) {
       onStatus(`Could not delete file: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setDeletingItemIds((prev) => {
         const next = new Set(prev);
-        next.delete(item.id);
+        next.delete(itemKey);
         return next;
       });
     }
@@ -678,7 +677,6 @@ export function InProgressView({
     hasEvents: events.length > 0,
     isClosePageDisabled,
     isOngoing,
-    isSinglePage: hasNoPages,
     hasOutputDir,
     onNavigateSession: handleNavigateSession,
     onOpenSessionModal: () => setShowSessionModal(true),
@@ -981,7 +979,7 @@ export function InProgressView({
                 preview={getItemPreview(item)}
                 fullPath={getItemFullPath(item)}
                 elapsedMs={getItemElapsedMs(item)}
-                isDeleting={deletingItemIds.has(item.id)}
+                isDeleting={deletingItemIds.has(scopedDeletedKey(item.id))}
                 onContextMenu={handleContextMenu}
                 onImageError={(url) => setFailedImages((prev) => ({ ...prev, [url]: true }))}
                 onStatus={onStatus}
@@ -1002,7 +1000,7 @@ export function InProgressView({
                 preview={getItemPreview(item)}
                 fullPath={getItemFullPath(item)}
                 elapsedMs={getItemElapsedMs(item)}
-                isDeleting={deletingItemIds.has(item.id)}
+                isDeleting={deletingItemIds.has(scopedDeletedKey(item.id))}
                 onContextMenu={handleContextMenu}
                 onImageError={(url) => setFailedImages((prev) => ({ ...prev, [url]: true }))}
                 onStatus={onStatus}

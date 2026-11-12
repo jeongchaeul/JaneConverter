@@ -160,6 +160,7 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
         ) from None
 
     target_browser = normalize_browser_session(browser)
+    is_auto_browser = target_browser == "auto"
     if target_browser and target_browser not in ("auto", "none"):
         candidate_browsers = [target_browser]
     else:
@@ -227,12 +228,14 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                 b_label = f"{b.title()} ({prof})" if prof and prof != "Default" else b.title()
                 tried_browsers.append(b_label)
                 if report:
-                    report(0.15, f"Sign-in required. Using your {b_label} session to retry.", force=True)
-
-                if abort_event and abort_event.is_set():
-                    raise KeyboardInterrupt("Stream extraction aborted by user.")
+                    try:
+                        report(0.15, f"Sign-in required. Using your {b_label} session to retry.", force=True)
+                    except TypeError:
+                        report(0.15, f"Sign-in required. Using your {b_label} session to retry.")
 
                 with authenticated:
+                    if abort_event and abort_event.is_set():
+                        raise KeyboardInterrupt("Stream extraction aborted by user.")
                     try:
                         return extract_with_recovery(authenticated, query, download, abort_event, report, deadline)
                     except Exception as extract_err:
@@ -240,7 +243,7 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                         if "drm" in message or "geo-restricted" in message or "music premium" in message or "premium members" in message or "members-only" in message:
                             raise
                         detail = f"Automatic browser-session retry did not succeed. Check that the source plays in {b_label}, then retry."
-                        if browser == "auto":
+                        if is_auto_browser:
                             last_error = BrowserSessionError(detail)
                             continue
                         raise BrowserSessionError(detail) from None
@@ -248,7 +251,7 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
             except KeyboardInterrupt:
                 raise
             except BrowserSessionError:
-                if browser == "auto":
+                if is_auto_browser:
                     continue
                 raise
             except Exception as error:
@@ -257,7 +260,7 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                 if any(word in message for word in ("cookie database", "decrypt", "dpapi", "keyring", "extract cookies", "cookies from", "load cookies")):
                     b_label = f"{b.title()} ({prof})" if prof and prof != "Default" else b.title()
                     detail = f"yt-dlp could not read the {b_label} session. The browser may be locked or its cookie encryption unsupported. Close it and retry."
-                    if browser == "auto":
+                    if is_auto_browser:
                         last_error = BrowserSessionError(detail)
                         continue
                     raise BrowserSessionError(detail) from None
@@ -291,6 +294,8 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
 
     if tried_browsers:
         detail = f"Automatic browser-session retry did not succeed with {', '.join(b.title() for b in tried_browsers)}. Check that the source plays in your browser, then retry."
+    elif isinstance(last_error, BrowserSessionError):
+        raise last_error
     else:
         detail = f"No usable session for this site was found in any detected browser ({', '.join(b.title() for b in candidate_browsers[:3])}). Sign in there, or use the Browser Extension."
     raise BrowserSessionError(detail) from last_error

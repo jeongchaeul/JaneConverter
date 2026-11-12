@@ -28,38 +28,10 @@ import { motion } from "framer-motion";
 import type { ConversionHistoryItem, ConverterSettings, LibraryEntry } from "../bridge";
 import { bridge } from "../bridge";
 import { detectCategoryFromPath, formatBytes, formatElapsedMs } from "../options";
+import { baseName, isInside, joinPath, parentPath, pathKey } from "../utils/paths";
 
 function size(value: number) {
   return formatBytes(value);
-}
-
-function cleanPath(value: string) {
-  return value.trim().replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "");
-}
-
-function pathKey(value: string) {
-  return cleanPath(value).replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
-}
-
-function isInside(root: string, candidate: string) {
-  const rootKey = pathKey(root);
-  const candidateKey = pathKey(candidate);
-  return candidateKey === rootKey || candidateKey.startsWith(rootKey + "\\");
-}
-
-function parentPath(value: string) {
-  const index = Math.max(value.lastIndexOf("\\"), value.lastIndexOf("/"));
-  return index > 0 ? value.slice(0, index) : value;
-}
-
-function baseName(value: string) {
-  const trimmed = value.replace(/[\\/]+$/, "");
-  const index = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
-  return index >= 0 ? trimmed.slice(index + 1) : trimmed;
-}
-
-function joinPath(parent: string, name: string) {
-  return parent.replace(/[\\/]+$/, "") + "\\" + name;
 }
 
 const HISTORY_PAGE_SIZE = 20;
@@ -199,7 +171,6 @@ export function LibraryView({
   async function loadPreviews(
     scanned: LibraryEntry[],
     libraryRoot: string,
-    token: number,
     isCurrent: () => boolean,
     setPreview: PreviewSetter,
   ) {
@@ -229,7 +200,7 @@ export function LibraryView({
       if (token !== refreshSequence.current) return;
       setEntries(scanned);
       setPreviews({});
-      void loadPreviews(scanned, libraryRoot, token, () => token === refreshSequence.current, setPreviews);
+      void loadPreviews(scanned, libraryRoot, () => token === refreshSequence.current, setPreviews);
     } catch (error) {
       onStatus(error instanceof Error ? error.message : String(error));
     } finally {
@@ -245,7 +216,7 @@ export function LibraryView({
       if (token !== recentRefreshSequence.current) return;
       setRecentEntries(scanned);
       setRecentPreviews({});
-      void loadPreviews(scanned, libraryRoot, token, () => token === recentRefreshSequence.current, setRecentPreviews);
+      void loadPreviews(scanned, libraryRoot, () => token === recentRefreshSequence.current, setRecentPreviews);
     } catch (error) {
       onStatus(error instanceof Error ? error.message : String(error));
     } finally {

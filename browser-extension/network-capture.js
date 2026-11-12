@@ -20,6 +20,9 @@
   }
 
   function sameSite(left, right) {
+    if (globalThis.JaneMediaUtils && typeof globalThis.JaneMediaUtils.sameSite === "function") {
+      return globalThis.JaneMediaUtils.sameSite(left, right);
+    }
     const a = String(left || "").toLowerCase().replace(/\.$/, "");
     const b = String(right || "").toLowerCase().replace(/\.$/, "");
     return Boolean(a && b) && (a === b || a.endsWith("." + b) || b.endsWith("." + a));
@@ -210,10 +213,15 @@
         return;
       }
       await diagnose(state, "network_body_ready", { mediaKind: item.mediaKind, status: item.status, bytes: bytes.byteLength });
-      const bridge = await findConfirmedAccess();
-      const result = await uploadNetworkBytes(bridge, state, item, bytes);
-      await sendDiagnostic(bridge, "upload_complete", { mediaKind: item.mediaKind, bytes: bytes.byteLength });
-      await setBadge(state.tabId, String(Math.min(Number(result && result.captureCount || 1), 99)), "#0f766e");
+      const uploadTask = (state.uploadQueue || Promise.resolve()).then(async function () {
+        if (!state.attached) return;
+        const bridge = await findConfirmedAccess();
+        const result = await uploadNetworkBytes(bridge, state, item, bytes);
+        await sendDiagnostic(bridge, "upload_complete", { mediaKind: item.mediaKind, bytes: bytes.byteLength });
+        await setBadge(state.tabId, String(Math.min(Number(result && result.captureCount || 1), 99)), "#0f766e");
+      });
+      state.uploadQueue = uploadTask.catch(function () {});
+      await uploadTask;
     } catch (error) {
       await diagnose(state, "network_capture_failed", { mediaKind: item.mediaKind, status: item.status, reason: "response body was unavailable" });
       await setBadge(state.tabId, "!", "#be123c");
@@ -322,6 +330,9 @@
       }
       const current = states.get(tabId);
       if (current && current.attached) {
+        if (current.pageUrl !== tab.url) {
+          current.pending.clear();
+        }
         current.pageUrl = tab.url;
         await writeEntry(tabId, {
           enabled: true,

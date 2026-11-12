@@ -51,25 +51,29 @@ pub async fn choose_folder() -> Option<String> {
 }
 
 #[tauri::command]
-pub fn export_log_file(
+pub async fn export_log_file(
     content: String,
     default_filename: Option<String>,
 ) -> Result<Option<String>, String> {
-    let name = default_filename.unwrap_or_else(|| "janeconverter-logs.txt".to_string());
-    let path = FileDialog::new()
-        .set_title("Export Console Logs")
-        .set_file_name(&name)
-        .add_filter("Text File (*.txt)", &["txt"])
-        .add_filter("Log File (*.log)", &["log"])
-        .save_file();
+    tauri::async_runtime::spawn_blocking(move || {
+        let name = default_filename.unwrap_or_else(|| "janeconverter-logs.txt".to_string());
+        let path = FileDialog::new()
+            .set_title("Export Console Logs")
+            .set_file_name(&name)
+            .add_filter("Text File (*.txt)", &["txt"])
+            .add_filter("Log File (*.log)", &["log"])
+            .save_file();
 
-    if let Some(path) = path {
-        fs::write(&path, content.as_bytes())
-            .map_err(|error| format!("Could not save log file: {error}"))?;
-        Ok(Some(path.display().to_string()))
-    } else {
-        Ok(None)
-    }
+        if let Some(path) = path {
+            fs::write(&path, content.as_bytes())
+                .map_err(|error| format!("Could not save log file: {error}"))?;
+            Ok(Some(path.display().to_string()))
+        } else {
+            Ok(None)
+        }
+    })
+    .await
+    .map_err(|error| format!("Task execution error: {error}"))?
 }
 
 fn spawn_system_open(target: &Path) -> Result<(), String> {
@@ -193,7 +197,9 @@ pub fn open_file(path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn open_url(state: State<'_, AppState>, url: String) -> Result<(), String> {
     let value = url.trim();
-    if !(value.starts_with("http://") || value.starts_with("https://")) {
+    let parsed = url::Url::parse(value)
+        .map_err(|_| "Only http and https URLs can be opened.".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
         return Err("Only http and https URLs can be opened.".into());
     }
     let is_active_access_link = state
@@ -207,16 +213,22 @@ pub fn open_url(state: State<'_, AppState>, url: String) -> Result<(), String> {
         })
         .unwrap_or(false);
 
-    let parsed = url::Url::parse(value).map_err(|_| "Invalid URL.".to_string())?;
+    let is_local_ipv4 = |ip: &std::net::Ipv4Addr| {
+        ip.is_loopback() || ip.is_unspecified() || ip.is_private() || ip.is_link_local()
+    };
     let is_local_host = match parsed.host() {
         Some(url::Host::Domain(domain)) => {
-            let d = domain.to_ascii_lowercase();
+            let d = domain.trim_end_matches('.').to_ascii_lowercase();
             d == "localhost" || d.ends_with(".localhost") || d.ends_with(".local")
         }
-        Some(url::Host::Ipv4(ip)) => {
-            ip.is_loopback() || ip.is_unspecified() || ip.is_private() || ip.is_link_local()
+        Some(url::Host::Ipv4(ip)) => is_local_ipv4(&ip),
+        Some(url::Host::Ipv6(ip)) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || (ip.segments()[0] & 0xfe00) == 0xfc00
+                || (ip.segments()[0] & 0xffc0) == 0xfe80
+                || ip.to_ipv4_mapped().is_some_and(|v4| is_local_ipv4(&v4))
         }
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback() || ip.is_unspecified(),
         None => true,
     };
     if !is_active_access_link && is_local_host {

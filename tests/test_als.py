@@ -167,3 +167,14 @@ def test_parse_als_rejects_xml_entities_and_gzip_bombs(monkeypatch):
     oversized_payload = gzip.compress(b"<Ableton>" + (b"A" * 4096) + b"</Ableton>")
     with pytest.raises(AlsParseError, match="exceeds maximum ceiling"):
         parse_als(oversized_payload)
+
+
+def test_migrate_als_file_overwrite_creates_backup_in_place(tmp_path):
+    source_file = tmp_path / "InPlace.als"
+    source_file.write_bytes(_create_sample_als_bytes())
+    summary = migrate_als_file(str(source_file), target_version="11", overwrite=True)
+    assert summary["outputPath"] == os.path.abspath(str(source_file))
+    assert summary["backupPath"] == os.path.abspath(f"{source_file}.backup")
+    assert os.path.isfile(summary["backupPath"])
+    assert parse_als_file(summary["backupPath"]).detected_major == 12
+    assert parse_als_file(str(source_file)).detected_major == 11

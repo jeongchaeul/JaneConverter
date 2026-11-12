@@ -373,156 +373,158 @@ def sniff_webpage(
     if report:
         report(0.20, f"Probing webpage for media streams: {urllib.parse.urlparse(url).hostname}...")
 
-    session = requests.Session()
-    try:
-        resp = _safe_http_get(url, headers=_DEFAULT_HEADERS, timeout=timeout, session=session)
-        if resp.status_code >= 400:
-            return None
-        html_content = resp.text
-        effective_url = resp.url if isinstance(getattr(resp, "url", None), str) and resp.url else url
-    except Exception:
-        return None
-
-    # Extract title
-    title = "Web Media"
-    m_title = re.search(r"<title[^>]*>(.*?)</title>", html_content, re.IGNORECASE | re.DOTALL)
-    if m_title:
-        title = _clean_title(m_title.group(1))
-    else:
-        m_og_title = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', html_content, re.IGNORECASE)
-        if m_og_title:
-            title = _clean_title(m_og_title.group(1))
-
-    # Extract thumbnail
-    thumb_url = ""
-    m_thumb = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html_content, re.IGNORECASE)
-    if m_thumb:
-        thumb_url = urllib.parse.urljoin(effective_url, m_thumb.group(1).strip())
-
-    headers = {"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": effective_url}
-
-    # 1. Look for HLS / DASH stream manifests
-    stream_url = _find_stream_in_html(html_content, effective_url)
-    if stream_url:
-        ext = "mpd" if ".mpd" in stream_url.lower() else "m3u8"
-        if report:
-            report(0.35, f"Discovered live stream manifest ({ext.upper()}): {stream_url[:60]}...")
-        return SniffedAsset(
-            asset_url=stream_url,
-            asset_kind="stream",
-            extension=ext,
-            title=title,
-            source_page=effective_url,
-            headers=headers,
-            thumbnail_url=thumb_url,
-        )
-
-    # 2. Look for 3D model assets
-    model_match = _find_model_in_html(html_content, effective_url)
-    if model_match:
-        m_url, m_ext = model_match
-        if report:
-            report(0.35, f"Discovered 3D model asset ({m_ext.upper()}): {m_url[:60]}...")
-        return SniffedAsset(
-            asset_url=m_url,
-            asset_kind="model",
-            extension=m_ext,
-            title=title,
-            source_page=effective_url,
-            headers=headers,
-            thumbnail_url=thumb_url,
-        )
-
-    # 3. Look for nested embedded player iframes
-    iframe_matches = _IFRAME_PATTERN.findall(html_content)
-    for iframe_src in iframe_matches[:4]:
-        resolved_iframe = urllib.parse.urljoin(effective_url, iframe_src.strip())
-        if not is_public_http_url(resolved_iframe):
-            continue
+    with requests.Session() as session:
         try:
-            if report:
-                report(0.30, f"Inspecting embedded player iframe: {urllib.parse.urlparse(resolved_iframe).hostname}...")
-            iframe_resp = _safe_http_get(
-                resolved_iframe,
-                headers={"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": effective_url},
-                timeout=8.0,
-                session=session,
-            )
-            if iframe_resp.status_code < 400:
-                nested_stream = _find_stream_in_html(iframe_resp.text, iframe_resp.url)
-                if nested_stream:
-                    ext = "mpd" if ".mpd" in nested_stream.lower() else "m3u8"
-                    return SniffedAsset(
-                        asset_url=nested_stream,
-                        asset_kind="stream",
-                        extension=ext,
-                        title=title,
-                        source_page=effective_url,
-                        headers={"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": resolved_iframe},
-                        thumbnail_url=thumb_url,
-                    )
-                nested_model = _find_model_in_html(iframe_resp.text, iframe_resp.url)
-                if nested_model:
-                    m_url, m_ext = nested_model
-                    return SniffedAsset(
-                        asset_url=m_url,
-                        asset_kind="model",
-                        extension=m_ext,
-                        title=title,
-                        source_page=effective_url,
-                        headers={"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": resolved_iframe},
-                        thumbnail_url=thumb_url,
-                    )
+            resp = _safe_http_get(url, headers=_DEFAULT_HEADERS, timeout=timeout, session=session)
+            if resp.status_code >= 400:
+                return None
+            html_content = resp.text
+            effective_url = resp.url if isinstance(getattr(resp, "url", None), str) and resp.url else url
         except Exception:
-            continue
+            return None
 
-    # 4. Look for direct HTML5 video element
-    video_url = _find_direct_video_in_html(html_content, effective_url)
-    if video_url:
-        ext = "webm" if ".webm" in video_url.lower() else "mp4"
-        return SniffedAsset(
-            asset_url=video_url,
-            asset_kind="video",
-            extension=ext,
-            title=title,
-            source_page=effective_url,
-            headers=headers,
-            thumbnail_url=thumb_url,
-        )
+        # Extract title
+        title = "Web Media"
+        m_title = re.search(r"<title[^>]*>(.*?)</title>", html_content, re.IGNORECASE | re.DOTALL)
+        if m_title:
+            title = _clean_title(m_title.group(1))
+        else:
+            m_og_title = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', html_content, re.IGNORECASE)
+            if m_og_title:
+                title = _clean_title(m_og_title.group(1))
 
-    # 5. Look for direct HTML5 audio element
-    audio_match = _find_direct_audio_in_html(html_content, effective_url)
-    if audio_match:
-        a_url, a_ext = audio_match
-        if report:
-            report(0.35, f"Discovered direct audio track ({a_ext.upper()}): {a_url[:60]}...")
-        return SniffedAsset(
-            asset_url=a_url,
-            asset_kind="audio",
-            extension=a_ext,
-            title=title,
-            source_page=effective_url,
-            headers=headers,
-            thumbnail_url=thumb_url,
-        )
+        # Extract thumbnail
+        thumb_url = ""
+        m_thumb = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html_content, re.IGNORECASE)
+        if m_thumb:
+            candidate_thumb = urllib.parse.urljoin(effective_url, m_thumb.group(1).strip())
+            if is_public_http_url(candidate_thumb):
+                thumb_url = candidate_thumb
 
-    # 6. Deep inspection of JSON Hydration state (Next.js, Nuxt, Redux initial state)
-    hydration_match = _find_in_hydration_json(html_content, effective_url)
-    if hydration_match:
-        h_url, h_kind, h_ext = hydration_match
-        if report:
-            report(0.35, f"Discovered hydration media ({h_kind.upper()} / {h_ext.upper()}): {h_url[:60]}...")
-        return SniffedAsset(
-            asset_url=h_url,
-            asset_kind=h_kind,
-            extension=h_ext,
-            title=title,
-            source_page=effective_url,
-            headers=headers,
-            thumbnail_url=thumb_url,
-        )
+        headers = {"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": effective_url}
 
-    return None
+        # 1. Look for HLS / DASH stream manifests
+        stream_url = _find_stream_in_html(html_content, effective_url)
+        if stream_url:
+            ext = "mpd" if ".mpd" in stream_url.lower() else "m3u8"
+            if report:
+                report(0.35, f"Discovered live stream manifest ({ext.upper()}): {stream_url[:60]}...")
+            return SniffedAsset(
+                asset_url=stream_url,
+                asset_kind="stream",
+                extension=ext,
+                title=title,
+                source_page=effective_url,
+                headers=headers,
+                thumbnail_url=thumb_url,
+            )
+
+        # 2. Look for 3D model assets
+        model_match = _find_model_in_html(html_content, effective_url)
+        if model_match:
+            m_url, m_ext = model_match
+            if report:
+                report(0.35, f"Discovered 3D model asset ({m_ext.upper()}): {m_url[:60]}...")
+            return SniffedAsset(
+                asset_url=m_url,
+                asset_kind="model",
+                extension=m_ext,
+                title=title,
+                source_page=effective_url,
+                headers=headers,
+                thumbnail_url=thumb_url,
+            )
+
+        # 3. Look for nested embedded player iframes
+        iframe_matches = _IFRAME_PATTERN.findall(html_content)
+        for iframe_src in iframe_matches[:4]:
+            resolved_iframe = urllib.parse.urljoin(effective_url, iframe_src.strip())
+            if not is_public_http_url(resolved_iframe):
+                continue
+            try:
+                if report:
+                    report(0.30, f"Inspecting embedded player iframe: {urllib.parse.urlparse(resolved_iframe).hostname}...")
+                iframe_resp = _safe_http_get(
+                    resolved_iframe,
+                    headers={"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": effective_url},
+                    timeout=8.0,
+                    session=session,
+                )
+                if iframe_resp.status_code < 400:
+                    nested_stream = _find_stream_in_html(iframe_resp.text, iframe_resp.url)
+                    if nested_stream:
+                        ext = "mpd" if ".mpd" in nested_stream.lower() else "m3u8"
+                        return SniffedAsset(
+                            asset_url=nested_stream,
+                            asset_kind="stream",
+                            extension=ext,
+                            title=title,
+                            source_page=effective_url,
+                            headers={"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": resolved_iframe},
+                            thumbnail_url=thumb_url,
+                        )
+                    nested_model = _find_model_in_html(iframe_resp.text, iframe_resp.url)
+                    if nested_model:
+                        m_url, m_ext = nested_model
+                        return SniffedAsset(
+                            asset_url=m_url,
+                            asset_kind="model",
+                            extension=m_ext,
+                            title=title,
+                            source_page=effective_url,
+                            headers={"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": resolved_iframe},
+                            thumbnail_url=thumb_url,
+                        )
+            except Exception:
+                continue
+
+        # 4. Look for direct HTML5 video element
+        video_url = _find_direct_video_in_html(html_content, effective_url)
+        if video_url:
+            ext = "webm" if ".webm" in video_url.lower() else "mp4"
+            return SniffedAsset(
+                asset_url=video_url,
+                asset_kind="video",
+                extension=ext,
+                title=title,
+                source_page=effective_url,
+                headers=headers,
+                thumbnail_url=thumb_url,
+            )
+
+        # 5. Look for direct HTML5 audio element
+        audio_match = _find_direct_audio_in_html(html_content, effective_url)
+        if audio_match:
+            a_url, a_ext = audio_match
+            if report:
+                report(0.35, f"Discovered direct audio track ({a_ext.upper()}): {a_url[:60]}...")
+            return SniffedAsset(
+                asset_url=a_url,
+                asset_kind="audio",
+                extension=a_ext,
+                title=title,
+                source_page=effective_url,
+                headers=headers,
+                thumbnail_url=thumb_url,
+            )
+
+        # 6. Deep inspection of JSON Hydration state (Next.js, Nuxt, Redux initial state)
+        hydration_match = _find_in_hydration_json(html_content, effective_url)
+        if hydration_match:
+            h_url, h_kind, h_ext = hydration_match
+            if report:
+                report(0.35, f"Discovered hydration media ({h_kind.upper()} / {h_ext.upper()}): {h_url[:60]}...")
+            return SniffedAsset(
+                asset_url=h_url,
+                asset_kind=h_kind,
+                extension=h_ext,
+                title=title,
+                source_page=effective_url,
+                headers=headers,
+                thumbnail_url=thumb_url,
+            )
+
+        return None
 
 
 def download_sniffed_asset(
@@ -540,12 +542,14 @@ def download_sniffed_asset(
         if progress_callback:
             progress_callback(max(0.0, min(1.0, pct)), msg)
 
+    from .paths import sanitize_filename
     safe_title = _clean_title(asset.title) or "Captured Media"
+    safe_stem = os.path.splitext(sanitize_filename(safe_title))[0] or "captured_media"
 
     # --- Case 1: Adaptive HLS / DASH stream ---
     if asset.asset_kind == "stream":
         report(0.40, f"Connecting to stream manifest ({asset.extension.upper()})...")
-        output_file = os.path.join(output_dir, f"{safe_title}.mp4")
+        output_file = os.path.join(output_dir, f"{safe_stem}.mp4")
 
         # Build FFmpeg command with network-only protocol whitelist & sanitized stream headers
         from .constants import SAFE_FFMPEG_PROTOCOLS
@@ -569,16 +573,25 @@ def download_sniffed_asset(
             output_file,
         ]
 
+        if abort_event and abort_event.is_set():
+            raise KeyboardInterrupt("Stream download aborted by user.")
         report(0.55, "Remuxing high-definition media stream to MP4...")
         returncode, _, err_msg = run_subprocess_binary(cmd, capture_output=True)
 
         if returncode != 0 or not os.path.isfile(output_file) or os.path.getsize(output_file) == 0:
+            if os.path.exists(output_file):
+                try:
+                    os.remove(output_file)
+                except OSError:
+                    pass
+            if abort_event and abort_event.is_set():
+                raise KeyboardInterrupt("Stream download aborted by user.")
             # Try yt-dlp fallback for streams with complex authentication
             report(0.60, "FFmpeg direct remux failed; engaging multi-threaded stream pipeline...")
             import yt_dlp
             ydl_opts = {
                 "format": "bestvideo+bestaudio/best",
-                "outtmpl": os.path.join(output_dir, f"{safe_title}.%(ext)s"),
+                "outtmpl": os.path.join(output_dir, f"{safe_stem}.%(ext)s"),
                 "http_headers": safe_headers,
                 "quiet": True,
                 "no_warnings": True,
@@ -615,20 +628,36 @@ def download_sniffed_asset(
     is_model = asset.asset_kind == "model"
     label = "3D model asset" if is_model else "media file"
     report(0.40, f"Downloading {label} ({asset.extension.upper()})...")
-    dest_file = os.path.join(output_dir, f"{safe_title}.{asset.extension}")
+    dest_file = os.path.join(output_dir, f"{safe_stem}.{asset.extension}")
     resp = _safe_http_get(asset.asset_url, headers=asset.headers, stream=True, timeout=30)
-    resp.raise_for_status()
-    total = int(resp.headers.get("content-length") or 0)
-    downloaded = 0
-    with open(dest_file, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=64 * 1024):
-            if abort_event and abort_event.is_set():
-                raise KeyboardInterrupt(f"{'3D model' if is_model else 'Media'} download cancelled.")
-            if chunk:
-                f.write(chunk)
-                downloaded += len(chunk)
-                if total > 0:
-                    report(0.40 + 0.45 * (downloaded / total), f"Downloaded {downloaded // 1024} KB of {total // 1024} KB...")
+    try:
+        resp.raise_for_status()
+        try:
+            total = int(resp.headers.get("content-length") or 0)
+        except (ValueError, TypeError):
+            total = 0
+        downloaded = 0
+        try:
+            with open(dest_file, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=64 * 1024):
+                    if abort_event and abort_event.is_set():
+                        raise KeyboardInterrupt(f"{'3D model' if is_model else 'Media'} download cancelled.")
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total > 0:
+                            report(0.40 + 0.45 * (downloaded / total), f"Downloaded {downloaded // 1024} KB of {total // 1024} KB...")
+        except BaseException:
+            if os.path.exists(dest_file):
+                try:
+                    os.remove(dest_file)
+                except OSError:
+                    pass
+            raise
+    finally:
+        close_fn = getattr(resp, "close", None)
+        if callable(close_fn):
+            close_fn()
 
     report(0.90, f"{'3D model' if is_model else 'Media file'} saved: {os.path.basename(dest_file)}")
     return {

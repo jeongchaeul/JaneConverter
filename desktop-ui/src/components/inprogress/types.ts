@@ -1,5 +1,3 @@
-import type { Category } from "../../bridge";
-
 export type MediaKind = "audio" | "video" | "image";
 export type InProgressItemStatus = "queued" | "downloading" | "transcoding" | "ready" | "failed";
 

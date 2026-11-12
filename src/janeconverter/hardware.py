@@ -17,8 +17,6 @@ from .constants import VAAPI_ENCODER_ARGS, VIDEO_QUALITY_SETTINGS
 
 _encoder_cache: Dict[Optional[str], Dict[str, Any]] = {}
 _encoder_cache_lock = threading.Lock()
-_gpu_probe_cache: Dict[str, bool] = {}
-_gpu_probe_lock = threading.Lock()
 
 def get_host_gpus() -> list:
     """

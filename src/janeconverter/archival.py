@@ -26,9 +26,43 @@ logger = logging.getLogger(__name__)
 ARCHIVE_TIMEOUT = 2.5
 
 _ARCHIVAL_CACHE: Dict[str, Optional['ArchivalStreamResult']] = {}
+_ARCHIVAL_CACHE_LOCK = threading.Lock()
+_MAX_ARCHIVAL_CACHE_ENTRIES = 128
 _DISK_CACHE_LOCK = threading.Lock()
 _MAX_DISK_CACHE_ENTRIES = 500
 _DISK_CACHE_MEM: Optional[Dict[str, Any]] = None
+
+
+def _report_progress(
+    report: Optional[Callable[..., None]],
+    progress: float,
+    message: str,
+    *,
+    force: bool = False,
+) -> None:
+    if not report:
+        return
+    if force:
+        try:
+            report(progress, message, force=True)
+            return
+        except TypeError:
+            pass
+    report(progress, message)
+
+
+def _get_cached_archival_result(video_id: str) -> tuple[bool, Optional['ArchivalStreamResult']]:
+    with _ARCHIVAL_CACHE_LOCK:
+        if video_id in _ARCHIVAL_CACHE:
+            return True, _ARCHIVAL_CACHE[video_id]
+    return False, None
+
+
+def _set_cached_archival_result(video_id: str, value: Optional['ArchivalStreamResult']) -> None:
+    with _ARCHIVAL_CACHE_LOCK:
+        if len(_ARCHIVAL_CACHE) >= _MAX_ARCHIVAL_CACHE_ENTRIES and video_id not in _ARCHIVAL_CACHE:
+            _ARCHIVAL_CACHE.pop(next(iter(_ARCHIVAL_CACHE)))
+        _ARCHIVAL_CACHE[video_id] = value
 
 
 def _get_disk_cache_path() -> str:
@@ -128,8 +162,20 @@ def _save_to_disk_cache(video_id: str, res: Optional['ArchivalStreamResult']) ->
             cache_dir = os.path.dirname(os.path.abspath(disk_path))
             os.makedirs(cache_dir, exist_ok=True)
             with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=cache_dir, delete=False) as tf:
-                json.dump(data, tf, separators=(",", ":"))
                 temp_name = tf.name
+                try:
+                    json.dump(data, tf, separators=(",", ":"))
+                except Exception:
+                    try:
+                        tf.close()
+                    except OSError:
+                        pass
+                    if os.path.exists(temp_name):
+                        try:
+                            os.remove(temp_name)
+                        except OSError:
+                            pass
+                    raise
             try:
                 os.replace(temp_name, disk_path)
             finally:
@@ -144,7 +190,8 @@ def _save_to_disk_cache(video_id: str, res: Optional['ArchivalStreamResult']) ->
 
 def clear_archival_cache() -> None:
     global _DISK_CACHE_MEM
-    _ARCHIVAL_CACHE.clear()
+    with _ARCHIVAL_CACHE_LOCK:
+        _ARCHIVAL_CACHE.clear()
     disk_path = _get_disk_cache_path()
     with _DISK_CACHE_LOCK:
         _DISK_CACHE_MEM = None
@@ -427,9 +474,15 @@ def query_archive_org_collections(
                         or doc.get("title")
                         or f"Archived YouTube Video ({video_id})"
                     )
+                    collection_val = doc.get("collection")
+                    if isinstance(collection_val, list):
+                        resolved_collection = str(collection_val[0]) if collection_val else ""
+                    else:
+                        resolved_collection = str(collection_val or "")
                     resolved_uploader = (
                         metadata.uploader
-                        or doc.get("collection", ["Internet Archive"])[0]
+                        or resolved_collection
+                        or "Internet Archive"
                     )
                     return ArchivalStreamResult(
                         found=True,
@@ -588,18 +641,18 @@ def probe_archival_vaults(
     if not video_id:
         return None
 
-    if video_id in _ARCHIVAL_CACHE:
-        return _ARCHIVAL_CACHE[video_id]
+    hit, cached_val = _get_cached_archival_result(video_id)
+    if hit:
+        return cached_val
 
     disk_entry = _load_from_disk_cache(video_id)
     if disk_entry is not None:
         is_cached, cached_res = disk_entry
         if is_cached:
-            _ARCHIVAL_CACHE[video_id] = cached_res
+            _set_cached_archival_result(video_id, cached_res)
             return cached_res
 
-    if report:
-        report(0.16, f"Initiating Archival Recovery Protocol for '{video_id}'...", force=True)
+    _report_progress(report, 0.16, f"Initiating Archival Recovery Protocol for '{video_id}'...", force=True)
 
     if parallel:
         return _probe_archival_vaults_concurrent(video_id, report=report)
@@ -612,33 +665,30 @@ def _probe_archival_vaults_concurrent(
 ) -> Optional[ArchivalStreamResult]:
     """Execute metadata discovery and stream vault probing concurrently."""
     metadata_placeholder = ArchivalMetadata(video_id=video_id)
+    timeout = ARCHIVE_TIMEOUT + 0.5
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="jc_archival")
+    fut_meta = executor.submit(lookup_historical_metadata, video_id, None)
+    fut_ia = executor.submit(query_archive_org_collections, video_id, metadata_placeholder, None)
+    fut_ga = executor.submit(query_ghostarchive, video_id, metadata_placeholder, None)
+    fut_wb = executor.submit(query_wayback_machine_stream, video_id, metadata_placeholder, None)
+    futures = [fut_meta, fut_ia, fut_ga, fut_wb]
+    try:
+        concurrent.futures.wait(futures, timeout=timeout)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="jc_archival") as executor:
-        fut_meta = executor.submit(lookup_historical_metadata, video_id, None)
-        fut_ia = executor.submit(query_archive_org_collections, video_id, metadata_placeholder, None)
-        fut_ga = executor.submit(query_ghostarchive, video_id, metadata_placeholder, None)
-        fut_wb = executor.submit(query_wayback_machine_stream, video_id, metadata_placeholder, None)
-
-        timeout = ARCHIVE_TIMEOUT + 0.5
+    def _safe_result(fut, default=None):
+        if not fut.done() or fut.cancelled():
+            return default
         try:
-            metadata = fut_meta.result(timeout=timeout)
+            return fut.result()
         except Exception:
-            metadata = metadata_placeholder
+            return default
 
-        try:
-            ia_res = fut_ia.result(timeout=timeout)
-        except Exception:
-            ia_res = None
-
-        try:
-            ga_res = fut_ga.result(timeout=timeout)
-        except Exception:
-            ga_res = None
-
-        try:
-            wb_res = fut_wb.result(timeout=timeout)
-        except Exception:
-            wb_res = None
+    metadata = _safe_result(fut_meta, metadata_placeholder) or metadata_placeholder
+    ia_res = _safe_result(fut_ia, None)
+    ga_res = _safe_result(fut_ga, None)
+    wb_res = _safe_result(fut_wb, None)
 
     chosen = None
     if ia_res and ia_res.found:
@@ -658,20 +708,19 @@ def _probe_archival_vaults_concurrent(
         if metadata.duration and not chosen.duration:
             chosen.duration = metadata.duration
 
-        if report:
-            report(0.40, f"Found preserved media in {chosen.source_name}!", force=True)
-        _ARCHIVAL_CACHE[video_id] = chosen
+        _report_progress(report, 0.40, f"Found preserved media in {chosen.source_name}!", force=True)
+        _set_cached_archival_result(video_id, chosen)
         _save_to_disk_cache(video_id, chosen)
         return chosen
 
-    if report:
-        meta_info = f"'{metadata.title}'" if metadata.title else f"ID {video_id}"
-        report(
-            0.45,
-            f"Archival search complete: no preserved video streams found across public archives for {meta_info}.",
-            force=True,
-        )
-    _ARCHIVAL_CACHE[video_id] = None
+    meta_info = f"'{metadata.title}'" if metadata.title else f"ID {video_id}"
+    _report_progress(
+        report,
+        0.45,
+        f"Archival search complete: no preserved video streams found across public archives for {meta_info}.",
+        force=True,
+    )
+    _set_cached_archival_result(video_id, None)
     _save_to_disk_cache(video_id, None)
     return None
 
@@ -683,8 +732,9 @@ def _probe_archival_vaults_sequential(
     """Sequential discovery ladder (Archive.org -> Ghostarchive -> Wayback Machine)."""
     # Phase 1: Metadata Fingerprinting
     metadata = lookup_historical_metadata(video_id, report=report)
-    if metadata.title and report:
-        report(
+    if metadata.title:
+        _report_progress(
+            report,
             0.22,
             f"Identified original metadata via {metadata.source_service}: '{metadata.title}'"
             + (f" by {metadata.uploader}" if metadata.uploader else ""),
@@ -694,37 +744,34 @@ def _probe_archival_vaults_sequential(
     # Phase 2: Direct Media Stream Recovery
     res = query_archive_org_collections(video_id, metadata, report=report)
     if res and res.found:
-        if report:
-            report(0.40, f"Found preserved media in Internet Archive item '{res.item_identifier}'!", force=True)
-        _ARCHIVAL_CACHE[video_id] = res
+        _report_progress(report, 0.40, f"Found preserved media in Internet Archive item '{res.item_identifier}'!", force=True)
+        _set_cached_archival_result(video_id, res)
         _save_to_disk_cache(video_id, res)
         return res
 
     res = query_ghostarchive(video_id, metadata, report=report)
     if res and res.found:
-        if report:
-            report(0.40, "Found preserved media in Ghostarchive vault!", force=True)
-        _ARCHIVAL_CACHE[video_id] = res
+        _report_progress(report, 0.40, "Found preserved media in Ghostarchive vault!", force=True)
+        _set_cached_archival_result(video_id, res)
         _save_to_disk_cache(video_id, res)
         return res
 
     res = query_wayback_machine_stream(video_id, metadata, report=report)
     if res and res.found:
-        if report:
-            report(0.40, f"Found capture in {res.source_name}!", force=True)
-        _ARCHIVAL_CACHE[video_id] = res
+        _report_progress(report, 0.40, f"Found capture in {res.source_name}!", force=True)
+        _set_cached_archival_result(video_id, res)
         _save_to_disk_cache(video_id, res)
         return res
 
-    if report:
-        meta_info = f"'{metadata.title}'" if metadata.title else f"ID {video_id}"
-        report(
-            0.45,
-            f"Archival search complete: no preserved video streams found across public archives for {meta_info}.",
-            force=True,
-        )
+    meta_info = f"'{metadata.title}'" if metadata.title else f"ID {video_id}"
+    _report_progress(
+        report,
+        0.45,
+        f"Archival search complete: no preserved video streams found across public archives for {meta_info}.",
+        force=True,
+    )
 
-    _ARCHIVAL_CACHE[video_id] = None
+    _set_cached_archival_result(video_id, None)
     _save_to_disk_cache(video_id, None)
     return None
 
@@ -742,7 +789,7 @@ def download_archival_stream(
 
     os.makedirs(output_dir, exist_ok=True)
     ext = (stream_result.ext or "mp4").lstrip(".")
-    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", stream_result.item_identifier or "archived_media")
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", stream_result.item_identifier or "archived_media").strip("._") or "archived_media"
     dest_filename = f"{safe_id}.{ext}"
     dest_path = os.path.join(output_dir, dest_filename)
 
@@ -762,7 +809,10 @@ def download_archival_stream(
             if resp.status_code not in (200, 206):
                 raise RuntimeError(f"Failed to download archival stream from {stream_result.source_name} (HTTP {resp.status_code})")
 
-            total_len = int(resp.headers.get("content-length") or 0)
+            try:
+                total_len = int(resp.headers.get("content-length") or 0)
+            except (ValueError, TypeError):
+                total_len = 0
             downloaded = 0
             try:
                 with open(dest_path, "wb") as f:

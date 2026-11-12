@@ -18,7 +18,6 @@ import socket
 import json
 import html
 import requests
-import yt_dlp
 from .paths import get_ytdlp_cache_dir
 from .session_pacer import pace_request
 from .catalog_match import choose_catalog_match, match_score
@@ -30,11 +29,21 @@ from .auth import (
     normalize_browser_error_message,
 )
 from .converter import get_js_runtimes_config
-from .instagram_patch import patch_instagram_story_extractor
-from .facebook_patch import patch_facebook_story_extractor
 
-patch_instagram_story_extractor()
-patch_facebook_story_extractor()
+
+def _get_yt_dlp() -> Any:
+    mod = globals().get("yt_dlp")
+    if mod is None:
+        import yt_dlp as _yt_dlp
+        globals()["yt_dlp"] = _yt_dlp
+        return _yt_dlp
+    return mod
+
+
+def __getattr__(name: str) -> Any:
+    if name == "yt_dlp":
+        return _get_yt_dlp()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class _AuthenticatedYtdlpLogger:
@@ -482,26 +491,22 @@ def download_and_convert_thumbnail(thumbnail_url: str, output_path: str) -> Opti
             for _ in range(MAX_REDIRECTS + 1):
                 if not _is_safe_public_url(current_url):
                     return None
-                resp = session.get(current_url, stream=True, timeout=12, allow_redirects=False)
-                if resp.status_code in (301, 302, 303, 307, 308):
-                    location = resp.headers.get("Location")
-                    resp.close()
-                    if not location:
-                        return None
-                    current_url = urllib.parse.urljoin(current_url, location)
-                    continue
-                if resp.status_code != 200:
-                    resp.close()
-                    return None
-
-                for chunk in resp.iter_content(chunk_size=65536):
-                    if not chunk:
+                with session.get(current_url, stream=True, timeout=12, allow_redirects=False) as resp:
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        location = resp.headers.get("Location")
+                        if not location:
+                            return None
+                        current_url = urllib.parse.urljoin(current_url, location)
                         continue
-                    downloaded_bytes.extend(chunk)
-                    if len(downloaded_bytes) > MAX_THUMBNAIL_BYTES:
-                        resp.close()
+                    if resp.status_code != 200:
                         return None
-                resp.close()
+
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        if not chunk:
+                            continue
+                        downloaded_bytes.extend(chunk)
+                        if len(downloaded_bytes) > MAX_THUMBNAIL_BYTES:
+                            return None
                 break
             else:
                 return None
@@ -594,7 +599,7 @@ def _fetch_tiktok_direct(
     abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     report: Optional[Callable[[float, str], None]] = None,
-    preexisting_stream_files: Optional[Dict[str, Any]] = None,
+    save_cover_art: bool = True,
 ) -> Dict[str, Any]:
     """Brute-force direct extraction for TikTok videos bypassing web WAF blocks.
 
@@ -685,7 +690,9 @@ def _fetch_tiktok_direct(
     if not stream_url:
         raise ValueError("Direct TikTok extractor returned no playable stream URL.")
 
-    if stream_url.startswith("/"):
+    if stream_url.startswith("//"):
+        stream_url = f"https:{stream_url}"
+    elif stream_url.startswith("/"):
         stream_url = f"https://www.tikwm.com{stream_url}"
 
     base_label = sanitize_filename(f"{artist} - {title}"[:60] if artist else title[:60]) or f"tiktok_{data.get('id', 'video')}"
@@ -753,7 +760,7 @@ def _fetch_tiktok_direct(
         raise FileNotFoundError(f"Failed to stream direct TikTok media to {target_filename}")
 
     thumbnail_local_path = None
-    if cover_url:
+    if save_cover_art and cover_url:
         local_thumb_file = os.path.join(output_dir, "cover.jpg")
         try:
             thumbnail_local_path = download_and_convert_thumbnail(cover_url, local_thumb_file)
@@ -846,6 +853,16 @@ def resolve_youtube_oembed_metadata(source_url: str) -> Dict[str, str]:
         }
     except Exception:
         return {}
+
+
+def _ensure_yt_dlp_patches() -> None:
+    """Lazily apply yt-dlp runtime patches only when extraction is actually invoked."""
+    from .cookie_unlocker import patch_yt_dlp_cookie_database_reader
+    from .instagram_patch import patch_instagram_story_extractor
+    from .facebook_patch import patch_facebook_story_extractor
+    patch_yt_dlp_cookie_database_reader()
+    patch_instagram_story_extractor()
+    patch_facebook_story_extractor()
 
 
 def fetch_media_stream(
@@ -986,7 +1003,7 @@ def fetch_media_stream(
 
     # 1. Local File
     if source_type == "local_file":
-        if not os.path.exists(source):
+        if not os.path.isfile(source):
             raise FileNotFoundError(f"Local file not found at: '{source}'")
         base = os.path.splitext(os.path.basename(source))[0]
         report(1.0, f"Loaded local file: {os.path.basename(source)}")
@@ -1225,7 +1242,8 @@ def fetch_media_stream(
         recovery_deadline = time.monotonic() + 60
         if is_url(source):
             pace_request(source, abort_event=abort_event)
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        _ensure_yt_dlp_patches()
+        with _get_yt_dlp().YoutubeDL(ydl_opts) as ydl:
             logger_inst = ydl_opts.get("logger")
             # Fast-path: Download directly from pre-resolved media manifest without querying platform API
             if pre_extracted_info and isinstance(pre_extracted_info, dict):
@@ -1362,7 +1380,7 @@ def fetch_media_stream(
                         abort_event=abort_event,
                         progress_callback=progress_callback,
                         report=report,
-                        preexisting_stream_files=preexisting_stream_files,
+                        save_cover_art=save_cover_art,
                     )
                 # 1. Standalone Native Page Sniffer (skip on YouTube and permanently removed media)
                 if (
@@ -1521,7 +1539,6 @@ def fetch_media_stream(
                 abort_event=abort_event,
                 progress_callback=progress_callback,
                 report=report,
-                preexisting_stream_files=preexisting_stream_files,
             )
         if archival_fallback and not archival_attempted:
             archival_attempted = True
@@ -1543,7 +1560,6 @@ def fetch_media_stream(
                     abort_event=abort_event,
                     progress_callback=progress_callback,
                     report=report,
-                    preexisting_stream_files=preexisting_stream_files,
                 )
             except Exception as direct_err:
                 raise RuntimeError(f"Stream extraction failed: {str(e)} (Direct extractor: {direct_err})") from e
@@ -1555,8 +1571,6 @@ def fetch_media_stream(
                 return download_archival_stream(
                     arc_res, output_dir, abort_event=abort_event, progress_callback=progress_callback
                 )
-        if auth_browser and isinstance(e, BrowserSessionError):
-            raise RuntimeError(describe_authenticated_extraction_failure(auth_browser, e)) from e
         raise RuntimeError(f"Stream extraction failed: {str(e)}") from e
 
 def fetch_playlist_entries(
@@ -1696,7 +1710,8 @@ def fetch_playlist_entries(
     try:
         if is_url(clean_url):
             pace_request(clean_url)
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        _ensure_yt_dlp_patches()
+        with _get_yt_dlp().YoutubeDL(ydl_opts) as ydl:
             report(0.3, "Extracting playlist index and track listings...")
             info = extract_with_browser_fallback(
                 ydl, ydl_opts, clean_url, download=False, browser=effective_auth_browser,
@@ -1827,8 +1842,8 @@ def fetch_playlist_entries(
                 "entries": entries
             }
     except Exception as e:
-        if auth_browser:
+        if allow_browser_cookies and effective_auth_browser != "none":
             raise RuntimeError(
-                describe_authenticated_extraction_failure(auth_browser, e, subject="playlist")
+                describe_authenticated_extraction_failure(effective_auth_browser, e, subject="playlist")
             ) from e
         raise RuntimeError(f"Playlist extraction failed: {str(e)}") from e

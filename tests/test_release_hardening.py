@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 
 from janeconverter import cli
-from janeconverter.events import BoundedLogQueue, CoalescingCallbackQueue
 from janeconverter.extractor import identify_source_type, is_playlist_url
 from janeconverter import updater
 from janeconverter.updater import check_and_apply_all_updates, update_engine
@@ -15,27 +14,6 @@ from janeconverter.cli import CLI_CATEGORIES, media_library_folder, _metadata_fo
 
 def test_source_updater_resolves_repository_root():
     assert (Path(updater.REPO_DIR) / "pyproject.toml").is_file()
-
-
-def test_progress_queue_coalesces_and_bounds_callbacks():
-    events = CoalescingCallbackQueue(max_callbacks=2)
-    values = []
-    for value in range(100_000):
-        events.put(lambda v=value: values.append(v), key="progress")
-    callbacks = events.drain(max_items=10)
-    for callback in callbacks:
-        callback()
-    assert values == [99_999]
-    assert events.qsize() == 0
-
-
-def test_log_queue_drops_under_pressure_and_batches():
-    logs = BoundedLogQueue(max_items=2)
-    assert logs.put("a")
-    assert logs.put("b")
-    assert not logs.put("c")
-    assert logs.dropped == 1
-    assert logs.get_batch() == ["a", "b"]
 
 
 def test_source_matching_does_not_accept_lookalike_domains():

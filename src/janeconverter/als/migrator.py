@@ -9,6 +9,7 @@ import gzip
 import io
 import os
 import shutil
+import threading
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, Optional, Tuple
 
@@ -83,24 +84,40 @@ def migrate_als_file(
     # Determine destination path
     target_key = normalize_als_target_key(target_version)
     if not output_path:
-        base, ext = os.path.splitext(source_path)
-        output_path = f"{base}_Live{target_key}{ext}"
+        if overwrite:
+            output_path = source_path
+        else:
+            base, ext = os.path.splitext(source_path)
+            output_path = f"{base}_Live{target_key}{ext}"
 
     output_path = os.path.abspath(output_path)
     source_path = os.path.abspath(source_path)
 
     backup_path = None
     if output_path == source_path:
-        if not overwrite:
-            backup_path = f"{source_path}.backup"
-            shutil.copy2(source_path, backup_path)
+        backup_path = f"{source_path}.backup"
+        if os.path.exists(backup_path):
+            idx = 2
+            while os.path.exists(f"{source_path}.backup.{idx}"):
+                idx += 1
+            backup_path = f"{source_path}.backup.{idx}"
+        shutil.copy2(source_path, backup_path)
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    tmp_output = f"{output_path}.tmp"
-    with open(tmp_output, "wb") as f:
-        f.write(migrated_bytes)
-
-    os.replace(tmp_output, output_path)
+    tmp_output = f"{output_path}.tmp.{os.getpid()}.{threading.get_ident()}"
+    try:
+        with open(tmp_output, "wb") as f:
+            f.write(migrated_bytes)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_output, output_path)
+    except Exception:
+        if os.path.exists(tmp_output):
+            try:
+                os.remove(tmp_output)
+            except OSError:
+                pass
+        raise
 
     summary.update({
         "sourcePath": source_path,

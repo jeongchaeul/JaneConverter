@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Check, Clipboard, Download, Filter, Layers, Pause, Play, Search, Square, TerminalSquare, Trash2, X } from "lucide-react";
+import { ArrowDown, Clipboard, Download, Filter, Layers, Pause, Play, Search, Square, TerminalSquare, Trash2, X } from "lucide-react";
 import { bridge, type Category, type ConverterEvent, type ConversionHistoryItem, type ConverterSettings } from "../bridge";
 import { InProgressView } from "./InProgressView";
 import { extractDistinctJobIds } from "./inprogress/parser";
@@ -156,13 +156,14 @@ export function ConsoleView({
   }, [processedEvents, isTruncated, lineLimit]);
 
   // Auto-scroll to bottom on new logs when autoScroll is active
+  const latestVisibleEvent = visibleEvents[visibleEvents.length - 1];
   useEffect(() => {
     if (!autoScroll || userHasScrolledUp) return;
     const el = logContainerRef.current;
     if (el) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [visibleEvents.length, autoScroll, userHasScrolledUp]);
+  }, [visibleEvents.length, latestVisibleEvent, autoScroll, userHasScrolledUp]);
 
   function handleScroll() {
     const el = logContainerRef.current;

@@ -85,22 +85,22 @@ Stress-tested under the Rule of 7 and actively verified across releases:
 
 | Platform | Supported Media | Extraction Route | Status |
 | :--- | :--- | :--- | :--- |
-| **YouTube, SoundCloud** | Audio, Video, Playlists | yt-dlp + bundled Node.js runtime | Verified on v2.3.5 (Oct 2026) |
-| **Spotify, Apple Music** | Tracks, Albums, Playlists | Catalog Metadata + Public Stream Matching | Verified on v2.3.5 (Oct 2026) |
-| **Instagram** | Photos, Reels, Audio | Guest Scraper & Internal API + Video Handoff | Verified on v2.3.5 (Oct 2026) |
-| **Facebook** | Photos, Albums, Reels | Sandboxed Guest View + Grid Scraper | Verified on v2.3.5 (Oct 2026) |
-| **Stories (IG / FB)** | Ephemeral Stories, Video Segments | Signed-in session (Session Recovery, opt-in) | Verified on v2.3.5 (Oct 2026) |
-| **TikTok** | Photos, Slideshows, Videos, Audio | Direct Stream Extractor + yt-dlp fallback | Verified on v2.3.5 (Oct 2026) |
-| **Pinterest** | Pins, Collections (`news_hub`), Boards | Direct API / Candidate Probe + CDN Fallback | Verified on v2.3.5 (Oct 2026) |
-| **X/Twitter** | Photos, Galleries, Videos | Direct Extractor / Guest Scraper | Verified on v2.3.5 (Oct 2026) |
-| **Reddit** | Videos, Audio, Galleries, Posts | Direct Stream Extractor + Guest Scraper | Verified on v2.3.5 (Oct 2026) |
+| **YouTube, SoundCloud** | Audio, Video, Playlists | yt-dlp + bundled Node.js runtime | Verified on v2.3.6 (Nov 2026) |
+| **Spotify, Apple Music** | Tracks, Albums, Playlists | Catalog Metadata + Public Stream Matching | Verified on v2.3.6 (Nov 2026) |
+| **Instagram** | Photos, Reels, Audio | Guest Scraper & Internal API + Video Handoff | Verified on v2.3.6 (Nov 2026) |
+| **Facebook** | Photos, Albums, Reels | Sandboxed Guest View + Grid Scraper | Verified on v2.3.6 (Nov 2026) |
+| **Stories (IG / FB)** | Ephemeral Stories, Video Segments | Signed-in session (Session Recovery, opt-in) | Verified on v2.3.6 (Nov 2026) |
+| **TikTok** | Photos, Slideshows, Videos, Audio | Direct Stream Extractor + yt-dlp fallback | Verified on v2.3.6 (Nov 2026) |
+| **Pinterest** | Pins, Collections (`news_hub`), Boards | Direct API / Candidate Probe + CDN Fallback | Verified on v2.3.6 (Nov 2026) |
+| **X/Twitter** | Photos, Galleries, Videos | Direct Extractor / Guest Scraper | Verified on v2.3.6 (Nov 2026) |
+| **Reddit** | Videos, Audio, Galleries, Posts | Direct Stream Extractor + Guest Scraper | Verified on v2.3.6 (Nov 2026) |
 
 ### Universal Open Web & Adult / 18+ Ingestion (Unrestricted)
 JaneConverter is **not restricted to the platforms above**. Its ingestion engine is inherently universal:
 - **Thousands of Unlisted & Niche Websites:** Powered by `yt-dlp`'s 1,800+ extractors, a generic media stream sniffer, and HLS (`.m3u8`) / DASH manifest assemblers.
 - **Adult & 18+ Platforms:** Natively supports and downloads from adult platforms (Pornhub, XVideos, SpankBang, RedTube, Chaturbate recordings, etc.) via underlying stream engines.
 - **Operational Reality:** Outside Tier 1 certified sites, open web and adult sites are expected to work out of the box via generic extraction without individual per-site certification.
-- **Browser Bridge Sniffing:** For sites with aggressive bot guards or custom web players, clicking **Send to JaneConverter** in the Browser Bridge pipes authenticated streams directly from your active browser tab.
+- **Browser Bridge Sniffing:** For sites with aggressive bot guards or custom web players, clicking **Capture current media** (or **Enable Network Compatibility Mode**) in the Browser Bridge pipes authenticated streams directly from your active browser tab.
 
 ---
 
@@ -145,7 +145,7 @@ Python, FFmpeg, FFprobe, and Node.js runtimes are bundled into standalone releas
 
 ```bash
 # Setup
-uv sync
+uv sync --locked
 cd desktop-ui && npm ci
 
 # Run Desktop UI in development

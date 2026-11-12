@@ -33,6 +33,7 @@ from .extractor import (
     identify_source_type, is_ephemeral_story_url,
 )
 from .session_pacer import pace_request
+from .constants import HARDWARE_VIDEO_FORMATS
 from .converter import (
     convert_media,
     SUPPORTED_AUDIO_FORMATS,
@@ -437,8 +438,8 @@ def process_conversion(
     work_dir = os.path.join(DEFAULT_TEMP_DIR, f"job_{job_id}")
     os.makedirs(work_dir, exist_ok=True)
 
-    enc_info = get_best_hardware_encoder()
-    gpu_desc = f"{enc_info['short_name']} ({enc_info['encoder_label']})" if active_gpu and enc_info["has_gpu"] else "CPU Multi-Core"
+    enc_info = get_best_hardware_encoder() if (active_gpu and target_format in HARDWARE_VIDEO_FORMATS) else {"has_gpu": False}
+    gpu_desc = f"{enc_info['short_name']} ({enc_info['encoder_label']})" if active_gpu and enc_info.get("has_gpu") else "CPU Multi-Core"
 
     print("=" * 60)
     print("[*] JANECONVERTER PIPELINE")
@@ -635,6 +636,7 @@ def process_playlist_conversion(
     """
     if abort_event and abort_event.is_set():
         raise KeyboardInterrupt("Playlist conversion aborted by user.")
+    target_format = target_format.lower().strip(".")
 
     if check_updates:
         _print_available_updates("Update")
@@ -690,8 +692,8 @@ def process_playlist_conversion(
             print(f"[*] Adaptive Engine: Rate-sensitive {reason} detected. Adapting to safe sequential execution to prevent session throttling.", flush=True)
             worker_count = 1
 
-    enc_info = get_best_hardware_encoder()
-    gpu_desc = f"{enc_info['short_name']} ({enc_info['encoder_label']})" if active_gpu and enc_info["has_gpu"] else "CPU Multi-Core"
+    enc_info = get_best_hardware_encoder() if (active_gpu and target_format in HARDWARE_VIDEO_FORMATS) else {"has_gpu": False}
+    gpu_desc = f"{enc_info['short_name']} ({enc_info['encoder_label']})" if active_gpu and enc_info.get("has_gpu") else "CPU Multi-Core"
 
     print("=" * 60)
     print("[*] JANECONVERTER PLAYLIST BATCH PIPELINE")
@@ -740,6 +742,7 @@ def process_playlist_conversion(
     last_report = [0.0, 0.0]
     track_progress = [0.0] * total_items
     completed_counter = [0]
+    counted_indices: set[int] = set()
 
     def report_overall(frac: float, msg: str, force: bool = False):
         with progress_lock:
@@ -921,7 +924,9 @@ def process_playlist_conversion(
 
             with progress_lock:
                 track_progress[i] = 1.0
-                completed_counter[0] += 1
+                if i not in counted_indices:
+                    counted_indices.add(i)
+                    completed_counter[0] += 1
                 overall_frac = sum(track_progress) / total_items
                 done = completed_counter[0]
 
@@ -958,7 +963,9 @@ def process_playlist_conversion(
 
             with progress_lock:
                 track_progress[i] = 1.0
-                completed_counter[0] += 1
+                if i not in counted_indices:
+                    counted_indices.add(i)
+                    completed_counter[0] += 1
                 overall_frac = sum(track_progress) / total_items
                 done = completed_counter[0]
 
@@ -1005,7 +1012,9 @@ def process_playlist_conversion(
             with progress_lock:
                 if orig_i < len(track_progress):
                     track_progress[orig_i] = 0.0
-                completed_counter[0] = max(0, completed_counter[0] - 1)
+                if orig_i in counted_indices:
+                    counted_indices.remove(orig_i)
+                    completed_counter[0] = max(0, completed_counter[0] - 1)
 
             # Filter out if already in pending_queue to prevent duplicates
             filtered = [item for item in pending_queue if item[1].get("index", item[0] + 1) != req_idx]
@@ -1169,7 +1178,7 @@ def process_playlist_conversion(
                     source_duration=stream_info.get("duration") or entry.get("duration"),
                 )
                 converted_files.append(result_path)
-                failed_files = [f for f in failed_files if f.get("index") != idx]
+                failed_files[:] = [f for f in failed_files if f.get("index") != idx]
                 print(f"[+] Adapted & Converted: {os.path.basename(result_path)}", flush=True)
             except Exception as retry_err:
                 print(f"[!] Adaptive Pass: Track #{idx} '{raw_title}' could not be resolved: {retry_err}", flush=True)
@@ -1437,7 +1446,7 @@ def main():
     parser.add_argument("--hardware-snapshot-json", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--hardware-target-pid", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--validate-browser-capture", help=argparse.SUPPRESS)
-    parser.add_argument("--capture-kind", choices=("image", "audio", "video"), help=argparse.SUPPRESS)
+    parser.add_argument("--capture-kind", choices=("image", "audio", "video", "stream", "model"), help=argparse.SUPPRESS)
     parser.add_argument("--compatibility-info", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--flp-inspect", help="Inspect an FL Studio project (.flp) and output JSON metadata")
     parser.add_argument("--flp-downgrade", help="Downgrade an FL Studio project (.flp) to a target version")
@@ -1650,13 +1659,16 @@ def main():
     else:
         refresh_callback = None
         if facebook_photo_manifest is not None and args.facebook_capture_id:
+            fb_rpc_lock = threading.Lock()
+
             def request_facebook_refresh(photo_id: str) -> list[str]:
                 request_id = uuid.uuid4().hex
-                print(
-                    f"__JANE_FB_REFRESH__{request_id}\t{photo_id}",
-                    flush=True,
-                )
-                response_line = sys.stdin.readline()
+                with fb_rpc_lock:
+                    print(
+                        f"__JANE_FB_REFRESH__{request_id}\t{photo_id}",
+                        flush=True,
+                    )
+                    response_line = sys.stdin.readline()
                 if not response_line:
                     return []
                 try:

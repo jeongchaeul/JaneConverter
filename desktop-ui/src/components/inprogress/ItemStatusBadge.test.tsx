@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { ItemStatusBadge, formatBriefError } from "./ItemStatusBadge";
 import type { InProgressItem } from "./types";
 
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 describe("formatBriefError", () => {
   it("formats unavailable and dead videos", () => {
     expect(formatBriefError("ERROR: [youtube] lmjDIUDNyDE: This video is not available")).toBe("Failed: Unavailable");

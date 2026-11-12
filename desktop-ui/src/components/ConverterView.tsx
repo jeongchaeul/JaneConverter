@@ -1,40 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertCircle,
   ArrowDownToLine,
   CheckCircle2,
-  ChevronDown,
-  Clapperboard,
   Clipboard,
   Copy,
   ExternalLink,
-  FileAudio,
-  FileImage,
   FilePlus2,
   Files,
-  FileVideo,
   FolderOpen,
   Inbox,
   Info,
   Layers,
-  Link2,
   ListMusic,
   ListPlus,
-  LoaderCircle,
-  LockKeyhole,
   Music2,
-  Pause,
-  Play,
   RefreshCw,
-  RotateCcw,
   ShieldAlert,
   ShieldCheck,
-  Square,
-  Trash2,
-  Wand2,
   X,
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import type { AccessStatus, Category, ConverterEvent, ConverterSettings, FetchedMedia, PlaylistCatalog, RuntimeInfo } from "../bridge";
 import { bridge } from "../bridge";
 import {
@@ -42,14 +27,11 @@ import {
   detectCategoryFromPath,
   formatsFor,
   imageFormats,
-  imageQualityLabel,
   intentPresets,
   type IntentPreset,
   qualitiesFor,
-  resolutionLabel,
   resolutions,
   videoFormats,
-  videoQualityLabel,
 } from "../options";
 import { PlaylistDialog } from "./PlaylistDialog";
 import { FlpConverterView } from "./FlpConverterView";
@@ -59,7 +41,6 @@ import { ConverterQueue } from "./converter/ConverterQueue";
 import { ActionBar } from "./converter/ActionBar";
 import { ParametersPanel } from "./converter/ParametersPanel";
 import {
-  type SocialPhotoPlatform,
   socialPhotoPlatformLabel,
   isEphemeralStoryUrl,
   extractInstagramProfileUser,
@@ -70,7 +51,6 @@ import {
   socialPhotoPlatform,
   normalizeDroppedPath,
 } from "./converter/routeUtils";
-import { SelectField, Toggle } from "./converter/FormControls";
 
 export { isEphemeralStoryUrl, groupIndexesByPreset };
 export type { QueueItem };
@@ -90,8 +70,6 @@ export function ConverterView({
   onCancel,
   onPauseToggle,
   onCaptureBusyChange,
-  onCreateAccess,
-  onClearAccess,
   accentColor = "#c52b68",
   onStatus,
   onError,
@@ -118,8 +96,6 @@ export function ConverterView({
   onCancel: () => Promise<void>;
   onPauseToggle?: () => Promise<void> | void;
   onCaptureBusyChange?: (busy: boolean, cancelCapture?: (() => Promise<void>) | null) => void;
-  onCreateAccess: (source: string) => Promise<AccessStatus>;
-  onClearAccess: () => Promise<void>;
   onStatus: (message: string) => void;
   onError: (message: string) => void;
 }) {
@@ -133,12 +109,8 @@ export function ConverterView({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const presetBaselineRef = useRef<ConverterSettings | null>(null);
-  const [accessBusy, setAccessBusy] = useState(false);
-  const [accessNotice, setAccessNotice] = useState("");
-  const [accessNoticeTone, setAccessNoticeTone] = useState<"neutral" | "success" | "error">("neutral");
   const [facebookCaptureBusy, setFacebookCaptureBusy] = useState(false);
   const facebookCaptureIdRef = useRef<string | null>(null);
-  const facebookPostLink = isFacebookPostLink(source);
   const [socialCaptureBusy, setSocialCaptureBusy] = useState(false);
   const socialCaptureIdRef = useRef<string | null>(null);
   const [localPaused, setLocalPaused] = useState(false);
@@ -148,7 +120,6 @@ export function ConverterView({
   const [queueRunning, setQueueRunning] = useState(false);
   const activeQueueItemIdRef = useRef<string | null>(null);
   const isStartingQueueRef = useRef(false);
-  const lastHandledEventRef = useRef<ConverterEvent | null>(null);
   const [configuringQueueItem, setConfiguringQueueItem] = useState<QueueItem | null>(null);
   const [loadingQueueConfig, setLoadingQueueConfig] = useState(false);
   const [completedItem, setCompletedItem] = useState<{ name: string; path?: string } | null>(null);
@@ -194,20 +165,6 @@ export function ConverterView({
       onSettings({ ...settings, format: formats[0], bitrate: qualitiesFor(formats[0], activeCategory)[0] });
     }
   }, [formats, settings, onSettings]);
-
-  useEffect(() => {
-    if (access.bridgeConnected) {
-      setAccessBusy(false);
-      setAccessNotice(`Browser capture received through ${access.browser || "your browser"}. The selected media is ready to convert.`);
-      setAccessNoticeTone("success");
-      return;
-    }
-    if (access.browser) {
-      setAccessBusy(false);
-      setAccessNotice(`Access confirmed in ${access.browser}. Open the JaneConverter Browser Capture extension and capture the visible media before converting.`);
-      setAccessNoticeTone("success");
-    }
-  }, [access.bridgeConnected, access.browser]);
 
   useEffect(() => {
     if (!selectedCapture?.mediaKind) return;
@@ -529,9 +486,6 @@ export function ConverterView({
     setQueue((curr) =>
       curr.map((item) => (item.id === targetItem.id ? { ...item, status: "converting", progress: 0.05 } : item))
     );
-    if (targetItem.settingsSnapshot) {
-      onSettings(targetItem.settingsSnapshot);
-    }
 
     executeConversion(targetItem.source, targetItem.playlistIndexes, undefined, targetItem.settingsSnapshot)
       .then((started) => {
@@ -933,67 +887,6 @@ export function ConverterView({
     }
   }
 
-  async function createAccess() {
-    setAccessBusy(true);
-    const sourceUrl = source.trim();
-    setAccessNotice(sourceUrl ? "Creating a temporary access page and opening your browser..." : "Creating a browser capture session and opening your browser...");
-    setAccessNoticeTone("neutral");
-    try {
-      const nextAccess = await onCreateAccess(sourceUrl);
-      if (nextAccess.browser) {
-        setAccessNotice(`Access page opened in ${nextAccess.browser}. Confirm access there, then use the Browser Capture extension to capture the visible media.`);
-        setAccessNoticeTone("success");
-      } else {
-        setAccessNotice("Access page opened. Direct brute-force extraction is active in JaneConverter; no localhost website required.");
-        setAccessNoticeTone("neutral");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setAccessNotice(message);
-      setAccessNoticeTone("error");
-    } finally {
-      setAccessBusy(false);
-    }
-  }
-
-  async function clearAccess() {
-    setAccessBusy(true);
-    try {
-      await onClearAccess();
-      setAccessNotice("Account access cleared. Future conversions will use public-only extraction.");
-      setAccessNoticeTone("neutral");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setAccessNotice(message);
-      setAccessNoticeTone("error");
-    } finally {
-      setAccessBusy(false);
-    }
-  }
-
-  async function copyAccessLink() {
-    try {
-      await navigator.clipboard.writeText(access.link);
-      setAccessNotice("Temporary access link copied to the clipboard.");
-      setAccessNoticeTone("success");
-    } catch {
-      setAccessNotice("The link could not be copied. Use Open link instead.");
-      setAccessNoticeTone("error");
-    }
-  }
-
-  async function openAccessLink() {
-    try {
-      await bridge.openUrl(access.link);
-      setAccessNotice("Access page opened in your browser.");
-      setAccessNoticeTone("neutral");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setAccessNotice(message);
-      setAccessNoticeTone("error");
-    }
-  }
-
   async function convert(indexes?: string, customPreset?: IntentPreset) {
     if (isOperationActive) {
       if (!source.trim() && !access.bridgeConnected) {
@@ -1037,6 +930,7 @@ export function ConverterView({
   async function cancelSocialPhotoCapture() {
     const captureId = socialCaptureIdRef.current;
     if (!captureId) return;
+    socialCaptureIdRef.current = null;
     try {
       await bridge.cancelSocialPostPhotos(captureId);
       onStatus("Public photo capture aborted.");
@@ -1402,7 +1296,6 @@ export function ConverterView({
       <ConverterQueue
         queue={queue}
         queueRunning={queueRunning}
-        running={running}
         onStartQueue={() => {
           if (!running) {
             setQueue((curr) =>
@@ -1542,8 +1435,6 @@ export function ConverterView({
         pendingQueueCount={queue.filter((it) => it.status === "queued").length}
         onConvert={() => void convert()}
         source={source}
-        facebookCaptureBusy={facebookCaptureBusy}
-        socialCaptureBusy={socialCaptureBusy}
         onAddToQueue={() => addToQueue()}
         effectivePaused={effectivePaused}
         onPauseToggle={() => void handlePauseToggle()}
@@ -1620,7 +1511,6 @@ export function ConverterView({
                 )
               );
             } else {
-              const targetIdx = queue.findIndex((it) => it.id === configuringQueueItem.id);
               const newItems: QueueItem[] = groups.map((g, idx) => ({
                 id: idx === 0 ? configuringQueueItem.id : crypto.randomUUID(),
                 source: configuringQueueItem.source,
@@ -1645,6 +1535,8 @@ export function ConverterView({
                   : configuringQueueItem.settingsSnapshot,
               }));
               setQueue((curr) => {
+                const targetIdx = curr.findIndex((it) => it.id === configuringQueueItem.id);
+                if (targetIdx < 0) return curr;
                 const next = [...curr];
                 next.splice(targetIdx, 1, ...newItems);
                 return next;
@@ -1665,6 +1557,7 @@ export function ConverterView({
               type="button"
               className="subtle-button px-3 py-1"
               onClick={() => {
+                setLoadingPlaylist(false);
                 setLoadingQueueConfig(false);
                 void bridge.cancelPlaylist().catch((error) => onError(String(error)));
               }}

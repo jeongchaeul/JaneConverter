@@ -80,6 +80,8 @@ pub fn validate_post_url(value: &str) -> Result<Url, String> {
     let path = url.path().to_ascii_lowercase();
     let query = url.query().unwrap_or_default().to_ascii_lowercase();
     if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
         || !(host == "facebook.com" || host.ends_with(".facebook.com"))
         || !(path.starts_with("/share/")
             || path.contains("/permalink/")
@@ -94,32 +96,6 @@ pub fn validate_post_url(value: &str) -> Result<Url, String> {
         return Err("Paste a public Facebook post link to capture its photos.".into());
     }
     Ok(url)
-}
-
-#[allow(dead_code)]
-pub fn is_video_conversion_intent(category: &str, format: &str) -> bool {
-    category.eq_ignore_ascii_case("video")
-        && matches!(
-            format.to_ascii_lowercase().as_str(),
-            "source"
-                | "original"
-                | "mp4"
-                | "mkv"
-                | "webm"
-                | "mov"
-                | "avi"
-                | "flv"
-                | "m4v"
-                | "ts"
-                | "m2ts"
-                | "mpeg"
-                | "mpg"
-                | "vob"
-                | "3gp"
-                | "wmv"
-                | "asf"
-                | "gif"
-        )
 }
 
 pub fn is_facebook_navigation(value: &str) -> bool {
@@ -259,14 +235,6 @@ mod tests {
         assert!(validate_post_url("https://www.facebook.com/media/set/?set=pcb.123").is_ok());
         assert!(validate_post_url("http://www.facebook.com/share/p/abc123/").is_err());
         assert!(validate_post_url("https://example.com/posts/123").is_err());
-    }
-
-    #[test]
-    fn direct_video_conversion_requires_a_video_intent_and_container() {
-        assert!(is_video_conversion_intent("Video", "mp4"));
-        assert!(is_video_conversion_intent("Video", "source"));
-        assert!(!is_video_conversion_intent("Image", "mp4"));
-        assert!(!is_video_conversion_intent("Video", "mp3"));
     }
 
     #[test]

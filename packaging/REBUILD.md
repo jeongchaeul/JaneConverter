@@ -180,7 +180,7 @@ cd ..
 uv run --locked pytest tests/test_consumer_packaging.py
 
 # Lint Python engine
-uv run --locked pyflakes src/janeconverter packaging/engine_entry.py
+uv run --locked pyflakes src/janeconverter packaging/engine_entry.py packaging/create_updater_manifest.py packaging/smoke_test_engine.py packaging/build_browser_bridge.py packaging/set_version.py packaging/monitor_ci.py
 
 # Run hermetic test suite
 uv run --locked pytest tests/ -v

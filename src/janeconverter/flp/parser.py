@@ -46,11 +46,11 @@ def parse_flp_stream(stream: BinaryIO, total_len: int) -> FLPProject:
     if len(flhd_len_raw) < 4:
         raise FLPParseError("Truncated FLhd header length.")
     flhd_len = struct.unpack("<I", flhd_len_raw)[0]
-    if flhd_len < 6:
-        raise FLPParseError(f"Invalid FLhd chunk length: {flhd_len} (minimum 6 bytes required).")
+    if flhd_len < 6 or flhd_len > max(0, total_len - 8):
+        raise FLPParseError(f"Invalid FLhd chunk length: {flhd_len}.")
 
     flhd_data = stream.read(flhd_len)
-    if len(flhd_data) < 6:
+    if len(flhd_data) < flhd_len:
         raise FLPParseError("Truncated FLhd chunk payload.")
 
     fmt, channels, ppq = struct.unpack("<HHH", flhd_data[:6])
@@ -61,9 +61,11 @@ def parse_flp_stream(stream: BinaryIO, total_len: int) -> FLPProject:
         chunk_magic = stream.read(4)
         if not chunk_magic:
             break
+        if len(chunk_magic) < 4:
+            raise FLPParseError(f"Truncated chunk header: {chunk_magic!r}")
         chunk_len_raw = stream.read(4)
         if len(chunk_len_raw) < 4:
-            break
+            raise FLPParseError(f"Truncated chunk length for {chunk_magic!r}.")
         chunk_len = struct.unpack("<I", chunk_len_raw)[0]
         remaining = total_len - stream.tell()
         if chunk_len > remaining:
@@ -73,6 +75,8 @@ def parse_flp_stream(stream: BinaryIO, total_len: int) -> FLPProject:
 
         if chunk_magic == b"FLdt":
             chunk_bytes = stream.read(chunk_len)
+            if len(chunk_bytes) < chunk_len:
+                raise FLPParseError("Truncated FLdt chunk payload.")
             data_stream = io.BytesIO(chunk_bytes)
             while True:
                 ev_id_byte = data_stream.read(1)

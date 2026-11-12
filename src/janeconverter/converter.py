@@ -564,6 +564,26 @@ def adapt_ffmpeg_command(cmd: list[str], stderr: bytes | str | None) -> Optional
     return mutated if changed else None
 
 
+def _normalize_lossy_audio_bitrate(value: Optional[str], default: str = "320k") -> str:
+    """Resolve UI/preset labels (e.g. 'auto', 'balanced') to a concrete FFmpeg -b:a bitrate."""
+    candidate = (value or "").strip().lower()
+    if re.fullmatch(r"\d+(?:\.\d+)?[km]", candidate):
+        return candidate
+    if re.fullmatch(r"\d+", candidate):
+        return f"{candidate}k" if int(candidate) <= 1024 else candidate
+    preset_map = {
+        "best": "320k",
+        "high": "256k",
+        "balanced": "192k",
+        "small": "128k",
+        "auto": default,
+        "original": default,
+        "source": default,
+        "copy": default,
+    }
+    return preset_map.get(candidate, default)
+
+
 def build_ffmpeg_args(
     input_path: str,
     output_path: str,
@@ -605,7 +625,7 @@ def build_ffmpeg_args(
             cmd.extend(["-to", end_time])
         cmd.extend(["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS])
         cmd.extend(["-i", input_path])
-        can_embed_art = has_valid_cover and target_format in ("mp3", "flac", "m4a", "aac")
+        can_embed_art = has_valid_cover and target_format in ("mp3", "flac", "m4a")
         if can_embed_art:
             cmd.extend(["-i", cover_path])
             cmd.extend(["-map", "0:a", "-map", "1:v"])
@@ -634,7 +654,7 @@ def build_ffmpeg_args(
         return cmd
 
     # Determine if target container format supports attached picture stream
-    can_embed_art = has_valid_cover and target_format in ("mp3", "flac", "m4a", "aac")
+    can_embed_art = has_valid_cover and target_format in ("mp3", "flac", "m4a")
 
     ffmpeg_bin = get_ffmpeg_binary()
     cmd = [ffmpeg_bin, "-y", "-nostdin", "-hide_banner", "-loglevel", "info" if normalize_audio else "error"]
@@ -729,8 +749,9 @@ def build_ffmpeg_args(
             cmd.extend(["-ar", str(sample_rate)])
 
         # Codecs and cover art mapping
+        lossy_bitrate = _normalize_lossy_audio_bitrate(bitrate)
         if target_format == "mp3":
-            cmd.extend(["-c:a", "libmp3lame", "-b:a", bitrate, "-cutoff", "20000"])
+            cmd.extend(["-c:a", "libmp3lame", "-b:a", lossy_bitrate, "-cutoff", "20000"])
             if not normalize_audio:
                 cmd.extend(["-compression_level", "4"])
             if can_embed_art:
@@ -749,7 +770,7 @@ def build_ffmpeg_args(
             if can_embed_art:
                 cmd.extend(["-c:v", "copy", "-disposition:v", "attached_pic"])
         elif target_format in ("aac", "m4a"):
-            cmd.extend(["-c:a", "aac", "-b:a", bitrate, "-cutoff", "20000"])
+            cmd.extend(["-c:a", "aac", "-b:a", lossy_bitrate, "-cutoff", "20000"])
             if can_embed_art:
                 cmd.extend(["-c:v", "copy", "-disposition:v", "attached_pic"])
         elif target_format == "ogg":
@@ -758,17 +779,17 @@ def build_ffmpeg_args(
             )
             cmd.extend(["-c:a", "libvorbis", "-q:a", ogg_quality])
         elif target_format == "opus":
-            cmd.extend(["-c:a", "libopus", "-b:a", bitrate])
+            cmd.extend(["-c:a", "libopus", "-b:a", lossy_bitrate])
         elif target_format == "alac":
             cmd.extend(["-c:a", "alac"])
         elif target_format in ("aiff", "aif"):
             cmd.extend(["-c:a", "pcm_s16be"])
         elif target_format == "ac3":
-            cmd.extend(["-c:a", "ac3", "-b:a", bitrate])
+            cmd.extend(["-c:a", "ac3", "-b:a", lossy_bitrate])
         elif target_format == "mp2":
-            cmd.extend(["-c:a", "mp2", "-b:a", bitrate])
+            cmd.extend(["-c:a", "mp2", "-b:a", lossy_bitrate])
         elif target_format == "wma":
-            cmd.extend(["-c:a", "wmav2", "-b:a", bitrate])
+            cmd.extend(["-c:a", "wmav2", "-b:a", lossy_bitrate])
         elif target_format == "caf":
             cmd.extend(["-c:a", "pcm_s16le"])
         elif target_format == "au":
@@ -844,6 +865,9 @@ def build_ffmpeg_args(
                 else:
                     audio_filters.append("pan=stereo|c0 < c0 + 0.707*c2 + 0.5*c4 | c1 < c1 + 0.707*c2 + 0.5*c5")
 
+            if reconstruct_frequency_loss:
+                audio_filters.append("aexciter=freq=7500:ceil=20000:amount=2.5:drive=8.5:blend=0")
+
             if normalize_audio:
                 audio_filters.append(build_loudnorm_filter(measured_loudness))
 
@@ -853,7 +877,7 @@ def build_ffmpeg_args(
             eff_a_bitrate = (audio_bitrate or video_quality.get("audio_bitrate", "original")).lower().strip()
             can_copy_audio = False
             if eff_a_bitrate in ("original", "source", "copy") and not audio_filters and not reconstruct_frequency_loss:
-                info = probed_info if probed_info is not None else (probe_media_streams(input_path) if input_path and os.path.exists(input_path) else None)
+                info = v_info if v_info is not None else (probe_media_streams(input_path) if input_path and os.path.exists(input_path) else None)
                 a_streams = [s for s in (info.get("streams", []) if info else []) if s.get("codec_type") == "audio"]
                 if a_streams:
                     a_codec = (a_streams[0].get("codec_name") or "").lower()
@@ -872,7 +896,7 @@ def build_ffmpeg_args(
                 if can_copy_audio:
                     cmd.extend(["-c:a", "copy"])
                 else:
-                    target_a_bitrate = "320k" if eff_a_bitrate in ("original", "source", "copy") else eff_a_bitrate
+                    target_a_bitrate = _normalize_lossy_audio_bitrate(eff_a_bitrate, "320k")
                     cmd.extend([
                         "-c:a", "libopus",
                         "-b:a", target_a_bitrate
@@ -920,7 +944,7 @@ def build_ffmpeg_args(
                     if can_copy_audio:
                         cmd.extend(["-c:a", "copy"])
                     else:
-                        target_a_bitrate = "320k" if eff_a_bitrate in ("original", "source", "copy") else eff_a_bitrate
+                        target_a_bitrate = _normalize_lossy_audio_bitrate(eff_a_bitrate, "320k")
                         cmd.extend([
                             "-c:a", audio_codec,
                             "-b:a", target_a_bitrate
@@ -1410,13 +1434,13 @@ def _convert_media_impl(
                         duration = float(raw_dur)
                     except (TypeError, ValueError):
                         duration = None
-            if duration is None:
-                duration = probe_media_duration(input_path)
             if (duration is None or duration <= 0) and source_duration and source_duration > 0:
                 try:
                     duration = float(source_duration)
                 except (TypeError, ValueError):
                     pass
+            if duration is None or duration <= 0:
+                duration = probe_media_duration(input_path)
             if duration and duration > 0:
                 s_sec = parse_time_offset_seconds(start_time) if start_time else None
                 e_sec = parse_time_offset_seconds(end_time) if end_time else None
@@ -1611,11 +1635,25 @@ def _convert_media_impl(
                         allow_lossless_png_recovery=allow_lossless_png_recovery,
                         start_time=start_time, end_time=end_time,
                         reconstruct_frequency_loss=reconstruct_frequency_loss,
+                        expected_category=expected_category,
+                        audio_bitrate=audio_bitrate,
+                        source_duration=source_duration,
                         _method_override="cover-normalized", _recovery=_recovery,
                     )
             elif next_method == "universal-transcode":
                 universal_target = "mp4"
                 report(0.75, f"Adaptive Preset Reroute: Specialized video preset failed ({category.value}); rerouting to universal {universal_target.upper()} transcode...")
+                _recovery.start("universal-transcode")
+                universal_recovery = RecoveryCoordinator(
+                    replace(
+                        _recovery.intent,
+                        target_format=universal_target,
+                        quality="balanced",
+                        gpu_allowed=False,
+                        allow_png_fallback=False,
+                    ),
+                    evidence_path=_recovery.evidence_path,
+                )
                 return convert_media(
                     input_path=input_path,
                     output_dir=output_dir,
@@ -1637,18 +1675,33 @@ def _convert_media_impl(
                     start_time=start_time,
                     end_time=end_time,
                     reconstruct_frequency_loss=reconstruct_frequency_loss,
+                    expected_category=expected_category,
+                    audio_bitrate=_normalize_lossy_audio_bitrate(audio_bitrate or "192k", "192k") if audio_bitrate else None,
+                    source_duration=source_duration,
                     _method_override="cpu-transcode",
-                    _recovery=_recovery,
+                    _recovery=universal_recovery,
                 )
             elif next_method == "audio-transcode":
                 audio_target = "flac" if target_format in {"flac", "wav"} else "mp3"
+                audio_quality = "24-bit" if audio_target == "flac" else _normalize_lossy_audio_bitrate(audio_bitrate or "320k", "320k")
                 report(0.75, f"Adaptive Audio Reroute: Audio transcode failed ({category.value}); rerouting to universal {audio_target.upper()}...")
+                _recovery.start("audio-transcode")
+                audio_recovery = RecoveryCoordinator(
+                    replace(
+                        _recovery.intent,
+                        target_format=audio_target,
+                        quality=audio_quality,
+                        gpu_allowed=False,
+                        allow_png_fallback=False,
+                    ),
+                    evidence_path=_recovery.evidence_path,
+                )
                 return convert_media(
                     input_path=input_path,
                     output_dir=output_dir,
                     output_filename=output_filename,
                     target_format=audio_target,
-                    bitrate="320k" if audio_target == "mp3" else "24-bit",
+                    bitrate=audio_quality,
                     sample_rate=sample_rate,
                     normalize_audio=normalize_audio,
                     resolution=resolution,
@@ -1664,8 +1717,11 @@ def _convert_media_impl(
                     start_time=start_time,
                     end_time=end_time,
                     reconstruct_frequency_loss=reconstruct_frequency_loss,
+                    expected_category=expected_category,
+                    audio_bitrate=audio_quality,
+                    source_duration=source_duration,
                     _method_override="cpu-transcode",
-                    _recovery=_recovery,
+                    _recovery=audio_recovery,
                 )
             return convert_media(
                 input_path=input_path,
@@ -1689,6 +1745,9 @@ def _convert_media_impl(
                 start_time=start_time,
                 end_time=end_time,
                 reconstruct_frequency_loss=reconstruct_frequency_loss,
+                expected_category=expected_category,
+                audio_bitrate=audio_bitrate,
+                source_duration=source_duration,
                 _recovery=_recovery,
             )
         try:
@@ -1710,7 +1769,10 @@ def _convert_media_impl(
                 os.remove(destination_path)
             except OSError:
                 pass
-        raise RuntimeError(f"Output validation error: {val_err}") from val_err
+        val_msg = str(val_err)
+        if val_msg.startswith("ValidationFailed:"):
+            raise RuntimeError(val_msg) from val_err
+        raise RuntimeError(f"Output validation error: {val_msg}") from val_err
 
     if len(_recovery.attempts) > 1:
         report(1.0, f"Conversion complete using {method} after bounded recovery: {os.path.basename(destination_path)}")
@@ -1916,14 +1978,15 @@ def convert_media(
                 )
                 if effective_target in {"source", "original", ""} and is_audio_context and has_audio:
                     audio_target = "flac"
+                    target_quality = "24-bit"
                     staged_progress(0.72, f"Preserve Quality fallback: raw stream preservation failed ({error}). Transcoding to lossless {audio_target.upper()}...")
-                    failure = FailureEvidence("source-validation", FailureCategory.VALIDATION, True, "audio:source-validation")
                     _recovery.start("audio-transcode")
                     audio_recovery = RecoveryCoordinator(replace(
-                        _recovery.intent, target_format=audio_target, allow_png_fallback=False,
+                        _recovery.intent, target_format=audio_target, quality=target_quality, allow_png_fallback=False,
                     ), evidence_path=_recovery.evidence_path)
                     staged_path = _convert_media_impl(
-                        **common, target_format=audio_target, allow_stream_copy=False,
+                        **{**common, "bitrate": target_quality, "audio_bitrate": target_quality},
+                        target_format=audio_target, allow_stream_copy=False,
                         allow_lossless_png_recovery=False, _recovery=audio_recovery,
                     )
                     effective_target = audio_target
@@ -1942,14 +2005,15 @@ def convert_media(
                         "wmv": "mp3",
                         "asf": "mp3",
                     }.get(effective_target, "mp3")
+                    target_quality = "24-bit" if audio_target == "flac" else _normalize_lossy_audio_bitrate(audio_bitrate or bitrate, "320k")
                     staged_progress(0.72, f"Adaptive Preset Reroute: Video preset ({effective_target.upper()}) is incompatible with audio-only media. Rerouting to {audio_target.upper()}...")
-                    failure = FailureEvidence("video-preset-validation", FailureCategory.VALIDATION, True, "video:audio-only-source")
                     _recovery.start("audio-transcode")
                     audio_recovery = RecoveryCoordinator(replace(
-                        _recovery.intent, target_format=audio_target, allow_png_fallback=False,
+                        _recovery.intent, target_format=audio_target, quality=target_quality, allow_png_fallback=False,
                     ), evidence_path=_recovery.evidence_path)
                     staged_path = _convert_media_impl(
-                        **common, target_format=audio_target, allow_stream_copy=False,
+                        **{**common, "bitrate": target_quality, "audio_bitrate": target_quality},
+                        target_format=audio_target, allow_stream_copy=False,
                         allow_lossless_png_recovery=False, _recovery=audio_recovery,
                     )
                     effective_target = audio_target

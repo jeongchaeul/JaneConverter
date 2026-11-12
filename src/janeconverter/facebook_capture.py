@@ -21,7 +21,7 @@ from .auth import detect_running_browsers, filter_cookie_jar_for_domains, get_or
 from .cookie_unlocker import patch_yt_dlp_cookie_database_reader
 from .extractor import clean_windows_path, sanitize_filename
 from .image_format import convert_image_format
-from .paths import get_temp_dir, promote_staging_dir
+from .paths import get_temp_dir
 
 
 MAX_PHOTOS = 10000
@@ -106,9 +106,6 @@ def _get_public_photo(session: requests.Session, url: str) -> requests.Response:
         except ValueError as error:
             raise RuntimeError("Facebook redirected a photo outside its public media CDN.") from error
     raise RuntimeError("Facebook returned too many photo redirects.")
-
-
-_promote_staging_dir = promote_staging_dir
 
 
 def download_facebook_photo_manifest(
@@ -260,8 +257,11 @@ def download_facebook_photo_manifest(
                 with _get_public_photo(session, candidate) as response:
                     response.raise_for_status()
                     _public_photo_url(response.url)
-                    length = response.headers.get("Content-Length")
-                    if length and int(length) > MAX_IMAGE_BYTES:
+                    try:
+                        length_val = int(response.headers.get("Content-Length") or 0)
+                    except (ValueError, TypeError):
+                        length_val = 0
+                    if length_val > MAX_IMAGE_BYTES:
                         raise RuntimeError(f"Facebook photo {index} is larger than the 100 MB per-image limit.")
                     image_bytes = 0
                     with open(image_path, "wb") as image_file:
@@ -393,7 +393,12 @@ def resolve_facebook_canonical_url(url: str, session: Optional[requests.Session]
     u_str = str(url).strip()
     if "/share/" not in u_str and "/profile.php" not in u_str:
         return u_str
+    from .extractor import _is_safe_public_url
+    if not _is_safe_public_url(u_str):
+        return u_str
+    owns_session = session is None
     sess = session or requests.Session()
+    resp = None
     try:
         resp = sess.get(
             u_str,
@@ -404,9 +409,20 @@ def resolve_facebook_canonical_url(url: str, session: Optional[requests.Session]
         if resp.status_code in (301, 302, 303, 307, 308):
             loc = resp.headers.get("Location")
             if loc:
-                return loc
+                resolved = urllib.parse.urljoin(u_str, loc.strip())
+                if _is_safe_public_url(resolved):
+                    return resolved
     except Exception:
         pass
+    finally:
+        if resp is not None:
+            close_resp = getattr(resp, "close", None)
+            if callable(close_resp):
+                close_resp()
+        if owns_session:
+            close_sess = getattr(sess, "close", None)
+            if callable(close_sess):
+                close_sess()
     return u_str
 
 
@@ -524,6 +540,7 @@ def _resolve_facebook_pagination_query(html: str, session: requests.Session) -> 
     return fallback
 
 
+_FB_SESSION_LOCK = threading.Lock()
 _CACHED_FACEBOOK_SESSION: Optional[dict[str, Any]] = None
 
 
@@ -699,9 +716,13 @@ def _fetch_facebook_manifest_with_session(
             try:
                 raw_author = author_m.group(1)
                 try:
-                    decoded_author = raw_author.encode().decode('unicode-escape')
-                except UnicodeDecodeError:
-                    decoded_author = raw_author
+                    decoded_author = json.loads(f'"{raw_author}"')
+                except (json.JSONDecodeError, ValueError):
+                    decoded_author = re.sub(
+                        r"\\u([0-9a-fA-F]{4})",
+                        lambda m: chr(int(m.group(1), 16)),
+                        raw_author,
+                    ).replace(r"\/", "/")
                 author_name = sanitize_filename(decoded_author, max_length=50)
                 if author_name and author_name not in title:
                     title = f"{title} - {author_name}" if title != "Facebook Post" else author_name
@@ -1043,9 +1064,13 @@ def _fetch_facebook_manifest_with_session(
                 if uri_m:
                     raw_val = uri_m.group(1)
                     try:
-                        raw_uri = raw_val.encode().decode("unicode-escape").replace("\\/", "/")
-                    except UnicodeDecodeError:
-                        raw_uri = raw_val.replace("\\/", "/")
+                        raw_uri = json.loads(f'"{raw_val}"').replace("\\/", "/")
+                    except (json.JSONDecodeError, ValueError):
+                        raw_uri = re.sub(
+                            r"\\u([0-9a-fA-F]{4})",
+                            lambda um: chr(int(um.group(1), 16)),
+                            raw_val,
+                        ).replace("\\/", "/")
                     w_m = re.search(r'"width"\s*:\s*(\d+)', context)
                     w = int(w_m.group(1)) if w_m else 1080
                     _add_photo(target_fbid, raw_uri, w)
@@ -1075,41 +1100,14 @@ def _fetch_facebook_manifest_with_session(
     }
 
 
-def _get_facebook_session_cache_path() -> str:
+def _purge_legacy_facebook_session_file() -> None:
     from .paths import APP_DATA_DIR
-    cache_dir = os.path.join(APP_DATA_DIR, "cache")
-    os.makedirs(cache_dir, exist_ok=True)
-    return os.path.join(cache_dir, "facebook_session.json")
-
-
-def _load_persisted_facebook_session() -> Optional[dict[str, Any]]:
-    # Plaintext disk cookie persistence is deprecated for credential safety.
-    # Automatically purge any legacy plaintext session file.
-    p = _get_facebook_session_cache_path()
+    p = os.path.join(APP_DATA_DIR, "cache", "facebook_session.json")
     if os.path.isfile(p):
         try:
             os.remove(p)
         except OSError:
             pass
-    return None
-
-def _save_persisted_facebook_session(browser_name: str, jar: Any) -> None:
-    # Ephemeral in-memory caching is preferred over unencrypted disk storage.
-    # Purge any stale file that may exist on disk.
-    p = _get_facebook_session_cache_path()
-    if os.path.isfile(p):
-        try:
-            os.remove(p)
-        except OSError:
-            pass
-
-def _clear_persisted_facebook_session() -> None:
-    try:
-        p = _get_facebook_session_cache_path()
-        if os.path.isfile(p):
-            os.remove(p)
-    except Exception:
-        pass
 
 
 def fetch_facebook_manifest(
@@ -1145,13 +1143,19 @@ def fetch_facebook_manifest(
     global _CACHED_FACEBOOK_SESSION
 
     # 1. In-process cache check
-    if _CACHED_FACEBOOK_SESSION:
-        cached_ts = _CACHED_FACEBOOK_SESSION.get("timestamp", 0)
-        cached_browser = _CACHED_FACEBOOK_SESSION.get("browser")
-        cached_jar = _CACHED_FACEBOOK_SESSION.get("jar")
-        if time.time() - cached_ts < 900 and cached_jar and (not raw_browser or raw_browser == str(cached_browser).lower()):
-            report(0.04, f"Reusing active Facebook session via {str(cached_browser).title()}...")
-            warm_session = requests.Session()
+    cached_session = None
+    with _FB_SESSION_LOCK:
+        if _CACHED_FACEBOOK_SESSION:
+            cached_ts = _CACHED_FACEBOOK_SESSION.get("timestamp", 0)
+            cached_browser = _CACHED_FACEBOOK_SESSION.get("browser")
+            cached_jar = _CACHED_FACEBOOK_SESSION.get("jar")
+            if time.time() - cached_ts < 900 and cached_jar and (not raw_browser or raw_browser == str(cached_browser).lower()):
+                cached_session = (cached_browser, cached_jar)
+    if cached_session:
+        cached_browser, cached_jar = cached_session
+        report(0.04, f"Reusing active Facebook session via {str(cached_browser).title()}...")
+        warm_session = requests.Session()
+        try:
             for c in cached_jar:
                 if "facebook.com" in getattr(c, "domain", ""):
                     warm_session.cookies.set(c.name, c.value, domain=c.domain, path=c.path)
@@ -1159,27 +1163,20 @@ def fetch_facebook_manifest(
                 warm_session, url, found_browser=cached_browser, report=report, abort_event=abort_event
             )
             if warm_manifest:
-                _CACHED_FACEBOOK_SESSION["timestamp"] = time.time()
+                with _FB_SESSION_LOCK:
+                    if _CACHED_FACEBOOK_SESSION is not None:
+                        _CACHED_FACEBOOK_SESSION["timestamp"] = time.time()
                 return warm_manifest
+        finally:
+            close_sess = getattr(warm_session, "close", None)
+            if callable(close_sess):
+                close_sess()
+        with _FB_SESSION_LOCK:
             _CACHED_FACEBOOK_SESSION = None
 
-    # 2. Disk-persisted session cache check (reusable across CLI engine invocations in 0.00s)
-    if not is_explicit_guest:
-        persisted = _load_persisted_facebook_session()
-        if persisted and (not raw_browser or raw_browser == str(persisted.get("browser", "")).lower()):
-            cached_b = persisted.get("browser", "Browser")
-            report(0.04, f"Reusing saved Facebook session via {str(cached_b).title()}...")
-            disk_session = requests.Session()
-            for c in persisted.get("cookies", []):
-                disk_session.cookies.set(c["name"], c["value"], domain=c.get("domain", ".facebook.com"), path=c.get("path", "/"))
-            disk_manifest = _fetch_facebook_manifest_with_session(
-                disk_session, url, found_browser=cached_b, report=report, abort_event=abort_event
-            )
-            if disk_manifest:
-                return disk_manifest
-            _clear_persisted_facebook_session()
+    _purge_legacy_facebook_session_file()
 
-    # 3. Detect running browsers with ultra-fast Win32 snapshot (17ms)
+    # 2. Detect running browsers with ultra-fast Win32 snapshot (17ms)
     running = detect_running_browsers()
     candidates = get_ordered_browser_candidates(preferred=raw_browser, running=running)
 
@@ -1203,6 +1200,7 @@ def fetch_facebook_manifest(
         cand_jar = None
         # Try up to 3 rapid attempts with 35ms backoff to handle transient SQLite file locks
         for attempt in range(3):
+            ydl = None
             try:
                 ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
                 cand_jar = filter_cookie_jar_for_domains(ydl.cookiejar, ("facebook.com", "fbcdn.net"))
@@ -1212,6 +1210,11 @@ def fetch_facebook_manifest(
                 if attempt < 2 and b in running:
                     time.sleep(0.035)
                 continue
+            finally:
+                if ydl is not None:
+                    close_fn = getattr(ydl, "close", None)
+                    if callable(close_fn):
+                        close_fn()
 
         if not cand_jar:
             if b in running and b in ("edge", "chrome", "brave") and not app_bound_noted:
@@ -1251,12 +1254,12 @@ def fetch_facebook_manifest(
 
     session = requests.Session()
     if jar and found_browser:
-        _CACHED_FACEBOOK_SESSION = {
-            "timestamp": time.time(),
-            "browser": found_browser,
-            "jar": jar,
-        }
-        _save_persisted_facebook_session(found_browser, jar)
+        with _FB_SESSION_LOCK:
+            _CACHED_FACEBOOK_SESSION = {
+                "timestamp": time.time(),
+                "browser": found_browser,
+                "jar": jar,
+            }
         report(0.06, f"Connected to Facebook session via {found_browser.title()}. Loading post...")
         for c in jar:
             if "facebook.com" in getattr(c, "domain", ""):

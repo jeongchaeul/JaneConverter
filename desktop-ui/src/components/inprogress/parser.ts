@@ -224,17 +224,26 @@ export function extractDistinctJobIds(
   format?: string,
 ): string[] {
   const rawIds: string[] = [];
+  const grouped = new Map<string, ConverterEvent[]>();
   for (const evt of events) {
-    if (evt.jobId && evt.jobId !== "ui" && evt.jobId !== "browser-session" && !rawIds.includes(evt.jobId)) {
-      rawIds.push(evt.jobId);
+    if (evt.jobId && evt.jobId !== "ui" && evt.jobId !== "browser-session") {
+      let bucket = grouped.get(evt.jobId);
+      if (!bucket) {
+        bucket = [];
+        grouped.set(evt.jobId, bucket);
+        rawIds.push(evt.jobId);
+      }
+      bucket.push(evt);
     }
   }
-  if (jobId && jobId !== "ui" && jobId !== "browser-session" && !rawIds.includes(jobId)) {
+  if (jobId && jobId !== "ui" && jobId !== "browser-session" && !grouped.has(jobId)) {
     rawIds.push(jobId);
   }
   return rawIds.filter((id) => {
     if (running && jobId && id === jobId) return true;
-    const parsed = parseConversionEvents(events, category, format, undefined, id, false);
+    const jobEvents = grouped.get(id);
+    if (!jobEvents?.length) return false;
+    const parsed = parseConversionEvents(jobEvents, category, format, undefined, id, false);
     return parsed.items.length > 0;
   });
 }

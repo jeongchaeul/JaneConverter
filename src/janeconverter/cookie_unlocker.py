@@ -111,21 +111,12 @@ def clean_nt_path(path: str) -> str:
 
 
 # Access masks known to deadlock kernel calls on synchronous pipes.
-# Note: Do not block standard Win32 generic access masks like 0x0012019F (GENERIC_READ | GENERIC_WRITE)
-# or 0x00120189 (GENERIC_READ) because disk files (such as Chromium / Vivaldi SQLite databases)
-# are opened with these exact masks. Disk handles are safely verified via GetFileType(h) == FILE_TYPE_DISK
-# before any path or handle inspection occurs.
-SYNCHRONOUS_PIPE_ACCESS_MASKS: frozenset[int] = frozenset()
-
-
 def is_safe_candidate_handle_entry(
     granted_access: int,
     object_type_index: int,
     file_object_type_index: Optional[int] = None,
 ) -> bool:
     """Return True if a kernel handle table entry is safe to duplicate and inspect."""
-    if granted_access in SYNCHRONOUS_PIPE_ACCESS_MASKS:
-        return False
     if file_object_type_index is not None and object_type_index != file_object_type_index:
         return False
     return True
@@ -161,26 +152,28 @@ def get_locking_pids(file_path: str) -> List[int]:
             reboot_reasons = wintypes.DWORD(0)
 
             # Probe for locking processes (strictly informational, no shutdown)
-            rstrtmgr.RmGetList(
+            rm_err = rstrtmgr.RmGetList(
                 session_handle,
                 ctypes.byref(n_needed),
                 ctypes.byref(n_proc),
                 None,
                 ctypes.byref(reboot_reasons),
             )
-            if n_needed.value == 0:
+            if rm_err not in (0, 234) or n_needed.value == 0:
                 return []
 
             procs = (RM_PROCESS_INFO * n_needed.value)()
             n_proc.value = n_needed.value
-            rstrtmgr.RmGetList(
+            rm_err2 = rstrtmgr.RmGetList(
                 session_handle,
                 ctypes.byref(n_needed),
                 ctypes.byref(n_proc),
                 procs,
                 ctypes.byref(reboot_reasons),
             )
-            return [p.Process.dwProcessId for p in procs]
+            if rm_err2 not in (0, 234):
+                return []
+            return [p.Process.dwProcessId for p in procs[:n_proc.value]]
         finally:
             rstrtmgr.RmEndSession(session_handle)
     except Exception:
@@ -224,13 +217,17 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
                 return False
             buf = ctypes.create_string_buffer(buf_size)
 
-        count = ctypes.c_size_t.from_buffer_copy(buf.raw[:8]).value
+        ptr_size = ctypes.sizeof(ctypes.c_size_t)
+        header_size = 2 * ptr_size
+        count = ctypes.c_size_t.from_buffer(buf, 0).value
         entry_size = ctypes.sizeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX)
+        max_entries = max(0, (buf_size - header_size) // entry_size)
+        count = min(count, max_entries)
         curr_proc = kernel32.GetCurrentProcess()
         norm_target = os.path.normcase(os.path.abspath(file_path))
 
         os.makedirs(os.path.dirname(os.path.abspath(dst_path)), exist_ok=True)
-        tmp_dst = dst_path + ".tmp"
+        tmp_dst = f"{dst_path}.{os.getpid()}.{threading.get_ident()}.tmp"
 
         PROCESS_DUP_HANDLE = 0x0040
         DUPLICATE_SAME_ACCESS = 0x0002
@@ -241,7 +238,7 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
         pid_set = set(pids)
         pid_handles: dict[int, list[tuple[int, int, int]]] = {p: [] for p in pids}
         for i in range(count):
-            entry = SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX.from_buffer(buf, 16 + i * entry_size)
+            entry = SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX.from_buffer(buf, header_size + i * entry_size)
             if entry.UniqueProcessId in pid_set:
                 if not is_safe_candidate_handle_entry(entry.GrantedAccess, entry.ObjectTypeIndex):
                     continue
@@ -356,21 +353,6 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
         return False
 
 
-def unlock_windows_file_lock(file_path: str) -> bool:
-    """Non-destructive lock query on Windows.
-
-    Queries whether a file is locked by any active process using Restart Manager
-    in strictly read-only mode, without terminating or disrupting any processes.
-    """
-    if os.name != "nt" or not file_path or not os.path.exists(file_path):
-        return False
-    try:
-        pids = get_locking_pids(file_path)
-        return len(pids) > 0
-    except Exception:
-        return False
-
-
 def _win32_shared_copy(src: str, dst: str) -> bool:
     """Attempt a low-level copy using Win32 API with full sharing flags (READ|WRITE|DELETE)."""
     if os.name != "nt":
@@ -379,66 +361,68 @@ def _win32_shared_copy(src: str, dst: str) -> bool:
         import ctypes
         from ctypes import wintypes
 
-        kernel32 = ctypes.windll.kernel32
-        kernel32.CreateFileW.argtypes = [
-            wintypes.LPCWSTR,
-            wintypes.DWORD,
-            wintypes.DWORD,
-            ctypes.c_void_p,
-            wintypes.DWORD,
-            wintypes.DWORD,
-            wintypes.HANDLE,
-        ]
-        kernel32.CreateFileW.restype = wintypes.HANDLE
-
-        GENERIC_READ = 0x80000000
-        FILE_SHARE_READ = 0x00000001
-        FILE_SHARE_WRITE = 0x00000002
-        FILE_SHARE_DELETE = 0x00000004
-        OPEN_EXISTING = 3
-        FILE_ATTRIBUTE_NORMAL = 0x00000080
-
-        handle = kernel32.CreateFileW(
-            src,
-            GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            None,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            None,
-        )
-        invalid_val = (1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1
-        raw_val = handle.value or 0
-        if raw_val == 0 or raw_val == invalid_val:
-            return False
-
+        os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
+        tmp_dst = f"{dst}.{os.getpid()}.{threading.get_ident()}.tmp"
         try:
-            chunk_size = 64 * 1024
-            buf = ctypes.create_string_buffer(chunk_size)
-            bytes_read = wintypes.DWORD(0)
-            os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
-            tmp_dst = dst + ".tmp"
-            read_success = True
-            with open(tmp_dst, "wb") as out_f:
-                while True:
-                    success = kernel32.ReadFile(handle, buf, chunk_size, ctypes.byref(bytes_read), None)
-                    if not success:
-                        read_success = False
-                        break
-                    if bytes_read.value == 0:
-                        break
-                    out_f.write(buf.raw[: bytes_read.value])
-            if read_success and os.path.exists(tmp_dst) and os.path.getsize(tmp_dst) > 0:
-                os.replace(tmp_dst, dst)
-                return True
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateFileW.argtypes = [
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                ctypes.c_void_p,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.HANDLE,
+            ]
+            kernel32.CreateFileW.restype = wintypes.HANDLE
+
+            GENERIC_READ = 0x80000000
+            FILE_SHARE_READ = 0x00000001
+            FILE_SHARE_WRITE = 0x00000002
+            FILE_SHARE_DELETE = 0x00000004
+            OPEN_EXISTING = 3
+            FILE_ATTRIBUTE_NORMAL = 0x00000080
+
+            handle = kernel32.CreateFileW(
+                src,
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+            invalid_val = (1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1
+            raw_val = handle.value or 0
+            if raw_val == 0 or raw_val == invalid_val:
+                return False
+
+            try:
+                chunk_size = 64 * 1024
+                buf = ctypes.create_string_buffer(chunk_size)
+                bytes_read = wintypes.DWORD(0)
+                read_success = True
+                with open(tmp_dst, "wb") as out_f:
+                    while True:
+                        success = kernel32.ReadFile(handle, buf, chunk_size, ctypes.byref(bytes_read), None)
+                        if not success:
+                            read_success = False
+                            break
+                        if bytes_read.value == 0:
+                            break
+                        out_f.write(buf.raw[: bytes_read.value])
+                if read_success and os.path.exists(tmp_dst) and os.path.getsize(tmp_dst) > 0:
+                    os.replace(tmp_dst, dst)
+                    return True
+                return False
+            finally:
+                kernel32.CloseHandle(handle)
+        finally:
             if os.path.exists(tmp_dst):
                 try:
                     os.remove(tmp_dst)
                 except OSError:
                     pass
-            return False
-        finally:
-            kernel32.CloseHandle(handle)
     except Exception:
         return False
 

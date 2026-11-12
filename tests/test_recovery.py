@@ -926,3 +926,118 @@ def test_downmix_failure_adapts_to_phase_resilient_pan():
     assert adapted is not None
     assert "-af" in adapted
     assert "pan=stereo|FL < 1.0*FL" in adapted[adapted.index("-af") + 1]
+
+
+def test_multichannel_audio_downmix_passes_validation_while_mono_drop_fails(monkeypatch):
+    source = {"streams": [{"codec_type": "audio", "channels": 6, "sample_rate": "48000"}]}
+    stereo_out = {"streams": [{"codec_type": "audio", "channels": 2, "sample_rate": "48000"}]}
+    mono_out = {"streams": [{"codec_type": "audio", "channels": 1, "sample_rate": "48000"}]}
+    audio_intent = OutputIntent(
+        target_format="mp3", quality="320k", sample_rate=48000,
+        resolution="original", normalize_audio=False, fps=None,
+        cover_required=False, gpu_allowed=False,
+    )
+    monkeypatch.setattr(converter, "probe_media_streams", lambda path: source if path == "source" else stereo_out)
+    converter.validate_output_intent("source", "output", audio_intent)
+    monkeypatch.setattr(converter, "probe_media_streams", lambda path: source if path == "source" else mono_out)
+    with pytest.raises(RuntimeError, match="channel count changed"):
+        converter.validate_output_intent("source", "output", audio_intent)
+
+
+def test_probe_media_duration_does_not_poison_stream_cache(tmp_path, monkeypatch):
+    from janeconverter import media_probe
+    media_file = tmp_path / "sample.mp3"
+    media_file.write_bytes(b"ID3test-payload")
+    calls = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        class Result:
+            returncode = 0
+            stdout = "12.5\n" if "-show_entries" in cmd else json.dumps({
+                "streams": [{"codec_type": "audio", "sample_rate": "48000"}],
+                "format": {"duration": "12.5"},
+            })
+        return Result()
+
+    monkeypatch.setattr(media_probe.subprocess, "run", fake_run)
+    assert media_probe.probe_media_duration(str(media_file)) == pytest.approx(12.5)
+    streams = media_probe.probe_media_streams(str(media_file))
+    assert streams is not None
+    assert len(streams.get("streams", [])) == 1
+    assert len(calls) == 2
+
+
+def test_loudnorm_filter_clamps_extreme_measured_bounds():
+    from janeconverter.audio_dsp import build_loudnorm_filter
+    filt = build_loudnorm_filter({
+        "input_i": "-78.0",
+        "input_tp": "5.0",
+        "input_lra": "62.0",
+        "input_thresh": "-88.0",
+        "target_offset": "0.0",
+    })
+    assert "LRA=50.00" in filt
+    assert "I=-70.00" in filt
+
+
+def test_audio_and_video_exciter_and_bitrate_normalization():
+    cmd_audio = converter.build_ffmpeg_args(
+        input_path="in.wav", output_path="out.mp3", target_format="mp3",
+        bitrate="auto", use_nvenc=False,
+    )
+    assert cmd_audio[cmd_audio.index("-b:a") + 1] == "320k"
+
+    cmd_video = converter.build_ffmpeg_args(
+        input_path="in.mp4", output_path="out.mp4", target_format="mp4",
+        bitrate="balanced", use_nvenc=False, reconstruct_frequency_loss=True,
+    )
+    assert "-af" in cmd_video
+    assert "aexciter=" in cmd_video[cmd_video.index("-af") + 1]
+    assert "-disposition:v" not in converter.build_ffmpeg_args(
+        input_path="in.wav", output_path="out.aac", target_format="aac",
+        bitrate="192k", cover_path="cover.jpg", use_nvenc=False,
+    )
+
+
+def test_universal_transcode_cascade_does_not_repeat_cpu_method(tmp_path, monkeypatch):
+    src = tmp_path / "clip.av1"
+    src.write_bytes(b"fake-av1")
+    methods = []
+
+    class FakeProc:
+        def __init__(self, target):
+            self.returncode = 0 if target.endswith(".mp4") else 1
+            self.stdout = io.BytesIO(b"")
+            self.stderr = io.BytesIO(b"Unknown encoder libsvtav1" if not target.endswith(".mp4") else b"")
+        def poll(self):
+            return self.returncode
+        def wait(self):
+            return self.returncode
+        def kill(self):
+            pass
+
+    def fake_popen(cmd, **_kwargs):
+        out = cmd[-1]
+        methods.append(out)
+        if out.endswith(".mp4"):
+            with open(out, "wb") as f:
+                f.write(b"mp4-ok")
+        return FakeProc(out)
+
+    monkeypatch.setattr(converter, "get_ffmpeg_binary", lambda: "ffmpeg")
+    monkeypatch.setattr(converter.shutil, "which", lambda _name: "ffmpeg")
+    monkeypatch.setattr(converter, "probe_media_streams", lambda _p: {"streams": [{"codec_type": "video", "width": 1280, "height": 720, "avg_frame_rate": "30/1"}]})
+    monkeypatch.setattr(converter, "validate_output_file", lambda _p, _t: None)
+    monkeypatch.setattr(converter, "validate_output_intent", lambda *_a: None)
+    monkeypatch.setattr(converter, "record_local_failure", lambda *_a, **_kw: None)
+    monkeypatch.setattr(converter, "record_local_success", lambda *_a, **_kw: None)
+    monkeypatch.setattr(converter.subprocess, "Popen", fake_popen)
+
+    out_path = converter.convert_media(
+        str(src), str(tmp_path / "out"), "clip", "av1",
+        use_nvenc=False, use_gpu=False, allow_stream_copy=False, source_duration=10.0,
+    )
+    assert out_path.endswith(".mp4")
+    assert any(m.endswith(".mkv") for m in methods)
+    assert any(m.endswith(".mp4") for m in methods)

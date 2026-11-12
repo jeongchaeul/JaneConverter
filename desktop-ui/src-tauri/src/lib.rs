@@ -158,8 +158,22 @@ pub fn run() {
             window_close,
             window_is_maximized,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running JaneConverter Desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building JaneConverter Desktop")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                let state = app_handle.state::<AppState>();
+                close_all_social_captures(&state.social_captures);
+                if let Ok(mut guard) = state.active_child.lock() {
+                    if let Some(child) = guard.take() {
+                        if let Ok(mut proc) = child.lock() {
+                            process::terminate_child(&mut proc);
+                        }
+                    }
+                };
+            }
+        });
 }
 
 #[cfg(test)]

@@ -328,7 +328,7 @@ def fetch_apple_music_playlist_entries(apple_url: str, progress_callback: Option
             "index": index,
             "title": meta["title"],
             "artist": meta["artist"],
-            "duration": result.get("trackTimeMillis", 0),
+            "duration": meta.get("duration", 0),
             "duration_str": format_duration(meta.get("duration", 0)),
             "url": track_url,
             "thumbnail": meta.get("thumbnail_url", ""),
@@ -389,7 +389,7 @@ def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
                     if imgs:
                         best = max(imgs, key=lambda x: x.get("maxWidth", 0))
                         thumbnail = best.get("url", "")
-        except (KeyError, TypeError, ValueError, AttributeError):
+        except (requests.RequestException, json.JSONDecodeError, KeyError, TypeError, ValueError, AttributeError):
             pass
 
     # 2. Fallback to public oEmbed endpoint for thumbnail / title if needed

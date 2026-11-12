@@ -33,36 +33,55 @@ pub async fn choose_als_file() -> Option<String> {
     .flatten()
 }
 
-#[tauri::command]
-pub async fn als_inspect(path: String) -> Result<AlsProjectInfo, String> {
+async fn run_daw_engine_json<T: serde::de::DeserializeOwned + Send + 'static>(
+    args: Vec<String>,
+    run_context: &'static str,
+    exit_label: &'static str,
+    parse_context: &'static str,
+) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let engine = find_python();
         let mut command = Command::new(&engine);
         if !packaged_engine(&engine) {
             command.args(["run", "--locked", "janeconverter"]);
         }
-        command
-            .arg(format!("--als-inspect={path}"))
-            .current_dir(project_root());
+        command.args(&args).current_dir(project_root());
         let output = crate::process::bounded_output(
             &mut command,
             std::time::Duration::from_secs(30),
             &std::sync::atomic::AtomicBool::new(false),
         )
-        .map_err(|error| format!("Could not inspect Ableton Live project: {error}"))?;
+        .map_err(|error| format!("{run_context}: {error}"))?;
         if !output.status.success() {
+            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                if let Some(err_msg) = val.get("error").and_then(|v| v.as_str()) {
+                    if !err_msg.trim().is_empty() {
+                        return Err(err_msg.trim().to_string());
+                    }
+                }
+            }
             let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(if detail.is_empty() {
-                format!("ALS inspector exited with status {}.", output.status)
+                format!("{exit_label} exited with status {}.", output.status)
             } else {
                 detail
             });
         }
-        serde_json::from_slice(&output.stdout)
-            .map_err(|error| format!("Could not read ALS inspector output: {error}"))
+        serde_json::from_slice(&output.stdout).map_err(|error| format!("{parse_context}: {error}"))
     })
     .await
     .map_err(|e| format!("Task execution error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn als_inspect(path: String) -> Result<AlsProjectInfo, String> {
+    run_daw_engine_json(
+        vec![format!("--als-inspect={path}")],
+        "Could not inspect Ableton Live project",
+        "ALS inspector",
+        "Could not read ALS inspector output",
+    )
+    .await
 }
 
 #[tauri::command]
@@ -72,77 +91,36 @@ pub async fn als_migrate(
     output_path: Option<String>,
     overwrite: Option<bool>,
 ) -> Result<AlsMigrationResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let engine = find_python();
-        let mut command = Command::new(&engine);
-        if !packaged_engine(&engine) {
-            command.args(["run", "--locked", "janeconverter"]);
+    let mut args = vec![
+        format!("--als-migrate={source}"),
+        format!("--als-target={target_version}"),
+    ];
+    if let Some(ref out) = output_path {
+        if !out.trim().is_empty() {
+            args.push(format!("--als-output={}", out.trim()));
         }
-        command
-            .args([
-                format!("--als-migrate={source}"),
-                format!("--als-target={target_version}"),
-            ])
-            .current_dir(project_root());
-        if let Some(ref out) = output_path {
-            if !out.trim().is_empty() {
-                command.arg(format!("--als-output={}", out.trim()));
-            }
-        }
-        if overwrite.unwrap_or(false) {
-            command.arg("--als-overwrite");
-        }
-        let output = crate::process::bounded_output(
-            &mut command,
-            std::time::Duration::from_secs(30),
-            &std::sync::atomic::AtomicBool::new(false),
-        )
-        .map_err(|error| format!("Could not migrate Ableton Live project: {error}"))?;
-        if !output.status.success() {
-            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(if detail.is_empty() {
-                format!("ALS migrator exited with status {}.", output.status)
-            } else {
-                detail
-            });
-        }
-        serde_json::from_slice(&output.stdout)
-            .map_err(|error| format!("Could not read ALS migrator output: {error}"))
-    })
+    }
+    if overwrite.unwrap_or(false) {
+        args.push("--als-overwrite".to_string());
+    }
+    run_daw_engine_json(
+        args,
+        "Could not migrate Ableton Live project",
+        "ALS migrator",
+        "Could not read ALS migrator output",
+    )
     .await
-    .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]
 pub async fn flp_inspect(path: String) -> Result<FlpProjectInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let engine = find_python();
-        let mut command = Command::new(&engine);
-        if !packaged_engine(&engine) {
-            command.args(["run", "--locked", "janeconverter"]);
-        }
-        command
-            .arg(format!("--flp-inspect={path}"))
-            .current_dir(project_root());
-        let output = crate::process::bounded_output(
-            &mut command,
-            std::time::Duration::from_secs(30),
-            &std::sync::atomic::AtomicBool::new(false),
-        )
-        .map_err(|error| format!("Could not inspect FL Studio project: {error}"))?;
-        if !output.status.success() {
-            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(if detail.is_empty() {
-                format!("FLP inspector exited with status {}.", output.status)
-            } else {
-                detail
-            });
-        }
-        serde_json::from_slice(&output.stdout)
-            .map_err(|error| format!("Could not read FLP inspector output: {error}"))
-    })
+    run_daw_engine_json(
+        vec![format!("--flp-inspect={path}")],
+        "Could not inspect FL Studio project",
+        "FLP inspector",
+        "Could not read FLP inspector output",
+    )
     .await
-    .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]
@@ -153,80 +131,39 @@ pub async fn flp_downgrade(
     output_path: Option<String>,
     overwrite: Option<bool>,
 ) -> Result<FlpDowngradeResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let engine = find_python();
-        let mut command = Command::new(&engine);
-        if !packaged_engine(&engine) {
-            command.args(["run", "--locked", "janeconverter"]);
+    let mut args = vec![
+        format!("--flp-downgrade={source}"),
+        format!("--flp-target={target_version}"),
+    ];
+    if let Some(build) = target_build {
+        if build > 0 {
+            args.push(format!("--flp-build={build}"));
         }
-        command
-            .args([
-                format!("--flp-downgrade={source}"),
-                format!("--flp-target={target_version}"),
-            ])
-            .current_dir(project_root());
-        if let Some(build) = target_build {
-            if build > 0 {
-                command.arg(format!("--flp-build={build}"));
-            }
+    }
+    if let Some(ref out) = output_path {
+        if !out.trim().is_empty() {
+            args.push(format!("--flp-output={}", out.trim()));
         }
-        if let Some(ref out) = output_path {
-            if !out.trim().is_empty() {
-                command.arg(format!("--flp-output={}", out.trim()));
-            }
-        }
-        if overwrite.unwrap_or(false) {
-            command.arg("--flp-overwrite");
-        }
-        let output = crate::process::bounded_output(
-            &mut command,
-            std::time::Duration::from_secs(30),
-            &std::sync::atomic::AtomicBool::new(false),
-        )
-        .map_err(|error| format!("Could not downgrade FL Studio project: {error}"))?;
-        if !output.status.success() {
-            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(if detail.is_empty() {
-                format!("FLP downgrader exited with status {}.", output.status)
-            } else {
-                detail
-            });
-        }
-        serde_json::from_slice(&output.stdout)
-            .map_err(|error| format!("Could not read FLP downgrader output: {error}"))
-    })
+    }
+    if overwrite.unwrap_or(false) {
+        args.push("--flp-overwrite".to_string());
+    }
+    run_daw_engine_json(
+        args,
+        "Could not downgrade FL Studio project",
+        "FLP downgrader",
+        "Could not read FLP downgrader output",
+    )
     .await
-    .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]
 pub async fn flp_detect_installed() -> Result<Vec<InstalledFlStudio>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let engine = find_python();
-        let mut command = Command::new(&engine);
-        if !packaged_engine(&engine) {
-            command.args(["run", "--locked", "janeconverter"]);
-        }
-        command
-            .arg("--flp-detect-installed")
-            .current_dir(project_root());
-        let output = crate::process::bounded_output(
-            &mut command,
-            std::time::Duration::from_secs(30),
-            &std::sync::atomic::AtomicBool::new(false),
-        )
-        .map_err(|error| format!("Could not detect FL Studio installations: {error}"))?;
-        if !output.status.success() {
-            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(if detail.is_empty() {
-                format!("FLP detector exited with status {}.", output.status)
-            } else {
-                detail
-            });
-        }
-        serde_json::from_slice(&output.stdout)
-            .map_err(|error| format!("Could not read FLP detector output: {error}"))
-    })
+    run_daw_engine_json(
+        vec!["--flp-detect-installed".to_string()],
+        "Could not detect FL Studio installations",
+        "FLP detector",
+        "Could not read FLP detector output",
+    )
     .await
-    .map_err(|e| format!("Task execution error: {e}"))?
 }

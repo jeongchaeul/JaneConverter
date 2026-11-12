@@ -95,6 +95,14 @@ def test_app_data_lookup_defers_legacy_migration_until_initialization(tmp_path, 
     assert not legacy.exists()
 
 
+def test_sanitize_filename_bounds_utf8_byte_length():
+    long_cjk = "\u65e5" * 120 + ".mp3"
+    cleaned = paths.sanitize_filename(long_cjk)
+    stem = os.path.splitext(cleaned)[0]
+    assert len(stem.encode("utf-8")) <= 180
+    assert cleaned.endswith(".mp3")
+
+
 def test_app_data_initialization_rejects_unwritable_explicit_override(tmp_path, monkeypatch):
     configured = tmp_path / "blocked"
     monkeypatch.setenv("JANECONVERTER_DATA_DIR", str(configured))

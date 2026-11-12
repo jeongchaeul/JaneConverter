@@ -23,8 +23,8 @@ class AlsParseError(ValueError):
 
 def _reject_unsafe_xml(xml_bytes: bytes) -> None:
     """Reject XML DTDs and entity declarations across UTF-8 and UTF-16 encodings."""
-    normalized = xml_bytes.replace(b"\x00", b"").lower()
-    if b"<!doctype" in normalized or b"<!entity" in normalized:
+    prolog = xml_bytes[:4096].replace(b"\x00", b"").lower()
+    if b"<!doctype" in prolog or b"<!entity" in prolog:
         raise AlsParseError("Unsafe XML DOCTYPE or ENTITY declarations are not permitted in ALS files.")
 
 

@@ -389,6 +389,26 @@ def test_parse_flp_file_size_bounds_and_missing_file(tmp_path, monkeypatch):
         parse_flp_file(str(fake_flp))
 
 
+def test_inspect_flp_preserves_ascii_titles_and_fine_tempo():
+    proj = FLPProject(
+        format=0,
+        channels=4,
+        ppq=96,
+        events=[
+            FLPEvent(event_id=199, data=b"25.1.0.4000\x00"),
+            FLPEvent(event_id=194, data=b"abcd"),
+            FLPEvent(event_id=156, data=struct.pack("<I", 128500)),
+            FLPEvent(event_id=68, data=struct.pack("<H", 140)),
+        ],
+    )
+    info = inspect_flp(proj)
+    assert info["title"] == "abcd"
+    assert info["bpm"] == 128.5
+
+    with pytest.raises(FLPParseError, match="Invalid FLhd"):
+        parse_flp(b"FLhd" + struct.pack("<I", 100) + b"\x00" * 6)
+
+
 
 
 

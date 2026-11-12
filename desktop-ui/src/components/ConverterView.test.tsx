@@ -39,7 +39,7 @@ const settings = {
 };
 
 function renderView(
-  onCreateAccess = vi.fn().mockResolvedValue({ active: true, link: "http://127.0.0.1:4321/access/test", browser: "", bridgeConnected: false }),
+  _unusedCreateAccess: unknown = undefined,
   access: AccessStatus = { active: false, link: "", browser: "", bridgeConnected: false },
   onStart = vi.fn().mockResolvedValue(undefined),
   selectedCapture: FetchedMedia | null = null,
@@ -66,8 +66,6 @@ function renderView(
         onSettings={onSettings}
         onStart={onStart}
         onCancel={vi.fn().mockResolvedValue(undefined)}
-        onCreateAccess={onCreateAccess}
-        onClearAccess={vi.fn().mockResolvedValue(undefined)}
         onStatus={onStatus}
         onError={onError}
       />,
@@ -89,8 +87,6 @@ function renderView(
           onSettings={onSettings}
           onStart={onStart}
           onCancel={vi.fn().mockResolvedValue(undefined)}
-          onCreateAccess={onCreateAccess}
-          onClearAccess={vi.fn().mockResolvedValue(undefined)}
           onStatus={onStatus}
           onError={onError}
           {...newProps}
@@ -99,7 +95,7 @@ function renderView(
     });
   };
 
-  return { container, root, updateProps, onCreateAccess, onStatus, onSettings, onError };
+  return { container, root, updateProps, onStatus, onSettings, onError };
 }
 
 describe("Converter account access feedback", () => {
@@ -275,8 +271,6 @@ describe("Converter account access feedback", () => {
           onSettings={view.onSettings}
           onStart={vi.fn()}
           onCancel={vi.fn()}
-          onCreateAccess={vi.fn()}
-          onClearAccess={vi.fn()}
           onStatus={view.onStatus}
           onError={view.onError}
         />

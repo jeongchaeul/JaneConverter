@@ -55,6 +55,9 @@ def patch_instagram_story_extractor() -> None:
                 cookiejar = getattr(downloader, "cookiejar", None) or getattr(downloader, "_cookiejar", None)
                 if cookiejar is not None:
                     for cookie in cookiejar:
+                        domain = getattr(cookie, "domain", None)
+                        if isinstance(domain, str) and domain and "instagram.com" not in domain.lower():
+                            continue
                         if getattr(cookie, "name", None) == "csrftoken":
                             csrf = getattr(cookie, "value", "")
                             break
@@ -129,7 +132,12 @@ def patch_instagram_story_extractor() -> None:
 
                 info_data = []
                 for item in items:
-                    item.setdefault("user", {}).update(user_info)
+                    item_user = item.get("user")
+                    if not isinstance(item_user, dict):
+                        item["user"] = dict(user_info)
+                    else:
+                        for k, v in user_info.items():
+                            item_user.setdefault(k, v)
                     highlight_data = self._extract_product(item)
 
                     # For photo stories, synthesize a valid format so image extraction succeeds

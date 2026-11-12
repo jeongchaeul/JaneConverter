@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
@@ -66,6 +67,32 @@ def get_repo_slug() -> str:
     return "jeongchaeul/JaneConverter"
 
 
+class RateLimitError(RuntimeError):
+    def __init__(self, message: str, retry_after: float) -> None:
+        super().__init__(message)
+        self.retry_after = max(1.0, retry_after)
+
+
+def _compute_retry_delay(error: urllib.error.HTTPError) -> Optional[float]:
+    if error.code not in (403, 429):
+        return None
+    retry_after_header = error.headers.get("Retry-After")
+    if retry_after_header:
+        try:
+            return max(1.0, float(retry_after_header.strip()))
+        except ValueError:
+            pass
+    if error.code == 429 or error.headers.get("X-RateLimit-Remaining") == "0":
+        reset_header = error.headers.get("X-RateLimit-Reset")
+        if reset_header:
+            try:
+                return max(5.0, min(300.0, float(reset_header) - time.time() + 1.0))
+            except ValueError:
+                pass
+        return 60.0
+    return None
+
+
 def github_request(url: str, token: Optional[str] = None) -> Dict[str, Any]:
     headers = {
         "User-Agent": "JaneConverter-CI-Monitor",
@@ -79,18 +106,25 @@ def github_request(url: str, token: Optional[str] = None) -> Dict[str, Any]:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         body = error.read().decode("utf-8", errors="replace")
+        delay = _compute_retry_delay(error)
+        if delay is not None:
+            raise RateLimitError(f"GitHub API rate limited (HTTP {error.code})", delay) from error
         raise RuntimeError(f"GitHub API HTTP {error.code}: {body}") from error
 
 
 def get_runs_for_commit(repo: str, commit_sha: str, token: Optional[str]) -> List[Dict[str, Any]]:
-    url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=20"
+    encoded_sha = urllib.parse.quote(commit_sha, safe="")
+    if len(commit_sha) == 40:
+        url = f"https://api.github.com/repos/{repo}/actions/runs?head_sha={encoded_sha}&per_page=100"
+    else:
+        url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=100"
     data = github_request(url, token)
     runs = data.get("workflow_runs", [])
     return [r for r in runs if r.get("head_sha", "").startswith(commit_sha)]
 
 
 def get_failed_jobs(repo: str, run_id: int, token: Optional[str]) -> List[Dict[str, Any]]:
-    url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs?per_page=50"
+    url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100"
     data = github_request(url, token)
     return [j for j in data.get("jobs", []) if j.get("conclusion") in ("failure", "timed_out", "cancelled")]
 
@@ -114,6 +148,11 @@ def monitor(
 
         try:
             runs = get_runs_for_commit(repo, commit_sha, token)
+        except RateLimitError as err:
+            wait_seconds = min(err.retry_after, max(1.0, timeout_seconds - elapsed))
+            print(f"[RATE_LIMIT] {err}; waiting {int(wait_seconds)}s...", flush=True)
+            time.sleep(wait_seconds)
+            continue
         except Exception as err:
             print(f"[WARN] Error fetching workflow runs ({err}), retrying in {interval_seconds}s...", flush=True)
             time.sleep(interval_seconds)

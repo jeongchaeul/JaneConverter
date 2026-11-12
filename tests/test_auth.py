@@ -6,7 +6,6 @@ import janeconverter.auth as auth
 import janeconverter.extractor as extractor
 from janeconverter.auth import (
     describe_authenticated_extraction_failure,
-    detect_browser_from_headers,
     browser_session_label,
     normalize_browser_error_message,
     normalize_browser_session,
@@ -116,25 +115,6 @@ def test_browser_session_label_is_stable():
 )
 def test_default_browser_signal_detection(signal, expected):
     assert auth._browser_from_signal(signal) == expected
-
-
-def test_browser_request_headers_detect_vivaldi():
-    detection = detect_browser_from_headers({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 Vivaldi/7.0.3495.6"
-        ),
-    })
-    assert detection.label == "Vivaldi"
-    assert detection.session_browser == "vivaldi"
-
-
-def test_browser_request_headers_detects_unknown_browser_without_guessing():
-    detection = detect_browser_from_headers({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CustomBrowser/1.0",
-    })
-    assert detection.label == "Unrecognized browser"
-    assert detection.session_browser is None
 
 
 def test_default_browser_detection_uses_association_fallback(monkeypatch):

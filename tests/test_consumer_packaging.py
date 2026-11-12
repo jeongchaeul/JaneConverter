@@ -277,18 +277,19 @@ def test_packaging_records_ffmpeg_build_and_source_provenance():
     assert "yt-dlp-ejs" in notices
 
 
-def test_browser_bridge_archive_matches_the_source_extension():
+def test_browser_bridge_archive_matches_the_source_extension(tmp_path):
+    from runpy import run_path
+    builder = run_path(str(REPO_ROOT / "packaging" / "build_browser_bridge.py"))["build"]
     manifest = json.loads(read("browser-extension/manifest.json"))
     source_popup = (REPO_ROOT / "browser-extension" / "popup.js").read_text(encoding="utf-8")
-    archives = sorted((REPO_ROOT / "browser-extension" / "releases").glob("JaneConverter-Browser-Bridge-*.zip"))
-    assert archives
-    assert archives[-1].stem.endswith(manifest["version"])
+    built_archive = builder(REPO_ROOT / "browser-extension", tmp_path)
+    assert built_archive.stem.endswith(manifest["version"])
     assert "allFrames: true" in source_popup
     assert "blob:" in source_popup
     assert "captureStream" in source_popup
     assert "MAX_RENDERED_CAPTURE_BYTES" in source_popup
 
-    with zipfile.ZipFile(archives[-1]) as archive:
+    with zipfile.ZipFile(built_archive) as archive:
         names = set(archive.namelist())
         assert names == {"manifest.json", "media-utils.js", "adaptation.js", "popup.html", "popup.js", "README.md", "collect.js", "service-worker.js", "network-capture.js", "extension-worker.js"}
         for name in names:

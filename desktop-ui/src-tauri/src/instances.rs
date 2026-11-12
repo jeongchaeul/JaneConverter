@@ -312,6 +312,11 @@ pub fn acquire_instance_slot() -> Option<InstanceGuard> {
             return None;
         }
 
+        if std::env::var_os("JANECONVERTER_RELAUNCH").is_some() {
+            std::env::remove_var("JANECONVERTER_RELAUNCH");
+            return try_claim_free_slot_custom(SLOT_MUTEX_PREFIX, MAX_INSTANCES);
+        }
+
         // Case 3: 1 or 2 instances currently active -> prompt user.
         // First acquire prompt lock. If another instance is ALREADY displaying the prompt
         // (e.g. keyboard repeat spamming dozens of launches), abort immediately to avoid dialog spam.

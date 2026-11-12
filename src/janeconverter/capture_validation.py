@@ -5,8 +5,6 @@ import math
 import os
 import subprocess
 
-from PIL import Image
-
 from .converter import get_ffmpeg_binary, get_ffprobe_binary
 
 
@@ -14,6 +12,7 @@ def validate_capture(path: str, kind: str) -> dict:
     if kind not in ("image", "audio", "video", "stream", "model") or not os.path.isfile(path) or not os.path.getsize(path):
         raise ValueError("The capture is empty or has an unsupported media kind.")
     if kind == "image":
+        from PIL import Image
         with Image.open(path) as image:
             mime = Image.MIME.get(image.format, "")
             image.verify()
@@ -36,22 +35,25 @@ def validate_capture(path: str, kind: str) -> dict:
         raise ValueError("The capture does not contain a valid stream manifest.")
     if kind == "model":
         with open(path, "rb") as f:
-            magic = f.read(64)
-        if magic.startswith(b"glTF"):
+            magic = f.read(4096)
+        size = os.path.getsize(path)
+        if magic.startswith(b"glTF") and len(magic) >= 12:
             return {"mimeType": "model/gltf-binary"}
         if magic.startswith(b"ply\n") or magic.startswith(b"ply\r\n"):
             return {"mimeType": "application/x-ply"}
         if b"Kaydara FBX" in magic:
             return {"mimeType": "application/octet-stream"}
+        head_lower = magic.lstrip()[:64].lower()
+        if head_lower.startswith((b"<!doctype", b"<html", b"<head", b"<script")):
+            raise ValueError("The capture is HTML rather than a 3D model.")
         text_sample = magic.decode("utf-8", errors="ignore")
-        if text_sample.strip().startswith("{") or '"asset"' in text_sample:
+        if text_sample.lstrip().startswith("{") and '"asset"' in text_sample:
             return {"mimeType": "model/gltf+json"}
-        if any(line.strip().startswith(("v ", "vn ", "vt ", "f ", "# ")) for line in text_sample.splitlines()):
+        if any(line.strip().startswith(("v ", "vn ", "vt ", "f ", "o ", "g ")) for line in text_sample.splitlines()[:16]):
             return {"mimeType": "model/obj"}
-        size = os.path.getsize(path)
-        if size > 0 and size % 32 == 0:
+        if size >= 32 and size % 32 == 0:
             return {"mimeType": "application/x-gaussian-splat"}
-        return {"mimeType": "model/gltf-binary"}
+        raise ValueError("The capture does not contain a recognized 3D model.")
     options = {"capture_output": True, "timeout": 15, "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
     probe = subprocess.run([
         get_ffprobe_binary(), "-v", "error", "-protocol_whitelist", "file,pipe",
@@ -67,7 +69,7 @@ def validate_capture(path: str, kind: str) -> dict:
     if not streams or (duration is not None and (not math.isfinite(duration) or duration <= 0)):
         raise ValueError("The capture has no playable stream or valid duration.")
     stream = streams[0]
-    if kind == "video" and (stream.get("width", 0) <= 0 or stream.get("height", 0) <= 0):
+    if kind == "video" and ((stream.get("width") or 0) <= 0 or (stream.get("height") or 0) <= 0):
         raise ValueError("The video has no readable dimensions.")
     decoded = subprocess.run([
         get_ffmpeg_binary(), "-v", "error", "-xerror", "-protocol_whitelist", "file,pipe",

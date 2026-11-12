@@ -13,7 +13,6 @@ from typing import Optional, Dict, Any, Callable
 from urllib.parse import urlparse
 import json
 import requests
-import yt_dlp
 
 from .binaries import get_ffmpeg_binary
 from .version import __version__
@@ -346,7 +345,8 @@ def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
                     for item in raw_commits:
                         if isinstance(item, dict):
                             sha = str(item.get("sha", ""))[:7]
-                            msg = str(item.get("commit", {}).get("message", "")).splitlines()[0].strip()
+                            msg_lines = str(item.get("commit", {}).get("message", "")).splitlines()
+                            msg = msg_lines[0].strip() if msg_lines else ""
                             if sha and msg:
                                 commits.append(f"{sha} {msg}")
                     if commits:
@@ -406,16 +406,21 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
             }
 
         head_res = _run_git_cmd(["git", "rev-parse", "HEAD"], timeout=3.0)
-        origin_res = _run_git_cmd(["git", "rev-parse", upstream], timeout=3.0)
+        origin_res = _run_git_cmd(["git", "rev-parse", "FETCH_HEAD"], timeout=3.0)
+        if origin_res.returncode != 0:
+            origin_res = _run_git_cmd(["git", "rev-parse", upstream], timeout=3.0)
+            compare_ref = upstream
+        else:
+            compare_ref = "FETCH_HEAD"
 
         if head_res.returncode == 0 and origin_res.returncode == 0:
             head_hash = head_res.stdout.strip()
             origin_hash = origin_res.stdout.strip()
             if head_hash != origin_hash:
-                count_res = _run_git_cmd(["git", "rev-list", "--count", f"HEAD..{upstream}"], timeout=3.0)
+                count_res = _run_git_cmd(["git", "rev-list", "--count", f"HEAD..{compare_ref}"], timeout=3.0)
                 behind = int(count_res.stdout.strip()) if count_res.returncode == 0 and count_res.stdout.strip().isdigit() else 1
                 short_origin = origin_hash[:7]
-                log_res = _run_git_cmd(["git", "log", "--pretty=format:%h %s", "-n", "10", f"HEAD..{upstream}"], timeout=3.0)
+                log_res = _run_git_cmd(["git", "log", "--pretty=format:%h %s", "-n", "10", f"HEAD..{compare_ref}"], timeout=3.0)
                 commits = [line.strip() for line in log_res.stdout.splitlines() if line.strip()] if log_res.returncode == 0 else []
                 return {
                     "has_update": True,
@@ -522,6 +527,7 @@ def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None,
 
 def get_current_engine_version() -> str:
     """Returns the currently installed version of yt-dlp."""
+    import yt_dlp
     return getattr(yt_dlp.version, "__version__", "unknown")
 
 def check_for_engine_updates(timeout_seconds: float = 3.0) -> Dict[str, Any]:
@@ -632,19 +638,20 @@ def check_for_ffmpeg_updates(timeout_seconds: float = 3.0) -> Dict[str, Any]:
     latest_ver = current_ver
     online = False
 
-    try:
-        resp = requests.get(
-            "https://www.gyan.dev/ffmpeg/builds/release-version",
-            headers={"User-Agent": f"JaneConverter/{__version__}"},
-            timeout=max(1.0, float(timeout_seconds)),
-        )
-        if resp.status_code == 200:
-            val = resp.text.strip()
-            if re.match(r"^\d+(\.\d+)+$", val):
-                latest_ver = val
-                online = True
-    except (requests.RequestException, OSError):
-        pass
+    if os.name == "nt":
+        try:
+            resp = requests.get(
+                "https://www.gyan.dev/ffmpeg/builds/release-version",
+                headers={"User-Agent": f"JaneConverter/{__version__}"},
+                timeout=max(1.0, float(timeout_seconds)),
+            )
+            if resp.status_code == 200:
+                val = resp.text.strip()
+                if re.match(r"^\d+(\.\d+)+$", val):
+                    latest_ver = val
+                    online = True
+        except (requests.RequestException, OSError):
+            pass
 
     if not online:
         try:

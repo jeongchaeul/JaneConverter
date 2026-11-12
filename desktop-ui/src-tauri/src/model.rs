@@ -19,6 +19,8 @@ pub struct ConverterSettings {
     #[serde(default)]
     pub allow_png_fallback: bool,
     #[serde(default)]
+    pub reconstruct_frequency_loss: bool,
+    #[serde(default)]
     pub open_in_browser: bool,
     #[serde(default)]
     pub read_browser_cookies: bool,

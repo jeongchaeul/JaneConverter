@@ -17,7 +17,6 @@ import type { QueueItem } from "./queueUtils";
 interface ConverterQueueProps {
   queue: QueueItem[];
   queueRunning: boolean;
-  running: boolean;
   onStartQueue: () => void;
   onPauseQueue: () => void;
   onClearCompleted: () => void;
@@ -31,7 +30,6 @@ interface ConverterQueueProps {
 export function ConverterQueue({
   queue,
   queueRunning,
-  running,
   onStartQueue,
   onPauseQueue,
   onClearCompleted,

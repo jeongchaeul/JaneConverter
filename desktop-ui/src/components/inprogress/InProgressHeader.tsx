@@ -23,7 +23,6 @@ interface InProgressHeaderProps {
   hasEvents: boolean;
   isClosePageDisabled: boolean;
   isOngoing: boolean;
-  isSinglePage: boolean;
   hasOutputDir: boolean;
   onNavigateSession: (offset: number) => void;
   onOpenSessionModal: () => void;
@@ -48,7 +47,6 @@ export function InProgressHeader({
   hasEvents,
   isClosePageDisabled,
   isOngoing,
-  isSinglePage,
   hasOutputDir,
   onNavigateSession,
   onOpenSessionModal,

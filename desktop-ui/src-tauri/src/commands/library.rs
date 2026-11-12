@@ -185,163 +185,169 @@ pub async fn get_thumbnail(root: String, path: String) -> Result<Option<String>,
 }
 
 #[tauri::command]
-pub fn move_library(
+pub async fn move_library(
     state: State<'_, AppState>,
     source: String,
     destination_parent: String,
 ) -> Result<library::MoveDirectoryResult, String> {
-    let _storage_guard = state
-        .storage_operation
-        .try_lock()
-        .map_err(|error| match error {
+    let storage_operation = std::sync::Arc::clone(&state.storage_operation);
+    let active_job = std::sync::Arc::clone(&state.active_job);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _storage_guard = storage_operation.try_lock().map_err(|error| match error {
             std::sync::TryLockError::WouldBlock => "Another storage operation is already running.",
             std::sync::TryLockError::Poisoned(_) => {
                 "The storage operation registry is unavailable."
             }
         })?;
-    if state
-        .active_job
-        .lock()
-        .map_err(|_| "The conversion registry is unavailable.")?
-        .is_some()
-    {
-        return Err("Wait for the active conversion to finish before moving the library.".into());
-    }
-    let mut settings = settings_get_internal();
-    let configured = fs::canonicalize(settings.output_dir.trim())
-        .map_err(|error| format!("The configured library is unavailable: {error}"))?;
-    let requested = fs::canonicalize(source.trim())
-        .map_err(|error| format!("The current library is unavailable: {error}"))?;
-    if configured != requested {
-        return Err("For safety, only the active converted library can be moved.".into());
-    }
-    write_settings(&settings).map_err(|error| {
-        format!("JaneConverter could not verify that settings are writable: {error}")
-    })?;
-    let result = library::move_directory(&source, &destination_parent)?;
-    settings.output_dir = result.destination.clone();
-    write_settings(&settings).map_err(|error| {
-        format!(
-            "The library moved to {}, but JaneConverter could not save the new location: {error}",
-            result.destination
-        )
-    })?;
-    Ok(result)
+        if active_job
+            .lock()
+            .map_err(|_| "The conversion registry is unavailable.")?
+            .is_some()
+        {
+            return Err("Wait for the active conversion to finish before moving the library.".into());
+        }
+        let mut settings = settings_get_internal();
+        let configured = fs::canonicalize(settings.output_dir.trim())
+            .map_err(|error| format!("The configured library is unavailable: {error}"))?;
+        let requested = fs::canonicalize(source.trim())
+            .map_err(|error| format!("The current library is unavailable: {error}"))?;
+        if configured != requested {
+            return Err("For safety, only the active converted library can be moved.".into());
+        }
+        write_settings(&settings).map_err(|error| {
+            format!("JaneConverter could not verify that settings are writable: {error}")
+        })?;
+        let result = library::move_directory(&source, &destination_parent)?;
+        settings.output_dir = result.destination.clone();
+        write_settings(&settings).map_err(|error| {
+            format!(
+                "The library moved to {}, but JaneConverter could not save the new location: {error}",
+                result.destination
+            )
+        })?;
+        Ok(result)
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]
-pub fn move_fetched_folder(
+pub async fn move_fetched_folder(
     state: State<'_, AppState>,
     source: String,
     destination_parent: String,
 ) -> Result<library::MoveDirectoryResult, String> {
-    let _storage_guard = state
-        .storage_operation
-        .try_lock()
-        .map_err(|error| match error {
+    let storage_operation = std::sync::Arc::clone(&state.storage_operation);
+    let active_job = std::sync::Arc::clone(&state.active_job);
+    let access = std::sync::Arc::clone(&state.access);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _storage_guard = storage_operation.try_lock().map_err(|error| match error {
             std::sync::TryLockError::WouldBlock => "Another storage operation is already running.",
             std::sync::TryLockError::Poisoned(_) => {
                 "The storage operation registry is unavailable."
             }
         })?;
-    if state
-        .active_job
-        .lock()
-        .map_err(|_| "The conversion registry is unavailable.")?
-        .is_some()
-    {
-        return Err(
-            "Wait for the active conversion to finish before moving captured media.".into(),
-        );
-    }
-    if state
-        .access
-        .lock()
-        .map_err(|_| "The access registry is unavailable.")?
-        .is_some()
-    {
-        return Err("Clear browser access before moving the media capturer folder.".into());
-    }
+        if active_job
+            .lock()
+            .map_err(|_| "The conversion registry is unavailable.")?
+            .is_some()
+        {
+            return Err(
+                "Wait for the active conversion to finish before moving captured media.".into(),
+            );
+        }
+        if access
+            .lock()
+            .map_err(|_| "The access registry is unavailable.")?
+            .is_some()
+        {
+            return Err("Clear browser access before moving the media capturer folder.".into());
+        }
 
-    let mut settings = settings_get_internal();
-    let configured = fs::canonicalize(settings.fetched_dir.trim())
-        .map_err(|error| format!("The configured media capturer folder is unavailable: {error}"))?;
-    let requested = fs::canonicalize(source.trim())
-        .map_err(|error| format!("The current media capturer folder is unavailable: {error}"))?;
-    if configured != requested {
-        return Err("For safety, only the active media capturer folder can be moved.".into());
-    }
-    write_settings(&settings).map_err(|error| {
-        format!("JaneConverter could not verify that settings are writable: {error}")
-    })?;
-    let result = library::move_directory(&source, &destination_parent)?;
-    settings.fetched_dir = result.destination.clone();
-    write_settings(&settings).map_err(|error| {
-        format!(
-            "The media capturer folder moved to {}, but JaneConverter could not save the new location: {error}",
-            result.destination
-        )
-    })?;
-    Ok(result)
+        let mut settings = settings_get_internal();
+        let configured = fs::canonicalize(settings.fetched_dir.trim())
+            .map_err(|error| format!("The configured media capturer folder is unavailable: {error}"))?;
+        let requested = fs::canonicalize(source.trim())
+            .map_err(|error| format!("The current media capturer folder is unavailable: {error}"))?;
+        if configured != requested {
+            return Err("For safety, only the active media capturer folder can be moved.".into());
+        }
+        write_settings(&settings).map_err(|error| {
+            format!("JaneConverter could not verify that settings are writable: {error}")
+        })?;
+        let result = library::move_directory(&source, &destination_parent)?;
+        settings.fetched_dir = result.destination.clone();
+        write_settings(&settings).map_err(|error| {
+            format!(
+                "The media capturer folder moved to {}, but JaneConverter could not save the new location: {error}",
+                result.destination
+            )
+        })?;
+        Ok(result)
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))?
 }
 
 #[tauri::command]
-pub fn delete_library_entry(
+pub async fn delete_library_entry(
     state: State<'_, AppState>,
     root: String,
     path: String,
 ) -> Result<(), String> {
-    let _storage_guard = state
-        .storage_operation
-        .try_lock()
-        .map_err(|error| match error {
+    let storage_operation = std::sync::Arc::clone(&state.storage_operation);
+    let active_job = std::sync::Arc::clone(&state.active_job);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _storage_guard = storage_operation.try_lock().map_err(|error| match error {
             std::sync::TryLockError::WouldBlock => "Another storage operation is already running.",
             std::sync::TryLockError::Poisoned(_) => {
                 "The storage operation registry is unavailable."
             }
         })?;
-    let settings = settings_get_internal();
-    let canonical_root = fs::canonicalize(root.trim())
-        .map_err(|error| format!("The library root is unavailable: {error}"))?;
-    let canonical_out = fs::canonicalize(settings.output_dir.trim()).ok();
-    let canonical_fetch = fs::canonicalize(settings.fetched_dir.trim()).ok();
-    let is_valid_root = canonical_out
-        .as_ref()
-        .map(|o| o == &canonical_root || canonical_root.starts_with(o))
-        .unwrap_or(false)
-        || canonical_fetch
+        let settings = settings_get_internal();
+        let canonical_root = fs::canonicalize(root.trim())
+            .map_err(|error| format!("The library root is unavailable: {error}"))?;
+        let canonical_out = fs::canonicalize(settings.output_dir.trim()).ok();
+        let canonical_fetch = fs::canonicalize(settings.fetched_dir.trim()).ok();
+        let is_valid_root = canonical_out
             .as_ref()
-            .map(|f| f == &canonical_root || canonical_root.starts_with(f))
-            .unwrap_or(false);
+            .map(|o| o == &canonical_root || canonical_root.starts_with(o))
+            .unwrap_or(false)
+            || canonical_fetch
+                .as_ref()
+                .map(|f| f == &canonical_root || canonical_root.starts_with(f))
+                .unwrap_or(false);
 
-    if !is_valid_root {
-        return Err("For safety, JaneConverter can only delete items inside the configured library or fetched directories.".into());
-    }
+        if !is_valid_root {
+            return Err("For safety, JaneConverter can only delete items inside the configured library or fetched directories.".into());
+        }
 
-    let target_path = Path::new(path.trim());
-    let candidate = if target_path.is_absolute() {
-        target_path.to_path_buf()
-    } else {
-        canonical_root.join(target_path)
-    };
-    if candidate.is_dir()
-        && state
-            .active_job
-            .lock()
-            .map_err(|_| "The conversion registry is unavailable.")?
-            .is_some()
-    {
-        return Err(
-            "Wait for the active conversion to finish before deleting library media folders."
-                .into(),
-        );
-    }
-    let res = library::delete_inside(&root, &path);
-    if res.is_ok() {
-        let _ = crate::catalog::remove_capture(
-            &Path::new(&root).join("capture-catalog.json"),
-            Path::new(&path),
-        );
-    }
-    res
+        let target_path = Path::new(path.trim());
+        let candidate = if target_path.is_absolute() {
+            target_path.to_path_buf()
+        } else {
+            canonical_root.join(target_path)
+        };
+        if candidate.is_dir()
+            && active_job
+                .lock()
+                .map_err(|_| "The conversion registry is unavailable.")?
+                .is_some()
+        {
+            return Err(
+                "Wait for the active conversion to finish before deleting library media folders."
+                    .into(),
+            );
+        }
+        let res = library::delete_inside(&root, &path);
+        if res.is_ok() {
+            let _ = crate::catalog::remove_capture(
+                &Path::new(&root).join("capture-catalog.json"),
+                Path::new(&path),
+            );
+        }
+        res
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))?
 }

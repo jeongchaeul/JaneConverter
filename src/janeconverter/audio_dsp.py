@@ -41,7 +41,7 @@ def build_loudnorm_filter(measured: Optional[Dict[str, str]] = None) -> str:
         # FFmpeg loudnorm requires measured_lra <= target_lra to stay in linear mode.
         # If input LRA exceeds 11, expand target LRA so high-dynamic-range tracks
         # are not forced into dynamic AGC compression.
-        target_lra = max(11.0, round(measured_lra + 0.1, 2))
+        target_lra = min(50.0, max(11.0, round(measured_lra + 0.1, 2)))
 
         # FFmpeg loudnorm requires measured_tp + (target_i - measured_i) <= target_tp
         # to stay in linear mode. If applying full gain would breach the True Peak ceiling,
@@ -51,6 +51,7 @@ def build_loudnorm_filter(measured: Optional[Dict[str, str]] = None) -> str:
         if measured_tp + gain > target_tp:
             max_safe_gain = (target_tp - 0.05) - measured_tp
             target_i = round(measured_i + max_safe_gain, 2)
+        target_i = max(-70.0, min(-5.0, target_i))
 
         target_i_str = f"{target_i:.2f}" if target_i != -14.0 else "-14"
         target_lra_str = f"{target_lra:.2f}" if target_lra != 11.0 else "11"
@@ -129,25 +130,34 @@ def measure_audio_loudness(
                 stderr=subprocess.PIPE,
                 creationflags=no_window,
             )
-            start_t = time.time()
+            start_t = time.monotonic()
             stderr_chunks = []
-            while True:
-                if abort_event.is_set():
-                    proc.kill()
-                    proc.wait()
-                    return None
-                try:
-                    _, err_chunk = proc.communicate(timeout=0.1)
-                    if err_chunk:
-                        stderr_chunks.append(err_chunk)
-                    break
-                except subprocess.TimeoutExpired as exc:
-                    if exc.stderr:
-                        stderr_chunks.append(exc.stderr)
-                    if time.time() - start_t > 300:
+            try:
+                while True:
+                    if abort_event.is_set():
                         proc.kill()
                         proc.wait()
                         return None
+                    try:
+                        _, err_chunk = proc.communicate(timeout=0.1)
+                        if err_chunk:
+                            stderr_chunks.append(err_chunk)
+                        break
+                    except subprocess.TimeoutExpired as exc:
+                        if exc.stderr:
+                            stderr_chunks.append(exc.stderr)
+                        if time.monotonic() - start_t > 300:
+                            proc.kill()
+                            proc.wait()
+                            return None
+            finally:
+                if proc.stderr:
+                    try:
+                        proc.stderr.close()
+                    except OSError:
+                        pass
+            if abort_event.is_set():
+                return None
             stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="ignore")
         else:
             res = subprocess.run(

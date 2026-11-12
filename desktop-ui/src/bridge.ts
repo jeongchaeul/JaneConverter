@@ -294,8 +294,6 @@ export interface JaneBridge {
   flpDowngrade(source: string, targetVersion: string, targetBuild?: number, outputPath?: string, overwrite?: boolean): Promise<FlpDowngradeResult>;
   exportLogFile(content: string, defaultFilename?: string): Promise<string | null>;
   setTaskbarProgress(progress?: number, status?: "normal" | "paused" | "error" | "none" | "indeterminate"): Promise<void>;
-  getChromiumCookiePolicy(): Promise<boolean>;
-  setChromiumCookiePolicy(enabled: boolean): Promise<boolean>;
   pathSize(path: string): Promise<number>;
   windowMinimize(): Promise<void>;
   windowStartDragging(): Promise<void>;
@@ -444,8 +442,6 @@ const demoBridge: JaneBridge = {
     return defaultFilename;
   },
   async setTaskbarProgress() {},
-  async getChromiumCookiePolicy() { return false; },
-  async setChromiumCookiePolicy(enabled: boolean) { return enabled; },
   async pathSize() { return 0; },
   async windowMinimize() {},
   async windowStartDragging() {},
@@ -520,8 +516,6 @@ const tauriBridge: JaneBridge = {
       progress: progress !== undefined ? Math.round(progress) : null,
       status: status ?? null,
     }),
-  getChromiumCookiePolicy: () => invoke<boolean>("get_chromium_cookie_policy"),
-  setChromiumCookiePolicy: (enabled: boolean) => invoke<boolean>("set_chromium_cookie_policy", { enabled }),
   pathSize: (path: string) => invoke<number>("path_size", { path }),
   windowMinimize: () => invoke<void>("window_minimize"),
   windowStartDragging: () => invoke<void>("window_start_dragging"),

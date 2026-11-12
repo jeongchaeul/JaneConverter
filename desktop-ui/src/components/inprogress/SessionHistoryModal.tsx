@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, FolderOpen, History, Trash2, X } from "lucide-react";
 import type { ConversionHistoryItem } from "../../bridge";
 import type { SessionSummary } from "./types";
@@ -6,11 +6,17 @@ import { formatElapsedMs } from "../../options";
 
 const CATALOG_PAGE_SIZE = 20;
 
+function safeCodePoint(code: number, fallback: string): string {
+  return Number.isFinite(code) && code >= 0 && code <= 0x10ffff
+    ? String.fromCodePoint(code)
+    : fallback;
+}
+
 function decodeHtmlEntities(text: string): string {
   if (!text) return "";
   return text
-    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (match, dec) => safeCodePoint(Number(dec), match))
+    .replace(/&#x([0-9a-fA-F]+);/g, (match, hex) => safeCodePoint(parseInt(hex, 16), match))
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
@@ -47,10 +53,24 @@ export function SessionHistoryModal({
     safeHistoryPage * CATALOG_PAGE_SIZE
   );
 
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-md animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-md animate-in fade-in duration-200"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Conversion Sessions"
+    >
       <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col rounded-3xl border border-white/10 bg-[#0c0919] p-6 shadow-[0_24px_70px_rgba(0,0,0,.7)]">
         {/* Modal Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-white/[0.06] pb-4">

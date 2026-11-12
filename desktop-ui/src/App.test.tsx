@@ -144,7 +144,6 @@ describe("Application shell", () => {
     const openFileBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.includes("Open File"));
     const openPathBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.includes("Open Path"));
     const dragFileBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.getAttribute("aria-label")?.includes("Drag this file"));
-    const closeBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) => b.textContent?.trim() === "Close");
 
     expect(dragFileBtn?.draggable).toBe(true);
     const exportedCard = dialog?.querySelector('[title*="Drag this file into another app"]');

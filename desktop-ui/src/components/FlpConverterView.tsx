@@ -112,7 +112,6 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
   const [filePath, setFilePath] = useState<string>("");
   const [projectInfo, setProjectInfo] = useState<FlpProjectInfo | null>(null);
   const [installedFl, setInstalledFl] = useState<InstalledFlStudio[]>([]);
-  const [, setDetectingFl] = useState<boolean>(false);
 
   // Target version & build controls
   const [targetVersion, setTargetVersion] = useState<string>("21.2.3");
@@ -140,7 +139,6 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
   useEffect(() => {
     let active = true;
     async function detect() {
-      setDetectingFl(true);
       try {
         const detected = await bridge.flpDetectInstalled();
         if (active && isMountedRef.current && detected.length > 0) {
@@ -148,8 +146,6 @@ export function FlpConverterView({ onStatus, initialFilePath }: FlpConverterView
         }
       } catch (err) {
         console.warn("Could not query installed FL Studios:", err);
-      } finally {
-        if (active && isMountedRef.current) setDetectingFl(false);
       }
     }
     void detect();

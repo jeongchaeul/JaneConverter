@@ -14,6 +14,14 @@ UPDATER_VERSION=""
 BUILD_COMMIT="${JANECONVERTER_BUILD_COMMIT:-}"
 signing_private_key="${TAURI_SIGNING_PRIVATE_KEY:-}"
 signing_private_key_password="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
+BUILD_ROOT=""
+
+cleanup() {
+  if ((KEEP_STAGING == 0)) && [[ -n "$BUILD_ROOT" && -d "$BUILD_ROOT" && "$BUILD_ROOT" == "$OUTPUT_DIR"/consumer-build-* ]]; then
+    rm -rf -- "$BUILD_ROOT"
+  fi
+}
+trap cleanup EXIT
 
 usage() {
   cat <<'EOF'

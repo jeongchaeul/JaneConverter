@@ -413,8 +413,12 @@ def downgrade_flp_file(
     overwrite: bool = False,
 ) -> Dict[str, Any]:
     """Read an FLP file, downgrade it to target version & build, and write to disk."""
+    from .parser import FLPParseError, MAX_FLP_FILE_SIZE
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"Input FLP file not found: {input_path}")
+    file_size = os.path.getsize(input_path)
+    if file_size > MAX_FLP_FILE_SIZE:
+        raise FLPParseError(f"FLP file size ({file_size} bytes) exceeds maximum limit ({MAX_FLP_FILE_SIZE} bytes).")
 
     with open(input_path, "rb") as f:
         raw_bytes = f.read()

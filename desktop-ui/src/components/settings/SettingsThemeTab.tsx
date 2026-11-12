@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Check,
   Image as ImageIcon,
@@ -8,7 +8,6 @@ import {
   RotateCcw,
   Save,
   Sliders,
-  Sparkles,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -57,7 +56,7 @@ export const SIDEBAR_PRESETS = [
 ];
 
 function svgDataUrl(svg: string) {
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg.trim())}`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg.trim()).replace(/'/g, "%27")}`;
 }
 
 export const PRESET_WALLPAPERS = [
@@ -229,15 +228,28 @@ export function SettingsThemeTab({
   onStatus: (msg: string) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const savedTimerRef = useRef<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [savedRecently, setSavedRecently] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current !== null) {
+        window.clearTimeout(savedTimerRef.current);
+      }
+    };
+  }, []);
 
   function handleSave() {
     onSaveAppearance?.();
     setSavedRecently(true);
     onStatus("Appearance settings saved successfully.");
-    setTimeout(() => {
+    if (savedTimerRef.current !== null) {
+      window.clearTimeout(savedTimerRef.current);
+    }
+    savedTimerRef.current = window.setTimeout(() => {
       setSavedRecently(false);
+      savedTimerRef.current = null;
     }, 2000);
   }
 
@@ -569,6 +581,7 @@ export function SettingsThemeTab({
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
+                  e.target.value = "";
                   if (file) handleFileSelected(file);
                 }}
               />
@@ -754,7 +767,7 @@ export function SettingsThemeTab({
                     <div
                       className="absolute inset-0 bg-cover bg-center transition-all duration-150"
                       style={{
-                        backgroundImage: `url(${wallpaper})`,
+                        backgroundImage: `url("${wallpaper.replace(/"/g, '\\"')}")`,
                         filter: `blur(${Math.round((wallpaperBlur / 100) * 16)}px)`,
                         transform: wallpaperBlur > 0 ? "scale(1.08)" : "scale(1)",
                       }}

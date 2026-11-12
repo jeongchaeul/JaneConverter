@@ -20,7 +20,7 @@ from PIL import Image
 from .cookie_unlocker import patch_yt_dlp_cookie_database_reader
 from .extractor import clean_windows_path, sanitize_filename
 from .image_format import convert_image_format
-from .paths import get_temp_dir, promote_staging_dir
+from .paths import get_temp_dir
 
 
 MAX_PHOTOS = 500
@@ -54,9 +54,6 @@ PLATFORM_LABELS = {
     "tumblr": "Tumblr",
     "pinterest": "Pinterest",
 }
-
-
-_promote_staging_dir = promote_staging_dir
 
 
 def _media_url(value: Any, platform: str) -> str:
@@ -257,8 +254,11 @@ def download_social_photo_manifest(
         with _get_photo(session, photo["url"], platform_key) as response:
             response.raise_for_status()
             _media_url(response.url, platform_key)
-            length = response.headers.get("Content-Length")
-            if length and int(length) > MAX_IMAGE_BYTES:
+            try:
+                length_val = int(response.headers.get("Content-Length") or 0)
+            except (ValueError, TypeError):
+                length_val = 0
+            if length_val > MAX_IMAGE_BYTES:
                 raise RuntimeError(f"{platform} photo {index} is larger than the 100 MB per-image limit.")
             download_path = os.path.join(staging_dir, f"{title}_{index:03d}.download")
             image_bytes = 0
@@ -349,12 +349,20 @@ def download_social_photo_manifest(
     }
 
 
+_SHORTLINK_CACHE_LOCK = threading.Lock()
+_SHORTLINK_CACHE: dict[str, str] = {}
+
+
 def resolve_pinterest_shortlink(url: str, timeout: float = 8.0) -> str:
     """Expand pin.it shortlinks to their full Pinterest destination URL safely hop-by-hop."""
     try:
         raw = str(url or "").strip()
         parsed = urllib.parse.urlparse(raw)
         if (parsed.hostname or "").lower() == "pin.it":
+            with _SHORTLINK_CACHE_LOCK:
+                cached = _SHORTLINK_CACHE.get(raw)
+            if cached:
+                return cached
             from .extractor import _is_safe_public_url
 
             current_url = raw
@@ -391,11 +399,19 @@ def resolve_pinterest_shortlink(url: str, timeout: float = 8.0) -> str:
                             current_url = urllib.parse.urljoin(current_url, loc)
                         else:
                             if _is_safe_public_url(current_url):
+                                with _SHORTLINK_CACHE_LOCK:
+                                    if len(_SHORTLINK_CACHE) >= 256:
+                                        _SHORTLINK_CACHE.pop(next(iter(_SHORTLINK_CACHE)))
+                                    _SHORTLINK_CACHE[raw] = current_url
                                 return current_url
                             return url
                     finally:
                         resp.close()
                 if _is_safe_public_url(current_url):
+                    with _SHORTLINK_CACHE_LOCK:
+                        if len(_SHORTLINK_CACHE) >= 256:
+                            _SHORTLINK_CACHE.pop(next(iter(_SHORTLINK_CACHE)))
+                        _SHORTLINK_CACHE[raw] = current_url
                     return current_url
     except Exception:
         pass
@@ -498,29 +514,9 @@ def _fetch_public_pinterest_pin(
     return None
 
 
-def _get_social_session_cache_path(platform: str) -> str:
+def _purge_legacy_social_cookies(platform: str) -> None:
     from .paths import APP_DATA_DIR
-    cache_dir = os.path.join(APP_DATA_DIR, "cache")
-    os.makedirs(cache_dir, exist_ok=True)
-    return os.path.join(cache_dir, f"{platform}_session.json")
-
-
-def _load_persisted_social_cookies(platform: str) -> Optional[tuple[str, Any]]:
-    # Plaintext disk cookie persistence is deprecated for credential safety.
-    # Automatically purge any legacy plaintext session file.
-    p = _get_social_session_cache_path(platform)
-    if os.path.isfile(p):
-        try:
-            os.remove(p)
-        except OSError:
-            pass
-    return None
-
-
-def _save_persisted_social_cookies(platform: str, browser_name: str, jar: Any) -> None:
-    # Ephemeral in-memory caching is preferred over unencrypted disk storage.
-    # Purge any stale file that may exist on disk.
-    p = _get_social_session_cache_path(platform)
+    p = os.path.join(APP_DATA_DIR, "cache", f"{platform}_session.json")
     if os.path.isfile(p):
         try:
             os.remove(p)
@@ -528,8 +524,16 @@ def _save_persisted_social_cookies(platform: str, browser_name: str, jar: Any) -
             pass
 
 
+_SOCIAL_SESSION_LOCK = threading.Lock()
 _CACHED_PINTEREST_SESSION: Optional[dict[str, Any]] = None
 _CACHED_INSTAGRAM_SESSION: Optional[dict[str, Any]] = None
+
+
+def _open_request(opener: Any, req: urllib.request.Request, timeout: float = 15.0) -> Any:
+    try:
+        return opener.open(req, timeout=timeout)
+    except TypeError:
+        return opener.open(req)
 
 
 def fetch_pinterest_collection_manifest(
@@ -570,25 +574,23 @@ def fetch_pinterest_collection_manifest(
     jar = None
     found_browser = None
 
-    global _CACHED_PINTEREST_SESSION
-    if _CACHED_PINTEREST_SESSION and (time.time() - _CACHED_PINTEREST_SESSION.get("timestamp", 0) < 900):
-        cached_b = _CACHED_PINTEREST_SESSION.get("browser")
-        if not preferred or preferred[0] == cached_b:
-            jar = _CACHED_PINTEREST_SESSION.get("jar")
-            found_browser = cached_b
+    with _SOCIAL_SESSION_LOCK:
+        global _CACHED_PINTEREST_SESSION
+        if _CACHED_PINTEREST_SESSION and (time.time() - _CACHED_PINTEREST_SESSION.get("timestamp", 0) < 900):
+            cached_b = _CACHED_PINTEREST_SESSION.get("browser")
+            if not preferred or preferred[0] == cached_b:
+                jar = _CACHED_PINTEREST_SESSION.get("jar")
+                found_browser = cached_b
 
     if not jar:
-        persisted = _load_persisted_social_cookies("pinterest")
-        if persisted and (not preferred or preferred[0] == persisted[0].lower()):
-            found_browser, jar = persisted
-
-    if not jar:
+        _purge_legacy_social_cookies("pinterest")
         report(0.04, "Searching desktop browsers for an active Pinterest session...")
         from .auth import get_ordered_browser_candidates, detect_running_browsers, filter_cookie_jar_for_domains
         running = detect_running_browsers()
         candidates = get_ordered_browser_candidates(preferred=browser, running=running)
 
         for b in candidates:
+            ydl = None
             try:
                 ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
                 candidate_jar = filter_cookie_jar_for_domains(ydl.cookiejar, ("pinterest.com", "pinimg.com"))
@@ -596,11 +598,16 @@ def fetch_pinterest_collection_manifest(
                 if p_cookies and any(getattr(c, "name", None) in ("_pinterest_sess", "_auth") for c in p_cookies):
                     jar = candidate_jar
                     found_browser = b
-                    _CACHED_PINTEREST_SESSION = {"timestamp": time.time(), "browser": found_browser, "jar": jar}
-                    _save_persisted_social_cookies("pinterest", b, jar)
+                    with _SOCIAL_SESSION_LOCK:
+                        _CACHED_PINTEREST_SESSION = {"timestamp": time.time(), "browser": found_browser, "jar": jar}
                     break
             except Exception:
                 continue
+            finally:
+                if ydl is not None:
+                    close_fn = getattr(ydl, "close", None)
+                    if callable(close_fn):
+                        close_fn()
 
     opener = None
     csrf = ""
@@ -645,8 +652,8 @@ def fetch_pinterest_collection_manifest(
                     api_url_pins,
                     headers={**headers_base, "X-Pinterest-PWS-Handler": "www/multi-pin-share/[id].js"},
                 )
-                resp = opener.open(req_pins)
-                data_pins = json.loads(resp.read().decode("utf-8"))
+                with _open_request(opener, req_pins, timeout=15) as resp:
+                    data_pins = json.loads(resp.read().decode("utf-8"))
                 pins_data = data_pins.get("resource_response", {}).get("data", [])
                 if pins_data:
                     p = pins_data[0]
@@ -735,8 +742,8 @@ def fetch_pinterest_collection_manifest(
             headers={**headers_base, "X-Pinterest-PWS-Handler": "www/multi-pin-share/[id].js"}
         )
         try:
-            resp = opener.open(req_mps)
-            data_mps = json.loads(resp.read().decode("utf-8"))
+            with _open_request(opener, req_mps, timeout=15) as resp:
+                data_mps = json.loads(resp.read().decode("utf-8"))
             pin_ids = data_mps.get("resource_response", {}).get("data", {}).get("pin_ids", [])
         except Exception as exc:
             raise RuntimeError(f"Pinterest multi-pin-share request failed: {exc}") from exc
@@ -760,8 +767,8 @@ def fetch_pinterest_collection_manifest(
             headers={**headers_base, "X-Pinterest-PWS-Handler": "www/multi-pin-share/[id].js"}
         )
         try:
-            resp = opener.open(req_pins)
-            data_pins = json.loads(resp.read().decode("utf-8"))
+            with _open_request(opener, req_pins, timeout=15) as resp:
+                data_pins = json.loads(resp.read().decode("utf-8"))
             pins_data = data_pins.get("resource_response", {}).get("data", [])
         except Exception as exc:
             raise RuntimeError(f"Pinterest batch pins request failed: {exc}") from exc
@@ -773,7 +780,7 @@ def fetch_pinterest_collection_manifest(
             if not img:
                 continue
             orig_url = re.sub(r"/\d+x(?:\d+|_RS)?/", "/originals/", img)
-            name = orig_url.split("/")[-1]
+            name = orig_url.split("?", 1)[0].split("/")[-1]
             photo_id = str(p.get("id") or re.sub(r"\.[a-zA-Z0-9]+$", "", name).replace("-", "_"))
             if not photo_id or photo_id in seen_ids:
                 continue
@@ -821,8 +828,8 @@ def fetch_pinterest_collection_manifest(
             }
         )
         try:
-            resp = opener.open(req)
-            parsed_json = json.loads(resp.read().decode("utf-8"))
+            with _open_request(opener, req, timeout=15) as resp:
+                parsed_json = json.loads(resp.read().decode("utf-8"))
             if parsed_json.get("resource_response", {}).get("data"):
                 res_data = parsed_json
                 break
@@ -850,7 +857,7 @@ def fetch_pinterest_collection_manifest(
         if not image_url:
             continue
         orig_url = re.sub(r"/\d+x(?:\d+|_RS)?/", "/originals/", image_url)
-        name = orig_url.split("/")[-1]
+        name = orig_url.split("?", 1)[0].split("/")[-1]
         photo_id = re.sub(r"\.[a-zA-Z0-9]+$", "", name).replace("-", "_")
         if not photo_id or photo_id in seen_ids:
             continue
@@ -939,8 +946,8 @@ def _query_instagram_media_endpoints(
                 }
             )
             try:
-                resp = opener.open(req)
-                parsed = json.loads(resp.read().decode("utf-8"))
+                with _open_request(opener, req, timeout=15) as resp:
+                    parsed = json.loads(resp.read().decode("utf-8"))
                 if parsed.get("items"):
                     return parsed
             except Exception:
@@ -991,25 +998,23 @@ def fetch_instagram_manifest(
         jar = None
         found_browser = None
 
-        global _CACHED_INSTAGRAM_SESSION
-        if _CACHED_INSTAGRAM_SESSION and (time.time() - _CACHED_INSTAGRAM_SESSION.get("timestamp", 0) < 900):
-            cached_b = _CACHED_INSTAGRAM_SESSION.get("browser")
-            if not preferred or preferred[0] == cached_b:
-                jar = _CACHED_INSTAGRAM_SESSION.get("jar")
-                found_browser = cached_b
+        with _SOCIAL_SESSION_LOCK:
+            global _CACHED_INSTAGRAM_SESSION
+            if _CACHED_INSTAGRAM_SESSION and (time.time() - _CACHED_INSTAGRAM_SESSION.get("timestamp", 0) < 900):
+                cached_b = _CACHED_INSTAGRAM_SESSION.get("browser")
+                if not preferred or preferred[0] == cached_b:
+                    jar = _CACHED_INSTAGRAM_SESSION.get("jar")
+                    found_browser = cached_b
 
         if not jar:
-            persisted = _load_persisted_social_cookies("instagram")
-            if persisted and (not preferred or preferred[0] == persisted[0].lower()):
-                found_browser, jar = persisted
-
-        if not jar:
+            _purge_legacy_social_cookies("instagram")
             report(0.05, "Searching desktop browsers for an active Instagram session...")
             from .auth import get_ordered_browser_candidates, detect_running_browsers, filter_cookie_jar_for_domains
             running = detect_running_browsers()
             candidates = get_ordered_browser_candidates(preferred=browser, running=running)
 
             for b in candidates:
+                ydl = None
                 try:
                     ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
                     candidate_jar = filter_cookie_jar_for_domains(ydl.cookiejar, ("instagram.com", "cdninstagram.com"))
@@ -1017,11 +1022,16 @@ def fetch_instagram_manifest(
                     if ig_cookies and any(getattr(c, "name", None) in ("sessionid", "ds_user_id") for c in ig_cookies):
                         jar = candidate_jar
                         found_browser = b
-                        _CACHED_INSTAGRAM_SESSION = {"timestamp": time.time(), "browser": found_browser, "jar": jar}
-                        _save_persisted_social_cookies("instagram", b, jar)
+                        with _SOCIAL_SESSION_LOCK:
+                            _CACHED_INSTAGRAM_SESSION = {"timestamp": time.time(), "browser": found_browser, "jar": jar}
                         break
                 except Exception:
                     continue
+                finally:
+                    if ydl is not None:
+                        close_fn = getattr(ydl, "close", None)
+                        if callable(close_fn):
+                            close_fn()
 
         if found_browser:
             report(0.06, f"Connected to Instagram session via {found_browser.title()}. Requesting post info...")

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
 import { AlertCircle, CheckCircle2, Clock, FolderOpen, GripVertical, HardDrive, Play, RotateCcw, X } from "lucide-react";
 import { bridge, type AccessStatus, type ConversionHistoryItem, type ConverterEvent, type ConverterSettings, type FetchedMedia, type RuntimeInfo, type UpdateCheckResult } from "./bridge";
 import { Sidebar, type ViewKey } from "./components/Sidebar";
@@ -14,7 +13,7 @@ import { UpdatePromptHeader, isAppUpdateAvailable } from "./components/UpdatePro
 import { UpdateChangesModal } from "./components/UpdateChangesModal";
 import { detectCategoryFromPath, findPresetName, formatBytes, formatElapsedMs } from "./options";
 import { appendOrCollapseProgressEvent, extractYouTubeUrlFromThumbnail } from "./components/inprogress/parser";
-import { clearAppearanceStorage, loadAppearanceFromStorage, saveAppearanceToStorage, type AppearanceSettings } from "./utils/appearanceStorage";
+import { clearAppearanceStorage, loadAppearanceFromStorage, saveAppearanceToStorage } from "./utils/appearanceStorage";
 
 const defaultSettings: ConverterSettings = {
   outputDir: "converted",
@@ -205,109 +204,40 @@ export default function App() {
       return {};
     }
   });
-  const [theme, setTheme] = useState<"dark" | "light">(() => {
-    if (typeof window === "undefined") return "dark";
+  const readStoredAppearance = (key: string): string | null => {
+    if (typeof window === "undefined") return null;
     try {
-      return (window.localStorage.getItem("janecoverter.theme") as "light" | null) ?? "dark";
+      return window.localStorage.getItem(`janeconverter.${key}`) ?? window.localStorage.getItem(`janecoverter.${key}`);
     } catch {
-      return "dark";
+      return null;
     }
-  });
+  };
 
-  const [accentColor, setAccentColor] = useState<string>(() => {
-    if (typeof window === "undefined") return "#c52b68";
-    try {
-      return window.localStorage.getItem("janecoverter.accentColor") ?? "#c52b68";
-    } catch {
-      return "#c52b68";
-    }
-  });
+  const readStoredInt = (key: string, fallback: number): number => {
+    const raw = readStoredAppearance(key);
+    if (raw === null) return fallback;
+    const val = parseInt(raw, 10);
+    return isNaN(val) ? fallback : Math.min(100, Math.max(0, val));
+  };
 
-  const [bgColor, setBgColor] = useState<string>(() => {
-    if (typeof window === "undefined") return "#02000a";
-    try {
-      return window.localStorage.getItem("janecoverter.bgColor") ?? "#02000a";
-    } catch {
-      return "#02000a";
-    }
-  });
-
-  const [bgMode, setBgMode] = useState<"color" | "wallpaper">(() => {
-    if (typeof window === "undefined") return "color";
-    try {
-      return (window.localStorage.getItem("janecoverter.bgMode") as "color" | "wallpaper") || "color";
-    } catch {
-      return "color";
-    }
-  });
-
-  const [wallpaper, setWallpaper] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    try {
-      return window.localStorage.getItem("janecoverter.wallpaper") || "";
-    } catch {
-      return "";
-    }
-  });
-
-  const [wallpaperBlur, setWallpaperBlur] = useState<number>(() => {
-    if (typeof window === "undefined") return 20;
-    try {
-      const raw = window.localStorage.getItem("janecoverter.wallpaperBlur");
-      if (raw !== null) {
-        const val = parseInt(raw, 10);
-        return isNaN(val) ? 20 : Math.min(100, Math.max(0, val));
-      }
-      return 20;
-    } catch {
-      return 20;
-    }
-  });
-
-  const [wallpaperMaskColor, setWallpaperMaskColor] = useState<string>(() => {
-    if (typeof window === "undefined") return "#000000";
-    try {
-      return window.localStorage.getItem("janecoverter.wallpaperMaskColor") ?? "#000000";
-    } catch {
-      return "#000000";
-    }
-  });
-
-  const [wallpaperMaskOpacity, setWallpaperMaskOpacity] = useState<number>(() => {
-    if (typeof window === "undefined") return 50;
-    try {
-      const raw = window.localStorage.getItem("janecoverter.wallpaperMaskOpacity");
-      if (raw !== null) {
-        const val = parseInt(raw, 10);
-        return isNaN(val) ? 50 : Math.min(100, Math.max(0, val));
-      }
-      return 50;
-    } catch {
-      return 50;
-    }
-  });
-
-  const [sidebarColor, setSidebarColor] = useState<string>(() => {
-    if (typeof window === "undefined") return "#05040d";
-    try {
-      return window.localStorage.getItem("janecoverter.sidebarColor") || "#05040d";
-    } catch {
-      return "#05040d";
-    }
-  });
-
+  const [theme, setTheme] = useState<"dark" | "light">(() =>
+    (readStoredAppearance("theme") as "light" | null) ?? "dark",
+  );
+  const [accentColor, setAccentColor] = useState<string>(() => readStoredAppearance("accentColor") ?? "#c52b68");
+  const [bgColor, setBgColor] = useState<string>(() => readStoredAppearance("bgColor") ?? "#02000a");
+  const [bgMode, setBgMode] = useState<"color" | "wallpaper">(() =>
+    (readStoredAppearance("bgMode") as "color" | "wallpaper") || "color",
+  );
+  const [wallpaper, setWallpaper] = useState<string>(() => readStoredAppearance("wallpaper") || "");
+  const [wallpaperBlur, setWallpaperBlur] = useState<number>(() => readStoredInt("wallpaperBlur", 20));
+  const [wallpaperMaskColor, setWallpaperMaskColor] = useState<string>(() => readStoredAppearance("wallpaperMaskColor") ?? "#000000");
+  const [wallpaperMaskOpacity, setWallpaperMaskOpacity] = useState<number>(() => readStoredInt("wallpaperMaskOpacity", 50));
+  const [sidebarColor, setSidebarColor] = useState<string>(() => readStoredAppearance("sidebarColor") || "#05040d");
   const [sidebarOpacity, setSidebarOpacity] = useState<number>(() => {
-    if (typeof window === "undefined") return 45;
-    try {
-      const raw = window.localStorage.getItem("janecoverter.sidebarOpacity");
-      if (raw !== null) {
-        const val = parseInt(raw, 10);
-        return isNaN(val) ? 45 : Math.min(100, Math.max(0, val));
-      }
-      return 45;
-    } catch {
-      return 45;
-    }
+    const raw = readStoredAppearance("sidebarOpacity");
+    if (raw === null) return 45;
+    const val = parseInt(raw, 10);
+    return isNaN(val) ? 45 : Math.min(100, Math.max(0, val));
   });
 
   useEffect(() => {
@@ -704,7 +634,7 @@ export default function App() {
         if (!unseen.length) return;
         for (const entry of unseen) accessDiagnosticIds.current.add(entry.id);
         setEvents((current) => [...current.slice(-1499), ...unseen.map((entry) => ({ jobId: "browser-session", kind: "status" as const, message: entry.message }))]);
-        setRawEvents((current) => [...current.slice(-1499), ...unseen.map((entry) => ({ jobId: "browser-session", kind: "status" as const, message: entry.message }))]);
+        setRawEvents((current) => [...current.slice(-9999), ...unseen.map((entry) => ({ jobId: "browser-session", kind: "status" as const, message: entry.message }))]);
       } catch (error) {
         statusMessage(error instanceof Error ? error.message : String(error));
       } finally {
@@ -731,7 +661,7 @@ export default function App() {
         if (!/update available|check unavailable/i.test(message)) return;
         setStatus(message);
         setEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
-        setRawEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
+        setRawEvents((current) => [...current.slice(-9999), { jobId: "ui", kind: "status", message }]);
       }).catch(() => {
         // Startup checks stay quiet when the machine is offline. The Settings
         // view remains available for an explicit retry and full status text.
@@ -745,7 +675,7 @@ export default function App() {
   const statusMessage = useCallback((message: string) => {
     setStatus(message);
     setEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
-    setRawEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
+    setRawEvents((current) => [...current.slice(-9999), { jobId: "ui", kind: "status", message }]);
   }, []);
 
   const errorMessage = useCallback((message: string) => {
@@ -912,12 +842,12 @@ export default function App() {
     catch (error) { errorMessage(error instanceof Error ? error.message : String(error)); }
   }
 
-  async function createAccess(source: string): Promise<AccessStatus> {
+  async function createAccess(source: string, openBrowser = true): Promise<AccessStatus> {
     try {
       const nextAccess = await bridge.createAccessLink(source);
       accessDiagnosticIds.current.clear();
       setAccess(nextAccess);
-      if (nextAccess.link) {
+      if (openBrowser && nextAccess.link) {
         try {
           await bridge.openUrl(nextAccess.link);
         } catch (openErr) {
@@ -948,7 +878,7 @@ export default function App() {
   }
 
   const secondaryContent = activeView === "fetched"
-    ? <FetchedMediaView access={access} settings={settings} onSettings={updateSettings} onCreateAccess={() => createAccess("")} onClearAccess={clearAccess} onSelect={(item) => { setSelectedCapture(item); setActiveView("converter"); statusMessage(item.name + " selected and ready to convert."); }} onDiscard={(item) => { if (selectedCapture?.path === item.path) setSelectedCapture(null); }} onStatus={statusMessage} />
+    ? <FetchedMediaView access={access} settings={settings} onSettings={updateSettings} onCreateAccess={() => createAccess("", false)} onClearAccess={clearAccess} onSelect={(item) => { setSelectedCapture(item); setActiveView("converter"); statusMessage(item.name + " selected and ready to convert."); }} onDiscard={(item) => { if (selectedCapture?.path === item.path) setSelectedCapture(null); }} onStatus={statusMessage} />
     : activeView === "library"
     ? <LibraryView settings={settings} onSettings={updateSettings} onStatus={statusMessage} history={history} conversionTimings={conversionTimings} onClearHistory={handleClearHistory} onRemoveHistoryItem={handleRemoveHistoryItem} />
     : activeView === "hardware"
@@ -1072,7 +1002,7 @@ export default function App() {
     <div
       data-theme={theme}
       onContextMenu={(event) => event.preventDefault()}
-      className="app-shell relative flex flex-col h-screen max-h-screen w-screen overflow-hidden transition-colors duration-200"
+      className="relative flex flex-col h-screen max-h-screen w-screen overflow-hidden transition-colors duration-200"
       style={{
         backgroundColor: bgMode === "wallpaper" && wallpaper ? "transparent" : "var(--bg-color, #02000a)",
         color: theme === "light" ? "#1f1222" : "#ededed",
@@ -1084,7 +1014,7 @@ export default function App() {
           <div
             className="absolute inset-0 bg-cover bg-center transition-[filter,transform] duration-200"
             style={{
-              backgroundImage: `url(${wallpaper})`,
+              backgroundImage: `url("${wallpaper.replace(/"/g, '\\"')}")`,
               filter: `blur(${Math.round((wallpaperBlur / 100) * 40)}px)`,
               transform: wallpaperBlur > 0 ? "scale(1.08)" : "scale(1)",
             }}
@@ -1149,8 +1079,6 @@ export default function App() {
                 cancelCaptureRef.current = cancelFn ?? null;
                 if (!busy && !activeJobRef.current) setPaused(false);
               }}
-              onCreateAccess={createAccess}
-              onClearAccess={clearAccess}
               onStatus={statusMessage}
               onError={errorMessage}
             />

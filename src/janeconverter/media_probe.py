@@ -25,6 +25,7 @@ import threading
 
 _PROBE_CACHE_LOCK = threading.Lock()
 _PROBE_CACHE: Dict[tuple, Dict[str, Any]] = {}
+_DURATION_CACHE: Dict[tuple, float] = {}
 _MAX_PROBE_CACHE_ENTRIES = 64
 
 def probe_media_duration(input_path: str) -> Optional[float]:
@@ -41,6 +42,8 @@ def probe_media_duration(input_path: str) -> Optional[float]:
 
     if cache_key is not None:
         with _PROBE_CACHE_LOCK:
+            if cache_key in _DURATION_CACHE:
+                return _DURATION_CACHE[cache_key]
             cached = _PROBE_CACHE.get(cache_key)
             if cached:
                 dur_str = cached.get("format", {}).get("duration")
@@ -48,7 +51,9 @@ def probe_media_duration(input_path: str) -> Optional[float]:
                     dur_str = next((s.get("duration") for s in cached.get("streams", []) if s.get("duration")), None)
                 if dur_str:
                     try:
-                        return float(dur_str)
+                        val = float(dur_str)
+                        _DURATION_CACHE[cache_key] = val
+                        return val
                     except (ValueError, TypeError):
                         pass
     try:
@@ -74,8 +79,9 @@ def probe_media_duration(input_path: str) -> Optional[float]:
                     if val > 0:
                         if cache_key is not None:
                             with _PROBE_CACHE_LOCK:
-                                entry = _PROBE_CACHE.setdefault(cache_key, {})
-                                entry.setdefault("format", {})["duration"] = str(val)
+                                if len(_DURATION_CACHE) >= _MAX_PROBE_CACHE_ENTRIES:
+                                    _DURATION_CACHE.pop(next(iter(_DURATION_CACHE)))
+                                _DURATION_CACHE[cache_key] = val
                         return val
                 except (ValueError, TypeError):
                     continue
@@ -110,7 +116,7 @@ def probe_media_streams(input_path: str) -> Optional[Dict[str, Any]]:
     Returns media information (format and streams) via ffprobe as a parsed dict,
     or None if probing fails or the input is invalid.
     """
-    if not input_path or not os.path.exists(input_path) or is_html_document(input_path):
+    if not input_path or not os.path.exists(input_path):
         return None
     try:
         st = os.stat(input_path)
@@ -122,6 +128,8 @@ def probe_media_streams(input_path: str) -> Optional[Dict[str, Any]]:
         with _PROBE_CACHE_LOCK:
             if cache_key in _PROBE_CACHE:
                 return _PROBE_CACHE[cache_key]
+    if is_html_document(input_path):
+        return None
 
     try:
         no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -268,6 +276,45 @@ def validate_output_file(
             )
 
 
+def _validate_duration(
+    source_duration: float,
+    output_duration: float,
+    start_time: Optional[str],
+    end_time: Optional[str],
+    kind_label: str,
+) -> None:
+    if start_time or end_time:
+        if output_duration <= 0:
+            raise RuntimeError(f"ValidationFailed: the trimmed output {kind_label}has zero or invalid duration.")
+        s_sec = parse_time_offset_seconds(start_time) or 0.0
+        e_sec = parse_time_offset_seconds(end_time)
+        if e_sec is not None and e_sec > s_sec:
+            expected_trim_duration = e_sec - s_sec
+        elif source_duration > s_sec:
+            expected_trim_duration = source_duration - s_sec
+        else:
+            expected_trim_duration = None
+        if expected_trim_duration is not None and expected_trim_duration > 0:
+            max_diff = max(2.5, expected_trim_duration * 0.15)
+            if abs(expected_trim_duration - output_duration) > max_diff:
+                raise RuntimeError(f"ValidationFailed: the output {kind_label}duration changed unexpectedly.")
+    elif source_duration > 0 and output_duration > 0:
+        if abs(source_duration - output_duration) > max(0.5, source_duration * 0.02):
+            raise RuntimeError(f"ValidationFailed: the output {kind_label}duration changed unexpectedly.")
+
+
+def _allowed_sample_rates(target: str, requested_rate: int) -> set[str]:
+    if target == "opus":
+        opus_rates = (8000, 12000, 16000, 24000, 48000)
+        if requested_rate in opus_rates:
+            return {str(requested_rate)}
+        higher = [r for r in opus_rates if r >= requested_rate]
+        return {str(higher[0] if higher else 48000)}
+    if target in {"mp3", "ac3", "mp2", "wma"} and requested_rate > 48000:
+        return {str(requested_rate), "48000"}
+    return {str(requested_rate)}
+
+
 def validate_output_intent(
     input_path: str,
     output_path: str,
@@ -307,33 +354,23 @@ def validate_output_intent(
         if not audio:
             raise RuntimeError("ValidationFailed: the requested audio stream is missing.")
         source_audio = next((stream for stream in source_streams if stream.get("codec_type") == "audio"), None)
-        if source_audio and source_audio.get("channels") and audio.get("channels") != source_audio.get("channels"):
-            raise RuntimeError("ValidationFailed: the output audio channel count changed.")
+        if source_audio and source_audio.get("channels"):
+            try:
+                src_ch = int(source_audio.get("channels"))
+                out_ch = int(audio.get("channels") or 0)
+            except (TypeError, ValueError):
+                src_ch = out_ch = 0
+            # Multi-channel sources (>2 ch) are intentionally phase-safe downmixed to stereo in converter.py
+            expected_min_ch = 2 if src_ch > 2 else src_ch
+            if src_ch > 0 and (out_ch < expected_min_ch or (src_ch <= 2 and out_ch != src_ch)):
+                raise RuntimeError("ValidationFailed: the output audio channel count changed.")
         try:
             source_duration = float(source.get("format", {}).get("duration") or 0)
             output_duration = float(output.get("format", {}).get("duration") or 0)
         except (TypeError, ValueError):
             source_duration = output_duration = 0
-        is_trimmed = bool(intent.start_time or intent.end_time)
-        if is_trimmed:
-            if output_duration <= 0:
-                raise RuntimeError("ValidationFailed: the trimmed output has zero or invalid duration.")
-            s_sec = parse_time_offset_seconds(intent.start_time) or 0.0
-            e_sec = parse_time_offset_seconds(intent.end_time)
-            if e_sec is not None and e_sec > s_sec:
-                expected_trim_duration = e_sec - s_sec
-            elif source_duration > s_sec:
-                expected_trim_duration = source_duration - s_sec
-            else:
-                expected_trim_duration = None
-            if expected_trim_duration is not None and expected_trim_duration > 0:
-                max_diff = max(2.5, expected_trim_duration * 0.15)
-                if abs(expected_trim_duration - output_duration) > max_diff:
-                    raise RuntimeError("ValidationFailed: the output audio duration changed unexpectedly.")
-        elif source_duration > 0 and output_duration > 0:
-            if abs(source_duration - output_duration) > max(0.5, source_duration * 0.02):
-                raise RuntimeError("ValidationFailed: the output audio duration changed unexpectedly.")
-        if intent.sample_rate and str(audio.get("sample_rate")) != str(intent.sample_rate):
+        _validate_duration(source_duration, output_duration, intent.start_time, intent.end_time, "audio ")
+        if intent.sample_rate and str(audio.get("sample_rate")) not in _allowed_sample_rates(target, int(intent.sample_rate)):
             raise RuntimeError("ValidationFailed: the output audio sample rate changed.")
         quality = intent.quality.lower().strip()
         if target == "wav":
@@ -350,7 +387,7 @@ def validate_output_intent(
             actual_depth = audio.get("bits_per_raw_sample") or audio.get("bits_per_sample")
             if str(actual_depth) != str(expected_depth):
                 raise RuntimeError("ValidationFailed: the requested FLAC bit depth was not produced.")
-        if intent.cover_required and target in {"mp3", "flac", "m4a", "aac"}:
+        if intent.cover_required and target in {"mp3", "flac", "m4a"}:
             if not any(stream.get("disposition", {}).get("attached_pic") for stream in output_streams):
                 raise RuntimeError("ValidationFailed: requested cover art was not embedded.")
     elif target != "gif":
@@ -358,7 +395,15 @@ def validate_output_intent(
             raise RuntimeError("ValidationFailed: the requested video stream is missing.")
         if any(stream.get("codec_type") == "audio" for stream in source_streams) and not audio:
             raise RuntimeError("ValidationFailed: the source audio stream was lost.")
-        source_video = next((stream for stream in source_streams if stream.get("codec_type") == "video"), None)
+        source_video = next(
+            (
+                stream
+                for stream in source_streams
+                if stream.get("codec_type") == "video"
+                and not stream.get("disposition", {}).get("attached_pic")
+            ),
+            None,
+        )
         if source_video:
             from fractions import Fraction
             try:
@@ -386,25 +431,7 @@ def validate_output_intent(
             output_duration = float(output.get("format", {}).get("duration") or 0)
         except (TypeError, ValueError):
             source_duration = output_duration = 0
-        is_trimmed = bool(intent.start_time or intent.end_time)
-        if is_trimmed:
-            if output_duration <= 0:
-                raise RuntimeError("ValidationFailed: the trimmed output video has zero or invalid duration.")
-            s_sec = parse_time_offset_seconds(intent.start_time) or 0.0
-            e_sec = parse_time_offset_seconds(intent.end_time)
-            if e_sec is not None and e_sec > s_sec:
-                expected_trim_duration = e_sec - s_sec
-            elif source_duration > s_sec:
-                expected_trim_duration = source_duration - s_sec
-            else:
-                expected_trim_duration = None
-            if expected_trim_duration is not None and expected_trim_duration > 0:
-                max_diff = max(2.5, expected_trim_duration * 0.15)
-                if abs(expected_trim_duration - output_duration) > max_diff:
-                    raise RuntimeError("ValidationFailed: the output video duration changed unexpectedly.")
-        elif source_duration > 0 and output_duration > 0:
-            if abs(source_duration - output_duration) > max(0.5, source_duration * 0.02):
-                raise RuntimeError("ValidationFailed: the output video duration changed unexpectedly.")
+        _validate_duration(source_duration, output_duration, intent.start_time, intent.end_time, "video ")
     elif intent.fps:
         if not video:
             raise RuntimeError("ValidationFailed: the requested GIF frames are missing.")

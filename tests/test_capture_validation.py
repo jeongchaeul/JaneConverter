@@ -58,3 +58,19 @@ def test_header_only_stream_is_not_accepted(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: next(results))
     with pytest.raises(ValueError, match="no playable"):
         validate_capture(str(capture), "video")
+
+
+def test_model_capture_rejects_html_and_arbitrary_bytes(tmp_path):
+    html_capture = tmp_path / "login.glb"
+    html_capture.write_bytes(b"<!DOCTYPE html><html><body>Login</body></html>")
+    with pytest.raises(ValueError, match="HTML"):
+        validate_capture(str(html_capture), "model")
+
+    bad_bin = tmp_path / "random.glb"
+    bad_bin.write_bytes(b"NOT_A_3D_MODEL_12345")
+    with pytest.raises(ValueError, match="recognized 3D model"):
+        validate_capture(str(bad_bin), "model")
+
+    gltf_json = tmp_path / "scene.gltf"
+    gltf_json.write_text('{"asset":{"version":"2.0"}}', encoding="utf-8")
+    assert validate_capture(str(gltf_json), "model")["mimeType"] == "model/gltf+json"

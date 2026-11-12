@@ -66,11 +66,11 @@ async function findConfirmedAccess() {
     } catch (_) {
       return false;
     }
+  }).sort(function (left, right) {
+    return Number(Boolean(right.active)) - Number(Boolean(left.active));
   });
 
-  if (candidates.length > 0) {
-    void saveConfirmedAccessUrl(candidates[0].url);
-  } else {
+  if (candidates.length === 0) {
     const stored = await getStoredAccessTab();
     if (stored) {
       candidates = [stored];
@@ -103,7 +103,7 @@ if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.onUpdated) {
     if (tab && tab.url) {
       try {
         const url = new URL(tab.url);
-        if ((url.hostname === "127.0.0.1" || url.hostname === "localhost") && /^\/access\/[^/]+(?:\/ready)?\/?$/.test(url.pathname)) {
+        if ((url.hostname === "127.0.0.1" || url.hostname === "localhost") && /^\/access\/[^/]+\/ready\/?$/.test(url.pathname)) {
           void saveConfirmedAccessUrl(tab.url);
         }
       } catch (_) {}

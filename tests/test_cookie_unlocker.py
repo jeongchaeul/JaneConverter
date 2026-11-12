@@ -9,11 +9,6 @@ import yt_dlp.cookies
 from janeconverter import cookie_unlocker
 
 
-def test_unlock_windows_file_lock_handles_invalid_and_missing_paths():
-    assert cookie_unlocker.unlock_windows_file_lock("") is False
-    assert cookie_unlocker.unlock_windows_file_lock("C:/nonexistent_file_path_12345.sqlite") is False
-
-
 def test_clean_nt_path():
     assert cookie_unlocker.clean_nt_path(r"\\?\C:\Users\foo\Cookies") == r"C:\Users\foo\Cookies"
     assert cookie_unlocker.clean_nt_path(r"\\?\UNC\server\share\file") == r"\\server\share\file"
@@ -140,5 +135,3 @@ def test_is_safe_candidate_handle_entry_skips_synchronous_pipes_and_non_file_typ
     assert cookie_unlocker.is_safe_candidate_handle_entry(0x00120089, 37)
     assert cookie_unlocker.is_safe_candidate_handle_entry(0x0012019F, 37, file_object_type_index=37)
     assert not cookie_unlocker.is_safe_candidate_handle_entry(0x0012019F, 12, file_object_type_index=37)
-    for mask in cookie_unlocker.SYNCHRONOUS_PIPE_ACCESS_MASKS:
-        assert not cookie_unlocker.is_safe_candidate_handle_entry(mask, 37)

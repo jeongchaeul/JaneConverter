@@ -119,7 +119,7 @@ jobs:
         run: uv pip check
 
       - name: Lint with pyflakes
-        run: uv run --locked pyflakes src/janeconverter packaging/engine_entry.py packaging/create_updater_manifest.py
+        run: uv run --locked pyflakes src/janeconverter packaging/engine_entry.py packaging/create_updater_manifest.py packaging/smoke_test_engine.py packaging/build_browser_bridge.py packaging/set_version.py packaging/monitor_ci.py
 
       - name: Run hermetic test suite
         run: uv run --locked pytest tests/ -v
@@ -145,7 +145,7 @@ jobs:
           cache: npm
           cache-dependency-path: desktop-ui/package-lock.json
       - name: Test Browser Bridge
-        run: node --test browser-extension/test/*.test.js
+        run: node --test browser-extension/test/*.js
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:

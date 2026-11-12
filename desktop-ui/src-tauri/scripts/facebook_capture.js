@@ -1,5 +1,5 @@
-  const seenScripts = new WeakSet();
 (() => {
+  const seenScripts = new WeakSet();
   const nonce = __NONCE_JSON__;
   const prefix = "__JANE_FACEBOOK_CAPTURE__" + nonce + "__";
   const ackKey = "__JANE_FACEBOOK_ACK__" + nonce;

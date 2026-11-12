@@ -66,9 +66,10 @@ def sanitize_filename(filename: str) -> str:
     if stem.upper() in WINDOWS_RESERVED_NAMES:
         stem = f"_{stem}"
 
-    # Limit stem length to 180 characters to leave headroom for extensions and counters
-    if len(stem.encode("utf-8")) > 180:
-        stem = stem[:180].rstrip(". ")
+    # Limit stem length to 180 UTF-8 bytes so multi-byte scripts stay under 255-byte filesystem caps
+    encoded = stem.encode("utf-8")
+    if len(encoded) > 180:
+        stem = encoded[:180].decode("utf-8", errors="ignore").rstrip(". ") or "media"
 
     return f"{stem}{ext}"
 
@@ -139,15 +140,20 @@ def _merge_entry(source: str, destination: str) -> None:
     """Move an entry, recursively merging directories when both exist."""
     if os.path.isdir(source) and not os.path.islink(source):
         if os.path.isdir(destination) and not os.path.islink(destination):
-            for child in os.scandir(source):
-                _merge_entry(child.path, os.path.join(destination, child.name))
+            with os.scandir(source) as children:
+                for child in children:
+                    _merge_entry(child.path, os.path.join(destination, child.name))
             os.rmdir(source)
             return
     if os.path.isfile(source) and os.path.isfile(destination):
         # A previous attempt may have copied the file but been unable to remove
-        # the source because another process has it open. Do not duplicate it
-        # on every subsequent launch.
+        # the source because another process has it open. Remove the duplicate
+        # source when it is identical instead of moving it as a migrated copy.
         if filecmp.cmp(source, destination, shallow=False):
+            try:
+                os.remove(source)
+            except OSError:
+                pass
             return
     shutil.move(source, _unique_destination(destination))
 
@@ -202,23 +208,24 @@ def migrate_legacy_app_data(legacy_root: str, new_root: str) -> bool:
         return False
 
     migrated = False
-    for entry in os.scandir(legacy_root):
-        name_lower = entry.name.lower()
-        if name_lower in PROGRAM_FILE_NAMES or name_lower.endswith(".exe"):
-            continue
-        # The current portable settings win when both locations already have
-        # a config file. This also avoids generating config (migrated N).json
-        # when Windows has temporarily locked the legacy file.
-        if entry.name == "config.json" and os.path.exists(os.path.join(new_root, entry.name)):
-            continue
-        try:
-            _merge_entry(entry.path, os.path.join(new_root, entry.name))
-            migrated = True
-        except OSError:
-            # Keep inaccessible legacy data in place and allow the app to use
-            # the new default. A later launch can retry after permissions or
-            # file locks have been resolved.
-            continue
+    with os.scandir(legacy_root) as entries:
+        for entry in entries:
+            name_lower = entry.name.lower()
+            if name_lower in PROGRAM_FILE_NAMES or name_lower.endswith(".exe"):
+                continue
+            # The current portable settings win when both locations already have
+            # a config file. This also avoids generating config (migrated N).json
+            # when Windows has temporarily locked the legacy file.
+            if entry.name == "config.json" and os.path.exists(os.path.join(new_root, entry.name)):
+                continue
+            try:
+                _merge_entry(entry.path, os.path.join(new_root, entry.name))
+                migrated = True
+            except OSError:
+                # Keep inaccessible legacy data in place and allow the app to use
+                # the new default. A later launch can retry after permissions or
+                # file locks have been resolved.
+                continue
 
     config_path = os.path.join(new_root, "config.json")
     if os.path.isfile(config_path):
@@ -291,27 +298,6 @@ def initialize_app_data() -> None:
         migrate_legacy_app_data(LEGACY_APP_DATA_DIR, APP_DATA_DIR)
 
 
-def promote_staging_dir(staging_dir: str, target_dir: str, max_attempts: int = 5) -> None:
-    """Atomically promote staging_dir to target_dir with exponential retry on Windows file locks."""
-    import time
-    for attempt in range(max_attempts):
-        try:
-            os.replace(
-                ensure_extended_length_path(staging_dir),
-                ensure_extended_length_path(target_dir),
-            )
-            return
-        except (PermissionError, FileExistsError, OSError) as error:
-            winerr = getattr(error, "winerror", None)
-            if attempt < max_attempts - 1 and (os.name != "nt" or winerr in (5, 32, 33, 183)):
-                time.sleep(0.1 * (2 ** attempt))
-                continue
-            raise
-
-
 APP_DATA_DIR = get_app_data_dir()
 DEFAULT_CONVERTED_DIR = os.path.join(APP_DATA_DIR, "converted")
 DEFAULT_TEMP_DIR = get_temp_dir()
-YTDLP_CACHE_DIR = get_ytdlp_cache_dir()
-LOG_DIR = os.path.join(APP_DATA_DIR, "logs")
-CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")

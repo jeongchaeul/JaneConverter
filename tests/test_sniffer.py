@@ -247,6 +247,19 @@ def test_sniffer_blocks_ssrf_to_private_and_loopback_hosts(tmp_path):
     with patch("requests.Session.get", return_value=mock_resp):
         assert sniff_webpage("https://example.com/evil") is None
 
+    og_evil_html = """
+    <html><head><meta property="og:image" content="http://127.0.0.1/secret.png"></head>
+    <body><video src="https://cdn.example.com/clip.mp4"></video></body></html>
+    """
+    mock_og = MagicMock()
+    mock_og.status_code = 200
+    mock_og.text = og_evil_html
+    mock_og.url = "https://example.com/video"
+    with patch("requests.Session.get", return_value=mock_og):
+        asset = sniff_webpage("https://example.com/video")
+        assert asset is not None
+        assert asset.thumbnail_url == ""
+
     loopback_asset = SniffedAsset(
         asset_url="http://127.0.0.1/secret.glb",
         asset_kind="model",
