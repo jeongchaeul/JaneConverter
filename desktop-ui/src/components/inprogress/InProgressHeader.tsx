@@ -120,7 +120,7 @@ export function InProgressHeader({
         )}
 
         {/* Quick jump back to live session */}
-        {running && !isViewingLive && liveJobId && onJumpToLive && (
+        {(running || paused) && !isViewingLive && liveJobId && onJumpToLive && (
           <button
             type="button"
             onClick={onJumpToLive}

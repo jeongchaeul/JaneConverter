@@ -741,11 +741,11 @@ def process_playlist_conversion(
     track_progress = [0.0] * total_items
     completed_counter = [0]
 
-    def report_overall(frac: float, msg: str):
+    def report_overall(frac: float, msg: str, force: bool = False):
         with progress_lock:
             frac = max(last_report[1], max(0.0, min(1.0, float(frac))))
             now = time.monotonic()
-            if frac >= 1.0 or now - last_report[0] >= 0.15 or int(frac * 100) != int(last_report[1] * 100):
+            if force or frac >= 1.0 or now - last_report[0] >= 0.15 or int(frac * 100) != int(last_report[1] * 100):
                 last_report[:] = [now, frac]
                 if progress_callback:
                     try:
@@ -809,7 +809,7 @@ def process_playlist_conversion(
             pace_request(item_url, abort_event=abort_event)
 
         current_frac, current_done = get_overall_progress()
-        report_overall(current_frac, f"[{current_done}/{total_items}] Fetching #{idx}: {clean_title}...")
+        report_overall(current_frac, f"[{current_done}/{total_items}] Fetching #{idx}: {clean_title}...", force=True)
 
         track_work_dir = None
         fetch_attempts = 0
@@ -926,7 +926,7 @@ def process_playlist_conversion(
                 done = completed_counter[0]
 
             print(f"[+] Converted: {os.path.basename(result_path)}", flush=True)
-            report_overall(overall_frac, f"[{done}/{total_items}] Converted #{idx}: {clean_title}")
+            report_overall(overall_frac, f"[{done}/{total_items}] Converted #{idx}: {clean_title}", force=True)
 
         except KeyboardInterrupt:
             raise
@@ -964,7 +964,7 @@ def process_playlist_conversion(
 
             clean_err = humanize_extraction_error(e)
             print(f"[!] Error converting track #{idx} '{raw_title}': {clean_err}", flush=True)
-            report_overall(overall_frac, f"[{done}/{total_items}] Failed #{idx}: {clean_title}")
+            report_overall(overall_frac, f"[{done}/{total_items}] Failed #{idx}: {clean_title}", force=True)
 
         finally:
             if not keep_temp and track_work_dir and os.path.exists(track_work_dir):
@@ -1101,7 +1101,7 @@ def process_playlist_conversion(
                     item_url = f"https://www.instagram.com/p/{e_id}/"
                 elif e_id and is_url(f"https://{e_id}"):
                     item_url = f"https://{e_id}"
-            report_overall(1.0, f"[Adaptive Recovery] Retrying #{idx}: {clean_title} via alternate audio paths...")
+            report_overall(1.0, f"[Adaptive Recovery] Retrying #{idx}: {clean_title} via alternate audio paths...", force=True)
             alt_title = re.sub(r'\s*[\(\[].*?[\)\]]', '', raw_title).strip()
             alt_artist = re.split(r'[,&]|\bfeat\b|\bft\b', str(artist or ""), flags=re.IGNORECASE)[0].strip()
 

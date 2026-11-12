@@ -123,13 +123,19 @@ export function InProgressView({
   const [page, setPage] = useState(1);
   const requestedThumbnailsRef = useRef<Set<string>>(new Set());
   const inFlightThumbnailsRef = useRef<Set<string>>(new Set());
+  const prevJobIdRef = useRef<string | undefined>(undefined);
+  const prevRunningRef = useRef<boolean>(false);
 
-  // Automatically follow live active job when running or when a new job starts
+  // Automatically follow live active job when a new jobId arrives or conversion starts running
   useEffect(() => {
-    if (jobId) {
-      setSelectedJobId(jobId);
+    const jobChanged = Boolean(jobId && jobId !== prevJobIdRef.current);
+    const startedRunning = Boolean(jobId && running && !prevRunningRef.current);
+    if (jobChanged || startedRunning) {
+      setSelectedJobId(jobId!);
     }
-  }, [jobId]);
+    prevJobIdRef.current = jobId;
+    prevRunningRef.current = running;
+  }, [jobId, running]);
 
   // Derive currently displayed job ID
   const currentJobId = useMemo(() => {
@@ -145,7 +151,7 @@ export function InProgressView({
   const currentIndex = currentJobId ? distinctJobIds.indexOf(currentJobId) : -1;
   const hasPrevious = currentIndex > 0;
   const hasNext = currentIndex >= 0 && currentIndex < distinctJobIds.length - 1;
-  const isViewingLive = Boolean(running && jobId && currentJobId === jobId);
+  const isViewingLive = Boolean((running || paused) && jobId && currentJobId === jobId);
 
   function handleNavigateSession(offset: number) {
     if (currentIndex === -1) return;
@@ -194,7 +200,7 @@ export function InProgressView({
     }
   }
 
-  const isOngoing = Boolean(running || paused);
+  const isOngoing = isViewingLive;
   const hasNoPages = distinctJobIds.length <= 0;
   const isClosePageDisabled = hasNoPages || isOngoing;
 
@@ -218,8 +224,8 @@ export function InProgressView({
 
   // Parse events into structured items & batch summary scoped to displayed job
   const { items, summary, latestLogLine } = useMemo(
-    () => parseConversionEvents(events, category, format, isViewingLive ? sourceTitle : undefined, currentJobId, isViewingLive && running),
-    [events, category, format, sourceTitle, currentJobId, isViewingLive, running]
+    () => parseConversionEvents(events, category, format, isViewingLive ? sourceTitle : undefined, currentJobId, isViewingLive),
+    [events, category, format, sourceTitle, currentJobId, isViewingLive]
   );
 
   // Computed session summaries for in-memory jobs (only computed when modal is open to avoid O(N * M) regex recomputation on live progress)
@@ -655,7 +661,7 @@ export function InProgressView({
     setContextMenu({ x, y, item });
   }
 
-  const effectiveProgress = progress > 0 ? progress : summary.overallProgress;
+  const effectiveProgress = isViewingLive && progress > 0 ? progress : summary.overallProgress;
   const batchCover = getBatchCover();
   const hasOutputDir = Boolean(summary.outputDir || outputDir);
 
@@ -802,6 +808,14 @@ export function InProgressView({
                     </span>
                   </>
                 )}
+                {failedCount > 0 && (
+                  <>
+                    <span className="text-zinc-600">•</span>
+                    <span className="text-rose-400 font-medium">
+                      {failedCount} failed
+                    </span>
+                  </>
+                )}
                 {formatBadge && (
                   <>
                     <span className="text-zinc-600">•</span>
@@ -887,19 +901,19 @@ export function InProgressView({
           >
             Done ({doneCount})
           </button>
-          {failedCount > 0 && (
-            <button
-              type="button"
-              onClick={() => setFilterState("failed")}
-              className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
-                filterState === "failed"
-                  ? "bg-rose-500/20 text-rose-300"
+          <button
+            type="button"
+            onClick={() => setFilterState("failed")}
+            className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
+              filterState === "failed"
+                ? "bg-rose-500/20 text-rose-300"
+                : failedCount > 0
+                  ? "text-rose-400/90 hover:bg-rose-500/10 hover:text-rose-300"
                   : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-              }`}
-            >
-              Failed ({failedCount})
-            </button>
-          )}
+            }`}
+          >
+            Failed ({failedCount})
+          </button>
         </div>
 
         <div className="flex items-center gap-2">
@@ -945,7 +959,19 @@ export function InProgressView({
 
       {/* 4. Main Conversion Rack: Grid or List */}
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-        {layoutMode === "grid" ? (
+        {paginatedItems.length === 0 ? (
+          <div className="panel flex flex-col items-center justify-center py-12 px-6 text-center text-xs text-zinc-400">
+            {searchQuery.trim()
+              ? "No items match your search."
+              : filterState === "failed"
+                ? "No failed items in this session."
+                : filterState === "active"
+                  ? "No active items right now."
+                  : filterState === "done"
+                    ? "No completed items yet."
+                    : "Waiting for conversion items..."}
+          </div>
+        ) : layoutMode === "grid" ? (
           <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {paginatedItems.map((item) => (
               <ItemCard

@@ -73,13 +73,15 @@ export function ItemStatusBadge({ item }: { item: InProgressItem }) {
         </span>
       );
     }
-    case "downloading":
+    case "downloading": {
+      const downloadSpeed = item.speed && !item.speed.endsWith("x") ? `(${item.speed})` : `${Math.round(item.progress * 100)}%`;
       return (
         <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/15 px-2 py-0.5 text-[11px] font-medium text-sky-300">
           <RefreshCw size={10} className="animate-spin" />
-          Downloading {item.speed ? `(${item.speed})` : `${Math.round(item.progress * 100)}%`}
+          Downloading {downloadSpeed}
         </span>
       );
+    }
     case "failed": {
       const briefLabel = formatBriefError(item.errorMessage);
       return (

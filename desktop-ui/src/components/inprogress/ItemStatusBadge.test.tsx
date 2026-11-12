@@ -87,4 +87,25 @@ describe("ItemStatusBadge rendering", () => {
 
     expect(container.textContent).toContain("Failed: 403 Forbidden");
   });
+
+  it("does not display transcode x-speed under Downloading status", async () => {
+    const item: InProgressItem = {
+      id: "test-3",
+      index: 3,
+      total: 10,
+      title: "Shaboozey - A Bar Song",
+      mediaKind: "audio",
+      status: "downloading",
+      progress: 0.75,
+      speed: "74.9x",
+    };
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<ItemStatusBadge item={item} />);
+    });
+
+    expect(container.textContent).toContain("Downloading 75%");
+    expect(container.textContent).not.toContain("74.9x");
+  });
 });

@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConsoleView } from "./ConsoleView";
+import { appendOrCollapseProgressEvent, parseConversionEvents } from "./inprogress/parser";
 import { bridge, type ConverterEvent } from "../bridge";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -834,6 +835,40 @@ describe("ConsoleView", () => {
     expect(closePageBtn?.disabled).toBe(true);
     expect(closePageBtn?.className).toContain("opacity-25");
 
+    // 4. While live session-2 is running, navigating to finished historical session-1 enables Close Page for session-1 only
+    onClear.mockClear();
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={multiSessionEvents}
+          jobId="session-2"
+          running={true}
+          paused={false}
+          initialMode="in_progress"
+          outputDir="D:\\Music"
+          onClear={onClear}
+          onStatus={onStatus}
+        />
+      );
+    });
+
+    const prevSessionBtn = container.querySelector<HTMLButtonElement>("button[aria-label='Previous session']");
+    expect(prevSessionBtn).toBeDefined();
+    await act(async () => {
+      prevSessionBtn?.click();
+    });
+
+    expect(container.textContent).toContain("Session 1 / 2");
+    expect(container.textContent).toContain("History");
+    closePageBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Close Page")
+    );
+    expect(closePageBtn?.disabled).toBe(false);
+    await act(async () => {
+      closePageBtn?.click();
+    });
+    expect(onClear).toHaveBeenCalledWith("session-1");
+
     await act(async () => {
       root.unmount();
     });
@@ -1101,5 +1136,105 @@ describe("ConsoleView", () => {
       root.unmount();
     });
     container.remove();
+  });
+
+  it("keeps Failed filter tab visible at zero count and shows empty filter message", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const events: ConverterEvent[] = [
+      { jobId: "j-failed-tab", kind: "started", message: "[*] Found 2 tracks in 'Test Mix'. Converting 2..." },
+      { jobId: "j-failed-tab", kind: "log", message: "[*] Track #1 Manifest: Track One\tArtist A" },
+      { jobId: "j-failed-tab", kind: "log", message: "[*] Track #2 Manifest: Track Two\tArtist B" },
+      { jobId: "j-failed-tab", kind: "log", message: "[+] Converted: 1. Track One.mp3" },
+      { jobId: "j-failed-tab", kind: "progress", message: "[1%] [1/2] #2: Track Two — Verifying media signatures..." },
+    ];
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={events}
+          jobId="j-failed-tab"
+          running={true}
+          initialMode="in_progress"
+          onClear={vi.fn()}
+          onStatus={vi.fn()}
+        />
+      );
+    });
+
+    const failedTab = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Failed (0)")
+    );
+    expect(failedTab).toBeDefined();
+
+    await act(async () => {
+      failedTab?.click();
+    });
+    expect(container.textContent).toContain("No failed items in this session.");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("parses playlist tracks with (Free Download), hyphens, em-dashes, and Verifying steps without regressing Ready or Failed", () => {
+    const rawEvents: ConverterEvent[] = [
+      { jobId: "pl-1", kind: "started", message: "[*] Found 5 tracks in 'TikTok Remix'. Converting 5..." },
+      { jobId: "pl-1", kind: "log", message: "[*] Track #1 Manifest: Artist A - Intro\tArtist A" },
+      { jobId: "pl-1", kind: "log", message: "[*] Track #2 Manifest: Artist B - Ready or Not\tArtist B" },
+      { jobId: "pl-1", kind: "log", message: "[*] Track #3 Manifest: Shaboozey - A Bar Song (YUSSI Remix) (Free Download)\tRELEVANT DNB" },
+      { jobId: "pl-1", kind: "log", message: "[*] Track #4 Manifest: Artist — Song [1/2]\tArtist" },
+      { jobId: "pl-1", kind: "log", message: "[*] Track #5 Manifest: Eloise - Pretty Little Baby (Lyric Video)\tEloise" },
+
+      // Track 1 finishes normally
+      { jobId: "pl-1", kind: "log", message: "[+] Converted: 1. Artist A - Intro.mp3" },
+      { jobId: "pl-1", kind: "log", message: "[20%] [1/5] Converted #1: Artist A - Intro" },
+
+      // Track 2 fails and must stay failed even with "Ready" in title
+      { jobId: "pl-1", kind: "log", message: "[!] Error converting track #2 'Artist B - Ready or Not': Video unavailable" },
+      { jobId: "pl-1", kind: "log", message: "[40%] [2/5] Failed #2: Artist B - Ready or Not" },
+
+      // Track 3 downloads, transcodes at 74.9x, emits Ready + Converted with (Free Download) in title
+      { jobId: "pl-1", kind: "log", message: "[40%] [2/5] Fetching #3: Shaboozey - A Bar Song (YUSSI Remix) (Free Download)..." },
+      { jobId: "pl-1", kind: "progress", message: "[45%] [2/5] #3: Shaboozey - A Bar Song (YUSSI Remix) (Free Download) — Transcoding MP3: 75% (speed 74.9x)" },
+      { jobId: "pl-1", kind: "log", message: "[60%] [2/5] #3: Shaboozey - A Bar Song (YUSSI Remix) (Free Download) — Ready: 3. Shaboozey - A Bar Song (YUSSI Remix) (Free Download).mp3" },
+      { jobId: "pl-1", kind: "log", message: "[+] Converted: 3. Shaboozey - A Bar Song (YUSSI Remix) (Free Download).mp3" },
+      { jobId: "pl-1", kind: "log", message: "[60%] [3/5] Converted #3: Shaboozey - A Bar Song (YUSSI Remix) (Free Download)" },
+
+      // Track 4 has em-dash and [1/2] in title, finishes out-of-order when done=4
+      { jobId: "pl-1", kind: "log", message: "[60%] [3/5] #4: Artist — Song [1/2] — Ready: 4. Artist — Song [1/2].mp3" },
+      { jobId: "pl-1", kind: "log", message: "[+] Converted: 4. Artist — Song [1/2].mp3" },
+      { jobId: "pl-1", kind: "log", message: "[80%] [4/5] Converted #4: Artist — Song [1/2]" },
+
+      // Track 5 enters Verifying media signatures directly without Fetching line
+      { jobId: "pl-1", kind: "log", message: "[80%] [4/5] #5: Eloise - Pretty Little Baby (Lyric Video) — Verifying media signatures..." },
+    ];
+
+    let collapsed: ConverterEvent[] = [];
+    for (const evt of rawEvents) {
+      collapsed = appendOrCollapseProgressEvent(collapsed, evt);
+    }
+
+    const parsed = parseConversionEvents(collapsed, "Music", "mp3", undefined, "pl-1", true);
+    expect(parsed.items).toHaveLength(5);
+
+    expect(parsed.items[0].status).toBe("ready");
+    expect(parsed.items[1].status).toBe("failed");
+    expect(parsed.items[1].errorMessage).toBe("Video unavailable");
+    expect(parsed.items[2].status).toBe("ready");
+    expect(parsed.items[2].progress).toBe(1);
+    expect(parsed.items[2].speed).toBeUndefined();
+    expect(parsed.items[3].status).toBe("ready");
+    expect(parsed.items[3].outputPath).toBe("4. Artist — Song [1/2].mp3");
+    expect(parsed.items[4].status).toBe("downloading");
+    expect(parsed.items[4].detailMessage).toBe("Verifying media signatures...");
+
+    expect(parsed.summary.completed).toBe(3);
+    expect(parsed.summary.failed).toBe(1);
+    expect(parsed.summary.active).toBe(1);
+    expect(parsed.summary.queued).toBe(0);
   });
 });

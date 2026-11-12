@@ -2,7 +2,9 @@ import type { Category, ConverterEvent } from "../../bridge";
 import type { InProgressBatchSummary, InProgressItem, InProgressItemStatus, MediaKind } from "./types";
 
 // Regex matchers for engine output streams
-export const PLAYLIST_ITEM_RE = /\[(\d+)\/(\d+)\]\s*(?:(?:#(\d+)|Fetching\s*#(\d+)):\s*)?(.*?)(?:\s*(?:—|-)\s*(.*))?$/;
+export const PLAYLIST_ITEM_RE = /^(?:\[\d+%\]\s*)?\[(\d+)\/(\d+)\]\s*(?:(Fetching|Converted|Failed)\s*)?(?:#(\d+):\s*)?(.*)$/i;
+export const ADAPTIVE_RETRY_RE = /^(?:\[\d+%\]\s*)?\[Adaptive Recovery\]\s*Retrying\s*#(\d+):\s*(.*?)(?:\s+via alternate audio paths\.{0,3})?$/i;
+export const ADAPTIVE_FAILED_RE = /\[\!\]\s*Adaptive Pass:\s*Track\s*#(\d+)\s*'(.*?)'\s*could not be resolved:\s*(.*)/i;
 export const CONVERTED_RE = /\[\+\]\s*(?:Adapted & )?(?:Converted|Saved photo):\s*(?:(\d+)\.\s*)?(.*)/i;
 export const READY_RE = /Ready:\s*(?:(\d+)\.\s*)?(.*)/i;
 export const ERROR_RE = /\[\!\]\s*Error converting track\s*#(\d+)\s*'(.*?)':\s*(.*)/i;
@@ -20,6 +22,108 @@ export const PHOTO_SAVED_RE = /\[\*\]\s*Photo\s*#(\d+)\s*Saved:\s*(.*)/i;
 export const MEDIA_THUMBNAIL_RE = /\[\*\]\s*Media\s*Thumbnail(?:\s*URL)?:\s*(.*)/i;
 export const TARGET_DIR_RE = /(?:Target Directory:\s*(.*)|Export Directory:\s*(.*)|DONE! Exported:\s*(.*))/i;
 export const SINGLE_READY_RE = /(?:Ready!\s*File exported to:\s*(.*)|DONE!\s*Exported:\s*(.*))/i;
+
+const KNOWN_DETAIL_PREFIX_RE = /^(?:ready:|recovered from\s|3d model ready:|transcoding\b|preserve quality fallback:|\[download\]|downloading\b|fetching\b|evaluating search candidate|connecting to media\b|parsing media\b|verifying media\b|synchronizing with media\b|stream link established|archival stream|reading facebook\b|copying\b|remuxing\b|extracting\b|normalizing\b|analyzing\b|\d+(?:\.\d+)?%)/i;
+
+type PlaylistActionKind = "fetching" | "converted" | "failed" | null;
+type PlaylistDetailPhase = "ready" | "transcoding" | "downloading";
+
+interface ParsedPlaylistLine {
+  totalIdx: number;
+  trackIdx: number;
+  action: PlaylistActionKind;
+  title: string;
+  detail: string;
+}
+
+function splitPlaylistTitleAndDetail(body: string): { title: string; detail: string } {
+  const sepRe = /\s+—\s+/g;
+  const matches: Array<{ index: number; length: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = sepRe.exec(body)) !== null) {
+    matches.push({ index: m.index, length: m[0].length });
+  }
+  if (matches.length > 0) {
+    // Prefer the earliest em-dash separator whose right-hand side starts with a known engine status phrase
+    // so titles containing " — " (including inside "Ready: 1. Artist — Song.mp3") stay intact.
+    for (const candidate of matches) {
+      const rhs = body.slice(candidate.index + candidate.length).trim();
+      if (KNOWN_DETAIL_PREFIX_RE.test(rhs)) {
+        return {
+          title: body.slice(0, candidate.index).replace(/\.{3}$/, "").trim(),
+          detail: rhs,
+        };
+      }
+    }
+    const last = matches[matches.length - 1];
+    return {
+      title: body.slice(0, last.index).replace(/\.{3}$/, "").trim(),
+      detail: body.slice(last.index + last.length).trim(),
+    };
+  }
+  const pctOnlyMatch = /^(.*?)\s*\((\d+(?:\.\d+)?)%\)$/.exec(body);
+  if (pctOnlyMatch) {
+    return {
+      title: pctOnlyMatch[1].replace(/\.{3}$/, "").trim(),
+      detail: `${pctOnlyMatch[2]}%`,
+    };
+  }
+  return {
+    title: body.replace(/\.{3}$/, "").trim(),
+    detail: "",
+  };
+}
+
+function parsePlaylistProgressLine(rawMsg: string): ParsedPlaylistLine | null {
+  const m = PLAYLIST_ITEM_RE.exec(rawMsg);
+  if (!m) return null;
+  const doneIdx = parseInt(m[1], 10);
+  const totalIdx = parseInt(m[2], 10);
+  const action = m[3] ? (m[3].toLowerCase() as Exclude<PlaylistActionKind, null>) : null;
+  const explicitTrackIdx = m[4] ? parseInt(m[4], 10) : undefined;
+  const body = (m[5] || "").trim();
+
+  if (action) {
+    if (explicitTrackIdx === undefined || Number.isNaN(explicitTrackIdx)) return null;
+    return {
+      totalIdx,
+      trackIdx: explicitTrackIdx,
+      action,
+      title: body.replace(/\.{3}$/, "").trim(),
+      detail: "",
+    };
+  }
+
+  const { title, detail } = splitPlaylistTitleAndDetail(body);
+  if (explicitTrackIdx === undefined && !detail) {
+    return null;
+  }
+
+  return {
+    totalIdx,
+    trackIdx: explicitTrackIdx ?? doneIdx,
+    action: null,
+    title,
+    detail,
+  };
+}
+
+function classifyPlaylistDetail(detail: string): PlaylistDetailPhase {
+  const lower = detail.trim().toLowerCase();
+  if (
+    lower === "ready" ||
+    lower === "converted" ||
+    lower.startsWith("ready:") ||
+    lower.startsWith("recovered from ") ||
+    lower.startsWith("3d model ready:")
+  ) {
+    return "ready";
+  }
+  if (lower.startsWith("transcoding") || lower.startsWith("preserve quality fallback:") || /\btranscoding\b/i.test(lower)) {
+    return "transcoding";
+  }
+  return "downloading";
+}
 
 export function extractYouTubeThumbnail(urlOrId?: string): string | undefined {
   if (!urlOrId) return undefined;
@@ -75,13 +179,14 @@ function getTransientProgressSignature(event: ConverterEvent): string | null {
   ) {
     return null;
   }
-  const pMatch = PLAYLIST_ITEM_RE.exec(rawMsg);
-  if (pMatch) {
-    const trackIdx = pMatch[3] || pMatch[4] || pMatch[1];
-    const detail = (pMatch[6] || "").toLowerCase();
-    if (detail.includes("transcoding")) return `${event.jobId}:track:${trackIdx}:transcode`;
-    if (detail.includes("download") || detail.includes("fetching")) return `${event.jobId}:track:${trackIdx}:download`;
-    return null;
+  const parsed = parsePlaylistProgressLine(rawMsg);
+  if (parsed) {
+    if (parsed.action === "converted" || parsed.action === "failed") return null;
+    if (parsed.action === "fetching") return `${event.jobId}:track:${parsed.trackIdx}:download`;
+    const phase = classifyPlaylistDetail(parsed.detail);
+    if (phase === "ready") return null;
+    if (phase === "transcoding") return `${event.jobId}:track:${parsed.trackIdx}:transcode`;
+    return `${event.jobId}:track:${parsed.trackIdx}:download`;
   }
   if (rawMsg.includes("[download]") || rawMsg.includes("Downloading stream:")) {
     return `${event.jobId}:single:download`;
@@ -382,62 +487,7 @@ export function parseConversionEvents(
       continue;
     }
 
-    // 7. Match playlist track item log: e.g. [35/47] #35: Runaway with Peace (feat. Caylune) — Transcoding MP3: 70% (speed 90.3x)
-    const pMatch = PLAYLIST_ITEM_RE.exec(rawMsg);
-    if (pMatch) {
-      const totalIdx = parseInt(pMatch[2], 10);
-      const trackIdx = parseInt(pMatch[3] || pMatch[4] || pMatch[1], 10);
-      const rawTitle = (pMatch[5] || "").replace(/\.{3}$/, "").trim();
-      const detail = (pMatch[6] || "").trim();
-
-      if (totalIdx > detectedTotal) detectedTotal = totalIdx;
-
-      let item = itemsMap.get(trackIdx);
-      if (!item) {
-        item = {
-          id: `item-${trackIdx}`,
-          index: trackIdx,
-          total: totalIdx,
-          title: rawTitle || `Track #${trackIdx}`,
-          mediaKind: inferMediaKind(defaultCategory, defaultFormat, rawTitle),
-          status: "downloading",
-          progress: 0.05,
-        };
-        itemsMap.set(trackIdx, item);
-      } else if (rawTitle && (!item.title || item.title.startsWith("Track #"))) {
-        item.title = rawTitle;
-      }
-
-      if (detail) {
-        item.detailMessage = detail;
-        const speedMatch = /(?:at\s+([\d\.]+\s*[KMGT]?i?B\/s)|speed\s+([\d\.]+x))/i.exec(detail);
-        if (speedMatch) {
-          item.speed = speedMatch[1] || speedMatch[2];
-        } else if (detail.toLowerCase().includes("transcoding") && item.speed && !item.speed.endsWith("x")) {
-          item.speed = undefined;
-        }
-
-        const etaMatch = /ETA\s+([\d:]+)/i.exec(detail);
-        if (etaMatch) item.eta = etaMatch[1];
-
-        const pctMatch = /(\d+(?:\.\d+)?)\s*%/i.exec(detail);
-        const parsedPct = pctMatch ? parseFloat(pctMatch[1]) / 100 : undefined;
-
-        if (detail.toLowerCase().includes("transcoding")) {
-          item.status = "transcoding";
-          if (parsedPct !== undefined) item.progress = Math.max(item.progress, parsedPct);
-        } else if (detail.toLowerCase().includes("download") || detail.toLowerCase().includes("fetching")) {
-          item.status = "downloading";
-          if (parsedPct !== undefined) item.progress = parsedPct;
-        } else if (detail.toLowerCase().includes("ready") || detail.toLowerCase().includes("converted")) {
-          item.status = "ready";
-          item.progress = 1;
-        }
-      }
-      continue;
-    }
-
-    // 8. Match converted item: e.g. [+] Converted: 35. Runaway with Peace (feat. Caylune).mp3
+    // 7. Match converted item: e.g. [+] Converted: 35. Runaway with Peace (feat. Caylune).mp3
     const convMatch = CONVERTED_RE.exec(rawMsg);
     if (convMatch) {
       const rawConverted = rawMsg.replace(/^\[\+\]\s*(?:Adapted & )?(?:Converted|Saved photo):\s*/i, "").trim();
@@ -462,6 +512,8 @@ export function parseConversionEvents(
         } else {
           item.status = "ready";
           item.progress = 1;
+          item.speed = undefined;
+          item.eta = undefined;
           item.outputPath = actualFile;
           if (!isPhoto && (!item.title || item.title.startsWith("Track #"))) {
             item.title = cleanTitle.replace(/\.[a-zA-Z0-9]+$/, "");
@@ -472,6 +524,8 @@ export function parseConversionEvents(
         singleTitle = cleanTitle.replace(/\.[a-zA-Z0-9]+$/, "");
         singleStatus = "ready";
         singleProgress = 1;
+        singleSpeed = undefined;
+        singleEta = undefined;
         if (!singleOutputPath) {
           singleOutputPath = actualFile;
         }
@@ -479,34 +533,7 @@ export function parseConversionEvents(
       continue;
     }
 
-    // 9. Match Ready: e.g. Ready: 9. am.mp3
-    const readyMatch = READY_RE.exec(rawMsg);
-    if (readyMatch) {
-      const rawReady = rawMsg.replace(/^Ready:\s*/i, "").trim();
-      const idx = readyMatch[1] ? parseInt(readyMatch[1], 10) : undefined;
-      const cleanTitle = (readyMatch[2] || "").trim();
-      const actualFile = rawReady || (idx !== undefined ? `${idx}. ${cleanTitle}` : cleanTitle);
-      if (idx !== undefined) {
-        const item = itemsMap.get(idx);
-        if (item) {
-          item.status = "ready";
-          item.progress = 1;
-          if (!item.outputPath) {
-            item.outputPath = actualFile;
-          }
-        }
-      } else {
-        isSingleMedia = true;
-        singleStatus = "ready";
-        singleProgress = 1;
-        if (!singleOutputPath) {
-          singleOutputPath = actualFile;
-        }
-      }
-      continue;
-    }
-
-    // 9.5 Match requeue: e.g. [*] Requeuing track #13 as next conversion: Can't Understand
+    // 7.5 Match requeue: e.g. [*] Requeuing track #13 as next conversion: Can't Understand
     const reqMatch = REQUEUE_RE.exec(rawMsg);
     if (reqMatch) {
       const reqIdx = parseInt(reqMatch[1], 10);
@@ -515,11 +542,14 @@ export function parseConversionEvents(
         item.status = "queued";
         item.errorMessage = undefined;
         item.progress = 0;
+        item.speed = undefined;
+        item.eta = undefined;
+        item.detailMessage = undefined;
       }
       continue;
     }
 
-    // 10. Match error: e.g. [!] Error converting track #35 'Runaway with Peace': <error>
+    // 8. Match error: e.g. [!] Error converting track #35 'Runaway with Peace': <error>
     const errMatch = ERROR_RE.exec(rawMsg);
     if (errMatch) {
       const errIdx = parseInt(errMatch[1], 10);
@@ -541,6 +571,197 @@ export function parseConversionEvents(
       } else {
         item.status = "failed";
         item.errorMessage = errDetail;
+        item.speed = undefined;
+        item.eta = undefined;
+      }
+      continue;
+    }
+
+    // 8.5 Match Adaptive Pass error: e.g. [!] Adaptive Pass: Track #13 'Title' could not be resolved: <error>
+    const adaptiveErrMatch = ADAPTIVE_FAILED_RE.exec(rawMsg);
+    if (adaptiveErrMatch) {
+      const errIdx = parseInt(adaptiveErrMatch[1], 10);
+      const errTitle = adaptiveErrMatch[2];
+      const errDetail = adaptiveErrMatch[3];
+      let item = itemsMap.get(errIdx);
+      if (!item) {
+        item = {
+          id: `item-${errIdx}`,
+          index: errIdx,
+          total: detectedTotal || errIdx,
+          title: errTitle || `Track #${errIdx}`,
+          mediaKind: inferMediaKind(defaultCategory, defaultFormat, errTitle),
+          status: "failed",
+          progress: 0,
+          errorMessage: errDetail,
+        };
+        itemsMap.set(errIdx, item);
+      } else {
+        item.status = "failed";
+        item.errorMessage = errDetail;
+        item.speed = undefined;
+        item.eta = undefined;
+      }
+      continue;
+    }
+
+    // 8.75 Match Adaptive Recovery retry: [Adaptive Recovery] Retrying #13: <title> via alternate audio paths...
+    const adaptiveRetryMatch = ADAPTIVE_RETRY_RE.exec(rawMsg);
+    if (adaptiveRetryMatch) {
+      const retryIdx = parseInt(adaptiveRetryMatch[1], 10);
+      const retryTitle = (adaptiveRetryMatch[2] || "").trim();
+      let item = itemsMap.get(retryIdx);
+      if (!item) {
+        item = {
+          id: `item-${retryIdx}`,
+          index: retryIdx,
+          total: detectedTotal || retryIdx,
+          title: retryTitle || `Track #${retryIdx}`,
+          mediaKind: inferMediaKind(defaultCategory, defaultFormat, retryTitle),
+          status: "downloading",
+          progress: 0.05,
+          detailMessage: "Retrying via alternate audio paths...",
+        };
+        itemsMap.set(retryIdx, item);
+      } else {
+        item.status = "downloading";
+        item.errorMessage = undefined;
+        item.progress = Math.max(item.progress, 0.05);
+        item.speed = undefined;
+        item.eta = undefined;
+        item.detailMessage = "Retrying via alternate audio paths...";
+        if (retryTitle && (!item.title || item.title.startsWith("Track #"))) {
+          item.title = retryTitle;
+        }
+      }
+      continue;
+    }
+
+    // 9. Match playlist track item log: e.g. [35/47] #35: Runaway with Peace (feat. Caylune) — Transcoding MP3: 70% (speed 90.3x)
+    const parsedLine = parsePlaylistProgressLine(rawMsg);
+    if (parsedLine) {
+      const { totalIdx, trackIdx, action, title: rawTitle, detail } = parsedLine;
+      if (totalIdx > detectedTotal) detectedTotal = totalIdx;
+
+      let item = itemsMap.get(trackIdx);
+      if (!item) {
+        const initialStatus: InProgressItemStatus =
+          action === "converted" ? "ready" : action === "failed" ? "failed" : "downloading";
+        item = {
+          id: `item-${trackIdx}`,
+          index: trackIdx,
+          total: totalIdx,
+          title: rawTitle || `Track #${trackIdx}`,
+          mediaKind: inferMediaKind(defaultCategory, defaultFormat, rawTitle),
+          status: initialStatus,
+          progress: initialStatus === "ready" ? 1 : initialStatus === "failed" ? 0 : 0.05,
+        };
+        itemsMap.set(trackIdx, item);
+      } else if (rawTitle && (!item.title || item.title.startsWith("Track #"))) {
+        item.title = rawTitle;
+      }
+
+      if (action === "converted") {
+        item.status = "ready";
+        item.progress = 1;
+        item.speed = undefined;
+        item.eta = undefined;
+        item.detailMessage = undefined;
+        continue;
+      }
+
+      if (action === "failed") {
+        item.status = "failed";
+        item.speed = undefined;
+        item.eta = undefined;
+        item.detailMessage = undefined;
+        continue;
+      }
+
+      if (action === "fetching") {
+        if (item.status !== "ready") {
+          item.status = "downloading";
+          item.progress = Math.max(item.progress, 0.05);
+          if (item.speed && item.speed.endsWith("x")) {
+            item.speed = undefined;
+          }
+          item.eta = undefined;
+          item.detailMessage = "Fetching media stream...";
+        }
+        continue;
+      }
+
+      if (item.status === "ready") {
+        continue;
+      }
+
+      const phase = classifyPlaylistDetail(detail);
+      if (detail) {
+        item.detailMessage = detail;
+      }
+
+      const pctMatch = /(\d+(?:\.\d+)?)\s*%/i.exec(detail);
+      const parsedPct = pctMatch ? parseFloat(pctMatch[1]) / 100 : undefined;
+
+      if (phase === "ready") {
+        item.status = "ready";
+        item.progress = 1;
+        item.speed = undefined;
+        item.eta = undefined;
+        const readyFileMatch = /^Ready:\s*(.+)$/i.exec(detail);
+        if (readyFileMatch && !item.outputPath) {
+          item.outputPath = readyFileMatch[1].trim();
+        }
+      } else if (phase === "transcoding") {
+        item.status = "transcoding";
+        const spdMatch = /speed\s+([\d\.]+x)/i.exec(detail);
+        if (spdMatch) {
+          item.speed = spdMatch[1];
+        } else if (item.speed && !item.speed.endsWith("x")) {
+          item.speed = undefined;
+        }
+        item.eta = undefined;
+        if (parsedPct !== undefined) item.progress = Math.max(item.progress, parsedPct);
+      } else {
+        item.status = "downloading";
+        const spdMatch = /at\s+([\d\.]+\s*[KMGT]?i?B\/s)/i.exec(detail);
+        if (spdMatch) {
+          item.speed = spdMatch[1];
+        } else if (item.speed && item.speed.endsWith("x")) {
+          item.speed = undefined;
+        }
+        const etaMatch = /ETA\s+([\d:]+)/i.exec(detail);
+        if (etaMatch) item.eta = etaMatch[1];
+        item.progress = parsedPct !== undefined ? parsedPct : Math.max(item.progress, 0.05);
+      }
+      continue;
+    }
+
+    // 10. Match standalone Ready: e.g. Ready: 9. am.mp3
+    const readyMatch = READY_RE.exec(rawMsg);
+    if (readyMatch) {
+      const rawReady = rawMsg.replace(/^Ready:\s*/i, "").trim();
+      const idx = readyMatch[1] ? parseInt(readyMatch[1], 10) : undefined;
+      const cleanTitle = (readyMatch[2] || "").trim();
+      const actualFile = rawReady || (idx !== undefined ? `${idx}. ${cleanTitle}` : cleanTitle);
+      const item = idx !== undefined ? itemsMap.get(idx) : undefined;
+      if (item) {
+        item.status = "ready";
+        item.progress = 1;
+        item.speed = undefined;
+        item.eta = undefined;
+        if (!item.outputPath) {
+          item.outputPath = actualFile;
+        }
+      } else if (itemsMap.size === 0) {
+        isSingleMedia = true;
+        singleStatus = "ready";
+        singleProgress = 1;
+        singleSpeed = undefined;
+        singleEta = undefined;
+        if (!singleOutputPath) {
+          singleOutputPath = actualFile;
+        }
       }
       continue;
     }
@@ -553,6 +774,8 @@ export function parseConversionEvents(
         isSingleMedia = true;
         singleStatus = "ready";
         singleProgress = 1;
+        singleSpeed = undefined;
+        singleEta = undefined;
         if (exportedTarget) {
           singleOutputPath = exportedTarget;
           const fname = exportedTarget.split(/[\\/]/).pop() || "";
@@ -566,7 +789,11 @@ export function parseConversionEvents(
         const pctMatch = /(\d+(?:\.\d+)?)\s*%/i.exec(rawMsg);
         if (pctMatch) singleProgress = parseFloat(pctMatch[1]) / 100;
         const spdMatch = /at\s+([\d\.]+\s*[KMGT]?i?B\/s)/i.exec(rawMsg);
-        if (spdMatch) singleSpeed = spdMatch[1];
+        if (spdMatch) {
+          singleSpeed = spdMatch[1];
+        } else if (singleSpeed && singleSpeed.endsWith("x")) {
+          singleSpeed = undefined;
+        }
         const etaMatch = /ETA\s+([\d:]+)/i.exec(rawMsg);
         if (etaMatch) singleEta = etaMatch[1];
         singleDetail = rawMsg;
@@ -586,6 +813,8 @@ export function parseConversionEvents(
       } else if (rawMsg.startsWith("[!] Error") || event.kind === "failed") {
         isSingleMedia = true;
         singleStatus = "failed";
+        singleSpeed = undefined;
+        singleEta = undefined;
         singleError = rawMsg;
       }
     }
@@ -597,6 +826,8 @@ export function parseConversionEvents(
           singleStatus = "ready";
           singleProgress = 1;
         }
+        singleSpeed = undefined;
+        singleEta = undefined;
         if (event.output) {
           singleOutputPath = event.output;
           const fname = event.output.split(/[\\/]/).pop() || "";
@@ -609,6 +840,8 @@ export function parseConversionEvents(
           if (item.status === "downloading" || item.status === "transcoding") {
             item.status = "ready";
             item.progress = 1;
+            item.speed = undefined;
+            item.eta = undefined;
           }
         }
       }

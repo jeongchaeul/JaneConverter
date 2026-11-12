@@ -472,3 +472,46 @@ def test_process_playlist_conversion_requeues_track_as_next(tmp_path, monkeypatc
     ]
     assert summary["successful_count"] == 4
     assert summary["failed_count"] == 0
+
+
+def test_process_playlist_conversion_emits_lifecycle_transitions_without_throttle(tmp_path, monkeypatch):
+    from janeconverter import cli
+
+    def fake_fetch(source, output_dir, **kwargs):
+        os.makedirs(output_dir, exist_ok=True)
+        media_path = os.path.join(output_dir, "track.mp3")
+        with open(media_path, "wb") as f:
+            f.write(b"ID3" + b"\x00" * 32)
+        return {"media_path": media_path, "title": "Track", "artist": "Jane"}
+
+    def fake_convert(input_path, output_dir, output_filename, target_format, **kwargs):
+        os.makedirs(output_dir, exist_ok=True)
+        out_path = os.path.join(output_dir, f"{output_filename}.{target_format}")
+        with open(out_path, "wb") as f:
+            f.write(b"converted")
+        return out_path
+
+    monkeypatch.setattr(cli, "fetch_media_stream", fake_fetch)
+    monkeypatch.setattr(cli, "convert_media", fake_convert)
+
+    entries = [
+        {"index": 1, "title": "Shaboozey - A Bar Song (Free Download)", "artist": "RELEVANT", "url": "https://example.com/1"},
+        {"index": 2, "title": "Eloise - Pretty Little Baby", "artist": "Eloise", "url": "https://example.com/2"},
+    ]
+    emitted = []
+
+    summary = process_playlist_conversion(
+        playlist_title="Fast Transition Mix",
+        selected_entries=entries,
+        output_dir=str(tmp_path),
+        target_format="mp3",
+        concurrency=1,
+        check_updates=False,
+        progress_callback=lambda frac, msg: emitted.append(msg),
+    )
+
+    assert summary["successful_count"] == 2
+    assert any("Fetching #1:" in m for m in emitted)
+    assert any("Converted #1:" in m for m in emitted)
+    assert any("Fetching #2:" in m for m in emitted)
+    assert any("Converted #2:" in m for m in emitted)
