@@ -30,10 +30,6 @@ import { bridge } from "../bridge";
 import { detectCategoryFromPath, formatBytes, formatElapsedMs } from "../options";
 import { baseName, isInside, joinPath, parentPath, pathKey } from "../utils/paths";
 
-function size(value: number) {
-  return formatBytes(value);
-}
-
 const HISTORY_PAGE_SIZE = 20;
 type LibrarySection = "explorer" | "recent" | "history";
 type MediaFilter = "all" | "audio" | "video" | "image" | "metadata";
@@ -767,8 +763,8 @@ export function LibraryView({
             const metadata = isMetadataEntry(entry);
             const elapsed = entryElapsedMs(entry);
             const details = entry.isDirectory
-              ? entry.mediaCount + " media item" + (entry.mediaCount === 1 ? "" : "s") + " - " + size(entry.totalBytes)
-              : entry.extension + " - " + size(entry.totalBytes);
+              ? entry.mediaCount + " media item" + (entry.mediaCount === 1 ? "" : "s") + " - " + formatBytes(entry.totalBytes)
+              : entry.extension + " - " + formatBytes(entry.totalBytes);
             const isSelected = lastClickedId === entry.path;
             return (
               <motion.div

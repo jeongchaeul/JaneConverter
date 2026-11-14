@@ -98,6 +98,7 @@ export function ConsoleView({
 
   // 1. Process and collapse repetitive progress frames when in "clean" mode
   const processedEvents = useMemo(() => {
+    if (activeMode === "in_progress") return [];
     let list: ConverterEvent[];
     if (filter === "failed") {
       list = consoleEvents.filter((e) => e.kind === "failed");
@@ -145,7 +146,7 @@ export function ConsoleView({
     }
 
     return list;
-  }, [consoleEvents, filter, searchQuery]);
+  }, [consoleEvents, filter, searchQuery, activeMode]);
 
   // 2. Windowing buffer to prevent infinite scroll DOM bloat
   const totalProcessedCount = processedEvents.length;

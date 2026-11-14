@@ -283,22 +283,28 @@ def record_local_success(path: str, coordinator: RecoveryCoordinator) -> None:
         _record_local_success_locked(path, coordinator)
 
 
-def _record_local_success_locked(path: str, coordinator: RecoveryCoordinator) -> None:
-    if len(coordinator.attempts) < 2:
-        return
-    target = coordinator.intent.target_format
-    if not re.fullmatch(r"[a-z0-9]{2,6}", target):
-        return
-    first = coordinator.attempts[0]
-    final = coordinator.attempts[-1]
-    if first.result is None or final.method not in {"cpu-transcode", "gpu-transcode", "cover-normalized", "image-ffmpeg-frame", "image-png", "universal-transcode", "audio-transcode"}:
-        return
-    key = f"{target}|{first.result.value}|{final.method}"
+_ADAPTATION_METHODS = frozenset({
+    "cpu-transcode",
+    "gpu-transcode",
+    "cover-normalized",
+    "image-ffmpeg-frame",
+    "image-png",
+    "universal-transcode",
+    "audio-transcode",
+})
+
+_EVIDENCE_KEY_RE = re.compile(
+    r"[a-z0-9]{2,6}\|[a-z_]+\|(?:"
+    + "|".join(re.escape(method) for method in sorted(_ADAPTATION_METHODS))
+    + r")"
+)
+
+
+def _update_local_evidence_locked(path: str, key: str, *, succeeded: bool, now: int) -> None:
+    """Read, update, bound, and atomically write local adaptation evidence."""
     entries = {}
     try:
-        if os.path.isfile(path):
-            if os.path.getsize(path) > 65_536:
-                raise ValueError("oversized recovery evidence")
+        if os.path.isfile(path) and os.path.getsize(path) <= 65_536:
             with open(path, "r", encoding="utf-8") as source:
                 previous = json.load(source)
             if previous.get("version") == 1 and isinstance(previous.get("entries"), dict):
@@ -309,16 +315,25 @@ def _record_local_success_locked(path: str, coordinator: RecoveryCoordinator) ->
                         "updated": max(0, int(item_value.get("updated", 0))),
                     }
                     for item_key, item_value in previous["entries"].items()
-                    if re.fullmatch(r"[a-z0-9]{2,6}\|[a-z_]+\|(?:cpu-transcode|gpu-transcode|cover-normalized|image-ffmpeg-frame|image-png|universal-transcode|audio-transcode)", item_key)
+                    if _EVIDENCE_KEY_RE.fullmatch(item_key)
                     and isinstance(item_value, dict)
                 }
     except (OSError, ValueError, TypeError, AttributeError):
         pass
-    now = int(time.time())
+
     prev = entries.get(key, {})
+    prev_count = prev.get("count", 0)
+    prev_failures = prev.get("failures", 0)
+    if succeeded:
+        new_count = min(999, prev_count + 1)
+        new_failures = max(0, prev_failures - 1)
+    else:
+        new_count = max(0, prev_count - 1)
+        new_failures = min(999, prev_failures + 1)
+
     entries[key] = {
-        "count": min(999, prev.get("count", 0) + 1),
-        "failures": max(0, prev.get("failures", 0) - 1),
+        "count": new_count,
+        "failures": new_failures,
         "updated": now,
     }
     entries = dict(sorted(entries.items(), key=lambda item: item[1]["updated"], reverse=True)[:64])
@@ -332,6 +347,20 @@ def _record_local_success_locked(path: str, coordinator: RecoveryCoordinator) ->
     finally:
         if os.path.exists(temporary_path):
             os.remove(temporary_path)
+
+
+def _record_local_success_locked(path: str, coordinator: RecoveryCoordinator) -> None:
+    if len(coordinator.attempts) < 2:
+        return
+    target = coordinator.intent.target_format
+    if not re.fullmatch(r"[a-z0-9]{2,6}", target):
+        return
+    first = coordinator.attempts[0]
+    final = coordinator.attempts[-1]
+    if first.result is None or final.method not in _ADAPTATION_METHODS:
+        return
+    key = f"{target}|{first.result.value}|{final.method}"
+    _update_local_evidence_locked(path, key, succeeded=True, now=int(time.time()))
 
 
 def record_local_failure(
@@ -354,46 +383,10 @@ def _record_local_failure_locked(
     if not re.fullmatch(r"[a-z0-9]{2,6}", target):
         return
     cat_str = category.value if isinstance(category, FailureCategory) else str(category)
-    if failed_method not in {"cpu-transcode", "gpu-transcode", "cover-normalized", "image-ffmpeg-frame", "image-png", "universal-transcode", "audio-transcode"}:
+    if failed_method not in _ADAPTATION_METHODS:
         return
     key = f"{target}|{cat_str}|{failed_method}"
-    entries = {}
-    try:
-        if os.path.isfile(path) and os.path.getsize(path) <= 65_536:
-            with open(path, "r", encoding="utf-8") as source:
-                previous = json.load(source)
-            if previous.get("version") == 1 and isinstance(previous.get("entries"), dict):
-                entries = {
-                    item_key: {
-                        "count": min(999, max(0, int(item_value.get("count", 0)))),
-                        "failures": min(999, max(0, int(item_value.get("failures", 0)))),
-                        "updated": max(0, int(item_value.get("updated", 0))),
-                    }
-                    for item_key, item_value in previous["entries"].items()
-                    if re.fullmatch(r"[a-z0-9]{2,6}\|[a-z_]+\|(?:cpu-transcode|gpu-transcode|cover-normalized|image-ffmpeg-frame|image-png|universal-transcode|audio-transcode)", item_key)
-                    and isinstance(item_value, dict)
-                }
-    except (OSError, ValueError, TypeError, AttributeError):
-        pass
-
-    now = int(time.time())
-    prev = entries.get(key, {"count": 0, "failures": 0, "updated": now})
-    entries[key] = {
-        "count": max(0, prev["count"] - 1),
-        "failures": min(999, prev.get("failures", 0) + 1),
-        "updated": now,
-    }
-    entries = dict(sorted(entries.items(), key=lambda item: item[1]["updated"], reverse=True)[:64])
-    directory = os.path.dirname(os.path.abspath(path))
-    os.makedirs(directory, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=directory, delete=False) as temporary:
-        json.dump({"version": 1, "entries": entries}, temporary, separators=(",", ":"))
-        temporary_path = temporary.name
-    try:
-        os.replace(temporary_path, path)
-    finally:
-        if os.path.exists(temporary_path):
-            os.remove(temporary_path)
+    _update_local_evidence_locked(path, key, succeeded=False, now=int(time.time()))
 
 
 def quarantine_failure(

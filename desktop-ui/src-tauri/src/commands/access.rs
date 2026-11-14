@@ -2,7 +2,7 @@ use crate::access;
 use crate::catalog;
 use crate::library;
 use crate::model::{AccessDiagnostic, AccessStatus, FetchedMedia};
-use crate::paths::{self, settings_get_internal};
+use crate::paths::settings_get_internal;
 use crate::AppState;
 use std::path::{Path, PathBuf};
 use tauri::State;
@@ -13,11 +13,7 @@ pub fn create_access_link(
     source: String,
 ) -> Result<AccessStatus, String> {
     let settings = settings_get_internal();
-    let server = access::create_with_root(
-        &source,
-        paths::now_stamp(),
-        PathBuf::from(settings.fetched_dir),
-    )?;
+    let server = access::create_with_root(&source, PathBuf::from(settings.fetched_dir))?;
     let status = server.status();
     let mut access = state
         .access

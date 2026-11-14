@@ -5,7 +5,7 @@ import math
 import os
 import subprocess
 
-from .converter import get_ffmpeg_binary, get_ffprobe_binary
+from .binaries import get_ffmpeg_binary, get_ffprobe_binary
 
 
 def validate_capture(path: str, kind: str) -> dict:

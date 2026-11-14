@@ -101,26 +101,51 @@ fn ffmpeg_name() -> &'static str {
 
 #[cfg(target_os = "windows")]
 fn copy_dir_all(source: &Path, destination: &Path) -> io::Result<()> {
-    copy_dir_all_bounded(source, destination, 0)
+    copy_dir_all_bounded(source, destination, 0, false)
 }
 
-#[cfg(target_os = "windows")]
-fn copy_dir_all_bounded(source: &Path, destination: &Path, depth: usize) -> io::Result<()> {
+pub(crate) fn copy_dir_all_bounded(
+    source: &Path,
+    destination: &Path,
+    depth: usize,
+    strict: bool,
+) -> io::Result<()> {
     if depth > 32 {
-        return Ok(());
+        return if strict {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "folder nesting exceeds maximum depth for a library move",
+            ))
+        } else {
+            Ok(())
+        };
     }
-    fs::create_dir_all(destination)?;
+    if strict {
+        fs::create_dir(destination)?;
+    } else {
+        fs::create_dir_all(destination)?;
+    }
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let file_type = entry.file_type()?;
         if file_type.is_symlink() {
+            if strict {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "symbolic links are not supported in a library move",
+                ));
+            }
             continue;
         }
         let dest_path = destination.join(entry.file_name());
         if file_type.is_dir() {
-            copy_dir_all_bounded(&entry.path(), &dest_path, depth + 1)?;
-        } else if !dest_path.exists() {
-            let _ = fs::copy(entry.path(), dest_path);
+            copy_dir_all_bounded(&entry.path(), &dest_path, depth + 1, strict)?;
+        } else if file_type.is_file() {
+            if strict {
+                fs::copy(entry.path(), dest_path)?;
+            } else if !dest_path.exists() {
+                let _ = fs::copy(entry.path(), dest_path);
+            }
         }
     }
     Ok(())

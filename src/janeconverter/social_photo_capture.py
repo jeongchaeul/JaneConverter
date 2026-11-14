@@ -680,49 +680,9 @@ def fetch_pinterest_collection_manifest(
                 pass
 
         # Public HTML fallback for single pin
-        report(0.06, "Reading public Pinterest pin metadata...")
-        req = urllib.request.Request(
-            f"https://www.pinterest.com/pin/{pin_id}/",
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                ),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                html = resp.read().decode("utf-8", errors="ignore")
-            if re.search(r'property=["\']og:type["\'][^>]+content=["\']video', html) or re.search(r'content=["\']video[^"\']*["\'][^>]+property=["\']og:type["\']', html):
-                return {"platform": "pinterest", "media_kind": "video", "title": f"Pinterest Pin {pin_id}"}
-            m_img = re.search(r'id=["\']pin-image-preload["\'][^>]+href=["\']([^"\']+)["\']', html)
-            if not m_img:
-                m_img = re.search(r'content=["\'](https://i\.pinimg\.com/[^"\']+)["\'][^>]+(?:name|property)=["\']og:image["\']', html)
-            if not m_img:
-                m_img = re.search(r'(?:name|property)=["\']og:image["\'][^>]+content=["\'](https://i\.pinimg\.com/[^"\']+)["\']', html)
-            if m_img:
-                img_url = m_img.group(1)
-                orig_url = re.sub(r"/\d+x(?:\d+|_RS)?/", "/originals/", img_url)
-                m_title = re.search(r'content=["\']([^"\']+)["\'][^>]+(?:name|property)=["\']og:title["\']', html)
-                if not m_title:
-                    m_title = re.search(r'(?:name|property)=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', html)
-                raw_title = m_title.group(1) if m_title else f"Pinterest Pin {pin_id}"
-                clean_title = sanitize_filename(raw_title[:60], max_length=60) or f"Pinterest Pin {pin_id}"
-                report(0.08, f"Found photo in '{clean_title}'. Starting download...")
-                return {
-                    "platform": "pinterest",
-                    "title": clean_title,
-                    "photos": [{
-                        "id": pin_id,
-                        "url": orig_url,
-                        "title": raw_title[:80],
-                        "width": 1200,
-                    }],
-                    "media_kind": "photo",
-                }
-        except Exception as exc:
-            raise RuntimeError(f"Could not load Pinterest pin: {exc}") from exc
+        public_manifest = _fetch_public_pinterest_pin(pin_id, report=report)
+        if public_manifest is not None:
+            return public_manifest
 
         raise RuntimeError(f"No photos or videos found for Pinterest pin {pin_id}.")
 

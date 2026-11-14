@@ -1074,13 +1074,9 @@ async function sendCapture(sourceTab, accessTab, challenge, item, mode, index, d
           partOffset = nextOffset;
         }
       }
-    } else if (pageFetched) {
-      const bytes = pageFetched.buffer instanceof Uint8Array ? pageFetched.buffer : new Uint8Array(pageFetched.buffer);
-      for (let offsetInBuffer = 0; offsetInBuffer < bytes.byteLength; offsetInBuffer += MAX_CHUNK_BYTES) {
-        await sendChunk(bytes.subarray(offsetInBuffer, Math.min(offsetInBuffer + MAX_CHUNK_BYTES, bytes.byteLength)));
-      }
     } else {
-      const bytes = pageCapture.buffer instanceof Uint8Array ? pageCapture.buffer : new Uint8Array(pageCapture.buffer);
+      const sourceBytes = pageFetched || pageCapture;
+      const bytes = sourceBytes.buffer instanceof Uint8Array ? sourceBytes.buffer : new Uint8Array(sourceBytes.buffer);
       for (let offsetInBuffer = 0; offsetInBuffer < bytes.byteLength; offsetInBuffer += MAX_CHUNK_BYTES) {
         await sendChunk(bytes.subarray(offsetInBuffer, Math.min(offsetInBuffer + MAX_CHUNK_BYTES, bytes.byteLength)));
       }
@@ -1286,7 +1282,7 @@ async function capture(mode) {
       setStatus(result.count + " story capture" + (result.count === 1 ? "" : "s") + " sent to JaneConverter. You can keep this access session open and capture more.");
       return;
     }
-    const captures = mode === "sequence" ? selected.slice(0, MAX_SEQUENCE_ITEMS) : selected.slice(0, 1);
+    const captures = selected.slice(0, 1);
     for (let index = 0; index < captures.length; index += 1) {
       await sendCapture(sourceTab, accessTab, challenge, captures[index], mode, index);
     }

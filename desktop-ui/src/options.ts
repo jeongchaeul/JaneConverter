@@ -1,4 +1,4 @@
-import type { Category } from "./bridge";
+import type { Category, ConverterSettings } from "./bridge";
 
 export const audioFormats = [
   "mp3", "flac", "wav", "aac", "ogg", "m4a", "opus", "aiff", "aif",
@@ -111,6 +111,24 @@ export interface IntentPreset {
   useGpu: boolean;
   preserveQuality?: boolean;
   archivalFallback?: boolean;
+}
+
+export function applyPresetToSettings(
+  base: ConverterSettings,
+  preset: IntentPreset,
+): ConverterSettings {
+  return {
+    ...base,
+    category: preset.category,
+    format: preset.format,
+    bitrate: preset.bitrate,
+    audioBitrate: preset.audioBitrate ?? (preset.category === "Video" ? "original" : base.audioBitrate),
+    sampleRate: preset.sampleRate,
+    resolution: preset.resolution,
+    normalize: preset.normalize,
+    useGpu: preset.useGpu,
+    archivalFallback: preset.archivalFallback ?? base.archivalFallback,
+  };
 }
 
 export const intentPresets: IntentPreset[] = [

@@ -117,6 +117,8 @@ pub fn validate_photo_url(value: &str) -> bool {
                 || host == "fbsbx.com"
                 || host.ends_with(".fbsbx.com"))
             && !path.contains("1997-6")
+            && !path.contains("/t45.")
+            && !path.contains("/sprites/")
             && !path.contains("/stickers/")
             && !path.contains("/reactions/")
             && !path.contains("emoji.php")

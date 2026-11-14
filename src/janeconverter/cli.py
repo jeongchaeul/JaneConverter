@@ -61,7 +61,6 @@ from .facebook_capture import (
 from .social_photo_capture import (
     MEDIA_HOSTS as SOCIAL_PHOTO_MEDIA_HOSTS,
     download_social_photo_manifest,
-    is_pinterest_newshub_url,
     is_pinterest_collection_url,
     is_pinterest_pin_url,
     fetch_pinterest_collection_manifest,
@@ -388,7 +387,7 @@ def process_conversion(
         return album["folder_path"]
 
     if social_photo_manifest is None and (
-        is_pinterest_collection_url(source) or is_pinterest_newshub_url(source) or is_pinterest_pin_url(source)
+        is_pinterest_collection_url(source) or is_pinterest_pin_url(source)
     ):
         try:
             report(0.02, "Reading Pinterest media via browser session...")
@@ -662,7 +661,6 @@ def process_playlist_conversion(
     if save_metadata or save_cover_art:
         os.makedirs(metadata_dir, exist_ok=True)
 
-    target_format = target_format.lower().strip(".")
     is_audio_target = target_format in SUPPORTED_AUDIO_FORMATS
     is_image_target = target_format in SUPPORTED_IMAGE_FORMATS
 

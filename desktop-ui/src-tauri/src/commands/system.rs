@@ -74,7 +74,10 @@ pub fn format_update_summary(stdout: &str) -> String {
             stdout.trim().into()
         };
     };
+    format_update_summary_value(&payload)
+}
 
+pub fn format_update_summary_value(payload: &serde_json::Value) -> String {
     let mut messages = Vec::new();
     if let Some(engine) = payload.get("engine") {
         if engine
@@ -263,10 +266,6 @@ pub fn disable_unsigned_installer(payload: &mut serde_json::Value) {
     {
         repo.insert("installer_available".into(), serde_json::Value::Bool(false));
     }
-}
-
-pub fn format_update_summary_value(payload: &serde_json::Value) -> String {
-    format_update_summary(&payload.to_string())
 }
 
 #[tauri::command]

@@ -550,7 +550,7 @@ def adapt_ffmpeg_command(cmd: list[str], stderr: bytes | str | None) -> Optional
     # 17. Audio downmix channel matrix fallback
     downmix_errors = ("cannot downmix", "no downmixing", "unable to downmix", "downmix not supported")
     if any(err in text for err in downmix_errors):
-        pan_downmix = "pan=stereo|FL < 1.0*FL + 0.707*FC + 0.707*BL | FR < 1.0*FR + 0.707*FC + 0.707*BR"
+        pan_downmix = _stereo_downmix_filter(6)
         if "-af" in mutated:
             idx = mutated.index("-af")
             if "pan=" not in mutated[idx + 1]:
@@ -562,6 +562,15 @@ def adapt_ffmpeg_command(cmd: list[str], stderr: bytes | str | None) -> Optional
             changed = True
 
     return mutated if changed else None
+
+
+def _stereo_downmix_filter(channels: int) -> str:
+    """Return an ITU-R BS.775 stereo downmix filter string for multi-channel audio."""
+    if channels == 6:
+        return "pan=stereo|FL < 1.0*FL + 0.707*FC + 0.707*BL | FR < 1.0*FR + 0.707*FC + 0.707*BR"
+    if channels == 8:
+        return "pan=stereo|FL < 1.0*FL + 0.707*FC + 0.5*BL + 0.5*SL | FR < 1.0*FR + 0.707*FC + 0.5*BR + 0.5*SR"
+    return "pan=stereo|c0 < c0 + 0.707*c2 + 0.5*c4 | c1 < c1 + 0.707*c2 + 0.5*c5"
 
 
 def _normalize_lossy_audio_bitrate(value: Optional[str], default: str = "320k") -> str:
@@ -669,22 +678,15 @@ def build_ffmpeg_args(
     if enc_spec is not None and enc_spec["encoder"] != "h264_vaapi":
         cmd.extend(["-hwaccel", "auto"])
 
+    if start_time:
+        cmd.extend(["-ss", start_time])
+    if end_time:
+        cmd.extend(["-to", end_time])
+    cmd.extend(["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS])
+    cmd.extend(["-i", input_path])
     if can_embed_art:
-        if start_time:
-            cmd.extend(["-ss", start_time])
-        if end_time:
-            cmd.extend(["-to", end_time])
-        cmd.extend(["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS])
-        cmd.extend(["-i", input_path])
         cmd.extend(["-i", cover_path])
         cmd.extend(["-map", "0:a", "-map", "1:v"])
-    else:
-        if start_time:
-            cmd.extend(["-ss", start_time])
-        if end_time:
-            cmd.extend(["-to", end_time])
-        cmd.extend(["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS])
-        cmd.extend(["-i", input_path])
 
     # Metadata tags
     if metadata:
@@ -720,12 +722,7 @@ def build_ffmpeg_args(
 
         # Multi-channel phase-safe downmixing to stereo (ITU-R BS.775 with auto-attenuation)
         if input_channels > 2:
-            if input_channels == 6:
-                audio_filters.append("pan=stereo|FL < 1.0*FL + 0.707*FC + 0.707*BL | FR < 1.0*FR + 0.707*FC + 0.707*BR")
-            elif input_channels == 8:
-                audio_filters.append("pan=stereo|FL < 1.0*FL + 0.707*FC + 0.5*BL + 0.5*SL | FR < 1.0*FR + 0.707*FC + 0.5*BR + 0.5*SR")
-            else:
-                audio_filters.append("pan=stereo|c0 < c0 + 0.707*c2 + 0.5*c4 | c1 < c1 + 0.707*c2 + 0.5*c5")
+            audio_filters.append(_stereo_downmix_filter(input_channels))
 
         # Avoid a resampler pass when the output rate already matches the source stream.
         if sample_rate and not source_rate_matches and has_soxr_support():
@@ -825,11 +822,15 @@ def build_ffmpeg_args(
             vf = f"fps={gif_fps},{scale_filter}split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3"
             cmd.extend(["-vf", vf])
         else:
+            resolved_info = (
+                probed_info
+                if probed_info is not None
+                else (probe_media_streams(input_path) if input_path and os.path.exists(input_path) else None)
+            )
             if fps:
                 cmd.extend(["-r", str(fps), "-fps_mode", "cfr"])
             else:
-                info = probed_info if probed_info is not None else (probe_media_streams(input_path) if input_path and os.path.exists(input_path) else None)
-                v_streams = [s for s in (info.get("streams", []) if info else []) if s.get("codec_type") == "video"]
+                v_streams = [s for s in (resolved_info.get("streams", []) if resolved_info else []) if s.get("codec_type") == "video"]
                 if v_streams:
                     r_fps = v_streams[0].get("r_frame_rate", "")
                     avg_fps = v_streams[0].get("avg_frame_rate", "")
@@ -849,8 +850,7 @@ def build_ffmpeg_args(
                 video_filters.append("scale=-2:480")
 
             audio_filters = []
-            v_info = probed_info if probed_info is not None else (probe_media_streams(input_path) if input_path and os.path.exists(input_path) else None)
-            v_a_streams = [s for s in (v_info.get("streams", []) if v_info else []) if s.get("codec_type") == "audio"]
+            v_a_streams = [s for s in (resolved_info.get("streams", []) if resolved_info else []) if s.get("codec_type") == "audio"]
             input_channels = 2
             if v_a_streams:
                 try:
@@ -858,12 +858,7 @@ def build_ffmpeg_args(
                 except (ValueError, TypeError):
                     input_channels = 2
             if input_channels > 2:
-                if input_channels == 6:
-                    audio_filters.append("pan=stereo|FL < 1.0*FL + 0.707*FC + 0.707*BL | FR < 1.0*FR + 0.707*FC + 0.707*BR")
-                elif input_channels == 8:
-                    audio_filters.append("pan=stereo|FL < 1.0*FL + 0.707*FC + 0.5*BL + 0.5*SL | FR < 1.0*FR + 0.707*FC + 0.5*BR + 0.5*SR")
-                else:
-                    audio_filters.append("pan=stereo|c0 < c0 + 0.707*c2 + 0.5*c4 | c1 < c1 + 0.707*c2 + 0.5*c5")
+                audio_filters.append(_stereo_downmix_filter(input_channels))
 
             if reconstruct_frequency_loss:
                 audio_filters.append("aexciter=freq=7500:ceil=20000:amount=2.5:drive=8.5:blend=0")
@@ -877,12 +872,11 @@ def build_ffmpeg_args(
             eff_a_bitrate = (audio_bitrate or video_quality.get("audio_bitrate", "original")).lower().strip()
             can_copy_audio = False
             if eff_a_bitrate in ("original", "source", "copy") and not audio_filters and not reconstruct_frequency_loss:
-                info = v_info if v_info is not None else (probe_media_streams(input_path) if input_path and os.path.exists(input_path) else None)
-                a_streams = [s for s in (info.get("streams", []) if info else []) if s.get("codec_type") == "audio"]
+                a_streams = [s for s in (resolved_info.get("streams", []) if resolved_info else []) if s.get("codec_type") == "audio"]
                 if a_streams:
                     a_codec = (a_streams[0].get("codec_name") or "").lower()
                     can_copy_audio = is_audio_codec_compatible_with_container(a_codec, target_format)
-                elif not info and not os.path.exists(input_path):
+                elif not resolved_info and not os.path.exists(input_path):
                     can_copy_audio = False
 
             if target_format == "webm":
@@ -939,18 +933,17 @@ def build_ffmpeg_args(
                         )
                         cmd.extend(["-c:v", video_codec, "-q:v", quantizer, "-pix_fmt", "yuv420p"])
 
-                if target_format not in ("webm",):
-                    _, audio_codec = VIDEO_ENCODER_PROFILES.get(target_format, ("libx264", "aac"))
-                    if can_copy_audio:
-                        cmd.extend(["-c:a", "copy"])
-                    else:
-                        target_a_bitrate = _normalize_lossy_audio_bitrate(eff_a_bitrate, "320k")
-                        cmd.extend([
-                            "-c:a", audio_codec,
-                            "-b:a", target_a_bitrate
-                        ])
-                        if sample_rate:
-                            cmd.extend(["-ar", str(sample_rate)])
+                _, audio_codec = VIDEO_ENCODER_PROFILES.get(target_format, ("libx264", "aac"))
+                if can_copy_audio:
+                    cmd.extend(["-c:a", "copy"])
+                else:
+                    target_a_bitrate = _normalize_lossy_audio_bitrate(eff_a_bitrate, "320k")
+                    cmd.extend([
+                        "-c:a", audio_codec,
+                        "-b:a", target_a_bitrate
+                    ])
+                    if sample_rate:
+                        cmd.extend(["-ar", str(sample_rate)])
 
             if video_filters:
                 cmd.extend(["-vf", ",".join(video_filters)])
@@ -1884,14 +1877,6 @@ def convert_media(
             f"InputInvalid: source '{os.path.basename(input_path)}' is an HTML document or web challenge payload, not a valid media file."
         )
     output_filename = sanitize_filename(output_filename or os.path.basename(input_path))
-    _, input_ext = os.path.splitext(input_path)
-    if input_ext.lower() in (".glb", ".gltf", ".obj", ".splat", ".ply", ".fbx"):
-        stem = os.path.splitext(output_filename)[0]
-        final_dest = os.path.join(output_dir, f"{stem}{input_ext.lower()}")
-        shutil.copy2(input_path, final_dest)
-        if progress_callback:
-            progress_callback(1.0, f"3D model ready: {os.path.basename(final_dest)}")
-        return os.path.abspath(final_dest)
     start_time = sanitize_time_offset(start_time)
     end_time = sanitize_time_offset(end_time)
     if _recovery is None:

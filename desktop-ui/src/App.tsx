@@ -13,7 +13,8 @@ import { UpdatePromptHeader, isAppUpdateAvailable } from "./components/UpdatePro
 import { UpdateChangesModal } from "./components/UpdateChangesModal";
 import { detectCategoryFromPath, findPresetName, formatBytes, formatElapsedMs } from "./options";
 import { appendOrCollapseProgressEvent, extractYouTubeUrlFromThumbnail } from "./components/inprogress/parser";
-import { clearAppearanceStorage, loadAppearanceFromStorage, saveAppearanceToStorage } from "./utils/appearanceStorage";
+import { clearAppearanceStorage, isColorLight, loadAppearanceFromStorage, saveAppearanceToStorage } from "./utils/appearanceStorage";
+import { baseName, cleanPath, pathKey } from "./utils/paths";
 
 const defaultSettings: ConverterSettings = {
   outputDir: "converted",
@@ -45,22 +46,8 @@ const LEGACY_HISTORY_STORAGE_KEY = "janecoverter.conversionHistory";
 const TIMINGS_STORAGE_KEY = "janeconverter.conversionTimings";
 const LEGACY_TIMINGS_STORAGE_KEY = "janecoverter.conversionTimings";
 
-function cleanDisplayPath(rawPath: string): string {
-  return rawPath.trim().replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "");
-}
-
-function normalizePathKey(rawPath: string): string {
-  return cleanDisplayPath(rawPath).replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
-}
-
-function baseNameFromPath(rawPath: string): string {
-  const cleaned = cleanDisplayPath(rawPath).replace(/[\\/]+$/, "");
-  const lastSlash = Math.max(cleaned.lastIndexOf("\\"), cleaned.lastIndexOf("/"));
-  return lastSlash >= 0 ? cleaned.slice(lastSlash + 1) : cleaned;
-}
-
 function extensionFromPath(rawPath: string): string {
-  const name = baseNameFromPath(rawPath);
+  const name = baseName(rawPath);
   const dot = name.lastIndexOf(".");
   if (dot <= 0 || dot === name.length - 1) return "";
   return name.slice(dot + 1).toUpperCase();
@@ -70,7 +57,7 @@ function extractExportedPathFromMessage(message: string): string | null {
   for (const prefix of ["DONE! Exported:", "Export Directory:", "Target Directory:"]) {
     const idx = message.indexOf(prefix);
     if (idx >= 0) {
-      const value = cleanDisplayPath(message.slice(idx + prefix.length));
+      const value = cleanPath(message.slice(idx + prefix.length));
       if (value) return value;
     }
   }
@@ -233,12 +220,9 @@ export default function App() {
   const [wallpaperMaskColor, setWallpaperMaskColor] = useState<string>(() => readStoredAppearance("wallpaperMaskColor") ?? "#000000");
   const [wallpaperMaskOpacity, setWallpaperMaskOpacity] = useState<number>(() => readStoredInt("wallpaperMaskOpacity", 50));
   const [sidebarColor, setSidebarColor] = useState<string>(() => readStoredAppearance("sidebarColor") || "#05040d");
-  const [sidebarOpacity, setSidebarOpacity] = useState<number>(() => {
-    const raw = readStoredAppearance("sidebarOpacity");
-    if (raw === null) return 45;
-    const val = parseInt(raw, 10);
-    return isNaN(val) ? 45 : Math.min(100, Math.max(0, val));
-  });
+  const [sidebarOpacity, setSidebarOpacity] = useState<number>(() =>
+    readStoredInt("sidebarOpacity", 45),
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -386,7 +370,7 @@ export default function App() {
   }
 
   function recordTimingForPath(rawPath: string, elapsedMs: number) {
-    const key = normalizePathKey(rawPath);
+    const key = pathKey(rawPath);
     if (!key) return;
     setConversionTimings((current) => {
       const next = { ...current, [key]: elapsedMs };
@@ -424,19 +408,12 @@ export default function App() {
 
   function handleBgChange(color: string) {
     setBgColor(color);
-    const clean = color.replace("#", "");
-    const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
-    const num = parseInt(full, 16);
-    if (!isNaN(num)) {
-      const r = (num >> 16) & 255;
-      const g = (num >> 8) & 255;
-      const b = num & 255;
-      const isLight = (r * 299 + g * 587 + b * 114) / 1000 > 135;
-      if (isLight && theme !== "light") {
-        setTheme("light");
-      } else if (!isLight && theme !== "dark") {
-        setTheme("dark");
-      }
+    if (!/^#?(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(color.trim())) return;
+    const isLight = isColorLight(color);
+    if (isLight && theme !== "light") {
+      setTheme("light");
+    } else if (!isLight && theme !== "dark") {
+      setTheme("dark");
     }
   }
 
@@ -511,7 +488,7 @@ export default function App() {
             if (ctx.logs.length >= 500) ctx.logs.shift();
             ctx.logs.push(event.message);
           }
-          const parsedPath = (event.output && cleanDisplayPath(event.output)) || extractExportedPathFromMessage(event.message);
+          const parsedPath = (event.output && cleanPath(event.output)) || extractExportedPathFromMessage(event.message);
           if (parsedPath) {
             ctx.exportedPath = parsedPath;
           }
@@ -520,14 +497,14 @@ export default function App() {
           const isPartial = event.kind === "partial";
           const effective = ctx?.effectiveSettings ?? settingsRef.current;
           const elapsedMs = Math.max(1, Date.now() - (ctx?.startedAtMs ?? Date.now()));
-          const exportPath = cleanDisplayPath(
+          const exportPath = cleanPath(
             event.output || extractExportedPathFromMessage(event.message) || ctx?.exportedPath || effective.outputDir,
           );
           const fallbackNote = isPartial
             ? event.message || "Partial conversion: some media items failed to convert."
             : detectFallbackNote(ctx?.logs ?? [], ctx?.forcedVideoFallback ?? false, ctx?.forcedAudioFallback ?? false);
           const { formatLabel, qualityLabel } = describeOutputFormatAndQuality(effective, exportPath, fallbackNote);
-          const fileName = baseNameFromPath(exportPath) || baseNameFromPath(ctx?.source || "") || "Converted media";
+          const fileName = baseName(exportPath) || baseName(ctx?.source || "") || "Converted media";
           setFailure(null);
           const historyId = `${event.jobId}-${Date.now()}`;
           const historyItem: ConversionHistoryItem = {
@@ -592,7 +569,7 @@ export default function App() {
             id: `${event.jobId}-${Date.now()}`,
             timestamp: new Date().toISOString(),
             source: ctx?.source || "Media source",
-            fileName: baseNameFromPath(ctx?.source || "") || "Failed conversion",
+            fileName: baseName(ctx?.source || "") || "Failed conversion",
             exportPath: ctx?.exportedPath || effective.outputDir,
             presetName: ctx?.presetName || findPresetName(effective),
             formatLabel,

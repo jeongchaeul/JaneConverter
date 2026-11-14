@@ -8,21 +8,15 @@ import sys
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
-from pathlib import Path
 from typing import Optional, Dict, Any, Callable
 from urllib.parse import urlparse
 import json
 import requests
 
 from .binaries import get_ffmpeg_binary
+from .paths import BASE_DIR as REPO_DIR
 from .version import __version__
 
-_source_root = Path(__file__).resolve().parents[2]
-REPO_DIR = str(
-    _source_root
-    if (_source_root / "pyproject.toml").is_file()
-    else Path(__file__).resolve().parents[1]
-)
 GITHUB_OWNER = "jeongchaeul"
 GITHUB_REPO = "JaneConverter"
 GITHUB_LATEST_RELEASE_URL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"

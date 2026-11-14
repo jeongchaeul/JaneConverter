@@ -129,10 +129,10 @@ fn to_wide(s: &str) -> Vec<u16> {
 }
 
 #[cfg(windows)]
-struct CoordGuard(*mut c_void);
+struct MutexHandleGuard(*mut c_void);
 
 #[cfg(windows)]
-impl Drop for CoordGuard {
+impl Drop for MutexHandleGuard {
     fn drop(&mut self) {
         if !self.0.is_null() {
             unsafe {
@@ -144,7 +144,7 @@ impl Drop for CoordGuard {
 }
 
 #[cfg(windows)]
-fn acquire_coord(name: &str, timeout_ms: u32) -> Option<CoordGuard> {
+fn acquire_coord(name: &str, timeout_ms: u32) -> Option<MutexHandleGuard> {
     let wide = to_wide(name);
     unsafe {
         let handle = CreateMutexW(std::ptr::null_mut(), 0, wide.as_ptr());
@@ -153,7 +153,7 @@ fn acquire_coord(name: &str, timeout_ms: u32) -> Option<CoordGuard> {
         }
         let wait = WaitForSingleObject(handle, timeout_ms);
         if wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED {
-            Some(CoordGuard(handle))
+            Some(MutexHandleGuard(handle))
         } else {
             CloseHandle(handle);
             None
@@ -162,22 +162,7 @@ fn acquire_coord(name: &str, timeout_ms: u32) -> Option<CoordGuard> {
 }
 
 #[cfg(windows)]
-struct PromptGuard(*mut c_void);
-
-#[cfg(windows)]
-impl Drop for PromptGuard {
-    fn drop(&mut self) {
-        if !self.0.is_null() {
-            unsafe {
-                ReleaseMutex(self.0);
-                CloseHandle(self.0);
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
-fn try_acquire_prompt_lock(name: &str) -> Option<PromptGuard> {
+fn try_acquire_prompt_lock(name: &str) -> Option<MutexHandleGuard> {
     let wide = to_wide(name);
     unsafe {
         let handle = CreateMutexW(std::ptr::null_mut(), 1, wide.as_ptr());
@@ -188,7 +173,7 @@ fn try_acquire_prompt_lock(name: &str) -> Option<PromptGuard> {
             CloseHandle(handle);
             return None;
         }
-        Some(PromptGuard(handle))
+        Some(MutexHandleGuard(handle))
     }
 }
 
@@ -307,14 +292,14 @@ pub fn acquire_instance_slot() -> Option<InstanceGuard> {
             return try_claim_free_slot_custom(SLOT_MUTEX_PREFIX, MAX_INSTANCES);
         }
 
-        // Case 2: Max instances (3) already active -> do NOT prompt; reject immediately.
-        if active_count >= MAX_INSTANCES {
-            return None;
-        }
-
         if std::env::var_os("JANECONVERTER_RELAUNCH").is_some() {
             std::env::remove_var("JANECONVERTER_RELAUNCH");
             return try_claim_free_slot_custom(SLOT_MUTEX_PREFIX, MAX_INSTANCES);
+        }
+
+        // Case 2: Max instances (3) already active -> do NOT prompt; reject immediately.
+        if active_count >= MAX_INSTANCES {
+            return None;
         }
 
         // Case 3: 1 or 2 instances currently active -> prompt user.
@@ -407,6 +392,11 @@ fn acquire_instance_slot_unix() -> Option<InstanceGuard> {
     }
 
     if active_count == 0 {
+        return try_claim_free_slot_unix(&dir);
+    }
+
+    if std::env::var_os("JANECONVERTER_RELAUNCH").is_some() {
+        std::env::remove_var("JANECONVERTER_RELAUNCH");
         return try_claim_free_slot_unix(&dir);
     }
 

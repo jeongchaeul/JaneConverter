@@ -2,14 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { AlertCircle, AlertTriangle, ArrowRight, Box, Check, CheckCircle2, Copy, ExternalLink, FileAudio, FileImage, FileVideo, FolderOpen, HelpCircle, Info, LoaderCircle, LockKeyhole, Radio, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import type { AccessStatus, ConverterSettings, FetchedMedia } from "../bridge";
 import { bridge } from "../bridge";
+import { formatBytes } from "../options";
 import { baseName, isInside, joinPath, parentPath, pathKey } from "../utils/paths";
-
-function formatBytes(size: number) {
-  if (!size) return "0 B";
-  if (size < 1024) return size + " B";
-  if (size < 1024 * 1024) return (size / 1024).toFixed(1) + " KB";
-  return (size / (1024 * 1024)).toFixed(1) + " MB";
-}
 
 function MediaIcon({ kind }: { kind: FetchedMedia["mediaKind"] }) {
   if (kind === "image") return <FileImage className="size-5 text-sky-300" />;

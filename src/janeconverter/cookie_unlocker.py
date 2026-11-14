@@ -13,6 +13,8 @@ import sqlite3
 import threading
 from typing import List, Optional
 
+from .paths import clean_windows_path as clean_nt_path
+
 # Win32 / NT API definitions for non-destructive handle duplication
 if os.name == "nt":
     import ctypes
@@ -99,15 +101,6 @@ if os.name == "nt":
             ("HandleAttributes", wintypes.ULONG),
             ("Reserved", wintypes.ULONG),
         ]
-
-
-def clean_nt_path(path: str) -> str:
-    """Strip Win32 device prefixes from paths returned by GetFinalPathNameByHandleW."""
-    if path.startswith("\\\\?\\UNC\\"):
-        return "\\\\" + path[8:]
-    if path.startswith("\\\\?\\"):
-        return path[4:]
-    return path
 
 
 # Access masks known to deadlock kernel calls on synchronous pipes.

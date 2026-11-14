@@ -254,10 +254,6 @@ fn has_converted_media_files(path: &std::path::Path) -> bool {
     if !path.is_dir() {
         return false;
     }
-    let media_extensions = [
-        "mp3", "m4a", "flac", "wav", "opus", "aac", "ogg", "aiff", "mp4", "mkv", "webm", "mov",
-        "avi", "png", "jpg", "jpeg", "webp", "gif", "bmp",
-    ];
     if let Ok(entries) = std::fs::read_dir(path) {
         for entry in entries.flatten() {
             let p = entry.path();
@@ -265,16 +261,14 @@ fn has_converted_media_files(path: &std::path::Path) -> bool {
                 if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
                     if name.eq_ignore_ascii_case("cover.jpg")
                         || name.eq_ignore_ascii_case("folder.jpg")
-                        || name.ends_with(".txt")
-                        || name.ends_with(".json")
                     {
                         continue;
                     }
                 }
-                if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
-                    if media_extensions.contains(&ext.to_ascii_lowercase().as_str()) {
-                        return true;
-                    }
+                if crate::library::library_file_extension(&p)
+                    && !crate::library::is_metadata_path(&p)
+                {
+                    return true;
                 }
             }
         }
@@ -1152,12 +1146,19 @@ pub fn load_playlist(
     allow_story_extraction: bool,
     cancel: &AtomicBool,
 ) -> Result<PlaylistCatalog, String> {
+    let trimmed = source.trim();
+    if trimmed.is_empty() {
+        return Err("Paste a media URL or choose a local file first.".into());
+    }
+    if trimmed.starts_with('-') {
+        return Err("Source URL or path cannot begin with '-'.".into());
+    }
     let engine = find_python();
     let mut command = Command::new(&engine);
     if !packaged_engine(&engine) {
         command.args(["run", "--locked", "janeconverter"]);
     }
-    command.args(["--source", source.trim(), "--list-playlist", "--no-update"]);
+    command.args(["--source", trimmed, "--list-playlist", "--no-update"]);
     if allow_story_extraction {
         command.arg("--allow-ephemeral-stories");
     }
@@ -1171,7 +1172,6 @@ pub fn load_playlist(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    prepare_command(&mut command);
     let output = bounded_output(&mut command, Duration::from_secs(60), cancel)?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();

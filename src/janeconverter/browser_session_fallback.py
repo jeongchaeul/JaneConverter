@@ -194,7 +194,7 @@ def extract_with_browser_fallback(ydl, options, query, download, browser=None,
                         quiet=True, no_warnings=True, noprogress=True)
             if "js_runtimes" not in opts or not opts["js_runtimes"] or opts["js_runtimes"].get("node", {}).get("path") is None:
                 try:
-                    from .converter import get_js_runtimes_config
+                    from .binaries import get_js_runtimes_config
                     opts["js_runtimes"] = get_js_runtimes_config()
                 except ImportError:
                     pass

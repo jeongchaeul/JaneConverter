@@ -18,7 +18,7 @@ import socket
 import json
 import html
 import requests
-from .paths import get_ytdlp_cache_dir
+from .paths import WINDOWS_RESERVED_NAMES, clean_windows_path, get_ytdlp_cache_dir
 from .session_pacer import pace_request
 from .catalog_match import choose_catalog_match, match_score
 from .extraction_recovery import classify_extraction, ExtractionCategory
@@ -120,24 +120,6 @@ def is_url(path_or_url: str) -> bool:
         return parsed.scheme in ("http", "https") and bool(parsed.netloc)
     except Exception:
         return False
-
-def clean_windows_path(path: str) -> str:
-    """Strip extended-length Windows verbatim prefixes (\\\\?\\) for standard Win32/Explorer compatibility."""
-    if not isinstance(path, str):
-        return ""
-    trimmed = path.strip()
-    if trimmed.startswith("\\\\?\\UNC\\"):
-        return "\\\\" + trimmed[8:]
-    if trimmed.startswith("\\\\?\\"):
-        return trimmed[4:]
-    return trimmed
-
-
-WINDOWS_RESERVED_NAMES = {
-    "CON", "PRN", "AUX", "NUL",
-    *(f"COM{i}" for i in range(1, 10)),
-    *(f"LPT{i}" for i in range(1, 10)),
-}
 
 _UNICODE_BIDI_AND_FORMAT_RE = re.compile(
     r"[\u200b\u200e\u200f\u202a-\u202e\u2060-\u206f\u061c\ufeff]"
@@ -325,6 +307,7 @@ __all__ = [
     "_apple_music_url_parts",
     "_apple_artwork_url",
     "_apple_music_result_metadata",
+    "clean_windows_path",
 ]
 
 
@@ -1174,7 +1157,7 @@ def fetch_media_stream(
         format_selector = build_video_format_selector(resolution)
         audio_format_sort = None
 
-    from .converter import get_ffmpeg_binary, get_js_runtimes_config
+    from .converter import get_ffmpeg_binary
     ffmpeg_bin = get_ffmpeg_binary()
 
     ydl_opts = {
@@ -1234,10 +1217,24 @@ def fetch_media_stream(
     if ffmpeg_bin and (os.path.isfile(ffmpeg_bin) or shutil.which(ffmpeg_bin)):
         ydl_opts["ffmpeg_location"] = ffmpeg_bin
 
+    archival_attempted = False
+
+    def _try_archival_fallback() -> Optional[Dict[str, Any]]:
+        nonlocal archival_attempted
+        if not archival_fallback or archival_attempted:
+            return None
+        archival_attempted = True
+        from .archival import probe_archival_vaults, download_archival_stream
+        arc_res = probe_archival_vaults(source, report=report)
+        if arc_res and arc_res.found:
+            return download_archival_stream(
+                arc_res, output_dir, abort_event=abort_event, progress_callback=progress_callback
+            )
+        return None
+
     try:
         info = None
         last_error = None
-        archival_attempted = False
         catalog_meta = spotify_meta or apple_meta
         recovery_deadline = time.monotonic() + 60
         if is_url(source):
@@ -1404,14 +1401,9 @@ def fetch_media_stream(
                     except Exception:
                         if abort_event and abort_event.is_set():
                             raise
-                if archival_fallback and not archival_attempted:
-                    archival_attempted = True
-                    from .archival import probe_archival_vaults, download_archival_stream
-                    arc_res = probe_archival_vaults(source, report=report)
-                    if arc_res and arc_res.found:
-                        return download_archival_stream(
-                            arc_res, output_dir, abort_event=abort_event, progress_callback=progress_callback
-                        )
+                arc_result = _try_archival_fallback()
+                if arc_result is not None:
+                    return arc_result
                 if source_type == "apple_music":
                     msg = (
                         "Apple Music was recognized, but no matching downloadable public stream was found. "
@@ -1539,15 +1531,11 @@ def fetch_media_stream(
                 abort_event=abort_event,
                 progress_callback=progress_callback,
                 report=report,
+                save_cover_art=save_cover_art,
             )
-        if archival_fallback and not archival_attempted:
-            archival_attempted = True
-            from .archival import probe_archival_vaults, download_archival_stream
-            arc_res = probe_archival_vaults(source, report=report)
-            if arc_res and arc_res.found:
-                return download_archival_stream(
-                    arc_res, output_dir, abort_event=abort_event, progress_callback=progress_callback
-                )
+        arc_result = _try_archival_fallback()
+        if arc_result is not None:
+            return arc_result
         raise
     except Exception as e:
         if is_tiktok_source:
@@ -1560,17 +1548,13 @@ def fetch_media_stream(
                     abort_event=abort_event,
                     progress_callback=progress_callback,
                     report=report,
+                    save_cover_art=save_cover_art,
                 )
             except Exception as direct_err:
                 raise RuntimeError(f"Stream extraction failed: {str(e)} (Direct extractor: {direct_err})") from e
-        if archival_fallback and not archival_attempted:
-            archival_attempted = True
-            from .archival import probe_archival_vaults, download_archival_stream
-            arc_res = probe_archival_vaults(source, report=report)
-            if arc_res and arc_res.found:
-                return download_archival_stream(
-                    arc_res, output_dir, abort_event=abort_event, progress_callback=progress_callback
-                )
+        arc_result = _try_archival_fallback()
+        if arc_result is not None:
+            return arc_result
         raise RuntimeError(f"Stream extraction failed: {str(e)}") from e
 
 def fetch_playlist_entries(

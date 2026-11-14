@@ -111,6 +111,21 @@ def probe_hardware_encoder(encoder: str) -> bool:
         _probed_hardware_encoders[encoder] = is_ok
     return is_ok
 
+def _format_short_gpu_name(gpu_name: str, fallback: str = "") -> str:
+    """Shorten a raw GPU adapter name for compact UI and CLI display."""
+    short = (
+        gpu_name
+        .replace("NVIDIA ", "")
+        .replace("GeForce ", "")
+        .replace("AMD ", "")
+        .replace("Radeon(TM) ", "Radeon ")
+        .replace("Intel(R) ", "")
+        .replace("Graphics", "")
+        .strip()
+    )
+    return short or fallback
+
+
 def get_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict[str, Any]:
     """
     Selects the optimal hardware video encoder for the current system (cached per session).
@@ -199,7 +214,7 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
             has_intel = any(any(k in g.lower() for k in ["intel", "arc", "iris", "uhd"]) for g in gpus)
             if has_nvidia and probe_hardware_encoder("av1_nvenc"):
                 gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["nvidia", "geforce", "quadro", "rtx", "gtx", "tesla"])), "NVIDIA GPU")
-                short = gpu_name.replace("NVIDIA ", "").replace("GeForce ", "").strip()
+                short = _format_short_gpu_name(gpu_name)
                 return {
                     "has_gpu": True, "vendor": "nvidia", "gpu_name": gpu_name, "short_name": short,
                     "encoder": "av1_nvenc", "encoder_label": "NVIDIA AV1 NVENC",
@@ -207,7 +222,7 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
                 }
             if has_amd and sys.platform == "win32" and probe_hardware_encoder("av1_amf"):
                 gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["amd", "radeon"])), "AMD Radeon GPU")
-                short = gpu_name.replace("AMD ", "").replace("Radeon(TM) ", "Radeon ").replace("Graphics", "").strip() or "Radeon"
+                short = _format_short_gpu_name(gpu_name, "Radeon")
                 return {
                     "has_gpu": True, "vendor": "amd", "gpu_name": gpu_name, "short_name": short,
                     "encoder": "av1_amf", "encoder_label": "AMD AV1 AMF",
@@ -215,7 +230,7 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
                 }
             if has_intel and probe_hardware_encoder("av1_qsv"):
                 gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["intel", "arc", "iris", "uhd"])), "Intel GPU")
-                short = gpu_name.replace("Intel(R) ", "").replace("Graphics", "").strip() or "Intel HD/Arc"
+                short = _format_short_gpu_name(gpu_name, "Intel HD/Arc")
                 return {
                     "has_gpu": True, "vendor": "intel", "gpu_name": gpu_name, "short_name": short,
                     "encoder": "av1_qsv", "encoder_label": "Intel Quick Sync AV1",
@@ -236,7 +251,7 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
     # Priority 1: NVIDIA GPU (NVENC)
     if has_nvidia and probe_hardware_encoder("h264_nvenc"):
         gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["nvidia", "geforce", "quadro", "rtx", "gtx", "tesla"])), "NVIDIA GPU")
-        short = gpu_name.replace("NVIDIA ", "").replace("GeForce ", "").strip()
+        short = _format_short_gpu_name(gpu_name)
         return {
             "has_gpu": True,
             "vendor": "nvidia",
@@ -250,7 +265,7 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
     # Priority 2: AMD GPU (AMF on Windows, AMF/VAAPI on Linux)
     if has_amd:
         gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["amd", "radeon"])), "AMD Radeon GPU")
-        short = gpu_name.replace("AMD ", "").replace("Radeon(TM) ", "Radeon ").replace("Graphics", "").strip() or "Radeon"
+        short = _format_short_gpu_name(gpu_name, "Radeon")
         encoder = "h264_amf" if sys.platform == "win32" else "h264_vaapi"
         if probe_hardware_encoder(encoder):
             label = "AMD AMF" if sys.platform == "win32" else "AMD VAAPI"
@@ -268,7 +283,7 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
     # Priority 3: Intel GPU (QSV)
     if has_intel and probe_hardware_encoder("h264_qsv"):
         gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["intel", "arc", "iris", "uhd"])), "Intel GPU")
-        short = gpu_name.replace("Intel(R) ", "").replace("Graphics", "").strip() or "Intel HD/Arc"
+        short = _format_short_gpu_name(gpu_name, "Intel HD/Arc")
         return {
             "has_gpu": True,
             "vendor": "intel",
@@ -385,15 +400,7 @@ def _apply_video_quality_to_encoder_args(
         replace_value("-global_quality", crf_val)
     elif encoder == "h264_vaapi":
         replace_value("-qp", crf)
-    elif encoder == "h264_amf":
-        replace_value("-quality", {
-            "original": "quality",
-            "best": "quality",
-            "high": "quality",
-            "balanced": "balanced",
-            "small": "speed",
-        }.get((quality_name or "").lower(), "balanced"))
-    elif encoder == "av1_amf":
+    elif encoder in ("h264_amf", "av1_amf"):
         replace_value("-quality", {
             "original": "quality",
             "best": "quality",

@@ -200,7 +200,7 @@ fn image_extension(path: &Path) -> bool {
     )
 }
 
-fn library_file_extension(path: &Path) -> bool {
+pub(crate) fn library_file_extension(path: &Path) -> bool {
     media_extension(path) || image_extension(path)
 }
 
@@ -218,7 +218,7 @@ pub fn openable_file_extension(path: &Path) -> bool {
     )
 }
 
-fn is_metadata_path(path: &Path) -> bool {
+pub(crate) fn is_metadata_path(path: &Path) -> bool {
     if let Some(parent) = path.parent() {
         if parent
             .file_name()
@@ -231,18 +231,19 @@ fn is_metadata_path(path: &Path) -> bool {
         .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("metadata"))
 }
 
-fn directory_summary(path: &Path) -> (usize, u64) {
+fn directory_summary(path: &Path) -> (usize, u64, u64) {
     directory_summary_bounded(path, 0)
 }
 
-fn directory_summary_bounded(path: &Path, depth: usize) -> (usize, u64) {
+fn directory_summary_bounded(path: &Path, depth: usize) -> (usize, u64, u64) {
     if depth > 32 {
-        return (0, 0);
+        return (0, 0, 0);
     }
     let mut count = 0;
-    let mut bytes = 0;
+    let mut media_bytes = 0;
+    let mut total_bytes = 0;
     let Ok(entries) = fs::read_dir(path) else {
-        return (0, 0);
+        return (0, 0, 0);
     };
     for entry in entries.flatten() {
         let child = entry.path();
@@ -253,45 +254,24 @@ fn directory_summary_bounded(path: &Path, depth: usize) -> (usize, u64) {
             continue;
         }
         if kind.is_dir() {
-            let (nested_count, nested_bytes) = directory_summary_bounded(&child, depth + 1);
+            let (nested_count, nested_media_bytes, nested_total_bytes) =
+                directory_summary_bounded(&child, depth + 1);
             count += nested_count;
-            bytes += nested_bytes;
-        } else if kind.is_file() && library_file_extension(&child) && !is_metadata_path(&child) {
-            count += 1;
-            bytes += entry
+            media_bytes += nested_media_bytes;
+            total_bytes += nested_total_bytes;
+        } else if kind.is_file() {
+            let file_bytes = entry
                 .metadata()
                 .map(|value| value.len())
                 .unwrap_or_default();
-        }
-    }
-    (count, bytes)
-}
-
-fn recursive_folder_bytes(path: &Path) -> u64 {
-    recursive_folder_bytes_bounded(path, 0)
-}
-
-fn recursive_folder_bytes_bounded(path: &Path, depth: usize) -> u64 {
-    if depth > 32 {
-        return 0;
-    }
-    let mut total = 0;
-    if let Ok(entries) = fs::read_dir(path) {
-        for entry in entries.flatten() {
-            let child = entry.path();
-            if let Ok(file_type) = entry.file_type() {
-                if file_type.is_symlink() {
-                    continue;
-                }
-                if file_type.is_dir() {
-                    total += recursive_folder_bytes_bounded(&child, depth + 1);
-                } else if file_type.is_file() {
-                    total += entry.metadata().map(|m| m.len()).unwrap_or(0);
-                }
+            total_bytes += file_bytes;
+            if library_file_extension(&child) && !is_metadata_path(&child) {
+                count += 1;
+                media_bytes += file_bytes;
             }
         }
     }
-    total
+    (count, media_bytes, total_bytes)
 }
 
 pub fn path_total_bytes(raw_path: &str) -> u64 {
@@ -303,11 +283,12 @@ pub fn path_total_bytes(raw_path: &str) -> u64 {
         return fs::metadata(&clean).map(|m| m.len()).unwrap_or(0);
     }
     if clean.is_dir() {
-        let (_, media_bytes) = directory_summary(&clean);
-        if media_bytes > 0 {
-            return media_bytes;
-        }
-        return recursive_folder_bytes(&clean);
+        let (_, media_bytes, total_bytes) = directory_summary(&clean);
+        return if media_bytes > 0 {
+            media_bytes
+        } else {
+            total_bytes
+        };
     }
     0
 }
@@ -348,7 +329,7 @@ pub fn scan(path: &str) -> Result<Vec<LibraryEntry>, String> {
         let name = entry.file_name().to_string_lossy().into_owned();
         let conversion_ms = timings.get(&timing_key(&child)).copied();
         if kind.is_dir() {
-            let (count, bytes) = directory_summary(&child);
+            let (count, bytes, _) = directory_summary(&child);
             result.push(LibraryEntry {
                 path: clean_windows_path(&child.display().to_string()),
                 name,
@@ -718,40 +699,6 @@ pub fn delete_inside(root: &str, path: &str) -> Result<(), String> {
     }
 }
 
-const MAX_COPY_DEPTH: usize = 32;
-
-fn copy_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
-    copy_directory_depth(source, destination, 0)
-}
-
-fn copy_directory_depth(source: &Path, destination: &Path, depth: usize) -> std::io::Result<()> {
-    if depth > MAX_COPY_DEPTH {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "folder nesting exceeds maximum depth for a library move",
-        ));
-    }
-    fs::create_dir(destination)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let kind = entry.file_type()?;
-        let source_child = entry.path();
-        let destination_child = destination.join(entry.file_name());
-        if kind.is_symlink() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "symbolic links are not supported in a library move",
-            ));
-        }
-        if kind.is_dir() {
-            copy_directory_depth(&source_child, &destination_child, depth + 1)?;
-        } else if kind.is_file() {
-            fs::copy(&source_child, &destination_child)?;
-        }
-    }
-    Ok(())
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MoveDirectoryResult {
@@ -823,7 +770,7 @@ pub fn move_directory(
         name.to_string_lossy(),
         now_stamp()
     ));
-    copy_directory(&source, &temporary).map_err(|error| {
+    crate::paths::copy_dir_all_bounded(&source, &temporary, 0, true).map_err(|error| {
         let _ = fs::remove_dir_all(&temporary);
         format!("Could not copy the library to the destination: {error}")
     })?;

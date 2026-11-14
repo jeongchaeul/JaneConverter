@@ -1467,11 +1467,7 @@ fn serve(listener: TcpListener, token: String, state: ServeState) {
     }
 }
 
-pub fn create_with_root(
-    source: &str,
-    _stamp: u128,
-    capture_root: PathBuf,
-) -> Result<AccessServer, String> {
+pub fn create_with_root(source: &str, capture_root: PathBuf) -> Result<AccessServer, String> {
     let source = source.trim().to_owned();
     if !source.is_empty() {
         let parsed_source =
@@ -1858,8 +1854,7 @@ mod tests {
     fn clearing_access_stops_a_slow_incomplete_request_promptly() {
         let root =
             std::env::temp_dir().join(format!("janec-slow-access-{}", crate::paths::now_stamp()));
-        let server =
-            create_with_root("", 0, root.clone()).expect("local access server should start");
+        let server = create_with_root("", root.clone()).expect("local access server should start");
         let address = Url::parse(&server.link).expect("access link should be a URL");
         let mut client = TcpStream::connect((address.host_str().unwrap(), address.port().unwrap()))
             .expect("test client should connect");

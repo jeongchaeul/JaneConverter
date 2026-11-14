@@ -52,31 +52,17 @@ fn is_allowed_library_or_history_path(candidate: &str) -> Result<bool, String> {
         data_root(),
         std::env::temp_dir(),
     ];
-    if let Ok(cat) = catalog::history(
-        &data_root().join("catalog.json"),
-        Vec::new(),
-        None,
-        None,
-        false,
-    ) {
-        for item in cat.history {
-            if let Some(export_path) = item.get("exportPath").and_then(|v| v.as_str()) {
-                if !export_path.trim().is_empty() {
-                    allowed_roots.push(resolve_configured_root(export_path));
-                }
-            }
+    for export_path in catalog::load_history_paths(&data_root().join("catalog.json")) {
+        if !export_path.trim().is_empty() {
+            allowed_roots.push(resolve_configured_root(&export_path));
         }
     }
 
-    for root in allowed_roots {
-        if library::is_library_path(&root, &canonical_target) {
-            return Ok(true);
-        }
-        if let Ok(canonical_root) = fs::canonicalize(&root) {
-            if canonical_target == canonical_root || canonical_target.starts_with(&canonical_root) {
-                return Ok(true);
-            }
-        }
+    if allowed_roots
+        .iter()
+        .any(|root| library::is_library_path(root, &canonical_target))
+    {
+        return Ok(true);
     }
 
     Err("For safety, JaneConverter can only access items inside the configured library or fetched directories.".into())
@@ -108,18 +94,8 @@ pub async fn scan_library(path: String) -> Result<Vec<LibraryEntry>, String> {
 
 #[tauri::command]
 pub fn is_converted_library_path(path: String) -> bool {
-    let configured = PathBuf::from(settings_get_internal().output_dir.trim());
-    let root = if configured.is_absolute() {
-        configured
-    } else {
-        project_root().join(configured)
-    };
-    let candidate = PathBuf::from(path.trim());
-    let candidate = if candidate.is_absolute() {
-        candidate
-    } else {
-        project_root().join(candidate)
-    };
+    let root = resolve_configured_root(&settings_get_internal().output_dir);
+    let candidate = resolve_configured_root(&path);
     library::is_library_path(&root, &candidate)
 }
 

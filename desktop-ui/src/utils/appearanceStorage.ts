@@ -11,6 +11,17 @@ export interface AppearanceSettings {
   sidebarOpacity?: number;
 }
 
+export function isColorLight(hex: string): boolean {
+  const clean = (hex || "").replace("#", "");
+  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+  const num = parseInt(full, 16);
+  if (isNaN(num)) return false;
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return (r * 299 + g * 587 + b * 114) / 1000 > 135;
+}
+
 export function hexToRgba(hex: string, alpha: number): string {
   if (!hex) return `rgba(5, 4, 13, ${alpha})`;
   let clean = hex.replace("#", "").trim();

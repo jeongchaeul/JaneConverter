@@ -108,16 +108,6 @@
     }
   }
 
-  async function visualHashForBlob(blob) {
-    if (typeof createImageBitmap !== "function" || !globalThis.JaneMediaUtils) return null;
-    try {
-      const image = await createImageBitmap(blob);
-      try { return visualHashForElement(image); } finally { image.close(); }
-    } catch (_) {
-      return null;
-    }
-  }
-
   function fingerprintFor(candidate, contentHash) {
     const element = candidate.element;
     const rect = candidate.geometry.rect;
@@ -189,8 +179,7 @@
     }
     if (blob) {
       return {
-        payload: await encodeBlob(blob, "browser-collect-" + Date.now() + ".png", isCanvas ? "canvas-render" : "rendered"),
-        visualHash: visualHashForElement(element)
+        payload: await encodeBlob(blob, "browser-collect-" + Date.now() + ".png", isCanvas ? "canvas-render" : "rendered")
       };
     }
     const source = currentUrl(element);
@@ -202,7 +191,7 @@
       throw new Error("The story image response was not a valid image.");
     }
     blob = await response.blob();
-    return { payload: await encodeBlob(blob, "browser-collect-" + Date.now() + ".png", "page-fetch"), visualHash: await visualHashForBlob(blob) };
+    return { payload: await encodeBlob(blob, "browser-collect-" + Date.now() + ".png", "page-fetch") };
   }
 
   async function captureVideo(candidate) {
@@ -215,7 +204,6 @@
     const mimeType = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
       .find(function (value) { return !MediaRecorder.isTypeSupported || MediaRecorder.isTypeSupported(value); });
     if (!mimeType) throw new Error("This browser cannot record the story video format.");
-    const visualHash = visualHashForElement(element);
     const stream = captureStream.call(element);
     const recorder = new MediaRecorder(stream, { mimeType: mimeType });
     const chunks = [];
@@ -271,7 +259,7 @@
       hardTimer = setTimeout(function () { finish(reject, new Error("Rendered capture deadline reached.")); }, MAX_VIDEO_MS + 5000);
       recorder.start(250);
     });
-    return { payload: result, visualHash: visualHash };
+    return { payload: result };
   }
 
   async function captureCandidate(candidate) {

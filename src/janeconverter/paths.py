@@ -74,6 +74,18 @@ def sanitize_filename(filename: str) -> str:
     return f"{stem}{ext}"
 
 
+def clean_windows_path(path: str) -> str:
+    """Strip extended-length Windows verbatim prefixes (\\\\?\\) for standard Win32/Explorer compatibility."""
+    if not isinstance(path, str):
+        return ""
+    trimmed = path.strip()
+    if trimmed.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + trimmed[8:]
+    if trimmed.startswith("\\\\?\\"):
+        return trimmed[4:]
+    return trimmed
+
+
 def ensure_extended_length_path(path: str) -> str:
     """
     On Windows, converts absolute paths longer than 240 chars to the Win32 extended-length

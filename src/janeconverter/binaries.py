@@ -7,17 +7,12 @@ from __future__ import annotations
 
 import functools
 import os
-from pathlib import Path
 import shutil
 from typing import Optional
 
+from .paths import BASE_DIR as PROJECT_ROOT
+
 ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
-_source_root = Path(__file__).resolve().parents[2]
-PROJECT_ROOT = str(
-    _source_root
-    if (_source_root / "pyproject.toml").is_file()
-    else Path(__file__).resolve().parents[1]
-)
 
 @functools.lru_cache(maxsize=1)
 def get_ffmpeg_binary() -> str:

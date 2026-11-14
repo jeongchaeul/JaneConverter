@@ -23,6 +23,7 @@ import { motion } from "framer-motion";
 import type { AccessStatus, Category, ConverterEvent, ConverterSettings, FetchedMedia, PlaylistCatalog, RuntimeInfo } from "../bridge";
 import { bridge } from "../bridge";
 import {
+  applyPresetToSettings,
   audioFormats,
   detectCategoryFromPath,
   formatsFor,
@@ -282,16 +283,7 @@ export function ConverterView({
 
     const effectiveBaseSettings = overrideSettings || settings;
     const customSettings: ConverterSettings | undefined = customPreset
-      ? {
-          ...effectiveBaseSettings,
-          category: customPreset.category,
-          format: customPreset.format,
-          bitrate: customPreset.bitrate,
-          sampleRate: customPreset.sampleRate,
-          resolution: customPreset.resolution,
-          normalize: customPreset.normalize,
-          useGpu: customPreset.useGpu,
-        }
+      ? applyPresetToSettings(effectiveBaseSettings, customPreset)
       : overrideSettings;
 
     const invokeStart = (
@@ -539,16 +531,7 @@ export function ConverterView({
       : (selectedPresetId ? intentPresets.find((p) => p.id === selectedPresetId)?.name : undefined);
 
     const snapshotSettings: ConverterSettings = customPreset
-      ? {
-          ...settings,
-          category: customPreset.category,
-          format: customPreset.format,
-          bitrate: customPreset.bitrate,
-          sampleRate: customPreset.sampleRate,
-          resolution: customPreset.resolution,
-          normalize: customPreset.normalize,
-          useGpu: customPreset.useGpu,
-        }
+      ? applyPresetToSettings(settings, customPreset)
       : { ...settings };
 
     const newItem: QueueItem = {
@@ -1039,14 +1022,7 @@ export function ConverterView({
       return;
     }
     onSettings({
-      ...settings,
-      category: preset.category,
-      format: preset.format,
-      bitrate: preset.bitrate,
-      audioBitrate: preset.audioBitrate ?? (preset.category === "Video" ? "original" : settings.audioBitrate),
-      sampleRate: preset.sampleRate,
-      resolution: preset.resolution,
-      normalize: preset.normalize,
+      ...applyPresetToSettings(settings, preset),
       useGpu: settings.useGpu || preset.useGpu,
       archivalFallback: preset.archivalFallback ?? false,
       playlistMode: autoMode,
@@ -1494,16 +1470,7 @@ export function ConverterView({
                           ? {
                               category: single.preset.category,
                               presetName: single.preset.name,
-                              settingsSnapshot: {
-                                ...(it.settingsSnapshot ?? settings),
-                                category: single.preset.category,
-                                format: single.preset.format,
-                                bitrate: single.preset.bitrate,
-                                sampleRate: single.preset.sampleRate,
-                                resolution: single.preset.resolution,
-                                normalize: single.preset.normalize,
-                                useGpu: single.preset.useGpu,
-                              },
+                              settingsSnapshot: applyPresetToSettings(it.settingsSnapshot ?? settings, single.preset),
                             }
                           : {}),
                       }
@@ -1522,16 +1489,7 @@ export function ConverterView({
                 playlistCatalog: catalog,
                 presetName: g.preset ? g.preset.name : configuringQueueItem.presetName,
                 settingsSnapshot: g.preset
-                  ? {
-                      ...(configuringQueueItem.settingsSnapshot ?? settings),
-                      category: g.preset.category,
-                      format: g.preset.format,
-                      bitrate: g.preset.bitrate,
-                      sampleRate: g.preset.sampleRate,
-                      resolution: g.preset.resolution,
-                      normalize: g.preset.normalize,
-                      useGpu: g.preset.useGpu,
-                    }
+                  ? applyPresetToSettings(configuringQueueItem.settingsSnapshot ?? settings, g.preset)
                   : configuringQueueItem.settingsSnapshot,
               }));
               setQueue((curr) => {
