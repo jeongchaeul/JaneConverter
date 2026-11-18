@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertCircle,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   LayoutGrid,
   List,
   Music,
   Search,
+  X,
 } from "lucide-react";
 import { bridge, type Category, type ConverterEvent, type ConversionHistoryItem, type ConverterSettings } from "../bridge";
 import { findPresetName } from "../options";
@@ -54,6 +57,8 @@ export function InProgressView({
   settings,
   historyItems = [],
   conversionTimings = {},
+  deletedItemKeys,
+  onMarkItemDeleted,
   onPauseToggle,
   onAbort,
   onClear,
@@ -76,6 +81,8 @@ export function InProgressView({
   settings?: ConverterSettings;
   historyItems?: ConversionHistoryItem[];
   conversionTimings?: Record<string, number>;
+  deletedItemKeys?: Set<string>;
+  onMarkItemDeleted?: (itemKey: string) => void;
   onPauseToggle?: () => Promise<void> | void;
   onAbort?: () => Promise<void> | void;
   onClear?: (targetJobId?: string) => void;
@@ -94,8 +101,35 @@ export function InProgressView({
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
   const [showSessionModal, setShowSessionModal] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: InProgressItem } | null>(null);
-  const [deletedItemIds, setDeletedItemIds] = useState<Set<string>>(new Set());
+  const [localDeletedItemIds, setLocalDeletedItemIds] = useState<Set<string>>(new Set());
   const [deletingItemIds, setDeletingItemIds] = useState<Set<string>>(new Set());
+  const [actionNotice, setActionNotice] = useState<{
+    kind: "error" | "success" | "info";
+    message: string;
+    staleItemKey?: string;
+  } | null>(null);
+
+  const deletedItemIds = deletedItemKeys ?? localDeletedItemIds;
+
+  function markItemDeleted(itemKey: string) {
+    if (onMarkItemDeleted) {
+      onMarkItemDeleted(itemKey);
+    } else {
+      setLocalDeletedItemIds((prev) => new Set(prev).add(itemKey));
+    }
+  }
+
+  function notifyAction(kind: "error" | "success" | "info", message: string, staleItemKey?: string) {
+    setActionNotice({ kind, message, staleItemKey });
+    onStatus(message);
+  }
+
+  useEffect(() => {
+    if (!actionNotice) return;
+    const ms = actionNotice.kind === "error" ? 10000 : 5000;
+    const timer = window.setTimeout(() => setActionNotice(null), ms);
+    return () => window.clearTimeout(timer);
+  }, [actionNotice]);
 
   // Close context menu on outside click or Escape
   useEffect(() => {
@@ -218,8 +252,9 @@ export function InProgressView({
       requestedThumbnailsRef.current.clear();
       inFlightThumbnailsRef.current.clear();
       setSelectedJobId(null);
-      setDeletedItemIds(new Set());
+      setLocalDeletedItemIds(new Set());
       setDeletingItemIds(new Set());
+      setActionNotice(null);
     }
   }, [events.length]);
 
@@ -228,6 +263,11 @@ export function InProgressView({
     () => parseConversionEvents(events, category, format, isViewingLive ? sourceTitle : undefined, currentJobId, isViewingLive),
     [events, category, format, sourceTitle, currentJobId, isViewingLive]
   );
+
+  const currentHistoryItem = useMemo(() => {
+    if (!currentJobId) return undefined;
+    return historyItems.find((h) => h.id === currentJobId || h.id.startsWith(currentJobId + "-"));
+  }, [currentJobId, historyItems]);
 
   // Computed session summaries for in-memory jobs (only computed when modal is open to avoid O(N * M) regex recomputation on live progress)
   const sessionSummaries = useMemo<SessionSummary[]>(() => {
@@ -361,11 +401,6 @@ export function InProgressView({
   );
 
   // Conversion Settings & Presets
-  const currentHistoryItem = useMemo(() => {
-    if (!currentJobId) return undefined;
-    return historyItems.find((h) => h.id === currentJobId);
-  }, [currentJobId, historyItems]);
-
   const presetBadge = useMemo(() => {
     if (currentHistoryItem?.presetName) return currentHistoryItem.presetName;
     if (settings) return findPresetName(settings);
@@ -532,12 +567,31 @@ export function InProgressView({
       return cleanPath(item.outputPath);
     }
 
-    // 2. Check historyItems for exact disk exportPath
     const itemFilename = item.outputPath
       ? cleanPath(item.outputPath).split(/[\\/]/).pop()?.toLowerCase()
       : undefined;
     const itemTitle = item.title.toLowerCase();
 
+    // 2. Check the matching history entry for the active session first
+    if (currentHistoryItem?.exportPath) {
+      const histExport = cleanPath(currentHistoryItem.exportPath);
+      const histLower = histExport.toLowerCase();
+      const histBase = histExport.split(/[\\/]/).pop()?.toLowerCase();
+      if (
+        itemFilename &&
+        (histBase === itemFilename || histLower.endsWith("\\" + itemFilename) || histLower.endsWith("/" + itemFilename))
+      ) {
+        return histExport;
+      }
+      if (item.outputPath && itemFilename && !/\.[a-zA-Z0-9]{2,5}$/.test(histExport)) {
+        return joinPath(histExport, cleanPath(item.outputPath));
+      }
+      if (currentHistoryItem.fileName && currentHistoryItem.fileName.toLowerCase() === itemTitle && /\.[a-zA-Z0-9]{2,5}$/.test(histExport)) {
+        return histExport;
+      }
+    }
+
+    // 3. Check historyItems for an exact file match by filename or title (never join onto an unrelated directory)
     for (const hist of historyItems) {
       if (!hist.exportPath) continue;
       const histExport = cleanPath(hist.exportPath);
@@ -548,17 +602,13 @@ export function InProgressView({
       if (itemFilename && (histBase === itemFilename || histLower.endsWith("\\" + itemFilename) || histLower.endsWith("/" + itemFilename))) {
         return histExport;
       }
-      // If history entry is a directory containing this item
-      if (item.outputPath && itemFilename && !/\.[a-zA-Z0-9]{2,5}$/.test(histExport)) {
-        return joinPath(histExport, item.outputPath);
-      }
       // Direct match on title if history is a file
       if (hist.fileName && hist.fileName.toLowerCase() === itemTitle && /\.[a-zA-Z0-9]{2,5}$/.test(histExport)) {
         return histExport;
       }
     }
 
-    // 3. Fallback to summary.outputDir or outputDir
+    // 4. Fallback to summary.outputDir or outputDir
     let dir = summary.outputDir || outputDir;
     if (dir) {
       dir = cleanPath(dir);
@@ -577,6 +627,17 @@ export function InProgressView({
     return joinPath(dir, cleaned);
   }
 
+  function resolveDeleteRoot(): string | undefined {
+    const raw = settings?.outputDir || outputDir || summary.outputDir;
+    if (!raw) return undefined;
+    let dir = cleanPath(raw);
+    if (/\.[a-zA-Z0-9]{2,5}$/.test(dir)) {
+      const idx = Math.max(dir.lastIndexOf("\\"), dir.lastIndexOf("/"));
+      if (idx > 0) dir = dir.slice(0, idx);
+    }
+    return dir || undefined;
+  }
+
   async function openItemFile(item: InProgressItem) {
     const fullPath = getItemFullPath(item);
     if (!fullPath) return;
@@ -584,7 +645,7 @@ export function InProgressView({
       await bridge.openFile(fullPath);
       onStatus(`Opened: ${item.title}`);
     } catch (err) {
-      onStatus(`Could not open file: ${err instanceof Error ? err.message : String(err)} (${fullPath})`);
+      notifyAction("error", `Could not open file: ${err instanceof Error ? err.message : String(err)} (${fullPath})`);
     }
   }
 
@@ -597,7 +658,7 @@ export function InProgressView({
       await bridge.openPath(target);
       onStatus(`Opened location: ${target}`);
     } catch (err) {
-      onStatus(`Could not open location: ${err instanceof Error ? err.message : String(err)} (${target})`);
+      notifyAction("error", `Could not open location: ${err instanceof Error ? err.message : String(err)} (${target})`);
     }
   }
 
@@ -605,22 +666,24 @@ export function InProgressView({
     const itemKey = scopedDeletedKey(item.id);
     if (deletingItemIds.has(itemKey)) return;
     const fullPath = getItemFullPath(item);
-    const root = settings?.outputDir || outputDir || summary.outputDir;
+    const root = resolveDeleteRoot();
     if (!fullPath) {
-      onStatus("No file path available to delete.");
+      notifyAction("error", "No file path available to delete.");
       return;
     }
     if (!root) {
-      onStatus("No output directory configured to delete this file.");
+      notifyAction("error", "No output directory configured to delete this file.");
       return;
     }
     setDeletingItemIds((prev) => new Set(prev).add(itemKey));
     try {
       await bridge.deleteLibraryEntry(root, fullPath);
-      setDeletedItemIds((prev) => new Set(prev).add(itemKey));
-      onStatus(`Deleted: ${item.title}`);
+      markItemDeleted(itemKey);
+      notifyAction("success", `Deleted: ${item.title}`);
     } catch (err) {
-      onStatus(`Could not delete file: ${err instanceof Error ? err.message : String(err)}`);
+      const detail = err instanceof Error ? err.message : String(err);
+      const isMissing = /unavailable|no longer exists|cannot find/i.test(detail);
+      notifyAction("error", `Could not delete file: ${detail}`, isMissing ? itemKey : undefined);
     } finally {
       setDeletingItemIds((prev) => {
         const next = new Set(prev);
@@ -967,7 +1030,9 @@ export function InProgressView({
                   ? "No active items right now."
                   : filterState === "done"
                     ? "No completed items yet."
-                    : "Waiting for conversion items..."}
+                    : items.length > 0 && remainingItems.length === 0 && !isViewingLive
+                      ? "All items in this session were deleted."
+                      : "Waiting for conversion items..."}
           </div>
         ) : layoutMode === "grid" ? (
           <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
@@ -1057,6 +1122,50 @@ export function InProgressView({
               aria-label="Next page"
             >
               Next <ChevronRight size={13} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {actionNotice && (
+        <div
+          role={actionNotice.kind === "error" ? "alert" : "status"}
+          className={`flex shrink-0 items-center justify-between gap-3 rounded-xl border px-3.5 py-2 text-xs ${
+            actionNotice.kind === "error"
+              ? "border-rose-500/30 bg-rose-500/10 text-rose-200"
+              : actionNotice.kind === "success"
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                : "border-white/10 bg-white/[0.04] text-zinc-200"
+          }`}
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            {actionNotice.kind === "error" ? (
+              <AlertCircle size={14} className="shrink-0 text-rose-400" />
+            ) : (
+              <CheckCircle2 size={14} className="shrink-0 text-emerald-400" />
+            )}
+            <span className="truncate">{actionNotice.message}</span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {actionNotice.staleItemKey && (
+              <button
+                type="button"
+                onClick={() => {
+                  markItemDeleted(actionNotice.staleItemKey!);
+                  setActionNotice(null);
+                }}
+                className="rounded-lg border border-rose-400/30 bg-rose-500/20 px-2 py-0.5 text-[11px] font-medium text-rose-100 hover:bg-rose-500/30 transition-colors"
+              >
+                Remove from view
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setActionNotice(null)}
+              aria-label="Dismiss notification"
+              className="rounded p-0.5 text-current opacity-70 hover:opacity-100 transition-opacity"
+            >
+              <X size={13} />
             </button>
           </div>
         </div>

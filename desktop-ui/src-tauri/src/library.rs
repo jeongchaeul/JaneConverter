@@ -500,7 +500,7 @@ fn strip_track_prefix(filename: &str) -> &str {
     filename
 }
 
-fn find_file_in_dir_recursive(
+pub(crate) fn find_file_in_dir_recursive(
     dir: &Path,
     target_name: &str,
     depth: usize,

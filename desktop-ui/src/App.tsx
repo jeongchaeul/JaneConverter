@@ -249,6 +249,7 @@ export default function App() {
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [deletedInProgressKeys, setDeletedInProgressKeys] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!failure) return;
@@ -877,17 +878,27 @@ export default function App() {
           initialMode="in_progress"
           historyItems={history}
           conversionTimings={conversionTimings}
+          deletedItemKeys={deletedInProgressKeys}
+          onMarkItemDeleted={(key) => setDeletedInProgressKeys((prev) => new Set(prev).add(key))}
           onPauseToggle={pauseToggle}
           onAbort={cancel}
           onClear={(targetJobId?: string) => {
             if (targetJobId) {
               setEvents((prev) => prev.filter((e) => e.jobId !== targetJobId));
+              setDeletedInProgressKeys((prev) => {
+                const next = new Set<string>();
+                for (const k of prev) {
+                  if (!k.startsWith(`${targetJobId}:`)) next.add(k);
+                }
+                return next;
+              });
               if (jobId === targetJobId) {
                 setJobId("");
                 setProgress(0);
               }
             } else {
               setEvents([]);
+              setDeletedInProgressKeys(new Set());
               setJobId("");
               setProgress(0);
             }
@@ -905,6 +916,13 @@ export default function App() {
               { jobId: item.id, kind: "log", message: `DONE! Exported: ${item.exportPath}` },
               { jobId: item.id, kind: "finished", message: "Conversion finished. Your media is ready.", output: item.exportPath },
             ];
+            setDeletedInProgressKeys((prev) => {
+              const next = new Set<string>();
+              for (const k of prev) {
+                if (!k.startsWith(`${item.id}:`)) next.add(k);
+              }
+              return next;
+            });
             setEvents((prev) => [...prev, ...syntheticEvents]);
             setRawEvents((prev) => [...prev, ...syntheticEvents]);
           }}

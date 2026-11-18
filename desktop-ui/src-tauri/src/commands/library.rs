@@ -265,6 +265,109 @@ pub async fn move_fetched_folder(
     .map_err(|e| format!("Task execution error: {e}"))?
 }
 
+fn resolve_delete_target(canonical_root: &Path, path: &str) -> PathBuf {
+    let cleaned = library::clean_windows_path(path);
+    let target_path = Path::new(&cleaned);
+    let direct_candidate = if target_path.is_absolute() {
+        target_path.to_path_buf()
+    } else {
+        canonical_root.join(target_path)
+    };
+    if direct_candidate.exists() {
+        return direct_candidate;
+    }
+    if let Some(resolved) = library::resolve_existing_path(&direct_candidate.display().to_string())
+    {
+        return resolved;
+    }
+    if !target_path.is_absolute() {
+        if let Some(resolved) = library::resolve_existing_path(&cleaned) {
+            return resolved;
+        }
+    }
+    let parent_is_root = direct_candidate
+        .parent()
+        .and_then(|parent| fs::canonicalize(parent).ok())
+        .map(|parent| parent == canonical_root)
+        .unwrap_or(false);
+    if parent_is_root || !target_path.is_absolute() {
+        if let Some(found) = target_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|fname| library::find_file_in_dir_recursive(canonical_root, fname, 0, 5))
+        {
+            return found;
+        }
+    }
+    direct_candidate
+}
+
+fn delete_entry_with_roots(
+    root: &str,
+    path: &str,
+    configured_output_dir: &str,
+    configured_fetched_dir: &str,
+    has_active_job: bool,
+) -> Result<(), String> {
+    let canonical_root = fs::canonicalize(resolve_configured_root(root.trim()))
+        .map_err(|error| format!("The library root is unavailable: {error}"))?;
+    let canonical_out =
+        fs::canonicalize(resolve_configured_root(configured_output_dir.trim())).ok();
+    let canonical_fetch =
+        fs::canonicalize(resolve_configured_root(configured_fetched_dir.trim())).ok();
+    let is_valid_root = canonical_out
+        .as_ref()
+        .map(|o| o == &canonical_root || canonical_root.starts_with(o))
+        .unwrap_or(false)
+        || canonical_fetch
+            .as_ref()
+            .map(|f| f == &canonical_root || canonical_root.starts_with(f))
+            .unwrap_or(false);
+
+    if !is_valid_root {
+        return Err("For safety, JaneConverter can only delete items inside the configured library or fetched directories.".into());
+    }
+
+    let resolved_target = resolve_delete_target(&canonical_root, path);
+    if resolved_target.is_dir() && has_active_job {
+        return Err(
+            "Wait for the active conversion to finish before deleting library media folders."
+                .into(),
+        );
+    }
+
+    let effective_root = if let Ok(canon_target) = fs::canonicalize(&resolved_target) {
+        if canon_target.starts_with(&canonical_root) && canon_target != canonical_root {
+            canonical_root.clone()
+        } else if let Some(out) = canonical_out
+            .as_ref()
+            .filter(|o| canon_target.starts_with(o) && &canon_target != *o)
+        {
+            out.clone()
+        } else if let Some(fetch) = canonical_fetch
+            .as_ref()
+            .filter(|f| canon_target.starts_with(f) && &canon_target != *f)
+        {
+            fetch.clone()
+        } else {
+            canonical_root.clone()
+        }
+    } else {
+        canonical_root.clone()
+    };
+
+    let effective_root_str = library::clean_windows_path(&effective_root.display().to_string());
+    let resolved_target_str = library::clean_windows_path(&resolved_target.display().to_string());
+    let res = library::delete_inside(&effective_root_str, &resolved_target_str);
+    if res.is_ok() {
+        let _ = crate::catalog::remove_capture(
+            &effective_root.join("capture-catalog.json"),
+            Path::new(&resolved_target_str),
+        );
+    }
+    res
+}
+
 #[tauri::command]
 pub async fn delete_library_entry(
     state: State<'_, AppState>,
@@ -281,49 +384,78 @@ pub async fn delete_library_entry(
             }
         })?;
         let settings = settings_get_internal();
-        let canonical_root = fs::canonicalize(root.trim())
-            .map_err(|error| format!("The library root is unavailable: {error}"))?;
-        let canonical_out = fs::canonicalize(settings.output_dir.trim()).ok();
-        let canonical_fetch = fs::canonicalize(settings.fetched_dir.trim()).ok();
-        let is_valid_root = canonical_out
-            .as_ref()
-            .map(|o| o == &canonical_root || canonical_root.starts_with(o))
-            .unwrap_or(false)
-            || canonical_fetch
-                .as_ref()
-                .map(|f| f == &canonical_root || canonical_root.starts_with(f))
-                .unwrap_or(false);
-
-        if !is_valid_root {
-            return Err("For safety, JaneConverter can only delete items inside the configured library or fetched directories.".into());
-        }
-
-        let target_path = Path::new(path.trim());
-        let candidate = if target_path.is_absolute() {
-            target_path.to_path_buf()
-        } else {
-            canonical_root.join(target_path)
-        };
-        if candidate.is_dir()
-            && active_job
-                .lock()
-                .map_err(|_| "The conversion registry is unavailable.")?
-                .is_some()
-        {
-            return Err(
-                "Wait for the active conversion to finish before deleting library media folders."
-                    .into(),
-            );
-        }
-        let res = library::delete_inside(&root, &path);
-        if res.is_ok() {
-            let _ = crate::catalog::remove_capture(
-                &Path::new(&root).join("capture-catalog.json"),
-                Path::new(&path),
-            );
-        }
-        res
+        let has_active_job = active_job
+            .lock()
+            .map_err(|_| "The conversion registry is unavailable.")?
+            .is_some();
+        delete_entry_with_roots(
+            &root,
+            &path,
+            &settings.output_dir,
+            &settings.fetched_dir,
+            has_active_job,
+        )
     })
     .await
     .map_err(|e| format!("Task execution error: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delete_entry_resolves_nested_and_suffixed_files_within_configured_root() {
+        let base = std::env::temp_dir().join(format!("janec-del-{}", crate::paths::now_stamp()));
+        let output_root = base.join("converted");
+        let fetched_root = base.join("fetched");
+        let nested = output_root.join("Images").join("youtube");
+        fs::create_dir_all(&nested).expect("create nested output dir");
+        fs::create_dir_all(&fetched_root).expect("create fetched dir");
+
+        let real_file = nested.join("kpop_mix.png");
+        fs::write(&real_file, b"png-bytes").expect("write png");
+
+        // Stale root-level guess (e.g. when summary.outputDir wasn't the leaf subfolder)
+        let root_guess = output_root.join("kpop_mix.png");
+        delete_entry_with_roots(
+            output_root.to_str().unwrap(),
+            root_guess.to_str().unwrap(),
+            output_root.to_str().unwrap(),
+            fetched_root.to_str().unwrap(),
+            false,
+        )
+        .expect("should resolve and delete nested file under output_root");
+        assert!(!real_file.exists());
+
+        // Alternate extension resolution in same parent directory
+        let actual_webp = nested.join("cover_art.png");
+        fs::write(&actual_webp, b"png-bytes").expect("write cover art");
+        let wrong_ext = nested.join("cover_art.jpg");
+        delete_entry_with_roots(
+            output_root.to_str().unwrap(),
+            wrong_ext.to_str().unwrap(),
+            output_root.to_str().unwrap(),
+            fetched_root.to_str().unwrap(),
+            false,
+        )
+        .expect("should resolve alternate extension and delete");
+        assert!(!actual_webp.exists());
+
+        // Outside configured roots must still be rejected
+        let outside = base.join("outside.txt");
+        fs::write(&outside, b"keep").expect("write outside file");
+        let err = delete_entry_with_roots(
+            output_root.to_str().unwrap(),
+            outside.to_str().unwrap(),
+            output_root.to_str().unwrap(),
+            fetched_root.to_str().unwrap(),
+            false,
+        )
+        .unwrap_err();
+        assert!(err.contains("inside the active library"));
+        assert!(outside.exists());
+
+        fs::remove_dir_all(base).expect("cleanup temp test dir");
+    }
 }

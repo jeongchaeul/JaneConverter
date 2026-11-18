@@ -1237,4 +1237,105 @@ describe("ConsoleView", () => {
     expect(parsed.summary.active).toBe(1);
     expect(parsed.summary.queued).toBe(0);
   });
+
+  it("shows an inline error notice when delete fails and ignores unrelated history directories for item path resolution", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const deleteSpy = vi
+      .spyOn(bridge, "deleteLibraryEntry")
+      .mockRejectedValue(new Error("That library item is unavailable: file missing"));
+
+    const events: ConverterEvent[] = [
+      { jobId: "job-img-1", kind: "started", message: "[*] JANECONVERTER PIPELINE" },
+      { jobId: "job-img-1", kind: "log", message: "Target Directory: I:\\Converted\\Images\\youtube" },
+      { jobId: "job-img-1", kind: "log", message: "Ready! File exported to: kpop jersey club mix playlist vol. 2.png" },
+      { jobId: "job-img-1", kind: "finished", message: "Conversion finished. Your media is ready." },
+    ];
+
+    const unrelatedHistory = [
+      {
+        id: "old-album-job-999",
+        timestamp: "2026-11-18T10:00:00Z",
+        source: "https://example.com/old-album",
+        fileName: "Old Album",
+        exportPath: "I:\\Converted\\Music\\Old Album",
+        presetName: "Fast MP3",
+        formatLabel: "MP3",
+        qualityLabel: "320 kbps",
+        elapsedMs: 5000,
+        status: "succeeded" as const,
+      },
+    ];
+
+    const settings = {
+      outputDir: "I:\\Converted",
+      fetchedDir: "I:\\Fetched",
+      tempDir: "",
+      category: "Image" as const,
+      format: "png",
+      bitrate: "best",
+      sampleRate: 48000,
+      resolution: "original",
+      normalize: false,
+      useGpu: false,
+      saveCover: false,
+      saveMetadata: false,
+      allowPngFallback: false,
+      reconstructFrequencyLoss: false,
+      retries: 2,
+      startTime: "",
+    };
+
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={events}
+          jobId="job-img-1"
+          running={false}
+          initialMode="in_progress"
+          outputDir="I:\\Converted"
+          settings={settings}
+          historyItems={unrelatedHistory}
+          onClear={vi.fn()}
+          onStatus={vi.fn()}
+        />
+      );
+    });
+
+    const deleteBtn = container.querySelector('button[aria-label="Delete kpop jersey club mix playlist vol. 2"]');
+    expect(deleteBtn).not.toBeNull();
+
+    await act(async () => {
+      deleteBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(deleteSpy).toHaveBeenCalledWith(
+      "I:\\Converted",
+      "I:\\Converted\\Images\\youtube\\kpop jersey club mix playlist vol. 2.png"
+    );
+
+    expect(container.textContent).toContain("Could not delete file: That library item is unavailable: file missing");
+    const removeFromViewBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === "Remove from view"
+    );
+    expect(removeFromViewBtn).toBeDefined();
+
+    await act(async () => {
+      removeFromViewBtn?.click();
+    });
+
+    expect(container.querySelector('button[aria-label="Delete kpop jersey club mix playlist vol. 2"]')).toBeNull();
+    expect(container.textContent).toContain("All items in this session were deleted.");
+
+    deleteSpy.mockRestore();
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
 });

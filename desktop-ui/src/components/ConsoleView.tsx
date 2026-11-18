@@ -21,6 +21,8 @@ export function ConsoleView({
   mode,
   historyItems = [],
   conversionTimings = {},
+  deletedItemKeys,
+  onMarkItemDeleted,
   onModeChange,
   onPauseToggle,
   onAbort,
@@ -48,6 +50,8 @@ export function ConsoleView({
   mode?: "in_progress" | "raw";
   historyItems?: ConversionHistoryItem[];
   conversionTimings?: Record<string, number>;
+  deletedItemKeys?: Set<string>;
+  onMarkItemDeleted?: (itemKey: string) => void;
   onModeChange?: (mode: "in_progress" | "raw") => void;
   onPauseToggle?: () => Promise<void> | void;
   onAbort?: () => Promise<void> | void;
@@ -249,6 +253,8 @@ export function ConsoleView({
         onStatus={onStatus}
         historyItems={historyItems}
         conversionTimings={conversionTimings}
+        deletedItemKeys={deletedItemKeys}
+        onMarkItemDeleted={onMarkItemDeleted}
         onNavigateToConverter={onNavigateToConverter}
         onNavigateToHistory={onNavigateToHistory}
         onNavigateToLibrary={onNavigateToLibrary}
