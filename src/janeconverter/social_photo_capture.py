@@ -875,6 +875,109 @@ def is_instagram_post_url(url: str) -> bool:
         return False
 
 
+def _is_standard_instagram_shortcode(shortcode: str) -> bool:
+    """Return True if shortcode is a standard base64-encoded Instagram shortcode (<= 15 chars)."""
+    clean = shortcode.split("?")[0].split("#")[0].strip()
+    return bool(clean) and len(clean) <= 15
+
+
+def _find_instagram_item_in_json(obj: Any) -> Optional[dict[str, Any]]:
+    """Walk a parsed JSON payload to find an Instagram media item dict."""
+    stack = [obj]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if ("carousel_media" in node or "image_versions2" in node) and (
+                "pk" in node or "id" in node or "media_type" in node
+            ):
+                return node
+            for val in node.values():
+                if isinstance(val, (dict, list)):
+                    stack.append(val)
+        elif isinstance(node, list):
+            for val in node:
+                if isinstance(val, (dict, list)):
+                    stack.append(val)
+    return None
+
+
+def _resolve_instagram_post_from_html(
+    opener: Any,
+    url: str,
+    shortcode: str,
+) -> tuple[int, str, Optional[dict[str, Any]]]:
+    """Fetch an Instagram post page to resolve obfuscated/private tokens into (media_pk, code, inline_item)."""
+    clean_url = url.split("?")[0].split("#")[0].strip()
+    req = urllib.request.Request(
+        clean_url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.instagram.com/",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+        },
+    )
+    try:
+        with _open_request(opener, req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        return 0, shortcode, None
+
+    resolved_pk = 0
+    resolved_code = shortcode
+    inline_item: Optional[dict[str, Any]] = None
+
+    for pattern in (
+        r"instagram://media\?id=(\d+)",
+        r'"media_id"\s*:\s*"?(\d{10,25})"?',
+        r'"xdt_api__v1__media__shortcode__web_info"\s*:\s*\{\s*"items"\s*:\s*\[\s*\{[^}]*"pk"\s*:\s*"?(\d{10,25})"?',
+    ):
+        m = re.search(pattern, html)
+        if m:
+            try:
+                resolved_pk = int(m.group(1))
+                if resolved_pk > 0:
+                    break
+            except ValueError:
+                continue
+
+    m_code = re.search(r'"code"\s*:\s*"([A-Za-z0-9_-]{8,15})"', html)
+    if m_code:
+        resolved_code = m_code.group(1)
+        if resolved_pk <= 0:
+            resolved_pk = _shortcode_to_pk(resolved_code)
+
+    for script_body in re.findall(
+        r'<script[^>]*type=["\']application/json["\'][^>]*>(.*?)</script>',
+        html,
+        flags=re.DOTALL | re.IGNORECASE,
+    ):
+        if "image_versions2" not in script_body and "carousel_media" not in script_body:
+            continue
+        try:
+            parsed_json = json.loads(script_body)
+        except Exception:
+            continue
+        found = _find_instagram_item_in_json(parsed_json)
+        if found:
+            inline_item = found
+            if resolved_pk <= 0:
+                raw_pk = str(found.get("pk") or "").split("_")[0]
+                if raw_pk.isdigit():
+                    resolved_pk = int(raw_pk)
+            if isinstance(found.get("code"), str) and _is_standard_instagram_shortcode(found["code"]):
+                resolved_code = found["code"]
+            break
+
+    return resolved_pk, resolved_code, inline_item
+
+
 def _query_instagram_media_endpoints(
     opener: urllib.request.OpenerDirector,
     media_pk: int,
@@ -938,18 +1041,18 @@ def fetch_instagram_manifest(
             media_pk = int(shortcode)
         except ValueError:
             return None
+        if media_pk <= 0:
+            return None
     else:
         assert match_post is not None
         shortcode = match_post.group(1)
-        media_pk = _shortcode_to_pk(shortcode)
-    if media_pk <= 0:
-        return None
+        media_pk = _shortcode_to_pk(shortcode) if _is_standard_instagram_shortcode(shortcode) else 0
 
     preferred = [browser] if browser and browser.lower() not in ("none", "auto", "public", "public only") else []
 
     res_data = None
-    # Fast guest path: probe public mobile API directly
-    if not preferred:
+    # Fast guest path: probe public mobile API directly for standard shortcodes
+    if not preferred and media_pk > 0:
         report(0.04, "Connecting to Instagram via public mobile API...")
         guest_opener = urllib.request.build_opener()
         res_data = _query_instagram_media_endpoints(guest_opener, media_pk, shortcode)
@@ -997,7 +1100,23 @@ def fetch_instagram_manifest(
             report(0.06, f"Connected to Instagram session via {found_browser.title()}. Requesting post info...")
         if jar:
             auth_opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-            res_data = _query_instagram_media_endpoints(auth_opener, media_pk, shortcode)
+            if media_pk > 0:
+                res_data = _query_instagram_media_endpoints(auth_opener, media_pk, shortcode)
+            if not res_data and match_post:
+                resolved_pk, resolved_code, inline_item = _resolve_instagram_post_from_html(auth_opener, url, shortcode)
+                if resolved_pk > 0:
+                    media_pk = resolved_pk
+                    res_data = _query_instagram_media_endpoints(auth_opener, resolved_pk, resolved_code)
+                if not res_data and inline_item:
+                    res_data = {"items": [inline_item]}
+        elif not preferred and match_post and media_pk <= 0:
+            guest_opener = urllib.request.build_opener()
+            resolved_pk, resolved_code, inline_item = _resolve_instagram_post_from_html(guest_opener, url, shortcode)
+            if resolved_pk > 0:
+                media_pk = resolved_pk
+                res_data = _query_instagram_media_endpoints(guest_opener, resolved_pk, resolved_code)
+            if not res_data and inline_item:
+                res_data = {"items": [inline_item]}
 
     if not res_data:
         report(0.08, "Instagram direct API request unavailable. Falling back to standard extractor...")

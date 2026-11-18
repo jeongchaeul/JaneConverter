@@ -685,6 +685,175 @@ def test_fetch_instagram_manifest_handles_null_caption_and_single_photo(monkeypa
     assert manifest["photos"][0]["width"] == 1440
 
 
+def test_fetch_instagram_manifest_resolves_obfuscated_private_token(monkeypatch):
+    import http.cookiejar
+    from http.cookiejar import Cookie
+    import json
+    import yt_dlp
+
+    monkeypatch.setattr(social_photo_capture, "_CACHED_INSTAGRAM_SESSION", None)
+
+    fake_session_cookie = Cookie(
+        version=0, name="sessionid", value="fake_session", port=None, port_specified=False,
+        domain=".instagram.com", domain_specified=True, domain_initial_dot=True,
+        path="/", path_specified=True, secure=True, expires=None, discard=False,
+        comment=None, comment_url=None, rest={}, rfc2109=False,
+    )
+
+    class FakeCookieJar(http.cookiejar.CookieJar):
+        filename = None
+
+    fake_jar = FakeCookieJar()
+    fake_jar.set_cookie(fake_session_cookie)
+    empty_jar = FakeCookieJar()
+    monkeypatch.setattr(
+        yt_dlp.cookies,
+        "extract_cookies_from_browser",
+        lambda b, *a, **kw: fake_jar if b == "vivaldi" else empty_jar,
+    )
+
+    fake_html = (
+        '<html><head>'
+        '<meta property="al:ios:url" content="instagram://media?id=3552437382828133462" />'
+        '</head><body><script>{"code":"DFMyvpiSgxW"}</script></body></html>'
+    )
+    fake_api_response = {
+        "items": [
+            {
+                "pk": 3552437382828133462,
+                "media_type": 8,
+                "user": {"username": "shinchewieeee"},
+                "caption": {"text": "Private carousel"},
+                "carousel_media": [
+                    {
+                        "pk": 1111,
+                        "image_versions2": {
+                            "candidates": [
+                                {"url": "https://instagram.fbag4-1.fna.fbcdn.net/v/p1.webp", "width": 1080, "height": 1350}
+                            ]
+                        },
+                    },
+                    {
+                        "pk": 2222,
+                        "image_versions2": {
+                            "candidates": [
+                                {"url": "https://instagram.fbag4-1.fna.fbcdn.net/v/p2.webp", "width": 1080, "height": 1350}
+                            ]
+                        },
+                    },
+                ],
+            }
+        ]
+    }
+
+    requested_urls = []
+
+    class FakeOpener:
+        def open(self, req):
+            requested_urls.append(req.full_url)
+            if "/api/v1/media/3552437382828133462/info/" in req.full_url:
+                return io.BytesIO(json.dumps(fake_api_response).encode("utf-8"))
+            if "shinchewieeee/p/DfzoqjwEkbqX9DUMVVScZ-nUutgXVsdqJo6Gas0/" in req.full_url:
+                return io.BytesIO(fake_html.encode("utf-8"))
+            raise RuntimeError(f"Unexpected URL: {req.full_url}")
+
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: FakeOpener())
+
+    url = "https://www.instagram.com/shinchewieeee/p/DfzoqjwEkbqX9DUMVVScZ-nUutgXVsdqJo6Gas0/"
+    assert social_photo_capture.is_instagram_post_url(url) is True
+    manifest = social_photo_capture.fetch_instagram_manifest(url)
+    assert manifest is not None
+    assert manifest["platform"] == "instagram"
+    assert manifest["title"] == "Private carousel"
+    assert [p["url"] for p in manifest["photos"]] == [
+        "https://instagram.fbag4-1.fna.fbcdn.net/v/p1.webp",
+        "https://instagram.fbag4-1.fna.fbcdn.net/v/p2.webp",
+    ]
+    assert any("shinchewieeee/p/DfzoqjwEkbqX9DUMVVScZ-nUutgXVsdqJo6Gas0/" in u for u in requested_urls)
+    assert any("/api/v1/media/3552437382828133462/info/" in u for u in requested_urls)
+
+
+def test_fetch_instagram_manifest_inline_json_fallback(monkeypatch):
+    import http.cookiejar
+    from http.cookiejar import Cookie
+    import json
+    import yt_dlp
+
+    monkeypatch.setattr(social_photo_capture, "_CACHED_INSTAGRAM_SESSION", None)
+
+    fake_session_cookie = Cookie(
+        version=0, name="sessionid", value="fake_session", port=None, port_specified=False,
+        domain=".instagram.com", domain_specified=True, domain_initial_dot=True,
+        path="/", path_specified=True, secure=True, expires=None, discard=False,
+        comment=None, comment_url=None, rest={}, rfc2109=False,
+    )
+
+    class FakeCookieJar(http.cookiejar.CookieJar):
+        filename = None
+
+    fake_jar = FakeCookieJar()
+    fake_jar.set_cookie(fake_session_cookie)
+    empty_jar = FakeCookieJar()
+    monkeypatch.setattr(
+        yt_dlp.cookies,
+        "extract_cookies_from_browser",
+        lambda b, *a, **kw: fake_jar if b == "vivaldi" else empty_jar,
+    )
+
+    embedded_payload = {
+        "require": [
+            [
+                "RelayPrefetchedStreamCache",
+                "next",
+                [],
+                [
+                    {
+                        "xdt_api__v1__media__shortcode__web_info": {
+                            "items": [
+                                {
+                                    "pk": "998877665544",
+                                    "media_type": 8,
+                                    "user": {"username": "shinchewieeee"},
+                                    "caption": {"text": "Inline fallback carousel"},
+                                    "carousel_media": [
+                                        {
+                                            "pk": "101",
+                                            "image_versions2": {
+                                                "candidates": [
+                                                    {"url": "https://cdninstagram.com/inline1.jpg", "width": 1080}
+                                                ]
+                                            },
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                ],
+            ]
+        ]
+    }
+    fake_html = (
+        '<html><body><script type="application/json">'
+        + json.dumps(embedded_payload)
+        + "</script></body></html>"
+    )
+
+    class FakeOpener:
+        def open(self, req):
+            if "/api/v1/media/" in req.full_url:
+                raise RuntimeError("API unavailable")
+            return io.BytesIO(fake_html.encode("utf-8"))
+
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: FakeOpener())
+
+    url = "https://www.instagram.com/shinchewieeee/p/DfzoqjwEkbqX9DUMVVScZ-nUutgXVsdqJo6Gas0/"
+    manifest = social_photo_capture.fetch_instagram_manifest(url)
+    assert manifest is not None
+    assert manifest["title"] == "Inline fallback carousel"
+    assert manifest["photos"][0]["url"] == "https://cdninstagram.com/inline1.jpg"
+
+
 
 
 
