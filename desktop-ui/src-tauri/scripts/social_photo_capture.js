@@ -104,6 +104,10 @@
         if (platform === "pinterest") {
           const match = /\/(\d+)x\//.exec(url);
           if (match) effectiveWidth = Math.max(effectiveWidth, Number(match[1]) || 0);
+        } else if (platform === "twitter") {
+          if (url.includes("name=orig") || url.includes(":orig")) effectiveWidth = Math.max(effectiveWidth, 4096);
+          else if (url.includes("name=large") || url.includes(":large")) effectiveWidth = Math.max(effectiveWidth, 2048);
+          else if (url.includes("name=medium") || url.includes(":medium")) effectiveWidth = Math.max(effectiveWidth, 1200);
         }
         candidates.push({url, width: effectiveWidth});
       }
@@ -129,7 +133,12 @@
     if (isInstagramCommentOrChromeImage(image, container)) return false;
     const rect = image.getBoundingClientRect();
     const minSize = platform === "instagram" ? 220 : 120;
-    if (rect.width < minSize || rect.height < minSize) return false;
+    if (platform === "twitter") {
+      const isGridImage = (rect.width >= 60 && rect.height >= 60) || (image.naturalWidth >= 200);
+      if (!isGridImage) return false;
+    } else {
+      if (rect.width < minSize || rect.height < minSize) return false;
+    }
     return chooseImage(image);
   };
   const imageId = (value) => {
@@ -377,7 +386,15 @@
       }
     }
     if (platform === "twitter" && !counts.length) {
-      if (container.querySelector('div[aria-label="Image"]')) counts.push(1);
+      const photoLinks = container.querySelectorAll('a[href*="/photo/"]');
+      if (photoLinks.length > 0) {
+        counts.push(photoLinks.length);
+      } else {
+        const imageDivs = container.querySelectorAll('div[aria-label="Image"]');
+        if (imageDivs.length > 0) {
+          counts.push(imageDivs.length);
+        }
+      }
     }
     for (const count of counts) {
       if (expectedCount !== null && expectedCount !== count) countConflict = true;

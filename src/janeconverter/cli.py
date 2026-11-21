@@ -66,6 +66,8 @@ from .social_photo_capture import (
     fetch_pinterest_collection_manifest,
     is_instagram_post_url,
     fetch_instagram_manifest,
+    is_twitter_post_url,
+    fetch_twitter_manifest,
 )
 from .hardware_snapshot import get_hardware_snapshot
 
@@ -413,6 +415,21 @@ def process_conversion(
                 social_photo_manifest = ig_manifest
         except Exception as ig_err:
             report(0.05, f"Instagram direct API bypassed ({type(ig_err).__name__}). Proceeding to standard stream extractor...")
+
+    if social_photo_manifest is None and is_twitter_post_url(source):
+        try:
+            report(0.02, "Reading X/Twitter post metadata...")
+            tw_manifest = fetch_twitter_manifest(
+                source,
+                browser=auth_browser,
+                progress_callback=report,
+            )
+            if tw_manifest and tw_manifest.get("photos"):
+                social_photo_manifest = tw_manifest
+            elif tw_manifest and tw_manifest.get("media_kind") == "video":
+                report(0.05, "This X/Twitter post contains video. Proceeding to standard stream extractor...")
+        except Exception as tw_err:
+            report(0.05, f"X/Twitter direct extraction bypassed ({type(tw_err).__name__}). Proceeding to standard stream extractor...")
 
     if social_photo_manifest is not None:
         platform = social_photo_manifest.get("platform")

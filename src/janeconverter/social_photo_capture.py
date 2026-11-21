@@ -122,6 +122,34 @@ def _pinterest_candidate_urls(url: str) -> list[str]:
     return candidates
 
 
+def _twitter_candidate_urls(url: str) -> list[str]:
+    """Generate high-resolution candidate URLs for Twitter / X CDN images."""
+    match = re.match(
+        r"^(https://pbs\.twimg\.com/media/)([^?#.]+)(?:\.([a-zA-Z0-9]+))?(?:[?#].*)?$",
+        url,
+        re.IGNORECASE,
+    )
+    if not match:
+        return [url]
+    origin, photo_id = match.group(1), match.group(2)
+    candidates: list[str] = []
+
+    def _add(cand: str) -> None:
+        if cand not in candidates:
+            candidates.append(cand)
+
+    _add(f"{origin}{photo_id}?format=jpg&name=orig")
+    _add(f"{origin}{photo_id}.jpg:orig")
+    _add(f"{origin}{photo_id}?format=png&name=orig")
+    _add(f"{origin}{photo_id}.png:orig")
+    _add(f"{origin}{photo_id}?format=jpg&name=large")
+    _add(f"{origin}{photo_id}.jpg:large")
+    _add(f"{origin}{photo_id}?format=png&name=large")
+    _add(f"{origin}{photo_id}.jpg")
+    _add(url)
+    return candidates
+
+
 def _fetch_single_photo(session: requests.Session, url: str, platform: str) -> requests.Response:
     current_url = url
     for redirect_count in range(MAX_REDIRECTS + 1):
@@ -148,17 +176,21 @@ def _fetch_single_photo(session: requests.Session, url: str, platform: str) -> r
 def _get_photo(session: requests.Session, url: str, platform: str) -> requests.Response:
     if platform == "pinterest":
         candidates = _pinterest_candidate_urls(url)
-        last_candidate = candidates[-1]
-        for candidate in candidates[:-1]:
-            try:
-                response = _fetch_single_photo(session, candidate, platform)
-                if response.status_code == 200:
-                    return response
-                response.close()
-            except requests.RequestException:
-                pass
-        return _fetch_single_photo(session, last_candidate, platform)
-    return _fetch_single_photo(session, url, platform)
+    elif platform == "twitter":
+        candidates = _twitter_candidate_urls(url)
+    else:
+        return _fetch_single_photo(session, url, platform)
+
+    last_candidate = candidates[-1]
+    for candidate in candidates[:-1]:
+        try:
+            response = _fetch_single_photo(session, candidate, platform)
+            if response.status_code == 200:
+                return response
+            response.close()
+        except requests.RequestException:
+            pass
+    return _fetch_single_photo(session, last_candidate, platform)
 
 
 def download_social_photo_manifest(
@@ -527,6 +559,7 @@ def _purge_legacy_social_cookies(platform: str) -> None:
 _SOCIAL_SESSION_LOCK = threading.Lock()
 _CACHED_PINTEREST_SESSION: Optional[dict[str, Any]] = None
 _CACHED_INSTAGRAM_SESSION: Optional[dict[str, Any]] = None
+_CACHED_TWITTER_SESSION: Optional[dict[str, Any]] = None
 
 
 def _open_request(opener: Any, req: urllib.request.Request, timeout: float = 15.0) -> Any:
@@ -1173,3 +1206,240 @@ def fetch_instagram_manifest(
         "photos": photos,
         "media_kind": "photo",
     }
+
+
+def is_twitter_post_url(url: str) -> bool:
+    """Identify if a URL is an individual X/Twitter tweet/post."""
+    try:
+        raw = str(url or "").strip()
+        parsed = urllib.parse.urlparse(raw)
+        host = (parsed.hostname or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+        if host not in ("x.com", "twitter.com", "mobile.twitter.com"):
+            return False
+        path = parsed.path.lower()
+        return bool(re.search(r"/status/\d+", path))
+    except Exception:
+        return False
+
+
+def _extract_twitter_status_id(url: str) -> str:
+    """Extract numeric status ID from an X/Twitter URL."""
+    try:
+        raw = str(url or "").strip()
+        parsed = urllib.parse.urlparse(raw)
+        m = re.search(r"/status/(\d+)", parsed.path)
+        return m.group(1) if m else ""
+    except Exception:
+        return ""
+
+
+def _parse_twitter_html(html: str, target_url: str) -> Optional[dict[str, Any]]:
+    """Extract photo metadata or video signal from rendered Twitter / X HTML."""
+    if not html:
+        return None
+
+    title = ""
+    m_title = re.search(
+        r'<meta\s+(?:name|property)=["\'](?:og:title|twitter:title)["\']\s+content=["\']([^"\']+)["\']',
+        html,
+        re.IGNORECASE,
+    )
+    if not m_title:
+        m_title = re.search(
+            r'(?:name|property)=["\'](?:og:title|twitter:title)["\'][^>]+content=["\']([^"\']+)["\']',
+            html,
+            re.IGNORECASE,
+        )
+    if m_title:
+        title = m_title.group(1).strip()
+    if not title:
+        m_page_title = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
+        if m_page_title:
+            title = m_page_title.group(1).strip()
+    clean_title = sanitize_filename(title[:60], max_length=60) or "X Post"
+    if clean_title == "media_file":
+        clean_title = "X Post"
+
+    has_video = bool(
+        re.search(r'\\?"type\\?":\s*\\?"(?:video|animated_gif)\\?"', html)
+        or re.search(r'property=["\']og:type["\'][^>]+content=["\']video', html, re.IGNORECASE)
+        or re.search(r'content=["\']video[^"\']*["\'][^>]+property=["\']og:type["\']', html, re.IGNORECASE)
+        or re.search(r'(?:name|property)=["\']twitter:player["\']', html, re.IGNORECASE)
+    )
+
+    photos: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    patterns = [
+        (r'\\?"media_url_https\\?":\s*\\?"https://pbs\.twimg\.com/media/([a-zA-Z0-9_-]+)\.[a-zA-Z0-9]+\\?"[^\}]*?\\?"original_info\\?":\s*\{[^\}]*?\\?"height\\?":\s*(\d+)[^\}]*?\\?"width\\?":\s*(\d+)', True),
+        (r'\\?"media_url_https\\?":\s*\\?"https://pbs\.twimg\.com/media/([a-zA-Z0-9_-]+)\.[a-zA-Z0-9]+\\?"[^\}]*?\\?"original_info\\?":\s*\{[^\}]*?\\?"width\\?":\s*(\d+)[^\}]*?\\?"height\\?":\s*(\d+)', False),
+    ]
+    for pattern, height_first in patterns:
+        for m in re.finditer(pattern, html):
+            photo_id = m.group(1)
+            if photo_id not in seen:
+                seen.add(photo_id)
+                num1, num2 = int(m.group(2)), int(m.group(3))
+                h, w = (num1, num2) if height_first else (num2, num1)
+                orig_url = f"https://pbs.twimg.com/media/{photo_id}?format=jpg&name=orig"
+                photos.append({
+                    "id": photo_id,
+                    "url": orig_url,
+                    "width": max(w, 1),
+                    "height": max(h, 1),
+                })
+
+    if has_video:
+        return {
+            "platform": "twitter",
+            "title": clean_title,
+            "media_kind": "video",
+        }
+
+    if not photos:
+        for m in re.finditer(r'https://pbs\.twimg\.com/media/([a-zA-Z0-9_-]+)', html):
+            photo_id = m.group(1)
+            if photo_id not in seen:
+                seen.add(photo_id)
+                orig_url = f"https://pbs.twimg.com/media/{photo_id}?format=jpg&name=orig"
+                photos.append({
+                    "id": photo_id,
+                    "url": orig_url,
+                    "width": 2048,
+                    "height": 2048,
+                })
+
+    if photos:
+        return {
+            "platform": "twitter",
+            "title": clean_title,
+            "photos": photos,
+            "media_kind": "photo",
+        }
+
+    return None
+
+
+def _fetch_public_twitter_post(
+    url: str,
+    report: Optional[Callable[[float, str], None]] = None,
+) -> Optional[dict[str, Any]]:
+    """Fast guest probe for an X/Twitter post without opening or decrypting local browser databases."""
+    if report:
+        report(0.04, "Reading public X/Twitter post metadata...")
+    candidates = [url]
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if "x.com" in host:
+        candidates.append(urllib.parse.urlunparse(parsed._replace(netloc="twitter.com")))
+    elif "twitter.com" in host:
+        candidates.append(urllib.parse.urlunparse(parsed._replace(netloc="x.com")))
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+    }
+    for candidate in candidates:
+        try:
+            req = urllib.request.Request(candidate, headers=headers)
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                html = resp.read().decode("utf-8", errors="ignore")
+            parsed_manifest = _parse_twitter_html(html, candidate)
+            if parsed_manifest:
+                if report and parsed_manifest.get("photos"):
+                    report(0.08, f"Found {len(parsed_manifest['photos'])} photos in '{parsed_manifest['title']}'. Starting download...")
+                return parsed_manifest
+        except Exception:
+            continue
+    return None
+
+
+def fetch_twitter_manifest(
+    url: str,
+    browser: Optional[str] = None,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+) -> Optional[dict[str, Any]]:
+    """Extract photos from an X/Twitter post using guest probe or active browser session cookies."""
+    def report(progress: float, message: str) -> None:
+        if progress_callback:
+            progress_callback(progress, message)
+
+    preferred = [browser] if browser and browser.lower() not in ("none", "auto", "public", "public only") else []
+
+    # 1. Fast guest probe: public X posts resolve in ~300ms without touching desktop browser databases
+    if not preferred:
+        manifest = _fetch_public_twitter_post(url, report=report)
+        if manifest:
+            return manifest
+
+    # 2. Browser session fallback for age-gated, protected, or rate-limited posts
+    _purge_legacy_social_cookies("twitter")
+    found_browser = None
+    jar = None
+    with _SOCIAL_SESSION_LOCK:
+        global _CACHED_TWITTER_SESSION
+        if _CACHED_TWITTER_SESSION and (time.time() - _CACHED_TWITTER_SESSION.get("timestamp", 0) < 300):
+            cached_b = _CACHED_TWITTER_SESSION.get("browser")
+            if not preferred or (cached_b and cached_b.lower() == preferred[0].lower()):
+                found_browser = cached_b
+                jar = _CACHED_TWITTER_SESSION.get("jar")
+
+    if not found_browser or jar is None:
+        report(0.04, "Searching desktop browsers for an active X/Twitter session...")
+        from .auth import get_ordered_browser_candidates, detect_running_browsers, filter_cookie_jar_for_domains
+        running = detect_running_browsers()
+        candidates = get_ordered_browser_candidates(preferred=browser, running=running)
+        for b in candidates:
+            try:
+                import yt_dlp
+                patch_yt_dlp_cookie_database_reader()
+                ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
+                raw_jar = ydl.cookiejar
+                filtered_jar = filter_cookie_jar_for_domains(raw_jar, ["x.com", "twitter.com"])
+                if filtered_jar and len(filtered_jar) > 0:
+                    found_browser = b
+                    jar = filtered_jar
+                    with _SOCIAL_SESSION_LOCK:
+                        _CACHED_TWITTER_SESSION = {"timestamp": time.time(), "browser": found_browser, "jar": jar}
+                    break
+            except Exception:
+                continue
+
+    if found_browser and jar:
+        report(0.06, f"Connected to X/Twitter session via {found_browser.title()}. Requesting post metadata...")
+        session = requests.Session()
+        session.cookies.update(jar)
+        session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+        try:
+            resp = session.get(url, timeout=15)
+            if resp.status_code == 200:
+                manifest = _parse_twitter_html(resp.text, url)
+                if manifest:
+                    if report and manifest.get("photos"):
+                        report(0.08, f"Found {len(manifest['photos'])} photos in '{manifest['title']}'. Starting download...")
+                    return manifest
+        except Exception:
+            pass
+
+    if preferred:
+        manifest = _fetch_public_twitter_post(url, report=report)
+        if manifest:
+            return manifest
+
+    return None

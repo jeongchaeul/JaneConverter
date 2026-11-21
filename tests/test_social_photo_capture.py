@@ -894,3 +894,147 @@ def test_resolve_pinterest_shortlink_safe_and_unsafe_redirects(monkeypatch):
     monkeypatch.setattr("requests.Session.head", fake_head_unsafe)
     result = resolve_pinterest_shortlink("https://pin.it/evil")
     assert result == "https://pin.it/evil"
+
+
+def test_is_twitter_post_url():
+    from janeconverter.social_photo_capture import is_twitter_post_url
+
+    assert is_twitter_post_url("https://x.com/oekaki_bibbi/status/2101935045720039883?a=Oqz1mqBdnH2v1Qzy8Og&s=20") is True
+    assert is_twitter_post_url("https://twitter.com/creator/status/9876543210") is True
+    assert is_twitter_post_url("https://mobile.twitter.com/user/status/1122334455") is True
+    assert is_twitter_post_url("https://x.com/i/web/status/9988776655") is True
+    assert is_twitter_post_url("https://x.com/home") is False
+    assert is_twitter_post_url("https://x.com/explore") is False
+    assert is_twitter_post_url("https://example.com/status/12345") is False
+    assert is_twitter_post_url("") is False
+
+
+def test_twitter_candidate_urls():
+    from janeconverter.social_photo_capture import _twitter_candidate_urls
+
+    raw = "https://pbs.twimg.com/media/HSuSv4JaoAAr3pC?format=webp&name=large"
+    cands = _twitter_candidate_urls(raw)
+    assert "https://pbs.twimg.com/media/HSuSv4JaoAAr3pC?format=jpg&name=orig" in cands
+    assert "https://pbs.twimg.com/media/HSuSv4JaoAAr3pC.jpg:orig" in cands
+    assert "https://pbs.twimg.com/media/HSuSv4JaoAAr3pC?format=jpg&name=large" in cands
+
+
+def test_fetch_twitter_manifest_multi_photo(monkeypatch):
+    from janeconverter.social_photo_capture import fetch_twitter_manifest
+
+    fake_html = '''
+    <!DOCTYPE html><html><head>
+    <meta property="og:title" content="まよ on X: 辺り一面結束バンド / X"/>
+    <script>
+    window.__DATA__ = {
+      "id_str": "2101935045720039883",
+      "extended_entities": {
+        "media": [
+          {"id_str": "101", "media_url_https": "https://pbs.twimg.com/media/photo_one.jpg", "original_info": {"width": 2327, "height": 4096}, "type": "photo"},
+          {"id_str": "102", "media_url_https": "https://pbs.twimg.com/media/photo_two.jpg", "original_info": {"width": 2327, "height": 4096}, "type": "photo"},
+          {"id_str": "103", "media_url_https": "https://pbs.twimg.com/media/photo_three.jpg", "original_info": {"width": 2327, "height": 4096}, "type": "photo"},
+          {"id_str": "104", "media_url_https": "https://pbs.twimg.com/media/photo_four.jpg", "original_info": {"width": 2327, "height": 4096}, "type": "photo"}
+        ]
+      }
+    };
+    </script>
+    </head><body><article>
+    <a href="/oekaki_bibbi/status/2101935045720039883/photo/1"></a>
+    <a href="/oekaki_bibbi/status/2101935045720039883/photo/2"></a>
+    <a href="/oekaki_bibbi/status/2101935045720039883/photo/3"></a>
+    <a href="/oekaki_bibbi/status/2101935045720039883/photo/4"></a>
+    </article></body></html>
+    '''
+
+    class FakeUrlopenResponse:
+        def __init__(self, data):
+            self.data = data.encode("utf-8")
+        def read(self):
+            return self.data
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=12: FakeUrlopenResponse(fake_html))
+
+    manifest = fetch_twitter_manifest("https://x.com/oekaki_bibbi/status/2101935045720039883")
+    assert manifest is not None
+    assert manifest["platform"] == "twitter"
+    assert manifest["media_kind"] == "photo"
+    assert len(manifest["photos"]) == 4
+    assert [p["id"] for p in manifest["photos"]] == ["photo_one", "photo_two", "photo_three", "photo_four"]
+    assert all("name=orig" in p["url"] for p in manifest["photos"])
+    assert all(p["width"] == 2327 and p["height"] == 4096 for p in manifest["photos"])
+
+
+def test_fetch_twitter_manifest_video_detection(monkeypatch):
+    from janeconverter.social_photo_capture import fetch_twitter_manifest
+
+    fake_html = '''
+    <!DOCTYPE html><html><head>
+    <meta property="og:title" content="Video Clip on X"/>
+    <meta property="og:type" content="video"/>
+    <meta name="twitter:player" content="https://twitter.com/i/videos/123"/>
+    <script>
+    {"id_str": "123", "media": [{"type": "video", "media_url_https": "https://pbs.twimg.com/media/thumb.jpg"}]}
+    </script>
+    </head><body></body></html>
+    '''
+
+    class FakeUrlopenResponse:
+        def __init__(self, data):
+            self.data = data.encode("utf-8")
+        def read(self):
+            return self.data
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=12: FakeUrlopenResponse(fake_html))
+
+    manifest = fetch_twitter_manifest("https://x.com/creator/status/123456789")
+    assert manifest is not None
+    assert manifest["platform"] == "twitter"
+    assert manifest["media_kind"] == "video"
+    assert "photos" not in manifest or len(manifest.get("photos", [])) == 0
+
+
+def test_conversion_routes_twitter_photos_to_social_downloader(tmp_path, monkeypatch):
+    from janeconverter.cli import process_conversion
+
+    fake_manifest = {
+        "platform": "twitter",
+        "title": "Bocchi Band Photos",
+        "photos": [
+            {"id": "p1", "url": "https://pbs.twimg.com/media/p1.jpg?name=orig", "width": 2048},
+            {"id": "p2", "url": "https://pbs.twimg.com/media/p2.jpg?name=orig", "width": 2048},
+        ],
+    }
+
+    monkeypatch.setattr("janeconverter.cli.fetch_twitter_manifest", lambda source, **kwargs: fake_manifest)
+
+    downloaded_manifests = []
+    def fake_download(manifest, output_folder, **kwargs):
+        downloaded_manifests.append((manifest, output_folder))
+        return {
+            "title": manifest["title"],
+            "folder_path": output_folder,
+            "photo_count": len(manifest["photos"]),
+            "total_bytes": 1024,
+        }
+
+    monkeypatch.setattr("janeconverter.cli.download_social_photo_manifest", fake_download)
+
+    result_folder = process_conversion(
+        source="https://x.com/oekaki_bibbi/status/2101935045720039883",
+        target_format="png",
+        output_dir=str(tmp_path),
+    )
+
+    assert len(downloaded_manifests) == 1
+    passed_manifest, out_folder = downloaded_manifests[0]
+    assert passed_manifest["platform"] == "twitter"
+    assert len(passed_manifest["photos"]) == 2
+    assert "Images" in out_folder and "Twitter" in out_folder

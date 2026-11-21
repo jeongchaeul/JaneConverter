@@ -402,6 +402,11 @@ export function ConverterView({
         const started = await invokeStart(trimmedSource, indexesToConvert);
         return started !== false;
       }
+      if (photoPlatform === "twitter" && (access.active || settings.readBrowserCookies === true)) {
+        onStatus("Reading X/Twitter post using your active browser session...");
+        const started = await invokeStart(trimmedSource, indexesToConvert);
+        return started !== false;
+      }
       const captureId = crypto.randomUUID();
       socialCaptureIdRef.current = captureId;
       setSocialCaptureBusy(true);
@@ -423,12 +428,8 @@ export function ConverterView({
         const message = error instanceof Error ? error.message : String(error);
         if (/cancelled|canceled/i.test(message)) {
           onStatus(message);
-        } else if (photoPlatform === "twitter") {
-          onStatus("Adapting: Passing the X/Twitter post to the media downloader...");
-          const started = await invokeStart(trimmedSource, indexesToConvert, undefined, undefined, "video");
-          sessionTransferredToConversion = started !== false;
         } else {
-          onStatus(`Guest session for ${platformLabel} unavailable or restricted. Adapting with browser session...`);
+          onStatus(`Guest session for ${platformLabel} unavailable or restricted. Adapting with media engine...`);
           try {
             const started = await invokeStart(trimmedSource, indexesToConvert);
             sessionTransferredToConversion = started !== false;

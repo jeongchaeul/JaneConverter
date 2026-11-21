@@ -64,3 +64,43 @@ test("recommendation counts cannot certify this post", async () => {
   expect(await replay(1, "https://x.com/other/status/456")).toMatchObject({ kind: "done", completion: "unknown" });
   expect(await replay(null)).toMatchObject({ kind: "done", completion: "unknown" });
 });
+
+test("a Twitter post with multiple photo links proves completion for all photos", async () => {
+  const dom = new JSDOM(
+    `<title>Twitter gallery</title><article>
+      <a href="/jane/status/123/photo/1">1</a>
+      <a href="/jane/status/123/photo/2">2</a>
+      <a href="/jane/status/123/photo/3">3</a>
+      <a href="/jane/status/123/photo/4">4</a>
+      <img src="https://pbs.twimg.com/media/p1.jpg">
+      <img src="https://pbs.twimg.com/media/p2.jpg">
+      <img src="https://pbs.twimg.com/media/p3.jpg">
+      <img src="https://pbs.twimg.com/media/p4.jpg">
+    </article>`,
+    { url: "https://x.com/jane/status/123", runScripts: "outside-only", pretendToBeVisual: true }
+  );
+  const w = dom.window;
+  w.TextEncoder = TextEncoder;
+  w.document.querySelectorAll("img").forEach((image) => {
+    image.getBoundingClientRect = () => ({ width: 300, height: 300, top: 0, left: 0, bottom: 300, right: 300 });
+    Object.defineProperty(image, "naturalWidth", { value: 1200 });
+    Object.defineProperty(image, "naturalHeight", { value: 1200 });
+  });
+  let callbacks = [];
+  w.setTimeout = (callback) => { callbacks.push(callback); return callbacks.length; };
+  w.eval(script);
+  w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
+  let message;
+  for (let tick = 0; tick < 20; tick++) {
+    const next = callbacks.splice(0);
+    next.forEach((callback) => callback());
+    await Promise.resolve();
+    if (w.document.title.startsWith("__JANE_SOCIAL_PHOTO_CAPTURE__fixture__")) {
+      message = JSON.parse(Buffer.from(w.document.title.split("__fixture__")[1], "base64url").toString());
+      if (message.kind === "photos") w.__JANE_SOCIAL_PHOTO_ACK__fixture = message.sequence;
+      if (message.kind === "done") break;
+    }
+  }
+  dom.window.close();
+  expect(message).toMatchObject({ kind: "done", count: 4, expectedCount: 4, completion: "complete" });
+});
