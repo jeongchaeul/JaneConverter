@@ -97,7 +97,7 @@ def needs_browser_session(error):
         "premium", "vip", "login to view",
         "rate limit", "rate-limit", "too many requests", "429",
         "http error 404", "404: not found", "access denied", "permission denied",
-        "restricted", "blocked",
+        "restricted", "blocked", "no video could be found in this tweet", "no video could be found",
     ))
 
 

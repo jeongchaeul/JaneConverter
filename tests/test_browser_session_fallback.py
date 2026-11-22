@@ -229,6 +229,11 @@ def test_facebook_cannot_parse_data_triggers_browser_session_fallback():
     assert fallback.needs_browser_session("Main webpage is locked behind the login page")
 
 
+def test_twitter_no_video_triggers_browser_session_fallback():
+    assert fallback.needs_browser_session("ERROR: [twitter] 2121853068480307387: No video could be found in this tweet")
+    assert fallback.needs_browser_session("ERROR: [twitter] No video could be found")
+
+
 def test_disabled_cookie_setting_refuses_to_read_browser_cookies(browser):
     public = Mock(params={})
     public.extract_info.side_effect = RuntimeError("Please sign in. Use --cookies-from-browser")

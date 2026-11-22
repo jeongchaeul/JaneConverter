@@ -1262,6 +1262,20 @@ def _parse_twitter_html(html: str, target_url: str) -> Optional[dict[str, Any]]:
     if clean_title == "media_file":
         clean_title = "X Post"
 
+    is_tombstone = bool(
+        "BlurredMediaTombstone" in html
+        or "TweetTombstone" in html
+        or re.search(r'\\?"__typename\\?":\s*\\?"(?:TweetTombstone|BlurredMediaTombstone)\\?"', html)
+        or re.search(r'blurred_image_url', html)
+    )
+
+    tombstone_ids = set()
+    if is_tombstone:
+        for m in re.finditer(r'blurred_image_url\\?":\s*\\?"https://pbs\.twimg\.com/media/([a-zA-Z0-9_-]+)', html):
+            tombstone_ids.add(m.group(1))
+        for m in re.finditer(r'https://pbs\.twimg\.com/media/([a-zA-Z0-9_-]+)[^\s"\'<>]*name=240x240', html):
+            tombstone_ids.add(m.group(1))
+
     has_video = bool(
         re.search(r'\\?"type\\?":\s*\\?"(?:video|animated_gif)\\?"', html)
         or re.search(r'property=["\']og:type["\'][^>]+content=["\']video', html, re.IGNORECASE)
@@ -1279,7 +1293,7 @@ def _parse_twitter_html(html: str, target_url: str) -> Optional[dict[str, Any]]:
     for pattern, height_first in patterns:
         for m in re.finditer(pattern, html):
             photo_id = m.group(1)
-            if photo_id not in seen:
+            if photo_id not in seen and photo_id not in tombstone_ids:
                 seen.add(photo_id)
                 num1, num2 = int(m.group(2)), int(m.group(3))
                 h, w = (num1, num2) if height_first else (num2, num1)
@@ -1298,10 +1312,10 @@ def _parse_twitter_html(html: str, target_url: str) -> Optional[dict[str, Any]]:
             "media_kind": "video",
         }
 
-    if not photos:
+    if not photos and not is_tombstone:
         for m in re.finditer(r'https://pbs\.twimg\.com/media/([a-zA-Z0-9_-]+)', html):
             photo_id = m.group(1)
-            if photo_id not in seen:
+            if photo_id not in seen and photo_id not in tombstone_ids:
                 seen.add(photo_id)
                 orig_url = f"https://pbs.twimg.com/media/{photo_id}?format=jpg&name=orig"
                 photos.append({
@@ -1431,6 +1445,7 @@ def fetch_twitter_manifest(
             if resp.status_code == 200:
                 manifest = _parse_twitter_html(resp.text, url)
                 if manifest:
+                    manifest["browser"] = found_browser
                     if report and manifest.get("photos"):
                         report(0.08, f"Found {len(manifest['photos'])} photos in '{manifest['title']}'. Starting download...")
                     return manifest

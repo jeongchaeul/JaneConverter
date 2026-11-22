@@ -428,6 +428,8 @@ def process_conversion(
                 social_photo_manifest = tw_manifest
             elif tw_manifest and tw_manifest.get("media_kind") == "video":
                 report(0.05, "This X/Twitter post contains video. Proceeding to standard stream extractor...")
+                if tw_manifest.get("browser") and (not auth_browser or str(auth_browser).lower() in ("none", "auto", "default")):
+                    auth_browser = tw_manifest["browser"]
         except Exception as tw_err:
             report(0.05, f"X/Twitter direct extraction bypassed ({type(tw_err).__name__}). Proceeding to standard stream extractor...")
 

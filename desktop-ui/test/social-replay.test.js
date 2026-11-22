@@ -104,3 +104,39 @@ test("a Twitter post with multiple photo links proves completion for all photos"
   dom.window.close();
   expect(message).toMatchObject({ kind: "done", count: 4, expectedCount: 4, completion: "complete" });
 });
+
+test("a Twitter sensitive content warning with a blurred placeholder is ignored as a photo", async () => {
+  const dom = new JSDOM(
+    `<title>Sensitive tweet</title><article>
+      <div data-testid="tombstone">
+        <img src="https://pbs.twimg.com/media/blurred.jpg?format=jpg&name=240x240">
+        <div>Sensitive Content</div>
+      </div>
+    </article>`,
+    { url: "https://x.com/jane/status/123", runScripts: "outside-only", pretendToBeVisual: true }
+  );
+  const w = dom.window;
+  w.TextEncoder = TextEncoder;
+  const image = w.document.querySelector("img");
+  image.getBoundingClientRect = () => ({ width: 300, height: 300, top: 0, left: 0, bottom: 300, right: 300 });
+  Object.defineProperty(image, "naturalWidth", { value: 240 });
+  Object.defineProperty(image, "naturalHeight", { value: 240 });
+  let callbacks = [];
+  w.setTimeout = (callback) => { callbacks.push(callback); return callbacks.length; };
+  w.eval(script);
+  w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
+  let message;
+  for (let tick = 0; tick < 20; tick++) {
+    const next = callbacks.splice(0);
+    next.forEach((callback) => callback());
+    await Promise.resolve();
+    if (w.document.title.startsWith("__JANE_SOCIAL_PHOTO_CAPTURE__fixture__")) {
+      message = JSON.parse(Buffer.from(w.document.title.split("__fixture__")[1], "base64url").toString());
+      if (message.kind === "photos") w.__JANE_SOCIAL_PHOTO_ACK__fixture = message.sequence;
+      if (message.kind === "done") break;
+    }
+  }
+  dom.window.close();
+  // Should have count 0 because the tombstone image was rejected
+  expect(message).toMatchObject({ count: 0 });
+});

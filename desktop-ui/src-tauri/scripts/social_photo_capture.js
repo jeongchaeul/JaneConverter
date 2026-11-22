@@ -134,6 +134,11 @@
     const rect = image.getBoundingClientRect();
     const minSize = platform === "instagram" ? 220 : 120;
     if (platform === "twitter") {
+      const src = image.currentSrc || image.src || "";
+      if (/name=240x240/i.test(src)) return false;
+      const inWarning = !!image.closest('[data-testid="tombstone"], [data-testid="emptyState"]')
+        || !!(image.parentElement && /Sensitive Content|Content warning|Age-restricted/i.test(image.parentElement.innerText || ""));
+      if (inWarning) return false;
       const isGridImage = (rect.width >= 60 && rect.height >= 60) || (image.naturalWidth >= 200);
       if (!isGridImage) return false;
     } else {
@@ -197,6 +202,20 @@
       document.documentElement.style.overflow = "";
       document.body.style.overflow = "";
       document.body.style.position = "";
+    }
+  };
+  const dismissTwitterContentWarning = () => {
+    if (platform !== "twitter") return;
+    const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+    for (const btn of buttons) {
+      const label = (btn.innerText || btn.getAttribute("aria-label") || "").trim();
+      if (/^(Show|View|表示する|Mostrar|Afficher|Anzeigen)$/i.test(label)) {
+        const warningCard = btn.closest('article, [data-testid="tweet"], [role="dialog"], main') || btn.parentElement;
+        if (warningCard && /Sensitive|Warning|Adult|Content warning/i.test(warningCard.innerText || "")) {
+          btn.click();
+          break;
+        }
+      }
     }
   };
   const postContainer = () => {
@@ -266,6 +285,7 @@
       || document.querySelector('[data-testid="videoPlayer"], [data-testid="videoComponent"], [data-testid="playButton"]')
       || Array.from(document.querySelectorAll('img[src*="video_thumb"], img[src*="amplify_video_thumb"]')).length > 0
       || Array.from(document.querySelectorAll('a[href*="/video/"]')).length > 0
+      || /"type":\s*"video"|"playback_type":\s*"video"/i.test(document.documentElement.innerHTML)
     );
     return visibleVideo || hasTwitterVideo || !!document.querySelector('meta[property="og:video"], meta[property="og:video:url"], meta[name="twitter:player"]');
   };
@@ -422,6 +442,7 @@
       retryAfterAttempt = attempts + 3;
     }
     closeGuestPrompt();
+    dismissTwitterContentWarning();
     const path = location.pathname.toLowerCase().replace(/\/+$/, "") || "/";
     const isRootOrFeed = path === "/" || path === "/home" || path === "/feed" || path === "/today" || path === "/explore";
     if (isRootOrFeed) {

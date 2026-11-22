@@ -1001,6 +1001,29 @@ def test_fetch_twitter_manifest_video_detection(monkeypatch):
     assert "photos" not in manifest or len(manifest.get("photos", [])) == 0
 
 
+def test_parse_twitter_html_ignores_tombstone_blurred_images():
+    from janeconverter.social_photo_capture import _parse_twitter_html
+
+    tombstone_html = '''
+    <!DOCTYPE html><html><head>
+    <meta property="og:title" content="Sensitive Post on X"/>
+    <script>
+    {"__typename": "TweetTombstone", "tombstone": {"__typename": "BlurredMediaTombstone", "blurred_image_url": "https://pbs.twimg.com/media/GxJIrSUagAAK-ZP?format=jpg&name=240x240"}}
+    </script>
+    <link rel="preload" as="image" href="https://pbs.twimg.com/media/GxJIrSUagAAK-ZP?format=jpg&amp;name=240x240"/>
+    </head><body>
+    <div class="relative overflow-hidden rounded-2xl">
+      <img src="https://pbs.twimg.com/media/GxJIrSUagAAK-ZP?format=jpg&amp;name=240x240"/>
+      <div>Sensitive Content</div>
+    </div>
+    </body></html>
+    '''
+
+    # A guest tombstone with no actual user photos or video must return None so it falls back to browser session
+    manifest = _parse_twitter_html(tombstone_html, "https://x.com/user/status/2121853068480307387")
+    assert manifest is None
+
+
 def test_conversion_routes_twitter_photos_to_social_downloader(tmp_path, monkeypatch):
     from janeconverter.cli import process_conversion
 
