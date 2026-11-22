@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -367,7 +367,10 @@ export function LibraryView({
 
   const totalHistoryPages = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
   const safeHistoryPage = Math.min(Math.max(1, historyPage), totalHistoryPages);
-  const pagedHistory = history.slice((safeHistoryPage - 1) * HISTORY_PAGE_SIZE, safeHistoryPage * HISTORY_PAGE_SIZE);
+  const pagedHistory = useMemo(
+    () => history.slice((safeHistoryPage - 1) * HISTORY_PAGE_SIZE, safeHistoryPage * HISTORY_PAGE_SIZE),
+    [history, safeHistoryPage]
+  );
 
   const requestedHistoryIdsRef = useRef<Set<string>>(new Set());
 

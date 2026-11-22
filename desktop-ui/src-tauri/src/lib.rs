@@ -87,6 +87,21 @@ impl Default for AppState {
     }
 }
 
+pub(crate) fn cleanup_app_state(state: &AppState) {
+    close_all_social_captures(&state.social_captures);
+    close_all_facebook_captures(&state.facebook_captures);
+    if let Ok(mut access) = state.access.lock() {
+        *access = None;
+    }
+    if let Ok(mut guard) = state.active_child.lock() {
+        if let Some(child) = guard.take() {
+            if let Ok(mut proc) = child.lock() {
+                process::terminate_child(&mut proc);
+            }
+        }
+    }
+}
+
 pub fn run() {
     sweep_stale_webview_profiles();
     let builder = tauri::Builder::default();
@@ -158,20 +173,21 @@ pub fn run() {
             window_close,
             window_is_maximized,
         ])
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                use tauri::Manager;
+                let app_handle = window.app_handle();
+                cleanup_app_state(&app_handle.state::<AppState>());
+                app_handle.exit(0);
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building JaneConverter Desktop")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
                 use tauri::Manager;
                 let state = app_handle.state::<AppState>();
-                close_all_social_captures(&state.social_captures);
-                if let Ok(mut guard) = state.active_child.lock() {
-                    if let Some(child) = guard.take() {
-                        if let Ok(mut proc) = child.lock() {
-                            process::terminate_child(&mut proc);
-                        }
-                    }
-                };
+                cleanup_app_state(&state);
             }
         });
 }

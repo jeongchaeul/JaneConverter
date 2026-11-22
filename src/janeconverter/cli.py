@@ -776,7 +776,8 @@ def process_playlist_conversion(
 
     def get_overall_progress():
         with progress_lock:
-            return sum(track_progress) / total_items, completed_counter[0]
+            denom = max(1, len(track_progress))
+            return sum(track_progress) / denom, completed_counter[0]
 
     def _process_single_track(i: int, entry: dict):
         if abort_event and abort_event.is_set():
@@ -819,7 +820,8 @@ def process_playlist_conversion(
                 raise KeyboardInterrupt("Playlist conversion aborted by user.")
             with progress_lock:
                 track_progress[i] = max(track_progress[i], max(0.0, min(0.95, float(sub_frac))))
-                overall_frac = sum(track_progress) / total_items
+                denom = max(1, len(track_progress))
+                overall_frac = sum(track_progress) / denom
                 done = completed_counter[0]
             msg_detail = f" — {sub_msg}" if sub_msg else f" ({int(sub_frac * 100)}%)"
             report_overall(overall_frac, f"[{done}/{total_items}] #{idx}: {clean_title}{msg_detail}")
@@ -1012,8 +1014,8 @@ def process_playlist_conversion(
         with queue_cv:
             matched = entry_by_index.get(req_idx)
             if matched is None:
-                orig_i = len(track_progress)
                 with progress_lock:
+                    orig_i = len(track_progress)
                     track_progress.append(0.0)
                 matched = (orig_i, {"index": req_idx, "title": f"Track_{req_idx}", "url": req_url})
                 entry_by_index[req_idx] = matched

@@ -144,12 +144,14 @@ fn save(path: &Path, catalog: &Catalog) -> Result<(), String> {
         }
     } else if let Ok(metadata) = fs::metadata(path) {
         if let Ok(mut cache) = CATALOG_CACHE.lock() {
+            let mut clean_catalog = catalog.clone();
+            clean_catalog.warning = None;
             *cache = Some((
                 path.to_path_buf(),
                 CachedCatalog {
                     mtime: metadata.modified().ok(),
                     len: metadata.len(),
-                    catalog: catalog.clone(),
+                    catalog: clean_catalog,
                 },
             ));
         }

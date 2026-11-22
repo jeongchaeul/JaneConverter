@@ -416,9 +416,9 @@ pub fn relaunch(app: tauri::AppHandle) -> Result<(), String> {
     let mut command = Command::new(&launcher);
     command
         .current_dir(&root)
-        .env("JANECONVERTER_DATA_DIR", data_root())
         .env("JANECONVERTER_RELAUNCH", "1");
     prepare_command(&mut command);
+    command.env_remove("JANECONVERTER_DATA_DIR");
     command
         .spawn()
         .map_err(|error| format!("Could not relaunch JaneConverter: {error}"))?;
@@ -760,8 +760,19 @@ pub fn window_toggle_maximize(window: tauri::Window) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub fn window_close(window: tauri::Window) -> Result<(), String> {
-    window.close().map_err(|e| e.to_string())
+pub fn window_close(
+    app: tauri::AppHandle,
+    state: State<'_, crate::AppState>,
+    window: tauri::Window,
+) -> Result<(), String> {
+    if window.label() == "main" {
+        crate::cleanup_app_state(&state);
+        let res = window.close().map_err(|e| e.to_string());
+        app.exit(0);
+        res
+    } else {
+        window.close().map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]

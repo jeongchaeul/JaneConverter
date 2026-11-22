@@ -25,7 +25,8 @@ pub fn conversion_history(
 }
 
 fn resolve_configured_root(raw: &str) -> PathBuf {
-    let trimmed = PathBuf::from(raw.trim());
+    let cleaned = library::clean_windows_path(raw.trim());
+    let trimmed = PathBuf::from(&cleaned);
     if trimmed.is_absolute() {
         trimmed
     } else {
@@ -50,8 +51,13 @@ fn is_allowed_library_or_history_path(candidate: &str) -> Result<bool, String> {
         resolve_configured_root(&settings.output_dir),
         resolve_configured_root(&settings.fetched_dir),
         data_root(),
-        std::env::temp_dir(),
+        crate::paths::default_temp_dir(),
     ];
+    if !settings.temp_dir.trim().is_empty() {
+        allowed_roots.push(resolve_configured_root(&settings.temp_dir));
+    }
+    #[cfg(test)]
+    allowed_roots.push(std::env::temp_dir());
     for export_path in catalog::load_history_paths(&data_root().join("catalog.json")) {
         if !export_path.trim().is_empty() {
             allowed_roots.push(resolve_configured_root(&export_path));
@@ -74,7 +80,8 @@ pub async fn path_size(path: String) -> Result<u64, String> {
         if !is_allowed_library_or_history_path(&path)? {
             return Ok(0);
         }
-        Ok(library::path_total_bytes(&path))
+        let resolved = resolve_configured_root(&path);
+        Ok(library::path_total_bytes(&resolved.display().to_string()))
     })
     .await
     .map_err(|e| format!("Task execution error: {e}"))?
@@ -86,7 +93,8 @@ pub async fn scan_library(path: String) -> Result<Vec<LibraryEntry>, String> {
         if !is_allowed_library_or_history_path(&path)? {
             return Ok(Vec::new());
         }
-        library::scan(&path)
+        let resolved = resolve_configured_root(&path);
+        library::scan(&resolved.display().to_string())
     })
     .await
     .map_err(|e| format!("Task execution error: {e}"))?
@@ -105,7 +113,8 @@ pub async fn recent_conversions(path: String, limit: usize) -> Result<Vec<Librar
         if !is_allowed_library_or_history_path(&path)? {
             return Ok(Vec::new());
         }
-        library::recent(&path, limit)
+        let resolved = resolve_configured_root(&path);
+        library::recent(&resolved.display().to_string(), limit)
     })
     .await
     .map_err(|e| format!("Task execution error: {e}"))?
@@ -154,7 +163,12 @@ pub async fn get_thumbnail(root: String, path: String) -> Result<Option<String>,
         if !is_allowed_library_or_history_path(&root)? {
             return Ok(None);
         }
-        library::thumbnail(&root, &path)
+        let resolved_root = resolve_configured_root(&root);
+        let resolved_path = resolve_configured_root(&path);
+        library::thumbnail(
+            &resolved_root.display().to_string(),
+            &resolved_path.display().to_string(),
+        )
     })
     .await
     .map_err(|e| format!("Task execution error: {e}"))?
@@ -276,20 +290,47 @@ fn resolve_delete_target(canonical_root: &Path, path: &str) -> PathBuf {
     if direct_candidate.exists() {
         return direct_candidate;
     }
-    if let Some(resolved) = library::resolve_existing_path(&direct_candidate.display().to_string())
-    {
-        return resolved;
-    }
-    if !target_path.is_absolute() {
-        if let Some(resolved) = library::resolve_existing_path(&cleaned) {
-            return resolved;
-        }
-    }
-    let parent_is_root = direct_candidate
+
+    let parent_canon = direct_candidate
         .parent()
-        .and_then(|parent| fs::canonicalize(parent).ok())
+        .and_then(|parent| fs::canonicalize(parent).ok());
+    let parent_is_root = parent_canon
+        .as_ref()
         .map(|parent| parent == canonical_root)
         .unwrap_or(false);
+    let parent_is_specific_subdir = parent_canon
+        .as_ref()
+        .map(|parent| parent != canonical_root && parent.starts_with(canonical_root))
+        .unwrap_or(false);
+
+    // Check alternate image/media extensions and numbered suffix only within the exact parent folder.
+    if let (Some(parent), Some(stem)) = (direct_candidate.parent(), direct_candidate.file_stem()) {
+        if parent.is_dir() {
+            let stem_str = stem.to_string_lossy();
+            for ext in [
+                "png", "jpg", "jpeg", "webp", "avif", "mp4", "mkv", "mp3", "wav", "flac",
+            ] {
+                let candidate = parent.join(format!("{stem_str}.{ext}"));
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+    }
+    let direct_str = direct_candidate.display().to_string();
+    let stripped_self = library::strip_numbered_suffix(&direct_str);
+    if stripped_self != direct_str {
+        let candidate = PathBuf::from(&stripped_self);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+
+    // Never jump across unrelated albums when the caller specified an existing subdirectory under root.
+    if parent_is_specific_subdir {
+        return direct_candidate;
+    }
+
     if parent_is_root || !target_path.is_absolute() {
         if let Some(found) = target_path
             .file_name()
@@ -455,6 +496,28 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("inside the active library"));
         assert!(outside.exists());
+
+        // Deleting a missing numbered track inside a specific album must NOT delete another track or album's file
+        let album_a = output_root.join("AlbumA");
+        let album_b = output_root.join("AlbumB");
+        fs::create_dir_all(&album_a).expect("create AlbumA");
+        fs::create_dir_all(&album_b).expect("create AlbumB");
+        let track_2 = album_a.join("2. Intro.mp3");
+        let other_album_track = album_b.join("1. Intro.mp3");
+        fs::write(&track_2, b"track2").expect("write track2");
+        fs::write(&other_album_track, b"albumB").expect("write albumB track");
+
+        let missing_track_1 = album_a.join("1. Intro.mp3");
+        let res = delete_entry_with_roots(
+            output_root.to_str().unwrap(),
+            missing_track_1.to_str().unwrap(),
+            output_root.to_str().unwrap(),
+            fetched_root.to_str().unwrap(),
+            false,
+        );
+        assert!(res.is_err());
+        assert!(track_2.exists());
+        assert!(other_album_track.exists());
 
         fs::remove_dir_all(base).expect("cleanup temp test dir");
     }

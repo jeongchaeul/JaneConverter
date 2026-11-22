@@ -455,16 +455,30 @@ export function parseConversionEvents(
     // 5. Match Facebook/Social Photo progress: Downloading Facebook photo 1 of 12...
     const photoProgMatch = PHOTO_PROGRESS_RE.exec(rawMsg);
     if (photoProgMatch) {
+      const curPhoto = parseInt(photoProgMatch[1], 10);
       const totPhoto = parseInt(photoProgMatch[2], 10);
       if (totPhoto > detectedTotal) detectedTotal = totPhoto;
       detectedKind = "image";
 
-      // Mark queued items as downloading during active transfer
-      for (const it of itemsMap.values()) {
-        if (it.status === "queued") {
-          it.status = "downloading";
-          it.progress = 0.5;
-          it.detailMessage = rawMsg;
+      if (curPhoto > 0) {
+        const existing = itemsMap.get(curPhoto);
+        if (existing) {
+          if (existing.status === "queued" || existing.status === "downloading") {
+            existing.status = "downloading";
+            existing.progress = Math.max(existing.progress, 0.5);
+            existing.detailMessage = rawMsg;
+          }
+        } else {
+          itemsMap.set(curPhoto, {
+            id: `item-${curPhoto}`,
+            index: curPhoto,
+            total: detectedTotal || totPhoto,
+            title: `Photo #${curPhoto}`,
+            mediaKind: "image",
+            status: "downloading",
+            progress: 0.5,
+            detailMessage: rawMsg,
+          });
         }
       }
       continue;
@@ -828,7 +842,18 @@ export function parseConversionEvents(
       }
     }
 
-    if (event.kind === "finished") {
+    if (event.kind === "failed" && itemsMap.size > 0) {
+      for (const item of itemsMap.values()) {
+        if (item.status === "downloading" || item.status === "transcoding") {
+          item.status = "failed";
+          item.speed = undefined;
+          item.eta = undefined;
+          item.errorMessage = item.errorMessage || rawMsg;
+        }
+      }
+    }
+
+    if (event.kind === "finished" || (event.kind as string) === "partial") {
       if (itemsMap.size === 0) {
         isSingleMedia = true;
         if (singleStatus !== "failed") {

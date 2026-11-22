@@ -411,3 +411,37 @@ def test_video_conversion_with_original_and_custom_audio_bitrate():
         bitrate="original", resolution="original", use_gpu=False, audio_bitrate="320k"
     )
     assert cmd_custom[cmd_custom.index("-b:a") + 1] == "320k"
+
+
+def test_build_ffmpeg_args_av1_with_gpu_requests_av1_codec(monkeypatch):
+    import janeconverter.converter as conv
+
+    requested = []
+
+    def fake_best_encoder(preferred_codec=None):
+        requested.append(preferred_codec)
+        return {
+            "encoder": "av1_nvenc",
+            "args": ["-c:v", "av1_nvenc", "-preset", "p4", "-cq", "28"],
+            "has_gpu": True,
+        }
+
+    monkeypatch.setattr(conv, "get_best_hardware_encoder", fake_best_encoder)
+    cmd = conv.build_ffmpeg_args(
+        input_path="input.mp4", output_path="output.mkv", target_format="av1", use_gpu=True
+    )
+    assert requested == ["av1"]
+    assert "av1_nvenc" in cmd
+
+
+def test_is_stream_copy_safe_disables_copy_when_fps_is_requested():
+    from janeconverter.converter import is_stream_copy_safe
+
+    probed = {
+        "streams": [
+            {"codec_type": "video", "codec_name": "h264"},
+            {"codec_type": "audio", "codec_name": "aac", "sample_rate": "48000"},
+        ]
+    }
+    assert is_stream_copy_safe("clip.mp4", "mp4", probed_info=probed, fps=None) is True
+    assert is_stream_copy_safe("clip.mp4", "mp4", probed_info=probed, fps=24) is False

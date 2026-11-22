@@ -21,12 +21,15 @@ from typing import Any, Dict, List, Optional
 
 def get_git_credential_token() -> Optional[str]:
     try:
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
         proc = subprocess.run(
             ["git", "credential", "fill"],
             input="protocol=https\nhost=github.com\n",
             capture_output=True,
             text=True,
             check=True,
+            timeout=5.0,
+            env=env,
         )
         match = re.search(r"password=([^\r\n]+)", proc.stdout)
         if match:

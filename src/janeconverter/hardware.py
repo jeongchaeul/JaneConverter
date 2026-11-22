@@ -89,7 +89,7 @@ def probe_hardware_encoder(encoder: str) -> bool:
         if encoder in _probed_hardware_encoders:
             return _probed_hardware_encoders[encoder]
     ffmpeg_bin = get_ffmpeg_binary()
-    if not shutil.which(ffmpeg_bin):
+    if not shutil.which(ffmpeg_bin) and not os.path.isfile(ffmpeg_bin):
         return False
     cmd = [
         ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",

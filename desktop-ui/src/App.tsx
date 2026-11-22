@@ -224,6 +224,8 @@ export default function App() {
     readStoredInt("sidebarOpacity", 45),
   );
 
+  const appearanceHydratedRef = useRef(false);
+
   useEffect(() => {
     let mounted = true;
     void loadAppearanceFromStorage().then((saved) => {
@@ -238,6 +240,8 @@ export default function App() {
       if (saved.accentColor) setAccentColor(saved.accentColor);
       if (saved.bgColor) setBgColor(saved.bgColor);
       if (saved.theme) setTheme(saved.theme);
+    }).finally(() => {
+      appearanceHydratedRef.current = true;
     });
     return () => {
       mounted = false;
@@ -296,7 +300,13 @@ export default function App() {
 
   useEffect(() => {
     const root = document.documentElement;
-    root.setAttribute("data-theme", theme);
+    const effectiveTheme =
+      bgMode === "wallpaper" && wallpaper
+        ? isColorLight(wallpaperMaskColor) && wallpaperMaskOpacity >= 50
+          ? "light"
+          : "dark"
+        : theme;
+    root.setAttribute("data-theme", effectiveTheme);
     const clean = accentColor.replace("#", "");
     const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
     const num = parseInt(full, 16);
@@ -313,6 +323,7 @@ export default function App() {
     root.style.setProperty("--accent-subtle", `rgba(${r}, ${g}, ${b}, 0.12)`);
     root.style.setProperty("--bg-color", bgColor);
 
+    if (!appearanceHydratedRef.current) return;
     void saveAppearanceToStorage({
       theme,
       accentColor,
@@ -611,7 +622,7 @@ export default function App() {
         const unseen = diagnostics.filter((entry) => !accessDiagnosticIds.current.has(entry.id));
         if (!unseen.length) return;
         for (const entry of unseen) accessDiagnosticIds.current.add(entry.id);
-        setEvents((current) => [...current.slice(-1499), ...unseen.map((entry) => ({ jobId: "browser-session", kind: "status" as const, message: entry.message }))]);
+        setEvents((current) => [...current.slice(-9999), ...unseen.map((entry) => ({ jobId: "browser-session", kind: "status" as const, message: entry.message }))]);
         setRawEvents((current) => [...current.slice(-9999), ...unseen.map((entry) => ({ jobId: "browser-session", kind: "status" as const, message: entry.message }))]);
       } catch (error) {
         statusMessage(error instanceof Error ? error.message : String(error));
@@ -638,7 +649,7 @@ export default function App() {
         const message = result.message;
         if (!/update available|check unavailable/i.test(message)) return;
         setStatus(message);
-        setEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
+        setEvents((current) => [...current.slice(-9999), { jobId: "ui", kind: "status", message }]);
         setRawEvents((current) => [...current.slice(-9999), { jobId: "ui", kind: "status", message }]);
       }).catch(() => {
         // Startup checks stay quiet when the machine is offline. The Settings
@@ -652,7 +663,7 @@ export default function App() {
 
   const statusMessage = useCallback((message: string) => {
     setStatus(message);
-    setEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
+    setEvents((current) => [...current.slice(-9999), { jobId: "ui", kind: "status", message }]);
     setRawEvents((current) => [...current.slice(-9999), { jobId: "ui", kind: "status", message }]);
   }, []);
 

@@ -1163,6 +1163,7 @@ async function captureStorySequence(sourceTab, accessTab, challenge, initialItem
   let cursor = 0;
   const fingerprints = [];
   const attempts = new Map();
+  const capturedNonImageKeys = new Set();
   const failures = [];
   const deadline = Date.now() + MAX_SEQUENCE_MS;
   let lastNewItem = Date.now();
@@ -1172,7 +1173,11 @@ async function captureStorySequence(sourceTab, accessTab, challenge, initialItem
     const candidates = globalThis.JaneMediaUtils
       ? globalThis.JaneMediaUtils.selectCaptureItems(nextItems, "sequence", MAX_SEQUENCE_ITEMS)
       : nextItems.slice(0, MAX_SEQUENCE_ITEMS);
-    const available = candidates.filter((item) => (attempts.get(captureItemKey(item)) || 0) < 2);
+    const available = candidates.filter((item) => {
+      const k = captureItemKey(item);
+      if (capturedNonImageKeys.has(k)) return false;
+      return (attempts.get(k) || 0) < 2;
+    });
     const candidate = available.length ? available[cursor++ % available.length] : null;
     if (candidate) {
       const key = captureItemKey(candidate);
@@ -1183,8 +1188,12 @@ async function captureStorySequence(sourceTab, accessTab, challenge, initialItem
         attempts.delete(key);
         if (!result?.duplicate) {
           fingerprints.push(result?.fingerprint || storyFingerprint(candidate));
+          if (candidate.mediaKind !== "image" || !result?.fingerprint?.contentHash) {
+            capturedNonImageKeys.add(key);
+          }
           count += 1;
           lastNewItem = Date.now();
+          await new Promise((resolve) => setTimeout(resolve, 750));
         } else {
           await new Promise((resolve) => setTimeout(resolve, 750));
         }

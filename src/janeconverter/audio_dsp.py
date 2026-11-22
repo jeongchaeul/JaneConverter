@@ -80,6 +80,7 @@ def measure_audio_loudness(
     end_time: Optional[str] = None,
     reconstruct_frequency_loss: bool = False,
     abort_event: Optional[Any] = None,
+    downmix_filter: Optional[str] = None,
 ) -> Optional[Dict[str, str]]:
     """
     Pass 1 measurement for EBU R128 loudness normalization.
@@ -93,6 +94,8 @@ def measure_audio_loudness(
         return None
 
     filters = []
+    if downmix_filter:
+        filters.append(downmix_filter)
     source_rate_matches = (
         input_sample_rate is not None
         and sample_rate

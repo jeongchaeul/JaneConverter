@@ -130,6 +130,21 @@ pub fn close_idle_facebook_captures(
     }
 }
 
+pub fn close_all_facebook_captures(
+    captures: &Arc<Mutex<std::collections::HashMap<String, FacebookCaptureSession>>>,
+) {
+    let removed = captures.lock().ok().map(|mut values| {
+        values
+            .drain()
+            .map(|(_, session)| session)
+            .collect::<Vec<_>>()
+    });
+    for session in removed.unwrap_or_default() {
+        let _ = session.window.close();
+        clean_facebook_capture_profile(&session.profile);
+    }
+}
+
 pub fn close_all_social_captures(
     captures: &Arc<Mutex<std::collections::HashMap<String, WebviewWindow>>>,
 ) {
@@ -455,10 +470,17 @@ pub async fn capture_facebook_album(
     match capture_result {
         Ok(facebook_capture::CaptureOutcome::Photos(manifest)) => {
             let registered_at = Instant::now();
-            if let Ok(mut captures) = state.facebook_captures.lock() {
-                if let Some(session) = captures.get_mut(&capture_id) {
+            let session_active = state
+                .facebook_captures
+                .lock()
+                .map_err(|_| "The Facebook capture registry is unavailable.")?
+                .get_mut(&capture_id)
+                .map(|session| {
                     session.created = registered_at;
-                }
+                })
+                .is_some();
+            if !session_active {
+                return Err("Facebook photo capture was cancelled.".into());
             }
             let result = FacebookCaptureResult {
                 capture_id: capture_id.clone(),

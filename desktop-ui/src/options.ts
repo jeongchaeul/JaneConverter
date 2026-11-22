@@ -264,8 +264,6 @@ export const intentPresets: IntentPreset[] = [
   },
 ];
 
-export const intentPresetGroups = ["Music", "Video", "Image", "Other"] as const;
-
 export function detectCategoryFromPath(pathOrUrl: string): Category | null {
   if (!pathOrUrl || !pathOrUrl.trim()) return null;
   const cleanPath = pathOrUrl.trim().split("?")[0].split("#")[0];

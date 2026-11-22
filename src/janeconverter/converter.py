@@ -144,6 +144,7 @@ def is_stream_copy_safe(
     reconstruct_frequency_loss: bool = False,
     bitrate: Optional[str] = None,
     audio_bitrate: Optional[str] = None,
+    fps: Optional[int] = None,
 ) -> bool:
     """
     Determines if stream copy (-c copy) is safe without quality loss or container corruption.
@@ -155,8 +156,9 @@ def is_stream_copy_safe(
     4. Codec must be natively supported by the target container format.
     5. Sample rate must match the source audio stream (no resampling requested).
     6. reconstruct_frequency_loss must be False (requires harmonic exciter filter).
+    7. fps must be None (changing frame rate requires video transcoding).
     """
-    if normalize_audio or reconstruct_frequency_loss:
+    if normalize_audio or reconstruct_frequency_loss or fps is not None:
         return False
 
     if bitrate and bitrate.lower() in ("high", "balanced", "small"):
@@ -214,7 +216,6 @@ def is_stream_copy_safe(
         v_stream = video_streams[0]
         v_codec = (v_stream.get("codec_name") or "").lower()
         a_codec = (audio_streams[0].get("codec_name") or "").lower() if audio_streams else None
-        a_sr = audio_streams[0].get("sample_rate") if audio_streams else None
 
         if target_format == "mp4":
             return v_codec in ("h264", "hevc", "av1") and is_audio_codec_compatible_with_container(a_codec, target_format)
@@ -671,11 +672,12 @@ def build_ffmpeg_args(
     # Resolve the encoder once so decode acceleration and encode args stay consistent
     enc_spec = None
     if active_gpu and target_format in HARDWARE_VIDEO_FORMATS:
-        enc_spec = get_best_hardware_encoder(preferred_codec=gpu_codec)
+        effective_gpu_codec = gpu_codec or ("av1" if target_format == "av1" else None)
+        enc_spec = get_best_hardware_encoder(preferred_codec=effective_gpu_codec)
 
     # Peak GPU Acceleration: offload video decoding to GPU silicon when hardware acceleration is
     # active. VAAPI is excluded: it uses software decode plus an explicit hwupload filter below.
-    if enc_spec is not None and enc_spec["encoder"] != "h264_vaapi":
+    if enc_spec is not None and enc_spec.get("has_gpu", True) and enc_spec["encoder"] != "h264_vaapi":
         cmd.extend(["-hwaccel", "auto"])
 
     if start_time:
@@ -999,31 +1001,38 @@ def _extract_png_frame(input_path: str, output_path: str, abort_event: Optional[
 
     start_extract = time.monotonic()
     max_frame_wait = 120.0
-    while True:
-        if abort_event and abort_event.is_set():
-            process.kill()
-            try:
-                _, stderr = process.communicate(timeout=1.0)
-            except Exception:
-                stderr = b""
-            if os.path.exists(output_path):
+    try:
+        while True:
+            if abort_event and abort_event.is_set():
+                process.kill()
                 try:
-                    os.remove(output_path)
-                except OSError:
-                    pass
-            raise KeyboardInterrupt("Conversion aborted by user.")
-        if time.monotonic() - start_extract > max_frame_wait:
-            process.kill()
+                    _, stderr = process.communicate(timeout=1.0)
+                except Exception:
+                    stderr = b""
+                if os.path.exists(output_path):
+                    try:
+                        os.remove(output_path)
+                    except OSError:
+                        pass
+                raise KeyboardInterrupt("Conversion aborted by user.")
+            if time.monotonic() - start_extract > max_frame_wait:
+                process.kill()
+                try:
+                    _, stderr = process.communicate(timeout=1.0)
+                except Exception:
+                    stderr = b""
+                raise TimeoutError("FFmpeg frame extraction timed out.")
             try:
-                _, stderr = process.communicate(timeout=1.0)
-            except Exception:
-                stderr = b""
-            raise TimeoutError("FFmpeg frame extraction timed out.")
-        try:
-            _, stderr = process.communicate(timeout=0.1)
-            break
-        except subprocess.TimeoutExpired:
-            continue
+                _, stderr = process.communicate(timeout=0.1)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        if process.stderr:
+            try:
+                process.stderr.close()
+            except OSError:
+                pass
     if process.returncode != 0:
         category = FailureEvidence.ffmpeg(stderr).category.value
         raise RuntimeError(f"FFmpegProcessError: image frame extraction failed ({category}).")
@@ -1070,7 +1079,7 @@ def _convert_media_impl(
     _, input_ext = os.path.splitext(input_path)
     if input_ext.lower() in (".glb", ".gltf", ".obj", ".splat", ".ply", ".fbx"):
         stem = os.path.splitext(output_filename)[0]
-        final_dest = os.path.join(output_dir, f"{stem}{input_ext.lower()}")
+        final_dest = get_unique_target_path(output_dir, f"{stem}{input_ext.lower()}")
         shutil.copy2(input_path, final_dest)
         if progress_callback:
             progress_callback(1.0, f"3D model ready: {os.path.basename(final_dest)}")
@@ -1299,21 +1308,27 @@ def _convert_media_impl(
 
     media_probe = (
         probe_media_streams(input_path)
-        if (target_format in SUPPORTED_AUDIO_FORMATS or allow_stream_copy)
+        if (target_format in SUPPORTED_AUDIO_FORMATS or allow_stream_copy or normalize_audio)
         else None
     )
     input_sample_rate = None
+    input_channels = 2
     if media_probe:
+        audio_streams = [s for s in media_probe.get("streams", []) if s.get("codec_type") == "audio"]
         input_sample_rate = next(
             (
                 int(stream["sample_rate"])
-                for stream in media_probe.get("streams", [])
-                if stream.get("codec_type") == "audio"
-                and stream.get("sample_rate")
+                for stream in audio_streams
+                if stream.get("sample_rate")
                 and str(stream["sample_rate"]).isdigit()
             ),
             None,
         )
+        if audio_streams:
+            try:
+                input_channels = int(audio_streams[0].get("channels", 2) or 2)
+            except (ValueError, TypeError):
+                input_channels = 2
 
     can_copy = allow_stream_copy and is_stream_copy_safe(
         input_path=input_path,
@@ -1326,6 +1341,7 @@ def _convert_media_impl(
         reconstruct_frequency_loss=reconstruct_frequency_loss,
         bitrate=bitrate,
         audio_bitrate=audio_bitrate,
+        fps=fps,
     )
     method = _method_override or ("stream-copy" if can_copy else "gpu-transcode" if active_gpu and target_format in HARDWARE_VIDEO_FORMATS else "cpu-transcode")
     _recovery.start(method)
@@ -1355,6 +1371,7 @@ def _convert_media_impl(
         measured_loudness = None
         if normalize_audio and os.path.isfile(input_path):
             report(0.68, "Analyzing audio loudness dynamics (linear EBU R128 pass)...")
+            downmix_filter = _stereo_downmix_filter(input_channels) if input_channels > 2 else None
             measured_loudness = measure_audio_loudness(
                 input_path,
                 ffmpeg_bin=ffmpeg_bin,
@@ -1364,6 +1381,7 @@ def _convert_media_impl(
                 end_time=end_time,
                 reconstruct_frequency_loss=reconstruct_frequency_loss,
                 abort_event=abort_event,
+                downmix_filter=downmix_filter,
             )
 
         report(0.70, f"Transcoding media to {target_format.upper()}...")
@@ -1532,6 +1550,12 @@ def _convert_media_impl(
             proc.wait()
             reader_thread.join(timeout=2.0)
             progress_thread.join(timeout=2.0)
+            for pipe in (proc.stdout, proc.stderr):
+                if pipe is not None:
+                    try:
+                        pipe.close()
+                    except OSError:
+                        pass
             stderr = stderr_chunks[0] if stderr_chunks else b""
 
             if proc.returncode == 0:

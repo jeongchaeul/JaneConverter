@@ -302,6 +302,8 @@ def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
             f"janeconverter-{latest_version}-windows-x64-setup.exe",
             "janeconverter-setup.exe",
         }
+    checksum_by_name: dict[str, str] = {}
+    matched_installer_name = ""
     for asset in assets:
         if not isinstance(asset, dict):
             continue
@@ -309,8 +311,13 @@ def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
         asset_url = _trusted_release_url(asset.get("browser_download_url"))
         if asset_name in candidate_names:
             installer_url = asset_url
+            matched_installer_name = asset_name
         elif any(asset_name == f"{name}.sha256" for name in candidate_names):
-            installer_checksum_url = asset_url
+            checksum_by_name[asset_name] = asset_url
+    if matched_installer_name and f"{matched_installer_name}.sha256" in checksum_by_name:
+        installer_checksum_url = checksum_by_name[f"{matched_installer_name}.sha256"]
+    elif checksum_by_name:
+        installer_checksum_url = next(iter(checksum_by_name.values()))
 
     release_url = _trusted_release_url(release.get("html_url"))
     release_body = str(release.get("body", "") or "").strip()

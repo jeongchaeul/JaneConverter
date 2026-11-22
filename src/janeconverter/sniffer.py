@@ -358,6 +358,40 @@ def _find_in_hydration_json(html_text: str, base_url: str) -> Optional[Tuple[str
     return None
 
 
+def _read_bounded_text(resp: Any, max_bytes: int = 10 * 1024 * 1024) -> Optional[str]:
+    """Read an HTTP text/HTML response safely with a strict byte ceiling."""
+    try:
+        headers = getattr(resp, "headers", None)
+        raw_ct = headers.get("content-type", "") if hasattr(headers, "get") else ""
+        content_type = raw_ct.lower() if isinstance(raw_ct, str) else ""
+        if content_type and not any(
+            token in content_type for token in ("text/", "html", "xml", "json", "javascript", "xhtml")
+        ):
+            return None
+        if isinstance(resp, requests.Response):
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in resp.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                remaining = max_bytes - total
+                if remaining <= 0:
+                    break
+                chunks.append(chunk[:remaining])
+                total += min(len(chunk), remaining)
+                if total >= max_bytes:
+                    break
+            raw = b"".join(chunks)
+            encoding = resp.encoding or "utf-8"
+            return raw.decode(encoding, errors="replace")
+        text = getattr(resp, "text", "")
+        return text[:max_bytes] if isinstance(text, str) else None
+    finally:
+        close_fn = getattr(resp, "close", None)
+        if callable(close_fn):
+            close_fn()
+
+
 def sniff_webpage(
     url: str,
     timeout: float = 12.0,
@@ -375,11 +409,16 @@ def sniff_webpage(
 
     with requests.Session() as session:
         try:
-            resp = _safe_http_get(url, headers=_DEFAULT_HEADERS, timeout=timeout, session=session)
+            resp = _safe_http_get(url, headers=_DEFAULT_HEADERS, stream=True, timeout=timeout, session=session)
             if resp.status_code >= 400:
+                close_fn = getattr(resp, "close", None)
+                if callable(close_fn):
+                    close_fn()
                 return None
-            html_content = resp.text
             effective_url = resp.url if isinstance(getattr(resp, "url", None), str) and resp.url else url
+            html_content = _read_bounded_text(resp)
+            if not html_content:
+                return None
         except Exception:
             return None
 
@@ -447,11 +486,14 @@ def sniff_webpage(
                 iframe_resp = _safe_http_get(
                     resolved_iframe,
                     headers={"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": effective_url},
+                    stream=True,
                     timeout=8.0,
                     session=session,
                 )
                 if iframe_resp.status_code < 400:
-                    nested_stream = _find_stream_in_html(iframe_resp.text, iframe_resp.url)
+                    iframe_url = iframe_resp.url if isinstance(getattr(iframe_resp, "url", None), str) and iframe_resp.url else resolved_iframe
+                    iframe_html = _read_bounded_text(iframe_resp) or ""
+                    nested_stream = _find_stream_in_html(iframe_html, iframe_url)
                     if nested_stream:
                         ext = "mpd" if ".mpd" in nested_stream.lower() else "m3u8"
                         return SniffedAsset(
@@ -463,7 +505,7 @@ def sniff_webpage(
                             headers={"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": resolved_iframe},
                             thumbnail_url=thumb_url,
                         )
-                    nested_model = _find_model_in_html(iframe_resp.text, iframe_resp.url)
+                    nested_model = _find_model_in_html(iframe_html, iframe_url)
                     if nested_model:
                         m_url, m_ext = nested_model
                         return SniffedAsset(
@@ -475,6 +517,10 @@ def sniff_webpage(
                             headers={"User-Agent": _DEFAULT_HEADERS["User-Agent"], "Referer": resolved_iframe},
                             thumbnail_url=thumb_url,
                         )
+                else:
+                    close_fn = getattr(iframe_resp, "close", None)
+                    if callable(close_fn):
+                        close_fn()
             except Exception:
                 continue
 
@@ -589,12 +635,17 @@ def download_sniffed_asset(
             # Try yt-dlp fallback for streams with complex authentication
             report(0.60, "FFmpeg direct remux failed; engaging multi-threaded stream pipeline...")
             import yt_dlp
+            def _abort_hook(_d):
+                if abort_event and abort_event.is_set():
+                    raise KeyboardInterrupt("Stream download aborted by user.")
+
             ydl_opts = {
                 "format": "bestvideo+bestaudio/best",
                 "outtmpl": os.path.join(output_dir, f"{safe_stem}.%(ext)s"),
                 "http_headers": safe_headers,
                 "quiet": True,
                 "no_warnings": True,
+                "progress_hooks": [_abort_hook],
                 "external_downloader_args": {"ffmpeg_i": ["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS]},
                 "postprocessor_args": {"ffmpeg": ["-protocol_whitelist", SAFE_FFMPEG_PROTOCOLS]},
             }
@@ -637,14 +688,17 @@ def download_sniffed_asset(
         except (ValueError, TypeError):
             total = 0
         downloaded = 0
+        max_download_bytes = 2 * 1024 * 1024 * 1024
         try:
             with open(dest_file, "wb") as f:
                 for chunk in resp.iter_content(chunk_size=64 * 1024):
                     if abort_event and abort_event.is_set():
                         raise KeyboardInterrupt(f"{'3D model' if is_model else 'Media'} download cancelled.")
                     if chunk:
-                        f.write(chunk)
                         downloaded += len(chunk)
+                        if downloaded > max_download_bytes:
+                            raise RuntimeError("Sniffed media download exceeds the 2 GB size limit.")
+                        f.write(chunk)
                         if total > 0:
                             report(0.40 + 0.45 * (downloaded / total), f"Downloaded {downloaded // 1024} KB of {total // 1024} KB...")
         except BaseException:

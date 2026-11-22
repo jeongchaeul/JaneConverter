@@ -286,33 +286,37 @@ async function uploadSessionResponse(bridge, payload, response, mimeType, expect
     if (!reader) throw new Error("The signed-in browser response contained no media bytes.");
     let offset = 0;
     let nextDiagnosticAt = 8 * 1024 * 1024;
-    while (true) {
-      if (Date.now() >= deadline) { await reader.cancel(); throw new Error("Browser capture deadline reached."); }
-      const read = await reader.read();
-      if (read.done) break;
-      for (let index = 0; index < read.value.byteLength; index += MAX_CHUNK_BYTES) {
-        const chunkData = read.value.subarray(index, Math.min(index + MAX_CHUNK_BYTES, read.value.byteLength));
-        if (!chunkData.byteLength || offset + chunkData.byteLength > MAX_SESSION_FETCH_BYTES) {
-          throw new Error("The authenticated media response exceeded JaneConverter's 1 GB capture limit.");
-        }
-        const chunk = await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/capture/chunk"), {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/octet-stream",
-            "X-JaneConverter-Bridge": bridge.challenge.bridgeToken,
-            "X-JaneConverter-Capture-Id": captureId,
-            "X-JaneConverter-Capture-Offset": String(offset)
-          },
-          body: chunkData
-        }, deadline);
-        const chunkResult = await readJson(chunk);
-        if (!chunk.ok) throw new Error(chunkResult.error || "JaneConverter rejected part of the media capture.");
-        offset += chunkData.byteLength;
-        if (offset >= nextDiagnosticAt) {
-          await sendDiagnostic(bridge, "upload_progress", { bytes: offset });
-          nextDiagnosticAt += 8 * 1024 * 1024;
+    try {
+      while (true) {
+        if (Date.now() >= deadline) { await reader.cancel(); throw new Error("Browser capture deadline reached."); }
+        const read = await reader.read();
+        if (read.done) break;
+        for (let index = 0; index < read.value.byteLength; index += MAX_CHUNK_BYTES) {
+          const chunkData = read.value.subarray(index, Math.min(index + MAX_CHUNK_BYTES, read.value.byteLength));
+          if (!chunkData.byteLength || offset + chunkData.byteLength > MAX_SESSION_FETCH_BYTES) {
+            throw new Error("The authenticated media response exceeded JaneConverter's 1 GB capture limit.");
+          }
+          const chunk = await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/capture/chunk"), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/octet-stream",
+              "X-JaneConverter-Bridge": bridge.challenge.bridgeToken,
+              "X-JaneConverter-Capture-Id": captureId,
+              "X-JaneConverter-Capture-Offset": String(offset)
+            },
+            body: chunkData
+          }, deadline);
+          const chunkResult = await readJson(chunk);
+          if (!chunk.ok) throw new Error(chunkResult.error || "JaneConverter rejected part of the media capture.");
+          offset += chunkData.byteLength;
+          if (offset >= nextDiagnosticAt) {
+            await sendDiagnostic(bridge, "upload_progress", { bytes: offset });
+            nextDiagnosticAt += 8 * 1024 * 1024;
+          }
         }
       }
+    } finally {
+      void reader.cancel().catch(function () {});
     }
     if (!offset) throw new Error("The signed-in browser response contained no media bytes.");
     const finish = await bridgeRequest(accessEndpoint(bridge.tab, "/bridge/capture/finish"), {

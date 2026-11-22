@@ -281,19 +281,37 @@ pub fn bring_active_window_to_top() {
 pub fn acquire_instance_slot() -> Option<InstanceGuard> {
     #[cfg(windows)]
     {
+        let is_relaunch = std::env::var_os("JANECONVERTER_RELAUNCH").is_some();
+        if is_relaunch {
+            std::env::remove_var("JANECONVERTER_RELAUNCH");
+        }
+
         // 1. Acquire coordination lock with a 3-second timeout to prevent race conditions.
         let _coord = acquire_coord(COORD_MUTEX_NAME, 3000)?;
+
+        if is_relaunch {
+            if let Some(guard) = try_claim_free_slot_custom(SLOT_MUTEX_PREFIX, MAX_INSTANCES) {
+                return Some(guard);
+            }
+            drop(_coord);
+            for _ in 0..20 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                if let Some(_retry_coord) = acquire_coord(COORD_MUTEX_NAME, 500) {
+                    if let Some(guard) =
+                        try_claim_free_slot_custom(SLOT_MUTEX_PREFIX, MAX_INSTANCES)
+                    {
+                        return Some(guard);
+                    }
+                }
+            }
+            return None;
+        }
 
         // 2. Query how many instance slots are currently active.
         let active_count = get_active_slot_count_custom(SLOT_MUTEX_PREFIX, MAX_INSTANCES);
 
         // Case 1: First instance (0 running) -> launch immediately without prompting.
         if active_count == 0 {
-            return try_claim_free_slot_custom(SLOT_MUTEX_PREFIX, MAX_INSTANCES);
-        }
-
-        if std::env::var_os("JANECONVERTER_RELAUNCH").is_some() {
-            std::env::remove_var("JANECONVERTER_RELAUNCH");
             return try_claim_free_slot_custom(SLOT_MUTEX_PREFIX, MAX_INSTANCES);
         }
 
@@ -362,6 +380,11 @@ fn get_unix_instances_dir() -> std::path::PathBuf {
 
 #[cfg(not(windows))]
 fn acquire_instance_slot_unix() -> Option<InstanceGuard> {
+    let is_relaunch = std::env::var_os("JANECONVERTER_RELAUNCH").is_some();
+    if is_relaunch {
+        std::env::remove_var("JANECONVERTER_RELAUNCH");
+    }
+
     let dir = get_unix_instances_dir();
     let _ = fs::create_dir_all(&dir);
 
@@ -372,6 +395,30 @@ fn acquire_instance_slot_unix() -> Option<InstanceGuard> {
         if flock(coord_fd, LOCK_EX) != 0 {
             return None;
         }
+    }
+
+    if is_relaunch {
+        if let Some(guard) = try_claim_free_slot_unix(&dir) {
+            return Some(guard);
+        }
+        unsafe {
+            flock(coord_fd, LOCK_UN);
+        }
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            unsafe {
+                if flock(coord_fd, LOCK_EX) != 0 {
+                    continue;
+                }
+            }
+            if let Some(guard) = try_claim_free_slot_unix(&dir) {
+                return Some(guard);
+            }
+            unsafe {
+                flock(coord_fd, LOCK_UN);
+            }
+        }
+        return None;
     }
 
     // Count active slots
@@ -392,11 +439,6 @@ fn acquire_instance_slot_unix() -> Option<InstanceGuard> {
     }
 
     if active_count == 0 {
-        return try_claim_free_slot_unix(&dir);
-    }
-
-    if std::env::var_os("JANECONVERTER_RELAUNCH").is_some() {
-        std::env::remove_var("JANECONVERTER_RELAUNCH");
         return try_claim_free_slot_unix(&dir);
     }
 

@@ -8,6 +8,7 @@
   const albumSetKey = "janeFacebookAlbumSet";
   const scannedIdsKey = "janeFacebookScannedPhotoIds";
   const pendingRefreshKey = "janeFacebookPendingRenditionRefresh";
+  const pendingRefreshAttemptsKey = "janeFacebookPendingRefreshAttempts";
   const refreshFunctionKey = "__JANE_FACEBOOK_REFRESH__" + nonce;
   const attemptsKey = "janeFacebookCaptureAttempts";
   const startedAtKey = "janeFacebookCaptureStartedAt";
@@ -55,6 +56,8 @@
   let pending = [];
   let nextSequence = 0;
   let awaitingSequence = 0;
+  let inFlightPayload = null;
+  let inFlightTicks = 0;
   let endConfirmed = false;
   let lastRelevantMutationAt = Date.now();
   let scheduledScan = 0;
@@ -68,14 +71,17 @@
     for (const byte of bytes) binary += String.fromCharCode(byte);
     document.title = prefix + btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
   };
+  const isRefreshableAlbumSet = (value) =>
+    !value || value.startsWith("pcb.") || value.startsWith("a.") || value.startsWith("pb.") || value.startsWith("gm.");
   window[refreshFunctionKey] = (requestId, photoId) => {
     if (!/^[a-f0-9]{32}$/i.test(requestId || "") || !/^[0-9]{5,30}$/.test(photoId || "")) return false;
     const albumSet = sessionStorage.getItem(albumSetKey) || new URL(location.href).searchParams.get("set") || "";
-    if (!albumSet.startsWith("pcb.") && !albumSet.startsWith("a.") && !albumSet.startsWith("pb.")) return false;
+    if (!isRefreshableAlbumSet(albumSet)) return false;
     sessionStorage.setItem(pendingRefreshKey, JSON.stringify({requestId,photoId}));
+    sessionStorage.setItem(pendingRefreshAttemptsKey, "0");
     const target = new URL("/photo/", location.href);
     target.searchParams.set("fbid", photoId);
-    target.searchParams.set("set", albumSet);
+    if (albumSet) target.searchParams.set("set", albumSet);
     location.replace(target.href);
     return true;
   };
@@ -383,21 +389,23 @@
   };
   const findScriptViewerPhoto = (expectedId) => {
     if (!/^[0-9]{5,30}$/.test(expectedId || "")) return null;
+    const idRe = new RegExp(`"(?:id|photo_id|fbid)"\\s*:\\s*"${expectedId}"`, "g");
     for (const script of document.scripts) {
       const text = script.textContent || "";
       if (!text.includes(expectedId)) continue;
-      const idMatch = new RegExp(`"(?:id|photo_id|fbid)"\\s*:\\s*"${expectedId}"`).exec(text);
-      if (!idMatch) continue;
-      const idIdx = idMatch.index;
-      const window = text.slice(Math.max(0, idIdx - 200), Math.min(text.length, idIdx + 1500));
-      const uriMatch = /"(?:viewer_image|image|photo_image)"\s*:\s*\{[^}]*?"uri"\s*:\s*"([^"]+)"/.exec(window);
-      const widthMatch = /"width"\s*:\s*(\d+)/.exec(window);
-      if (uriMatch) {
-        let decodedUrl = uriMatch[1].replace(/\\u0025/g, "%").replace(/\\u0026/g, "&").replace(/\\\//g, "/");
-        if (isCdn(decodedUrl)) {
-          const fullUrl = cleanFbUrl(decodedUrl);
-          const alts = fullUrl !== decodedUrl ? [decodedUrl] : [];
-          return {id: expectedId, url: fullUrl, width: Number(widthMatch ? widthMatch[1] : "1080") || 1080, alternates: alts};
+      for (const idMatch of text.matchAll(idRe)) {
+        const idIdx = idMatch.index;
+        if (typeof idIdx !== "number") continue;
+        const window = text.slice(Math.max(0, idIdx - 200), Math.min(text.length, idIdx + 1500));
+        const uriMatch = /"(?:viewer_image|image|photo_image)"\s*:\s*\{[^}]*?"uri"\s*:\s*"([^"]+)"/.exec(window);
+        const widthMatch = /"width"\s*:\s*(\d+)/.exec(window);
+        if (uriMatch) {
+          let decodedUrl = uriMatch[1].replace(/\\u0025/g, "%").replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+          if (isCdn(decodedUrl)) {
+            const fullUrl = cleanFbUrl(decodedUrl);
+            const alts = fullUrl !== decodedUrl ? [decodedUrl] : [];
+            return {id: expectedId, url: fullUrl, width: Number(widthMatch ? widthMatch[1] : "1080") || 1080, alternates: alts};
+          }
         }
       }
     }
@@ -610,23 +618,33 @@
         return;
       }
       const page = new URL(location.href);
+      const refreshAttempts = (Number(sessionStorage.getItem(pendingRefreshAttemptsKey)) || 0) + 1;
+      if (page.pathname.toLowerCase().includes("/login") || refreshAttempts > 30) {
+        sessionStorage.removeItem(pendingRefreshKey);
+        sessionStorage.removeItem(pendingRefreshAttemptsKey);
+        send({kind:"refresh",requestId:refresh.requestId,photos:[]});
+        return;
+      }
+      sessionStorage.setItem(pendingRefreshAttemptsKey, String(refreshAttempts));
       if (!page.pathname.toLowerCase().includes("/photo")
         || page.searchParams.get("fbid") !== refresh.photoId) {
         const albumSet = sessionStorage.getItem(albumSetKey) || page.searchParams.get("set") || "";
-        if (!(albumSet.startsWith("pcb.") || albumSet.startsWith("a.") || albumSet.startsWith("pb."))) {
+        if (!isRefreshableAlbumSet(albumSet)) {
           sessionStorage.removeItem(pendingRefreshKey);
+          sessionStorage.removeItem(pendingRefreshAttemptsKey);
           send({kind:"refresh",requestId:refresh.requestId,photos:[]});
           return;
         }
         const target = new URL("/photo/", location.href);
         target.searchParams.set("fbid", refresh.photoId);
-        target.searchParams.set("set", albumSet);
+        if (albumSet) target.searchParams.set("set", albumSet);
         location.replace(target.href);
         return;
       }
       const refreshedPhoto = findCurrentViewerPhoto();
       if (refreshedPhoto && refreshedPhoto.id === refresh.photoId) {
         sessionStorage.removeItem(pendingRefreshKey);
+        sessionStorage.removeItem(pendingRefreshAttemptsKey);
         finished = true;
         send({kind:"refresh",requestId:refresh.requestId,photos:[refreshedPhoto]});
         return;
@@ -637,7 +655,16 @@
     if (finished) return;
     attempts += 1;
     sessionStorage.setItem(attemptsKey, String(attempts));
-    if (awaitingSequence && window[ackKey] === awaitingSequence) awaitingSequence = 0;
+    if (awaitingSequence && window[ackKey] === awaitingSequence) {
+      awaitingSequence = 0;
+      inFlightPayload = null;
+      inFlightTicks = 0;
+    } else if (awaitingSequence && inFlightPayload) {
+      inFlightTicks += 1;
+      if (inFlightTicks % 3 === 0) {
+        send({ ...inFlightPayload, retry: Math.floor(inFlightTicks / 3) });
+      }
+    }
     closeGuestPrompt();
     let captureMode = sessionStorage.getItem(captureModeKey) || "";
     if (captureMode !== "viewer" || !expectedCount) {
@@ -694,7 +721,7 @@
       }
       if (location.pathname.toLowerCase().includes("/photo")) {
         const currentSet = new URL(location.href).searchParams.get("set") || findAlbumSet() || "";
-        if (currentSet.startsWith("pcb.") || currentSet.startsWith("a.") || currentSet.startsWith("pb.")) {
+        if (currentSet && isRefreshableAlbumSet(currentSet)) {
           sessionStorage.setItem(albumSetKey, currentSet);
         }
         sessionStorage.setItem(captureModeKey, "viewer");
@@ -707,7 +734,7 @@
       if (startPhoto && (startPhoto.needsDirectNavigation || hasVisiblePublicPhoto())) {
         const photoUrl = new URL(startPhoto.url);
         const albumSet = photoUrl.searchParams.get("set") || "";
-        if (albumSet.startsWith("pcb.") || albumSet.startsWith("a.") || albumSet.startsWith("pb.")) sessionStorage.setItem(albumSetKey, albumSet);
+        if (albumSet && isRefreshableAlbumSet(albumSet)) sessionStorage.setItem(albumSetKey, albumSet);
         sessionStorage.setItem(captureModeKey, "viewer");
         sessionStorage.setItem(scannedIdsKey, JSON.stringify(Array.from(scanned)));
         if (expectedCount) sessionStorage.setItem(expectedCountKey, String(expectedCount));
@@ -808,7 +835,9 @@
         previousCount = scanned.size;
         if (pending.length && awaitingSequence === 0) {
           awaitingSequence = ++nextSequence;
-          send({kind:"photos",sequence:awaitingSequence,photos:pending.splice(0,1),title});
+          inFlightPayload = {kind:"photos",sequence:awaitingSequence,photos:pending.splice(0,1),title};
+          inFlightTicks = 0;
+          send(inFlightPayload);
         }
         if (pending.length === 0 && awaitingSequence === 0) {
           if (wrappedAround && scanned.size >= 1) {
@@ -885,7 +914,9 @@
       if (scanned.size) sessionStorage.setItem(scannedIdsKey, JSON.stringify(Array.from(scanned)));
       if (pending.length && awaitingSequence === 0) {
         awaitingSequence = ++nextSequence;
-        send({kind:"photos",sequence:awaitingSequence,photos:pending.splice(0,2),title});
+        inFlightPayload = {kind:"photos",sequence:awaitingSequence,photos:pending.splice(0,2),title};
+        inFlightTicks = 0;
+        send(inFlightPayload);
       }
       const scroller = findAlbumScroller();
       const isDocumentScroller = scroller === document.scrollingElement || scroller === document.documentElement;

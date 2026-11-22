@@ -31,7 +31,9 @@ export function PlaylistDialog({
   const [query, setQuery] = useState("");
   const [selectedPresetId, setSelectedPresetId] = useState<string>("current");
   const [itemPresets, setItemPresets] = useState<Record<number, string>>({});
-  const isStory = /story|stories|instagram|facebook/i.test(catalog.title) || catalog.items.some((item) => /story/i.test(item.title));
+  const isStory =
+    /^story by\b|\bstories\b|instagram|facebook/i.test(catalog.title) ||
+    catalog.items.some((item) => /^story\s+\d+$/i.test(item.title.trim()) || /\/stories\//i.test(item.url || ""));
   const [selected, setSelected] = useState<Set<number>>(() => {
     if (initialIndexes && initialIndexes.trim()) {
       const idxs = initialIndexes

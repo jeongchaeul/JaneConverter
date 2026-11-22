@@ -222,10 +222,10 @@ pub fn scan_fetched_media(root: &Path) -> Vec<FetchedMedia> {
     if let Ok(mut saved) = crate::catalog::captures(&root.join("capture-catalog.json")) {
         let before_count = saved.len();
         saved.retain(|record| {
-            Path::new(&record.path).exists()
-                || root
-                    .join(Path::new(&record.path).file_name().unwrap_or_default())
-                    .exists()
+            Path::new(&record.path).is_file()
+                || Path::new(&record.path)
+                    .file_name()
+                    .is_some_and(|name| root.join(name).is_file())
         });
         if saved.len() != before_count {
             let _ = crate::catalog::save_captures(&root.join("capture-catalog.json"), &saved);
@@ -831,7 +831,7 @@ fn handle_connection(mut stream: TcpStream, token: &str, state: &ServeState) {
         if let Ok(mut value) = browser.lock() {
             *value = Some(label.clone());
         }
-        confirmed.store(true, Ordering::Relaxed);
+        confirmed.store(true, Ordering::Release);
         send_html(&mut stream, 200, "OK", &access_page("Access confirmed", &format!("<p>Browser detected: <strong>{}</strong>.</p><p>Return to JaneConverter, open the Browser Capture extension, and choose <strong>Capture current media</strong> or <strong>Capture story sequence</strong>.</p><p class=\"note\">Only selected media bytes are sent to this app. No password, cookie, cache, or browser profile data is read or uploaded.</p>", html_escape(&label))));
         return;
     }
@@ -848,7 +848,7 @@ fn handle_connection(mut stream: TcpStream, token: &str, state: &ServeState) {
                 return;
             }
         };
-        if !confirmed.load(Ordering::Relaxed) {
+        if !confirmed.load(Ordering::Acquire) {
             send_json_cors_or_plain(
                 &mut stream,
                 409,
@@ -1170,6 +1170,7 @@ fn handle_connection(mut stream: TcpStream, token: &str, state: &ServeState) {
             return;
         }
         current.bytes_written = next_size;
+        current.started_at = Instant::now();
         send_json_cors_or_plain(
             &mut stream,
             200,
@@ -1327,6 +1328,33 @@ fn handle_connection(mut stream: TcpStream, token: &str, state: &ServeState) {
                 .unwrap_or_default()
                 .as_secs(),
         };
+        {
+            let state = match capture_state.lock() {
+                Ok(state) => state,
+                Err(_) => {
+                    send_json_cors_or_plain(
+                        &mut stream,
+                        500,
+                        "Internal Server Error",
+                        origin.as_deref(),
+                        &json!({"error": "The capture registry is unavailable."}).to_string(),
+                    );
+                    return;
+                }
+            };
+            if state.paths.len() >= MAX_CAPTURE_ITEMS {
+                drop(state);
+                let _ = fs::remove_file(&path);
+                send_json_cors_or_plain(
+                    &mut stream,
+                    409,
+                    "Conflict",
+                    origin.as_deref(),
+                    &json!({"error": "The browser capture session is full."}).to_string(),
+                );
+                return;
+            }
+        }
         if let Err(error) =
             crate::catalog::capture(&capture_root.join("capture-catalog.json"), record.clone())
         {
@@ -1357,6 +1385,10 @@ fn handle_connection(mut stream: TcpStream, token: &str, state: &ServeState) {
         if state.paths.len() >= MAX_CAPTURE_ITEMS {
             drop(state);
             let _ = fs::remove_file(&path);
+            let _ = crate::catalog::remove_capture(
+                &capture_root.join("capture-catalog.json"),
+                Path::new(&record.path),
+            );
             send_json_cors_or_plain(
                 &mut stream,
                 409,

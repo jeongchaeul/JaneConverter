@@ -234,4 +234,27 @@ describe("PlaylistDialog", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("does not misclassify music albums containing tracks with 'Story' in the title as ephemeral stories", async () => {
+    const musicCatalog: PlaylistCatalog = {
+      title: "Fearless (Taylor's Version)",
+      items: [
+        { index: 1, title: "Love Story", artist: "Taylor Swift", duration: "3:55", url: "https://example.test/m1" },
+        { index: 2, title: "Fifteen", artist: "Taylor Swift", duration: "4:54", url: "https://example.test/m2" },
+      ],
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<PlaylistDialog catalog={musicCatalog} onClose={vi.fn()} onConfirm={vi.fn()} />);
+    });
+
+    expect(container.textContent).not.toContain("Convert selected stories");
+    expect(container.textContent).toContain("2 of 2 tracks selected");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });

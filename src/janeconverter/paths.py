@@ -53,17 +53,17 @@ def sanitize_filename(filename: str) -> str:
     # Separate stem and extension
     stem, ext = os.path.splitext(filename)
 
-    # Replace forbidden Windows characters: < > : " / \ | ? * and control chars (0-31)
-    stem = re.sub(r'[\x00-\x1f<>:"/\\|?*]', '_', stem)
-    ext = re.sub(r'[\x00-\x1f<>:"/\\|?*]', '_', ext)
+    # Replace forbidden Windows characters: < > : " / \ | ? * and ASCII/C1 controls
+    stem = re.sub(r'[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069<>:"/\\|?*]', '_', stem)
+    ext = re.sub(r'[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069<>:"/\\|?*]', '_', ext)
 
     # Strip trailing periods and whitespace from stem (Windows filesystem limitation)
     stem = stem.rstrip(". ").lstrip()
     if not stem:
         stem = "media"
 
-    # Check for Windows reserved device names (e.g. aux.mp3, con.mp4, com1.wav)
-    if stem.upper() in WINDOWS_RESERVED_NAMES:
+    # Check for Windows reserved device names (e.g. aux.mp3, con.tar.mp3, com1.wav)
+    if stem.upper().split(".")[0] in WINDOWS_RESERVED_NAMES:
         stem = f"_{stem}"
 
     # Limit stem length to 180 UTF-8 bytes so multi-byte scripts stay under 255-byte filesystem caps
@@ -88,14 +88,16 @@ def clean_windows_path(path: str) -> str:
 
 def ensure_extended_length_path(path: str) -> str:
     """
-    On Windows, converts absolute paths longer than 240 chars to the Win32 extended-length
+    On Windows, converts paths whose absolute form is 240+ chars to the Win32 extended-length
     syntax to bypass MAX_PATH (260 character) limits.
     """
     prefix = "\\\\?\\"
     unc_prefix = "\\\\?\\UNC\\"
-    if os.name == "nt" and isinstance(path, str):
-        norm = os.path.normpath(path)
-        if len(norm) >= 240 and not norm.startswith(prefix):
+    if os.name == "nt" and isinstance(path, str) and path:
+        if path.startswith(prefix):
+            return path
+        norm = os.path.normpath(os.path.abspath(path))
+        if len(norm) >= 240:
             if norm.startswith("\\\\"):
                 return unc_prefix + norm[2:]
             if len(norm) >= 2 and norm[1] == ":" and norm[0].isalpha():

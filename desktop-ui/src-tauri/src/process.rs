@@ -584,6 +584,7 @@ pub fn build_conversion_args_with_capture(
         return Err("Unsupported sample rate.".into());
     }
     for (label, value) in [
+        ("output folder", request.output_dir.trim()),
         ("format", request.format.trim()),
         ("bitrate", request.bitrate.trim()),
         ("resolution", request.resolution.trim()),
@@ -1032,6 +1033,11 @@ pub fn bounded_output(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     prepare_command(command);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not start operation: {error}"))?;

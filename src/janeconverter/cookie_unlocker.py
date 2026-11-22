@@ -11,7 +11,7 @@ import os
 import shutil
 import sqlite3
 import threading
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from .paths import clean_windows_path as clean_nt_path
 
@@ -112,7 +112,34 @@ def is_safe_candidate_handle_entry(
     """Return True if a kernel handle table entry is safe to duplicate and inspect."""
     if file_object_type_index is not None and object_type_index != file_object_type_index:
         return False
+    # Disk handles readable by SQLite always include FILE_READ_DATA (0x0001).
+    if granted_access and not (granted_access & 0x0001):
+        return False
     return True
+
+
+def _query_disk_handle_path(target_handle: Any, timeout_sec: float = 0.1) -> tuple[bool, str]:
+    """Query file type and final NT path on a bounded daemon thread to prevent Win32 pipe deadlocks."""
+    FILE_TYPE_DISK = 1
+    result: list[tuple[bool, str]] = []
+
+    def _probe():
+        try:
+            if kernel32.GetFileType(target_handle) != FILE_TYPE_DISK:
+                result.append((False, ""))
+                return
+            path_buf = ctypes.create_unicode_buffer(1024)
+            plen = kernel32.GetFinalPathNameByHandleW(target_handle, path_buf, 1024, 0)
+            result.append((True, path_buf.value if plen > 0 else ""))
+        except Exception:
+            result.append((False, ""))
+
+    worker = threading.Thread(target=_probe, daemon=True)
+    worker.start()
+    worker.join(timeout=timeout_sec)
+    if worker.is_alive() or not result:
+        return False, ""
+    return result[0]
 
 
 def get_locking_pids(file_path: str) -> List[int]:
@@ -224,7 +251,6 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
 
         PROCESS_DUP_HANDLE = 0x0040
         DUPLICATE_SAME_ACCESS = 0x0002
-        FILE_TYPE_DISK = 1
         FILE_BEGIN = 0
         FILE_CURRENT = 1
 
@@ -266,13 +292,12 @@ def snapshot_file_via_handle_duplication(file_path: str, dst_path: str) -> bool:
                     )
                     if ok and target_handle.value:
                         try:
-                            if kernel32.GetFileType(target_handle) == FILE_TYPE_DISK:
+                            is_disk, raw_nt_path = _query_disk_handle_path(target_handle)
+                            if is_disk:
                                 if file_object_type_index is None:
                                     file_object_type_index = obj_type_idx
-                                path_buf = ctypes.create_unicode_buffer(1024)
-                                plen = kernel32.GetFinalPathNameByHandleW(target_handle, path_buf, 1024, 0)
-                                if plen > 0:
-                                    clean = clean_nt_path(path_buf.value)
+                                if raw_nt_path:
+                                    clean = clean_nt_path(raw_nt_path)
                                     if os.path.normcase(clean) == norm_target:
                                         # Save original 64-bit file position to leave handle untouched
                                         orig_pos = wintypes.LARGE_INTEGER(0)

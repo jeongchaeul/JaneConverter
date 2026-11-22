@@ -185,54 +185,53 @@ def downgrade_flp_bytes(
                 data[:c7_pos] + new_c7_event + data[c7_pos + len(old_c7_match):]
             )
 
-    # 2. Patch Event 0x9F (FLBuild DWORD)
+    # 2. Patch Event 0x9F (FLBuild DWORD) via event-aligned traversal first, falling back to raw scan
     new_build_payload = b"\x9f" + struct.pack("<I", target_b_int)
     patched_9f = False
 
-    if source_build > 0:
+    from .parser import parse_varint as _parse_varint
+
+    cur_fldt_idx = data.find(b"FLdt", 8 + flhd_len)
+    if cur_fldt_idx == -1:
+        cur_fldt_idx = data.find(b"FLdt")
+    if cur_fldt_idx != -1 and cur_fldt_idx + 8 < len(data):
+        scan_stream = io.BytesIO(data[cur_fldt_idx + 8 : min(len(data), cur_fldt_idx + 4096)])
+        try:
+            for _ in range(64):
+                ev_pos = cur_fldt_idx + 8 + scan_stream.tell()
+                ev_raw = scan_stream.read(1)
+                if not ev_raw:
+                    break
+                ev_id = ev_raw[0]
+                if ev_id < 64:
+                    if len(scan_stream.read(1)) < 1:
+                        break
+                elif ev_id < 128:
+                    if len(scan_stream.read(2)) < 2:
+                        break
+                elif ev_id < 192:
+                    payload4 = scan_stream.read(4)
+                    if len(payload4) < 4:
+                        break
+                    if ev_id == 0x9F:
+                        cur_val = struct.unpack("<I", payload4)[0]
+                        if 10 <= cur_val <= 99999:
+                            data[ev_pos : ev_pos + 5] = new_build_payload
+                            patched_9f = True
+                            break
+                else:
+                    vlen = _parse_varint(scan_stream)
+                    if len(scan_stream.read(vlen)) < vlen:
+                        break
+        except Exception:
+            pass
+
+    if not patched_9f and source_build > 0:
         old_build_payload = b"\x9f" + struct.pack("<I", source_build)
         pos_9f = data.find(old_build_payload)
         if pos_9f != -1 and pos_9f < 1024:
             data[pos_9f : pos_9f + len(old_build_payload)] = new_build_payload
             patched_9f = True
-
-    if not patched_9f:
-        from .parser import parse_varint as _parse_varint
-
-        cur_fldt_idx = data.find(b"FLdt", 8 + flhd_len)
-        if cur_fldt_idx == -1:
-            cur_fldt_idx = data.find(b"FLdt")
-        if cur_fldt_idx != -1 and cur_fldt_idx + 8 < len(data):
-            scan_stream = io.BytesIO(data[cur_fldt_idx + 8 : min(len(data), cur_fldt_idx + 4096)])
-            try:
-                for _ in range(64):
-                    ev_pos = cur_fldt_idx + 8 + scan_stream.tell()
-                    ev_raw = scan_stream.read(1)
-                    if not ev_raw:
-                        break
-                    ev_id = ev_raw[0]
-                    if ev_id < 64:
-                        if len(scan_stream.read(1)) < 1:
-                            break
-                    elif ev_id < 128:
-                        if len(scan_stream.read(2)) < 2:
-                            break
-                    elif ev_id < 192:
-                        payload4 = scan_stream.read(4)
-                        if len(payload4) < 4:
-                            break
-                        if ev_id == 0x9F:
-                            cur_val = struct.unpack("<I", payload4)[0]
-                            if 10 <= cur_val <= 99999:
-                                data[ev_pos : ev_pos + 5] = new_build_payload
-                                patched_9f = True
-                                break
-                    else:
-                        vlen = _parse_varint(scan_stream)
-                        if len(scan_stream.read(vlen)) < vlen:
-                            break
-            except Exception:
-                pass
 
     # 3. Patch UTF-16LE version strings in header (Events 0xC0, 0xC8, etc.)
     fl_needle = "FL Studio ".encode("utf-16le")

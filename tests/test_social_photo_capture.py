@@ -1061,3 +1061,55 @@ def test_conversion_routes_twitter_photos_to_social_downloader(tmp_path, monkeyp
     assert passed_manifest["platform"] == "twitter"
     assert len(passed_manifest["photos"]) == 2
     assert "Images" in out_folder and "Twitter" in out_folder
+
+
+def test_fetch_twitter_manifest_handles_cookiejar_without_len(monkeypatch):
+    import http.cookiejar
+    from http.cookiejar import Cookie
+    import yt_dlp
+    from janeconverter import social_photo_capture
+
+    monkeypatch.setattr(social_photo_capture, "_CACHED_TWITTER_SESSION", None)
+
+    class _NoLenCookieJar(http.cookiejar.CookieJar):
+        pass
+
+    jar = _NoLenCookieJar()
+    jar.set_cookie(
+        Cookie(
+            version=0, name="auth_token", value="tok", port=None, port_specified=False,
+            domain=".x.com", domain_specified=True, domain_initial_dot=True,
+            path="/", path_specified=True, secure=True, expires=None, discard=False,
+            comment=None, comment_url=None, rest={}, rfc2109=False,
+        )
+    )
+
+    closed = []
+
+    class _FakeYdl:
+        def __init__(self, *args, **kwargs):
+            self.cookiejar = jar
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _FakeYdl)
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("guest blocked")))
+    monkeypatch.setattr("janeconverter.auth.detect_running_browsers", lambda: ["vivaldi"])
+    monkeypatch.setattr("janeconverter.auth.get_ordered_browser_candidates", lambda **kw: ["vivaldi"])
+
+    fake_html = (
+        '<html><head><meta property="og:title" content="Protected X Photo"/></head>'
+        '<body><script>{"extended_entities":{"media":[{"media_url_https":"https://pbs.twimg.com/media/auth1.jpg","type":"photo"}]}}</script></body></html>'
+    )
+
+    class _FakeResp:
+        status_code = 200
+        text = fake_html
+
+    monkeypatch.setattr("requests.Session.get", lambda self, url, **kw: _FakeResp())
+
+    manifest = social_photo_capture.fetch_twitter_manifest("https://x.com/user/status/1234567890")
+    assert manifest is not None
+    assert len(manifest["photos"]) == 1
+    assert closed == [True]

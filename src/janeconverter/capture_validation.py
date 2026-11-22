@@ -3,6 +3,7 @@
 import json
 import math
 import os
+import struct
 import subprocess
 
 from .binaries import get_ffmpeg_binary, get_ffprobe_binary
@@ -17,10 +18,10 @@ def validate_capture(path: str, kind: str) -> dict:
             mime = Image.MIME.get(image.format, "")
             image.verify()
         with Image.open(path) as image:
-            image.load()
             width, height = image.size
-            if width < 1 or height < 1 or not mime.startswith("image/"):
+            if width < 1 or height < 1 or (width * height) > 100_000_000 or not mime.startswith("image/"):
                 raise ValueError("The capture does not contain a readable image.")
+            image.load()
         return {"mimeType": mime, "width": width, "height": height}
     if kind == "stream":
         with open(path, "rb") as f:
@@ -51,8 +52,9 @@ def validate_capture(path: str, kind: str) -> dict:
             return {"mimeType": "model/gltf+json"}
         if any(line.strip().startswith(("v ", "vn ", "vt ", "f ", "o ", "g ")) for line in text_sample.splitlines()[:16]):
             return {"mimeType": "model/obj"}
-        if size >= 32 and size % 32 == 0:
-            return {"mimeType": "application/x-gaussian-splat"}
+        if size >= 32 and size % 32 == 0 and len(magic) >= 24:
+            if all(math.isfinite(v) for v in struct.unpack("<6f", magic[:24])):
+                return {"mimeType": "application/x-gaussian-splat"}
         raise ValueError("The capture does not contain a recognized 3D model.")
     options = {"capture_output": True, "timeout": 15, "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
     probe = subprocess.run([

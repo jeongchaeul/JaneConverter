@@ -39,7 +39,7 @@
     if (!globalThis.JaneMediaUtils || !globalThis.JaneMediaUtils.isAllowedNetworkMediaUrl(pageUrl, mediaUrl)) {
       return { accepted: false, reason: "media host not approved" };
     }
-    if (response.status < 200 || response.status >= 400) {
+    if (response.status < 200 || response.status >= 300) {
       return { accepted: false, reason: "response was not successful" };
     }
     let mediaKind = globalThis.JaneMediaUtils.classify(mediaUrl, contentType);
@@ -116,7 +116,7 @@
       pageUrl: String(entry.pageUrl || ""),
       platform: String(entry.platform || ""),
       pending: new Map(),
-      attached: Boolean(entry.enabled)
+      attached: false
     };
     states.set(tabId, state);
     return state;
@@ -323,7 +323,11 @@
     void (async function () {
       const entry = await storedEntry(tabId);
       if (!entry || !entry.enabled || !tab.url) return;
-      const nextPlatform = pagePlatform(tab.url);
+      const nextPlatform = pagePlatform(tab.url) || (
+        entry.platform === "universal" && sameSite(safeHost(entry.pageUrl), safeHost(tab.url))
+          ? { id: "universal" }
+          : null
+      );
       if (!nextPlatform || nextPlatform.id !== entry.platform) {
         await detachNetworkMode(tabId, true);
         return;

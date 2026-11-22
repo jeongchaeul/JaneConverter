@@ -517,6 +517,15 @@ def _resolve_facebook_pagination_query(html: str, session: requests.Session) -> 
     ))
     for bundle_url in all_candidate_urls:
         try:
+            parsed_bundle = urllib.parse.urlparse(bundle_url)
+            bundle_host = (parsed_bundle.hostname or "").lower()
+            if parsed_bundle.scheme != "https" or not (
+                bundle_host == "fbcdn.net"
+                or bundle_host.endswith(".fbcdn.net")
+                or bundle_host == "facebook.com"
+                or bundle_host.endswith(".facebook.com")
+            ):
+                continue
             resp = session.get(bundle_url, timeout=(4, 8))
             if resp.status_code == 200:
                 for q_name in candidate_queries:
@@ -1133,12 +1142,20 @@ def fetch_facebook_manifest(
         "vivaldi", "firefox", "chrome", "edge", "brave", "opera", "chromium", "safari"
     )
 
+    def _close_session(sess: Any) -> None:
+        close_fn = getattr(sess, "close", None)
+        if callable(close_fn):
+            close_fn()
+
     if is_explicit_guest:
         guest_session = requests.Session()
-        report(0.04, "Connecting to Facebook via guest session...")
-        return _fetch_facebook_manifest_with_session(
-            guest_session, url, found_browser=None, report=report, abort_event=abort_event
-        )
+        try:
+            report(0.04, "Connecting to Facebook via guest session...")
+            return _fetch_facebook_manifest_with_session(
+                guest_session, url, found_browser=None, report=report, abort_event=abort_event
+            )
+        finally:
+            _close_session(guest_session)
 
     global _CACHED_FACEBOOK_SESSION
 
@@ -1183,12 +1200,15 @@ def fetch_facebook_manifest(
     # 4. If no browsers with auth are running, try guest path
     if not is_explicit_browser and not running:
         guest_session = requests.Session()
-        report(0.04, "Connecting to Facebook via guest session...")
-        guest_manifest = _fetch_facebook_manifest_with_session(
-            guest_session, url, found_browser=None, report=report, abort_event=abort_event
-        )
-        if guest_manifest:
-            return guest_manifest
+        try:
+            report(0.04, "Connecting to Facebook via guest session...")
+            guest_manifest = _fetch_facebook_manifest_with_session(
+                guest_session, url, found_browser=None, report=report, abort_event=abort_event
+            )
+            if guest_manifest:
+                return guest_manifest
+        finally:
+            _close_session(guest_session)
 
     scored_candidates = []
     app_bound_noted = False
@@ -1253,29 +1273,35 @@ def fetch_facebook_manifest(
         _, found_browser, jar = scored_candidates[0]
 
     session = requests.Session()
-    if jar and found_browser:
-        with _FB_SESSION_LOCK:
-            _CACHED_FACEBOOK_SESSION = {
-                "timestamp": time.time(),
-                "browser": found_browser,
-                "jar": jar,
-            }
-        report(0.06, f"Connected to Facebook session via {found_browser.title()}. Loading post...")
-        for c in jar:
-            if "facebook.com" in getattr(c, "domain", ""):
-                session.cookies.set(c.name, c.value, domain=c.domain, path=c.path)
-    else:
-        report(0.06, "Connecting to Facebook via guest session...")
+    try:
+        if jar and found_browser:
+            with _FB_SESSION_LOCK:
+                _CACHED_FACEBOOK_SESSION = {
+                    "timestamp": time.time(),
+                    "browser": found_browser,
+                    "jar": jar,
+                }
+            report(0.06, f"Connected to Facebook session via {found_browser.title()}. Loading post...")
+            for c in jar:
+                if "facebook.com" in getattr(c, "domain", ""):
+                    session.cookies.set(c.name, c.value, domain=c.domain, path=c.path)
+        else:
+            report(0.06, "Connecting to Facebook via guest session...")
 
-    manifest = _fetch_facebook_manifest_with_session(
-        session, url, found_browser=found_browser, report=report, abort_event=abort_event
-    )
+        manifest = _fetch_facebook_manifest_with_session(
+            session, url, found_browser=found_browser, report=report, abort_event=abort_event
+        )
+    finally:
+        _close_session(session)
     if not manifest and found_browser and not is_explicit_browser:
         report(0.06, f"Facebook session via {found_browser.title()} returned no media. Trying guest session...")
         guest_session = requests.Session()
-        manifest = _fetch_facebook_manifest_with_session(
-            guest_session, url, found_browser=None, report=report, abort_event=abort_event
-        )
+        try:
+            manifest = _fetch_facebook_manifest_with_session(
+                guest_session, url, found_browser=None, report=report, abort_event=abort_event
+            )
+        finally:
+            _close_session(guest_session)
     return manifest
 
 

@@ -462,7 +462,7 @@ fn strip_paren_digits(val: &str) -> String {
     val.to_string()
 }
 
-fn strip_numbered_suffix(val: &str) -> String {
+pub fn strip_numbered_suffix(val: &str) -> String {
     if let Some((stem, ext)) = val.rsplit_once('.') {
         if ext.len() <= 5 && !stem.contains('/') && !stem.contains('\\') {
             let stripped_stem = strip_paren_digits(stem);
@@ -513,6 +513,7 @@ pub(crate) fn find_file_in_dir_recursive(
     let mut subdirs = Vec::new();
     let target_clean = target_name.trim();
     let target_stripped = strip_track_prefix(target_clean);
+    let target_has_prefix = target_stripped != target_clean;
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -522,13 +523,16 @@ pub(crate) fn find_file_in_dir_recursive(
                     let name_clean = name.trim();
                     let name_stripped = strip_track_prefix(name_clean);
                     if name_clean.eq_ignore_ascii_case(target_clean)
-                        || name_stripped.eq_ignore_ascii_case(target_stripped)
-                        || name_clean
-                            .to_ascii_lowercase()
-                            .ends_with(&format!(". {}", target_clean.to_ascii_lowercase()))
-                        || name_clean
-                            .to_ascii_lowercase()
-                            .ends_with(&format!("- {}", target_clean.to_ascii_lowercase()))
+                        || (!target_has_prefix
+                            && (name_stripped.eq_ignore_ascii_case(target_stripped)
+                                || name_clean.to_ascii_lowercase().ends_with(&format!(
+                                    ". {}",
+                                    target_clean.to_ascii_lowercase()
+                                ))
+                                || name_clean.to_ascii_lowercase().ends_with(&format!(
+                                    "- {}",
+                                    target_clean.to_ascii_lowercase()
+                                ))))
                     {
                         return Some(path);
                     }
@@ -602,6 +606,7 @@ pub fn resolve_existing_path(path_str: &str) -> Option<PathBuf> {
     if let Some(fname) = target_file_name {
         let fname_clean = fname.trim();
         let fname_stripped = strip_track_prefix(fname_clean);
+        let fname_has_prefix = fname_stripped != fname_clean;
         for hist in &history_paths {
             let hist_clean = clean_windows_path(hist);
             let hist_path = PathBuf::from(&hist_clean);
@@ -611,7 +616,8 @@ pub fn resolve_existing_path(path_str: &str) -> Option<PathBuf> {
                         let h_clean = hname.trim();
                         let h_stripped = strip_track_prefix(h_clean);
                         if h_clean.eq_ignore_ascii_case(fname_clean)
-                            || h_stripped.eq_ignore_ascii_case(fname_stripped)
+                            || (!fname_has_prefix
+                                && h_stripped.eq_ignore_ascii_case(fname_stripped))
                         {
                             return Some(hist_path);
                         }

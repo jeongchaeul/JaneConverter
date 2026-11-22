@@ -717,7 +717,10 @@ def _fetch_tiktok_direct(
 
         with stream_resp:
             stream_resp.raise_for_status()
-            total_size = int(stream_resp.headers.get("content-length") or 0)
+            try:
+                total_size = int(stream_resp.headers.get("content-length") or 0)
+            except (ValueError, TypeError):
+                total_size = 0
             downloaded = 0
             with open(target_filename, "wb") as f:
                 for chunk in stream_resp.iter_content(chunk_size=65536):

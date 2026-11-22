@@ -1224,17 +1224,6 @@ def is_twitter_post_url(url: str) -> bool:
         return False
 
 
-def _extract_twitter_status_id(url: str) -> str:
-    """Extract numeric status ID from an X/Twitter URL."""
-    try:
-        raw = str(url or "").strip()
-        parsed = urllib.parse.urlparse(raw)
-        m = re.search(r"/status/(\d+)", parsed.path)
-        return m.group(1) if m else ""
-    except Exception:
-        return ""
-
-
 def _parse_twitter_html(html: str, target_url: str) -> Optional[dict[str, Any]]:
     """Extract photo metadata or video signal from rendered Twitter / X HTML."""
     if not html:
@@ -1413,13 +1402,14 @@ def fetch_twitter_manifest(
         running = detect_running_browsers()
         candidates = get_ordered_browser_candidates(preferred=browser, running=running)
         for b in candidates:
+            ydl = None
             try:
                 import yt_dlp
                 patch_yt_dlp_cookie_database_reader()
                 ydl = yt_dlp.YoutubeDL({"cookiesfrombrowser": (b, None, None, None), "quiet": True})
                 raw_jar = ydl.cookiejar
                 filtered_jar = filter_cookie_jar_for_domains(raw_jar, ["x.com", "twitter.com"])
-                if filtered_jar and len(filtered_jar) > 0:
+                if filtered_jar and len(list(filtered_jar)) > 0:
                     found_browser = b
                     jar = filtered_jar
                     with _SOCIAL_SESSION_LOCK:
@@ -1427,6 +1417,11 @@ def fetch_twitter_manifest(
                     break
             except Exception:
                 continue
+            finally:
+                if ydl is not None:
+                    close_fn = getattr(ydl, "close", None)
+                    if callable(close_fn):
+                        close_fn()
 
     if found_browser and jar:
         report(0.06, f"Connected to X/Twitter session via {found_browser.title()}. Requesting post metadata...")

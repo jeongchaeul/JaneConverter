@@ -276,7 +276,7 @@ select option:disabled {
 }
 
 [data-theme="light"] aside {
-  background: #faeef3 !important;
+  background: #faeef3;
   border-right-color: var(--accent-subtle, rgba(197, 43, 104, 0.14)) !important;
 }
 

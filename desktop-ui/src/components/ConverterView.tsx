@@ -143,8 +143,14 @@ export function ConverterView({
       : "mp4"
     : null;
 
-  const activeCategory = (capturedCategory || settings.category) === "Music" ? "Audio" : (capturedCategory || settings.category);
-  const activeFormat = capturedFormat || settings.format;
+  const captureKey = selectedCapture ? `${selectedCapture.path}:${selectedCapture.mediaKind}` : null;
+  const [userEditedCaptureKey, setUserEditedCaptureKey] = useState<string | null>(null);
+  const applyCaptureDefaults = Boolean(captureKey && userEditedCaptureKey !== captureKey && !source.trim());
+
+  const activeCategory = ((applyCaptureDefaults ? capturedCategory : null) || settings.category) === "Music"
+    ? "Audio"
+    : ((applyCaptureDefaults ? capturedCategory : null) || settings.category);
+  const activeFormat = (applyCaptureDefaults ? capturedFormat : null) || settings.format;
   const formats = useMemo(() => formatsFor(activeCategory), [activeCategory]);
   const qualities = useMemo(() => qualitiesFor(activeFormat, activeCategory), [activeFormat, activeCategory]);
   const isSourceFormat = activeFormat === "source";
@@ -158,7 +164,7 @@ export function ConverterView({
   const presetCategory = activeCategory === "Video" || activeCategory === "Image" ? activeCategory : "Audio";
   const visiblePresets = intentPresets.filter((preset) => preset.group === (presetCategory === "Audio" ? "Music" : presetCategory) || preset.group === "Other");
   const hardwareAccelerationDisabled = !isVideo || isSourceFormat || activeFormat === "gif" || (runtime !== null && runtime !== undefined && !runtime.gpuAvailable);
-  const processedEventCountRef = useRef(0);
+  const lastProcessedEventRef = useRef<ConverterEvent | null>(null);
   const lastEvent = events.length ? events[events.length - 1] : null;
 
   useEffect(() => {
@@ -169,6 +175,7 @@ export function ConverterView({
 
   useEffect(() => {
     if (!selectedCapture?.mediaKind) return;
+    setUserEditedCaptureKey(null);
     const nextCategory = selectedCapture.mediaKind === "image" ? "Image" : selectedCapture.mediaKind === "audio" ? "Audio" : "Video";
     const nextFormat = selectedCapture.mediaKind === "image" ? "jpg" : selectedCapture.mediaKind === "audio" ? "mp3" : "mp4";
     if (settings.category !== nextCategory || settings.format !== nextFormat) {
@@ -178,9 +185,19 @@ export function ConverterView({
 
   // Track finished completions and queue progress scanning all unprocessed events
   useEffect(() => {
-    if (events.length <= processedEventCountRef.current) return;
-    const unprocessed = events.slice(processedEventCountRef.current);
-    processedEventCountRef.current = events.length;
+    if (events.length === 0) {
+      lastProcessedEventRef.current = null;
+      return;
+    }
+    const lastSeen = lastProcessedEventRef.current;
+    let startIndex = 0;
+    if (lastSeen) {
+      const lastIdx = events.lastIndexOf(lastSeen);
+      if (lastIdx === events.length - 1) return;
+      startIndex = lastIdx >= 0 ? lastIdx + 1 : 0;
+    }
+    const unprocessed = events.slice(startIndex);
+    lastProcessedEventRef.current = events[events.length - 1];
 
     for (const evt of unprocessed) {
       if (evt.kind === "finished" || (evt.kind as string) === "partial") {
@@ -274,7 +291,7 @@ export function ConverterView({
     overrideSettings?: ConverterSettings
   ): Promise<boolean> {
     const trimmedSource = sourceToConvert.trim();
-    if (!trimmedSource && !access.bridgeConnected) return false;
+    if (!trimmedSource && !selectedCapture && !access.bridgeConnected) return false;
     if (trimmedSource && isEphemeralStoryUrl(trimmedSource) && !settings.allowStoryExtraction) {
       setShowStoryTermsModal(true);
       onStatus("Ephemeral story extraction requires accepting the Terms of Usage and legal compliance agreement.");
@@ -581,6 +598,9 @@ export function ConverterView({
   }
 
   const update = (patch: Partial<ConverterSettings>) => {
+    if (captureKey && ("category" in patch || "format" in patch)) {
+      setUserEditedCaptureKey(captureKey);
+    }
     presetBaselineRef.current = null;
     setSelectedPresetId(null);
     onSettings({ ...settings, ...patch });
@@ -589,7 +609,8 @@ export function ConverterView({
   function handleSourceInput(val: string) {
     setSource(val);
     const detected = detectCategoryFromPath(val);
-    if (detected && detected !== settings.category) {
+    const currentCat = settings.category === "Music" ? "Audio" : settings.category;
+    if (detected && detected !== currentCat) {
       update({ category: detected });
     }
   }
@@ -617,7 +638,7 @@ export function ConverterView({
           return;
         }
         if (paths.length > 1) {
-          const newItems = createQueueItems(paths, activeCategory);
+          const newItems = createQueueItems(paths, activeCategory, undefined, settings);
           setQueue((curr) => [...curr, ...newItems]);
           onStatus(`Added ${paths.length} items to conversion queue.`);
           return;
@@ -655,7 +676,7 @@ export function ConverterView({
     try {
       const paths = bridge.chooseFiles ? await bridge.chooseFiles() : [];
       if (!paths || paths.length === 0) return;
-      const newItems = createQueueItems(paths, activeCategory);
+      const newItems = createQueueItems(paths, activeCategory, undefined, settings);
       setQueue((curr) => [...curr, ...newItems]);
       onStatus(`Added ${paths.length} items to conversion queue.`);
     } catch (error) {
@@ -714,7 +735,7 @@ export function ConverterView({
     if (acceptedPaths.length === 1) {
       handleSingleSource(acceptedPaths[0]);
     } else {
-      const newItems = createQueueItems(acceptedPaths, activeCategory);
+      const newItems = createQueueItems(acceptedPaths, activeCategory, undefined, settings);
       setQueue((curr) => [...curr, ...newItems]);
       onStatus(`Added ${acceptedPaths.length} items to conversion queue.`);
     }
@@ -873,7 +894,7 @@ export function ConverterView({
 
   async function convert(indexes?: string, customPreset?: IntentPreset) {
     if (isOperationActive) {
-      if (!source.trim() && !access.bridgeConnected) {
+      if (!source.trim() && !selectedCapture && !access.bridgeConnected) {
         onStatus("Paste a source URL, choose a local file, or capture media in the browser first.");
         return;
       }
@@ -892,7 +913,7 @@ export function ConverterView({
       setQueueRunning(true);
       return;
     }
-    if (!source.trim() && !access.bridgeConnected) {
+    if (!source.trim() && !selectedCapture && !access.bridgeConnected) {
       onStatus("Paste a source URL, choose a local file, or capture media in the browser first.");
       return;
     }
