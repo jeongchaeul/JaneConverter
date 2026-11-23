@@ -74,6 +74,7 @@ export function ConverterView({
   accentColor = "#c52b68",
   onStatus,
   onError,
+  onNavigateToProgress,
 }: {
   accentColor?: string;
   settings: ConverterSettings;
@@ -99,6 +100,7 @@ export function ConverterView({
   onCaptureBusyChange?: (busy: boolean, cancelCapture?: (() => Promise<void>) | null) => void;
   onStatus: (message: string) => void;
   onError: (message: string) => void;
+  onNavigateToProgress?: (source?: string) => void;
 }) {
   const [source, setSource] = useState("");
   const [converterTab, setConverterTab] = useState<"media" | "flp">("media");
@@ -364,6 +366,7 @@ export function ConverterView({
       const captureId = crypto.randomUUID();
       facebookCaptureIdRef.current = captureId;
       setFacebookCaptureBusy(true);
+      onCaptureBusyChange?.(true, handleAbort);
       onStatus("Reading the public Facebook post in a hidden guest session...");
       let sessionTransferredToConversion = false;
       try {
@@ -427,6 +430,7 @@ export function ConverterView({
       const captureId = crypto.randomUUID();
       socialCaptureIdRef.current = captureId;
       setSocialCaptureBusy(true);
+      onCaptureBusyChange?.(true, handleAbort);
       const platformLabel = socialPhotoPlatformLabel(photoPlatform);
       onStatus(`Reading the public ${platformLabel} post in a hidden guest session...`);
       let sessionTransferredToConversion = false;
@@ -900,6 +904,7 @@ export function ConverterView({
       }
       addToQueue(source.trim(), indexes, undefined, customPreset);
       setQueueRunning(true);
+      onNavigateToProgress?.(source.trim() || selectedCapture?.name || "");
       return;
     }
     if (queue.length > 0 && queue.some((item) => item.status === "queued" || item.status === "converting")) {
@@ -911,12 +916,20 @@ export function ConverterView({
         );
       }
       setQueueRunning(true);
+      onNavigateToProgress?.(source.trim() || selectedCapture?.name || queue.find((it) => it.status === "queued")?.source || "");
       return;
     }
-    if (!source.trim() && !selectedCapture && !access.bridgeConnected) {
+    const trimmedSource = source.trim();
+    if (!trimmedSource && !selectedCapture && !access.bridgeConnected) {
       onStatus("Paste a source URL, choose a local file, or capture media in the browser first.");
       return;
     }
+    if (trimmedSource && isEphemeralStoryUrl(trimmedSource) && !settings.allowStoryExtraction) {
+      setShowStoryTermsModal(true);
+      onStatus("Ephemeral story extraction requires accepting the Terms of Usage and legal compliance agreement.");
+      return;
+    }
+    onNavigateToProgress?.(trimmedSource || selectedCapture?.name || "");
     await executeConversion(source, indexes, customPreset);
   }
 

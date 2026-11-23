@@ -45,6 +45,7 @@ function renderView(
   selectedCapture: FetchedMedia | null = null,
   onSettings = vi.fn(),
   settingsOverride: Partial<ConverterSettings> = {},
+  onNavigateToProgress = vi.fn(),
 ) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -68,6 +69,7 @@ function renderView(
         onCancel={vi.fn().mockResolvedValue(undefined)}
         onStatus={onStatus}
         onError={onError}
+        onNavigateToProgress={onNavigateToProgress}
       />,
     );
   });
@@ -89,13 +91,14 @@ function renderView(
           onCancel={vi.fn().mockResolvedValue(undefined)}
           onStatus={onStatus}
           onError={onError}
+          onNavigateToProgress={onNavigateToProgress}
           {...newProps}
         />,
       );
     });
   };
 
-  return { container, root, updateProps, onStatus, onSettings, onError };
+  return { container, root, updateProps, onStatus, onSettings, onError, onNavigateToProgress };
 }
 
 describe("Converter account access feedback", () => {
@@ -1137,6 +1140,94 @@ it("groupIndexesByPreset groups selected items by their distinct presets", () =>
     });
 
     expect(input.value).toBe("https://www.instagram.com/stories/mzwerr/");
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("instantly calls onNavigateToProgress when Convert media is clicked with a valid source", async () => {
+    const onNavigateToProgress = vi.fn();
+    const onStart = vi.fn().mockImplementation(() => new Promise(() => {})); // pending forever
+    const view = renderView(undefined, undefined, onStart, null, undefined, {}, onNavigateToProgress);
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "https://www.facebook.com/share/p/19Tme8WSPx/");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const convertBtn = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
+    expect(convertBtn).toBeDefined();
+
+    await act(async () => {
+      convertBtn?.click();
+    });
+
+    // onNavigateToProgress must be called instantly before onStart or guest session completes
+    expect(onNavigateToProgress).toHaveBeenCalledTimes(1);
+    expect(onNavigateToProgress).toHaveBeenCalledWith("https://www.facebook.com/share/p/19Tme8WSPx/");
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("instantly calls onNavigateToProgress when Enter key is pressed in the source input", async () => {
+    const onNavigateToProgress = vi.fn();
+    const onStart = vi.fn().mockResolvedValue(true);
+    const view = renderView(undefined, undefined, onStart, null, undefined, {}, onNavigateToProgress);
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "https://youtube.com/watch?v=sample123");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+
+    expect(onNavigateToProgress).toHaveBeenCalledTimes(1);
+    expect(onNavigateToProgress).toHaveBeenCalledWith("https://youtube.com/watch?v=sample123");
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("does not call onNavigateToProgress when source is empty", async () => {
+    const onNavigateToProgress = vi.fn();
+    const onStart = vi.fn();
+    const view = renderView(undefined, undefined, onStart, null, undefined, {}, onNavigateToProgress);
+    const convertBtn = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
+
+    await act(async () => {
+      convertBtn?.click();
+    });
+
+    expect(onNavigateToProgress).not.toHaveBeenCalled();
+    expect(view.onStatus).toHaveBeenCalledWith("Paste a source URL, choose a local file, or capture media in the browser first.");
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("does not call onNavigateToProgress when ephemeral story terms must be accepted first", async () => {
+    const onNavigateToProgress = vi.fn();
+    const onStart = vi.fn();
+    const view = renderView(undefined, undefined, onStart, null, undefined, { allowStoryExtraction: false }, onNavigateToProgress);
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "https://www.instagram.com/stories/highlights/12345/");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const convertBtn = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Convert media");
+    await act(async () => {
+      convertBtn?.click();
+    });
+
+    expect(onNavigateToProgress).not.toHaveBeenCalled();
+    expect(view.container.textContent).toContain("Ephemeral Stories & Legal Agreement");
+
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });

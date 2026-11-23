@@ -180,13 +180,19 @@ export function InProgressView({
     if (jobId && distinctJobIds.includes(jobId)) {
       return jobId;
     }
+    if (running && !selectedJobId) {
+      return jobId || undefined;
+    }
     return distinctJobIds.length > 0 ? distinctJobIds[distinctJobIds.length - 1] : (jobId || undefined);
-  }, [selectedJobId, distinctJobIds, jobId]);
+  }, [selectedJobId, distinctJobIds, jobId, running]);
 
   const currentIndex = currentJobId ? distinctJobIds.indexOf(currentJobId) : -1;
   const hasPrevious = currentIndex > 0;
   const hasNext = currentIndex >= 0 && currentIndex < distinctJobIds.length - 1;
-  const isViewingLive = Boolean((running || paused) && jobId && currentJobId === jobId);
+  const isViewingLive = Boolean(
+    (running || paused) &&
+      (!selectedJobId || (jobId ? currentJobId === jobId : true))
+  );
 
   function handleNavigateSession(offset: number) {
     if (currentIndex === -1) return;

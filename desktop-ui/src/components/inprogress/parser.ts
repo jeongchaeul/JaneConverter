@@ -882,6 +882,17 @@ export function parseConversionEvents(
     }
   }
 
+  // Fallback latest log line when scoped events have not arrived yet but conversion is running
+  if (!latestLogLine && isRunning) {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const msg = events[i]?.message?.trim();
+      if (msg) {
+        latestLogLine = msg;
+        break;
+      }
+    }
+  }
+
   // Build items array
   let items: InProgressItem[] = [];
 
@@ -906,21 +917,21 @@ export function parseConversionEvents(
     items.sort((a, b) => a.index - b.index);
   } else if (
     isSingleMedia ||
-    (Boolean(initialSource) && Boolean(targetJobId) && targetJobId !== "ui" && targetJobId !== "browser-session" && isRunning)
+    (Boolean(initialSource) && isRunning && targetJobId !== "browser-session")
   ) {
     items = [
       {
         id: "single-item-1",
         index: 1,
         total: 1,
-        title: singleTitle || detectedTitle || "Media file",
+        title: singleTitle || detectedTitle || initialSource || "Media file",
         url: initialSource || undefined,
-        mediaKind: inferMediaKind(defaultCategory, defaultFormat, singleOutputPath || singleTitle),
+        mediaKind: inferMediaKind(defaultCategory, defaultFormat, singleOutputPath || singleTitle || initialSource),
         status: singleStatus,
         progress: singleProgress,
         speed: singleSpeed,
         eta: singleEta,
-        detailMessage: singleDetail,
+        detailMessage: singleDetail || latestLogLine || "Starting...",
         coverPath: detectedCoverArt,
         thumbnail: singleThumbnail || extractYouTubeThumbnail(initialSource),
         errorMessage: singleError,

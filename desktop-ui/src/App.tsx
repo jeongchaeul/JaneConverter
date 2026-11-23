@@ -156,6 +156,7 @@ export default function App() {
   const [jobId, setJobId] = useState("");
   const [paused, setPaused] = useState(false);
   const [captureBusy, setCaptureBusy] = useState(false);
+  const [isStartingConversion, setIsStartingConversion] = useState(false);
   const captureBusyRef = useRef(false);
   const cancelCaptureRef = useRef<(() => Promise<void>) | null>(null);
   const activeJobRef = useRef("");
@@ -282,7 +283,7 @@ export default function App() {
   useEffect(() => {
     let nextPct: number | undefined = undefined;
     let nextStatus: "normal" | "paused" | "error" | "none" | "indeterminate" = "none";
-    if (jobId || captureBusy) {
+    if (jobId || captureBusy || isStartingConversion) {
       nextStatus = paused ? "paused" : "normal";
       nextPct = Math.min(100, Math.max(0, Math.round(progress * 100)));
     } else if (failure) {
@@ -296,7 +297,7 @@ export default function App() {
       lastTaskbarRef.current = { pct: nextPct, status: nextStatus };
       void bridge.setTaskbarProgress(nextPct, nextStatus);
     }
-  }, [jobId, captureBusy, progress, paused, failure]);
+  }, [jobId, captureBusy, isStartingConversion, progress, paused, failure]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -727,6 +728,27 @@ export default function App() {
     void bridge.settingsSave(next).catch((error) => errorMessage(error instanceof Error ? error.message : String(error)));
   }
 
+  const handleNavigateToProgress = useCallback((source?: string) => {
+    setActiveView("console");
+    setIsStartingConversion(true);
+    setProgress(0.02);
+    setStatus("Starting conversion...");
+    if (source) {
+      const normalized = source.trim();
+      activeJobContextRef.current = {
+        startedAtMs: Date.now(),
+        source: normalized || selectedCapture?.name || "Media source",
+        effectiveSettings: settingsRef.current,
+        presetName: findPresetName(settingsRef.current),
+        forcedVideoFallback: false,
+        forcedAudioFallback: false,
+        logs: [],
+        exportedPath: "",
+      };
+      lastJobContextRef.current = activeJobContextRef.current;
+    }
+  }, [selectedCapture?.name]);
+
   async function start(
     source: string,
     playlistIndexes?: string,
@@ -736,6 +758,8 @@ export default function App() {
     customSettings?: ConverterSettings,
   ): Promise<boolean> {
     try {
+      setActiveView("console");
+      setIsStartingConversion(true);
       const normalizedSource = source.trim();
       let effectiveSettings = customSettings ?? settingsRef.current;
       if (customSettings) {
@@ -773,25 +797,26 @@ export default function App() {
       }
       activeJobSuggestLosslessRef.current = effectiveSettings.format === "source" && effectiveSettings.category === "Image" && !forcedVideoFallback;
       activeJobContextRef.current = {
-        startedAtMs: Date.now(),
-        source: normalizedSource || selectedCapture?.name || "Media source",
+        startedAtMs: activeJobContextRef.current?.startedAtMs || Date.now(),
+        source: normalizedSource || selectedCapture?.name || activeJobContextRef.current?.source || "Media source",
         effectiveSettings,
         presetName: findPresetName(effectiveSettings),
         forcedVideoFallback,
         forcedAudioFallback,
-        logs: [],
+        logs: activeJobContextRef.current?.logs || [],
         exportedPath: "",
       };
       lastJobContextRef.current = activeJobContextRef.current;
+      setPaused(false);
+      setProgress(0.02);
+      setStatus("Starting conversion...");
       const nextJob = await bridge.startConversion({ ...effectiveSettings, source, playlistIndexes, browserSession, browserCapturePath: !normalizedSource ? selectedCapture?.path : undefined, facebookCaptureId, socialCaptureId });
       activeJobRef.current = nextJob;
       setJobId(nextJob);
-      setPaused(false);
-      setProgress(.02);
-      setStatus("Starting conversion...");
-      setActiveView("console");
+      setIsStartingConversion(false);
       return true;
     } catch (error) {
+      setIsStartingConversion(false);
       const message = error instanceof Error ? error.message : String(error);
       setFailure({ title: "Conversion could not start", message, suggestLossless: false });
       activeJobSuggestLosslessRef.current = false;
@@ -802,7 +827,7 @@ export default function App() {
   }
 
   async function pauseToggle() {
-    if (!jobId && !captureBusy) return;
+    if (!jobId && !captureBusy && !isStartingConversion) return;
     try {
       if (paused) {
         await bridge.resumeConversion(jobId || undefined);
@@ -818,6 +843,7 @@ export default function App() {
 
   async function cancel() {
     setPaused(false);
+    setIsStartingConversion(false);
     if (cancelCaptureRef.current) {
       try {
         await cancelCaptureRef.current();
@@ -871,14 +897,14 @@ export default function App() {
     : activeView === "library"
     ? <LibraryView settings={settings} onSettings={updateSettings} onStatus={statusMessage} history={history} conversionTimings={conversionTimings} onClearHistory={handleClearHistory} onRemoveHistoryItem={handleRemoveHistoryItem} />
     : activeView === "hardware"
-      ? <HardwarePipelineView runtime={runtime} settings={settings} active={Boolean(jobId) || captureBusy} progress={progress} progressMessage={status} />
+      ? <HardwarePipelineView runtime={runtime} settings={settings} active={Boolean(jobId) || captureBusy || isStartingConversion} progress={progress} progressMessage={status} />
     : activeView === "console"
       ? (
         <ConsoleView
           events={events}
           rawEvents={rawEvents}
           jobId={jobId || undefined}
-          running={Boolean(jobId) || captureBusy}
+          running={Boolean(jobId) || captureBusy || isStartingConversion}
           paused={paused}
           progress={progress}
           sourceTitle={activeJobContextRef.current?.source || selectedCapture?.name || ""}
@@ -1083,10 +1109,14 @@ export default function App() {
                 setCaptureBusy(busy);
                 captureBusyRef.current = busy;
                 cancelCaptureRef.current = cancelFn ?? null;
-                if (!busy && !activeJobRef.current) setPaused(false);
+                if (!busy) {
+                  setIsStartingConversion(false);
+                  if (!activeJobRef.current) setPaused(false);
+                }
               }}
               onStatus={statusMessage}
               onError={errorMessage}
+              onNavigateToProgress={handleNavigateToProgress}
             />
           </div>
           {activeView !== "converter" && (

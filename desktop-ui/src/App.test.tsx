@@ -249,4 +249,48 @@ describe("Application shell", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("instantly reacts to Convert media click by transitioning to the progress view without waiting for capture or engine startup", async () => {
+    vi.spyOn(bridge, "settingsGet").mockResolvedValue({
+      outputDir: "converted", fetchedDir: "fetched", category: "Image", format: "png",
+      bitrate: "best", sampleRate: 48000, resolution: "original", normalize: false,
+      useGpu: false, saveCover: true, saveMetadata: true, retries: 2,
+    });
+    vi.spyOn(bridge, "subscribe").mockResolvedValue(() => {});
+    // Pending promise simulates a long-running guest session
+    vi.spyOn(bridge, "captureFacebookAlbum").mockImplementation(() => new Promise(() => {}));
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => { root.render(<App />); });
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="Source media URL or local path"]');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "https://www.facebook.com/share/p/19Tme8WSPx/");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const convertBtn = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Convert media"));
+    expect(convertBtn).toBeDefined();
+
+    // Prior to clicking Convert media, the converter view is active
+    expect(container.querySelector('[aria-label="Source media URL or local path"]')).not.toBeNull();
+
+    await act(async () => {
+      convertBtn?.click();
+    });
+
+    // The progress view (InProgressView / ConsoleView) must be visible immediately
+    // Sidebar active item or main content displays In Progress / Console content
+    const inProgressElements = Array.from(container.querySelectorAll("button, h2, span")).map((el) => el.textContent || "");
+    const showsProgressView = inProgressElements.some((text) =>
+      text.includes("Raw Console") || text.includes("Converting Media") || text.includes("Reading the public Facebook post")
+    );
+    expect(showsProgressView).toBe(true);
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });
