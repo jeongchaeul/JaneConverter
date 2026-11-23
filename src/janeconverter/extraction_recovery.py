@@ -130,6 +130,28 @@ def extract_with_recovery(ydl, query, download, abort_event=None, report=None, d
                         continue
                     else:
                         raise
+                if category == ExtractionCategory.RATE_LIMIT:
+                    if hasattr(ydl, "params"):
+                        current_client = ""
+                        try:
+                            current_client = str(ydl.params.get("extractor_args", {}).get("youtube", {}).get("player_client", [""])[0]).lower()
+                        except Exception:
+                            pass
+                        chosen_rotation = None
+                        for candidate_rotation in client_ladder:
+                            cand_client = candidate_rotation["youtube"]["player_client"][0].lower()
+                            if cand_client != current_client:
+                                chosen_rotation = candidate_rotation
+                                break
+                        if not chosen_rotation and client_ladder:
+                            chosen_rotation = client_ladder[min(attempt, len(client_ladder) - 1)]
+                        if chosen_rotation:
+                            client_name = chosen_rotation["youtube"]["player_client"][0].upper()
+                            if report:
+                                report(0.15, f"Adaptive Recovery: Rotating streaming client identity to {client_name} (rate-limit/403 recovery)...", force=True)
+                            ydl.params["extractor_args"] = chosen_rotation
+                        if attempt > 0:
+                            ydl.params["format"] = "bestaudio[protocol^=m3u8]/best[protocol^=m3u8]/ba/b/best"
                 retry_after = re.search(r"retry[- ]after\s*[:=]?\s*(\d+)", str(error), re.I)
                 delay = max(1, int(retry_after[1])) if retry_after else 2 ** attempt
                 if delay > 8 or time.monotonic() + delay >= deadline:

@@ -207,3 +207,34 @@ def test_catalog_prefers_official_audio_over_fan_lyrics():
     chosen = choose_catalog_match(wanted, [fan_lyrics, official_audio])
     assert chosen["id"] == "official_vid"
 
+
+def test_adaptive_client_rotation_and_format_fallback_on_cdn_403_rate_limit(monkeypatch):
+    import time
+    # Prevent real sleep delays during test
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+
+    ydl = Mock(params={"extractor_args": {"youtube": {"player_client": ["web_embedded", "android"]}}})
+    calls = []
+    formats = []
+
+    def extract(query, download):
+        calls.append(dict(ydl.params.get("extractor_args", {})))
+        formats.append(ydl.params.get("format"))
+        if len(calls) == 1:
+            raise RuntimeError("ERROR: unable to download video data: HTTP Error 403: Forbidden")
+        elif len(calls) == 2:
+            raise RuntimeError("YouTube CDN stream forbidden (HTTP 403 - token expired or throttled)")
+        return {"id": "recovered_via_hls_and_client_rotation"}
+
+    ydl.extract_info.side_effect = extract
+    result = extract_with_recovery(ydl, "https://youtube.com/watch?v=abc", True)
+    assert result["id"] == "recovered_via_hls_and_client_rotation"
+    assert len(calls) == 3
+    # Call 1 had original web_embedded
+    assert calls[0] == {"youtube": {"player_client": ["web_embedded", "android"]}}
+    # Call 2 rotated away from web_embedded to android / ios
+    assert calls[1] == {"youtube": {"player_client": ["android", "ios"]}}
+    # Call 3 engaged HLS m3u8 format fallback
+    assert "bestaudio[protocol^=m3u8]" in formats[2]
+
+

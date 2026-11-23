@@ -1203,7 +1203,7 @@ def fetch_media_stream(
             ydl_opts["extractor_args"] = {}
         if "youtube" not in ydl_opts["extractor_args"]:
             ydl_opts["extractor_args"]["youtube"] = {
-                "player_client": ["web_embedded", "android", "ios"],
+                "player_client": ["android", "ios", "web_embedded"],
             }
 
     is_tiktok_source = (
@@ -1330,9 +1330,10 @@ def fetch_media_stream(
                             if remaining_candidates:
                                 continue
                             break
-                        # YouTube Gated / Music Premium Fallback
+                        # YouTube Gated / Music Premium / CDN 403 Fallback
                         is_yt_item = source_type == "youtube" or any(yt in str(query_item).lower() for yt in ("youtube.com", "youtu.be"))
-                        if is_yt_item and is_youtube_gated_error(ex) and not gated_fallback_attempted:
+                        is_403_err = any(k in str(ex).casefold() for k in ("403", "forbidden", "token expired or throttled"))
+                        if is_yt_item and (is_youtube_gated_error(ex) or is_403_err) and not gated_fallback_attempted:
                             gated_fallback_attempted = True
                             for raw_q in (str(query_item), str(source)):
                                 m_id = re.search(r'(?:v=|youtu\.be/|shorts/|embed/)([a-zA-Z0-9_-]{11})', raw_q)
@@ -1342,9 +1343,10 @@ def fetch_media_stream(
                             gated_title = fallback_title or oe.get("title")
                             gated_artist = fallback_artist or oe.get("artist") or "Unknown Artist"
                             if gated_title:
+                                reason_msg = "track is restricted to Music Premium members" if is_youtube_gated_error(ex) else "CDN stream was forbidden (HTTP 403)"
                                 report(
                                     0.14,
-                                    f"YouTube track is restricted to Music Premium members. Locating alternate public audio stream for '{gated_artist} - {gated_title}'...",
+                                    f"YouTube {reason_msg}. Locating alternate public audio stream for '{gated_artist} - {gated_title}'...",
                                     force=True,
                                 )
                                 recovery_candidates = build_search_candidates(gated_artist, gated_title)
@@ -1359,13 +1361,13 @@ def fetch_media_stream(
                                 remaining_candidates = recovery_candidates + remaining_candidates
                                 continue
                         if is_bse:
-                            if (is_tiktok_source or catalog_meta) and remaining_candidates:
+                            if (is_tiktok_source or catalog_meta or remaining_candidates) and remaining_candidates:
                                 continue
                             if is_tiktok_source or archival_fallback:
                                 break
                             raise
                         if classify_extraction(ex) in (ExtractionCategory.ACCESS, ExtractionCategory.REMOVED, ExtractionCategory.RATE_LIMIT, ExtractionCategory.NETWORK):
-                            if (source_type == "tiktok" or catalog_meta) and remaining_candidates:
+                            if (source_type == "tiktok" or catalog_meta or remaining_candidates) and remaining_candidates:
                                 continue
                             break
                         continue
