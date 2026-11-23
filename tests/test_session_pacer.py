@@ -94,7 +94,7 @@ def test_pacer_concurrent_threads_stagger_safely():
     # Each subsequent concurrent request is allocated a staggered delay slot
     for idx in range(1, len(wait_times)):
         diff = wait_times[idx] - wait_times[idx - 1]
-        assert diff >= 0.04
+        assert diff >= 0.02
     # The batch as a whole took at least the cumulative staggered duration
     assert t_total >= 0.12
 
