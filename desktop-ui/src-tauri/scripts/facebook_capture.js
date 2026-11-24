@@ -7,6 +7,7 @@
   const captureModeKey = "janeFacebookCaptureMode";
   const albumSetKey = "janeFacebookAlbumSet";
   const scannedIdsKey = "janeFacebookScannedPhotoIds";
+  const singlePhotoTargetKey = "janeFacebookSinglePhotoId";
   const pendingRefreshKey = "janeFacebookPendingRenditionRefresh";
   const pendingRefreshAttemptsKey = "janeFacebookPendingRefreshAttempts";
   const refreshFunctionKey = "__JANE_FACEBOOK_REFRESH__" + nonce;
@@ -29,6 +30,7 @@
   let expectedCount = Number(sessionStorage.getItem(expectedCountKey)) || 0;
   let countSource = sessionStorage.getItem("janeFacebookCountSource") || "";
   let countConflict = sessionStorage.getItem("janeFacebookCountConflict") === "true";
+  let singlePhotoTargetId = sessionStorage.getItem(singlePhotoTargetKey) || "";
   let attempts = Number(sessionStorage.getItem(attemptsKey)) || 0;
   let startedAt = Number(sessionStorage.getItem(startedAtKey)) || Date.now();
   sessionStorage.setItem(startedAtKey, String(startedAt));
@@ -40,13 +42,24 @@
   let currentPageScannedId = "";
   const knownIdsKey = "janeFacebookKnownPhotoIds";
   const lastProgressKey = "janeFacebookLastProgressAt";
+  const commentPhotoIds = new Set();
   let knownIds;
   try { knownIds = JSON.parse(sessionStorage.getItem(knownIdsKey) || "[]"); }
   catch (_) { knownIds = []; }
   const recordKnownId = (id) => {
-    if (/^[0-9]{5,30}$/.test(id) && !knownIds.includes(id)) {
+    if (/^[0-9]{5,30}$/.test(id) && !commentPhotoIds.has(id) && !knownIds.includes(id)) {
       knownIds.push(id);
       sessionStorage.setItem(knownIdsKey, JSON.stringify(knownIds));
+    }
+  };
+  const recordCommentPhotoId = (id) => {
+    if (/^[0-9]{5,30}$/.test(id)) {
+      commentPhotoIds.add(id);
+      const idx = knownIds.indexOf(id);
+      if (idx !== -1) {
+        knownIds.splice(idx, 1);
+        sessionStorage.setItem(knownIdsKey, JSON.stringify(knownIds));
+      }
     }
   };
   let lastProgressAt = Number(sessionStorage.getItem(lastProgressKey)) || Date.now();
@@ -108,6 +121,24 @@
     }
     return total;
   };
+  const isAlbumPageUrl = () => {
+    const path = location.pathname.toLowerCase();
+    const search = location.search.toLowerCase();
+    return path.includes("/media/set/") || search.includes("sk=photos") || path.includes("/photos");
+  };
+  const isCommentPhotoAnchor = (anchor, parsedHref) => {
+    try {
+      const set = (parsedHref && parsedHref.searchParams.get("set")) || "";
+      if (set.startsWith("p.")) return true;
+      if (parsedHref && (parsedHref.searchParams.has("comment_id") || parsedHref.searchParams.has("reply_comment_id"))) {
+        return true;
+      }
+      if (anchor && anchor.closest('[aria-label*="comment" i], [data-testid*="comment" i]')) {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  };
   const discoverPostPhotoIds = () => {
     try {
       const currentUrl = new URL(location.href);
@@ -117,30 +148,74 @@
     for (const anchor of document.querySelectorAll('a[href*="fbid="], a[href*="/photo/"], a[href*="/photo.php"], a[href*="/photos/"]')) {
       try {
         const href = new URL(anchor.href, location.href);
-        const photoId = href.searchParams.get("fbid") || "";
-        if (photoId) recordKnownId(photoId);
-        else {
+        let photoId = href.searchParams.get("fbid") || "";
+        if (!photoId) {
           const m = /\/photos\/(?:[^/]+\/)?([0-9]{5,30})/.exec(href.pathname);
-          if (m) recordKnownId(m[1]);
+          if (m) photoId = m[1];
         }
+        if (isCommentPhotoAnchor(anchor, href)) {
+          if (photoId) recordCommentPhotoId(photoId);
+          continue;
+        }
+        if (photoId) recordKnownId(photoId);
       } catch (_) {}
     }
+    const onPhotoViewer = location.pathname.toLowerCase().includes("/photo");
     for (const script of document.scripts) {
       if (seenScripts.has(script)) continue;
       seenScripts.add(script);
       const text = script.textContent || "";
       if (!text.includes("fbid=") && !text.includes("nextMediaAfterNodeId") && !text.includes("all_subattachments") && !text.includes('"Photo"') && !text.includes("viewer_image")) continue;
+      for (const match of text.matchAll(/(?:photo(?:\.php)?\/?\?fbid=|fbid=)([0-9]{5,30})&(?:amp;)?set=p\./g)) {
+        recordCommentPhotoId(match[1]);
+      }
       for (const match of text.matchAll(/(?:photo(?:\.php)?\/?\?fbid=|fbid=)([0-9]{5,30})/g)) {
         recordKnownId(match[1]);
       }
-      for (const match of text.matchAll(/"nextMediaAfterNodeId"\s*:\s*\{\s*"__typename"\s*:\s*"Photo"\s*,\s*"id"\s*:\s*"([0-9]{5,30})"/g)) {
-        recordKnownId(match[1]);
+      if (onPhotoViewer || isAlbumPageUrl()) {
+        for (const match of text.matchAll(/"nextMediaAfterNodeId"\s*:\s*\{\s*"__typename"\s*:\s*"Photo"\s*,\s*"id"\s*:\s*"([0-9]{5,30})"/g)) {
+          recordKnownId(match[1]);
+        }
       }
       for (const match of text.matchAll(/"(?:attachment|target|currMedia)"\s*:\s*\{[\s\S]{0,400}?"__typename"\s*:\s*"Photo"[\s\S]{0,400}?"id"\s*:\s*"([0-9]{5,30})"/g)) {
         recordKnownId(match[1]);
       }
     }
   };
+  const hasMultiPhotoPostEvidence = () => {
+    discoverPostPhotoIds();
+    const currentSet = new URL(location.href).searchParams.get("set") || "";
+    if (currentSet.startsWith("pcb.") || currentSet.startsWith("gm.")) return true;
+    const domPhotoIds = new Set();
+    for (const anchor of document.querySelectorAll('a[href*="fbid="], a[href*="/photo/"], a[href*="/photo.php"]')) {
+      try {
+        const href = new URL(anchor.href, location.href);
+        if (isCommentPhotoAnchor(anchor, href)) continue;
+        const set = href.searchParams.get("set") || "";
+        if (set.startsWith("pcb.") || set.startsWith("gm.")) return true;
+        const pid = href.searchParams.get("fbid") || "";
+        if (/^[0-9]{5,30}$/.test(pid)) domPhotoIds.add(pid);
+      } catch (_) {}
+    }
+    if (domPhotoIds.size >= 2) return true;
+    for (const script of document.scripts) {
+      const text = script.textContent || "";
+      if (text.includes("pcb.") || /"mediaset_token"\s*:\s*"(?:pcb|gm)\./.test(text)) return true;
+      const subMatch = /"all_subattachments"\s*:\s*\{\s*"count"\s*:\s*(\d{1,3})/.exec(text);
+      if (subMatch && Number(subMatch[1]) >= 2) return true;
+    }
+    const sources = [
+      readPageTitle(),
+      document.querySelector('meta[property="og:title"]')?.content || "",
+      document.querySelector('meta[property="og:description"]')?.content || ""
+    ];
+    for (const heading of document.querySelectorAll('h1, h2, [role="heading"]')) {
+      sources.push(heading.innerText || "");
+    }
+    return sources.some((value) => photoCountFromText(value, true) >= 2);
+  };
+  const allowPageAlbumSet = () =>
+    isAlbumPageUrl() || location.pathname.toLowerCase().includes("/photo") || hasMultiPhotoPostEvidence();
   const discoverExpectedPhotoCount = () => {
     discoverPostPhotoIds();
     const onAlbumPage = location.pathname.toLowerCase().includes("/media/set/")
@@ -308,13 +383,21 @@
     }
   };
   const findAlbumSet = () => {
+    const allowPageAlbum = allowPageAlbumSet();
     const currentSet = new URL(location.href).searchParams.get("set") || "";
-    if (currentSet.startsWith("pcb.") || currentSet.startsWith("a.") || currentSet.startsWith("pb.")) return currentSet;
+    if (currentSet.startsWith("pcb.") || currentSet.startsWith("gm.")
+      || (allowPageAlbum && (currentSet.startsWith("a.") || currentSet.startsWith("pb.")))) {
+      return currentSet;
+    }
     for (const anchor of document.querySelectorAll('a[href*="fbid="], a[href*="/photo/"], a[href*="/photo.php"]')) {
       try {
         const href = new URL(anchor.href, location.href);
+        if (isCommentPhotoAnchor(anchor, href)) continue;
         const set = href.searchParams.get("set");
-        if (set && (set.startsWith("pcb.") || set.startsWith("a.") || set.startsWith("pb."))) return set;
+        if (set && (set.startsWith("pcb.") || set.startsWith("gm.")
+          || (allowPageAlbum && (set.startsWith("a.") || set.startsWith("pb."))))) {
+          return set;
+        }
       } catch (_) {}
     }
     return "";
@@ -322,16 +405,23 @@
   const findPostAlbumSet = () => {
     const domSet = findAlbumSet();
     if (domSet) return domSet;
+    const allowPageAlbum = allowPageAlbumSet();
+    const multiPhoto = hasMultiPhotoPostEvidence();
     for (const script of document.scripts) {
       const text = script.textContent || "";
-      if (!text.includes("pcb.") && !text.includes("set=a.") && !text.includes("set=pb.")) continue;
-      const match = /(?:"mediaset_token"\s*:\s*"|[?&]set=)((?:pcb|a|pb)\.[0-9_.-]{5,50})/.exec(text);
+      if (!text.includes("pcb.") && !text.includes("gm.") && !text.includes("set=a.") && !text.includes("set=pb.")) continue;
+      const pattern = allowPageAlbum
+        ? /(?:"mediaset_token"\s*:\s*"|[?&]set=)((?:pcb|gm|a|pb)\.[0-9_.-]{5,50})/
+        : /(?:"mediaset_token"\s*:\s*"|[?&]set=)((?:pcb|gm)\.[0-9_.-]{5,50})/;
+      const match = pattern.exec(text);
       if (match) return match[1];
     }
-    const pathMatch = /\/(?:permalink|posts)\/([0-9]{5,30})/.exec(location.pathname);
-    if (pathMatch) return "pcb." + pathMatch[1];
-    const storyId = new URL(location.href).searchParams.get("story_fbid") || "";
-    if (/^[0-9]{5,30}$/.test(storyId)) return "pcb." + storyId;
+    if (multiPhoto) {
+      const pathMatch = /\/(?:permalink|posts)\/([0-9]{5,30})/.exec(location.pathname);
+      if (pathMatch) return "pcb." + pathMatch[1];
+      const storyId = new URL(location.href).searchParams.get("story_fbid") || "";
+      if (/^[0-9]{5,30}$/.test(storyId)) return "pcb." + storyId;
+    }
     return "";
   };
   const normalizeFacebookUrl = (value) => {
@@ -346,20 +436,27 @@
     } catch (_) { return ""; }
   };
   const findAlbumStartPhoto = () => {
+    const allowPageAlbum = allowPageAlbumSet();
+    const multiPhoto = hasMultiPhotoPostEvidence();
     const pageSet = new URL(location.href).searchParams.get("set") || findPostAlbumSet() || "";
     for (const anchor of document.querySelectorAll('a[href*="fbid="], a[href*="/photo/"], a[href*="/photo.php"]')) {
       try {
         const href = new URL(anchor.href, location.href);
+        if (isCommentPhotoAnchor(anchor, href)) continue;
         const photoId = href.searchParams.get("fbid") || "";
         const rawSet = href.searchParams.get("set") || "";
-        const set = rawSet.startsWith("pcb.") ? rawSet : (pageSet.startsWith("pcb.") ? pageSet : rawSet);
-        if (/^[0-9]{5,30}$/.test(photoId) && (!set || set.startsWith("pcb.") || set.startsWith("gm.") || set.startsWith("a."))) {
+        const isPageAlbumSet = rawSet.startsWith("a.") || rawSet.startsWith("pb.");
+        const isPostAlbumSet = rawSet.startsWith("pcb.") || rawSet.startsWith("gm.");
+        const pagePostSet = (pageSet.startsWith("pcb.") || pageSet.startsWith("gm.")) ? pageSet : "";
+        const set = isPostAlbumSet ? rawSet : (pagePostSet || (allowPageAlbum && isPageAlbumSet ? rawSet : ""));
+        if (/^[0-9]{5,30}$/.test(photoId) && (!rawSet || isPostAlbumSet || isPageAlbumSet)) {
           const normalized = normalizeFacebookUrl(href.href);
           if (normalized) {
             const photoUrl = new URL("/photo/", normalized);
             photoUrl.searchParams.set("fbid", photoId);
             if (set) photoUrl.searchParams.set("set", set);
-            return {anchor, url:photoUrl.href, needsDirectNavigation: rawSet !== set || !set};
+            const singlePhoto = !multiPhoto && !set;
+            return {anchor, photoId, singlePhoto, url:photoUrl.href, needsDirectNavigation: rawSet !== set || !set};
           }
         }
       } catch (_) {}
@@ -371,19 +468,24 @@
       const subMatch = !hrefMatch && /"all_subattachments"\s*:\s*\{[\s\S]{0,1200}?"__typename"\s*:\s*"Photo"[\s\S]{0,1200}?"id"\s*:\s*"([0-9]{5,30})"/.exec(text);
       const singleMatch = !hrefMatch && !subMatch && /(?:photo(?:\.php)?\/?\?fbid=|fbid=)([0-9]{5,30})/.exec(text);
       const photoId = hrefMatch ? hrefMatch[1] : (subMatch ? subMatch[1] : (singleMatch ? singleMatch[1] : ""));
-      const set = hrefMatch ? hrefMatch[2] : (pageSet || "");
+      const rawMatchedSet = hrefMatch ? hrefMatch[2] : (pageSet || "");
+      const keepMatchedSet = rawMatchedSet && (!rawMatchedSet.startsWith("a.") && !rawMatchedSet.startsWith("pb.") || allowPageAlbum);
+      const set = keepMatchedSet ? rawMatchedSet : "";
       if (photoId) {
         const photoUrl = new URL("/photo/", location.href);
         photoUrl.searchParams.set("fbid", photoId);
         if (set) photoUrl.searchParams.set("set", set);
-        return {anchor: null, url: photoUrl.href, needsDirectNavigation: true};
+        const singlePhoto = !multiPhoto && !set;
+        return {anchor: null, photoId, singlePhoto, url: photoUrl.href, needsDirectNavigation: true};
       }
     }
     if (knownIds.length > 0) {
+      const keepPageSet = pageSet && (!pageSet.startsWith("a.") && !pageSet.startsWith("pb.") || allowPageAlbum);
       const photoUrl = new URL("/photo/", location.href);
       photoUrl.searchParams.set("fbid", knownIds[0]);
-      if (pageSet) photoUrl.searchParams.set("set", pageSet);
-      return {anchor: null, url: photoUrl.href, needsDirectNavigation: true};
+      if (keepPageSet) photoUrl.searchParams.set("set", pageSet);
+      const singlePhoto = !multiPhoto && !keepPageSet;
+      return {anchor: null, photoId: knownIds[0], singlePhoto, url: photoUrl.href, needsDirectNavigation: true};
     }
     return null;
   };
@@ -506,6 +608,7 @@
     for (const anchor of document.querySelectorAll('a[href*="fbid="]')) {
       try {
         const href = new URL(anchor.href, location.href);
+        if (isCommentPhotoAnchor(anchor, href)) continue;
         const id = href.searchParams.get("fbid") || "";
         if (/^[0-9]{5,30}$/.test(id) && id !== currentId && !scanned.has(id)) {
           const nextUrl = new URL("/photo/", location.href);
@@ -667,7 +770,12 @@
     }
     closeGuestPrompt();
     let captureMode = sessionStorage.getItem(captureModeKey) || "";
-    if (captureMode !== "viewer" || !expectedCount) {
+    singlePhotoTargetId = sessionStorage.getItem(singlePhotoTargetKey) || "";
+    if (singlePhotoTargetId && captureMode === "viewer") {
+      expectedCount = Number(sessionStorage.getItem(expectedCountKey)) || 1;
+      countSource = sessionStorage.getItem("janeFacebookCountSource") || "post-single";
+      countConflict = false;
+    } else if (captureMode !== "viewer" || !expectedCount) {
       const evidence = discoverExpectedPhotoCount();
       if (evidence.conflict || (countSource === "page-count" && evidence.source === "page-count" && expectedCount && evidence.count !== expectedCount)) countConflict = true;
       if (evidence.count > expectedCount || (evidence.source === "page-count" && countSource !== "page-count")) {
@@ -734,7 +842,20 @@
       if (startPhoto && (startPhoto.needsDirectNavigation || hasVisiblePublicPhoto())) {
         const photoUrl = new URL(startPhoto.url);
         const albumSet = photoUrl.searchParams.get("set") || "";
-        if (albumSet && isRefreshableAlbumSet(albumSet)) sessionStorage.setItem(albumSetKey, albumSet);
+        if (startPhoto.singlePhoto && startPhoto.photoId) {
+          singlePhotoTargetId = startPhoto.photoId;
+          sessionStorage.setItem(singlePhotoTargetKey, startPhoto.photoId);
+          sessionStorage.removeItem(albumSetKey);
+          expectedCount = 1;
+          countSource = "post-single";
+          countConflict = false;
+          sessionStorage.setItem("janeFacebookCountSource", countSource);
+          sessionStorage.setItem("janeFacebookCountConflict", "false");
+        } else {
+          singlePhotoTargetId = "";
+          sessionStorage.removeItem(singlePhotoTargetKey);
+          if (albumSet && isRefreshableAlbumSet(albumSet)) sessionStorage.setItem(albumSetKey, albumSet);
+        }
         sessionStorage.setItem(captureModeKey, "viewer");
         sessionStorage.setItem(scannedIdsKey, JSON.stringify(Array.from(scanned)));
         if (expectedCount) sessionStorage.setItem(expectedCountKey, String(expectedCount));
@@ -840,7 +961,7 @@
           send(inFlightPayload);
         }
         if (pending.length === 0 && awaitingSequence === 0) {
-          if (wrappedAround && scanned.size >= 1) {
+          if ((singlePhotoTargetId && scanned.has(singlePhotoTargetId)) || (wrappedAround && scanned.size >= 1)) {
             endConfirmed = true;
           } else {
             const nextPhotoUrl = findNextPhotoUrl();

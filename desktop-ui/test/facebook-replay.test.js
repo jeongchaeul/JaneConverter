@@ -308,3 +308,55 @@ test("profile photostream enters grid mode and captures uncategorized photos", a
     endConfirmed: true,
   });
 });
+
+test("single-photo page permalink strips parent set=a. album, ignores comment photos, and stops after 1 photo", async () => {
+  const permalinkHtml = `<!doctype html><html><head><title>Spicy Gimbap II - Post | Facebook</title></head><body>
+    <div role="article">
+      <a href="https://www.facebook.com/photo/?fbid=1463914419286187&set=a.1400784518932511&__tn__=EH-R">
+        <img src="https://scontent.fbcdn.net/thumb_main.jpg">
+      </a>
+      <a href="https://www.facebook.com/photo.php?fbid=3274205172919118&set=p.3274205172919118&type=3&comment_id=949038901475734">
+        <img src="https://scontent.fbcdn.net/comment_photo.jpg">
+      </a>
+    </div>
+  </body></html>`;
+  const session = replay(permalinkHtml, "/permalink.php?story_fbid=pfbid0QVWSe&id=100070029286462");
+  sessions.push(session);
+  await session.advance(150);
+
+  expect(session.window.location.pathname).toBe("/photo/");
+  expect(session.window.location.search).toBe("?fbid=1463914419286187");
+  expect(session.window.sessionStorage.getItem("janeFacebookCaptureMode")).toBe("viewer");
+  expect(session.window.sessionStorage.getItem("janeFacebookSinglePhotoId")).toBe("1463914419286187");
+  expect(session.window.sessionStorage.getItem("janeFacebookAlbumSet")).toBeNull();
+  expect(session.window.sessionStorage.getItem("janeFacebookExpectedPhotoCount")).toBe("1");
+
+  const viewerHtml = `<!doctype html><html><head><title>Facebook</title></head><body>
+    <a href="https://www.facebook.com/photo/?fbid=1462863632724599" aria-label="Next photo">Next photo</a>
+    <script type="application/json">{"currMedia":{"__typename":"Photo","id":"1463914419286187","image":{"uri":"https:\\/\\/scontent.fbcdn.net\\/full_main.jpg","width":1529,"height":2048}},"nextMediaAfterNodeId":{"__typename":"Photo","id":"1462863632724599"}}</script>
+  </body></html>`;
+  const viewer = replay(viewerHtml, "/photo/?fbid=1463914419286187", "viewer");
+  sessions.push(viewer);
+  viewer.window.sessionStorage.setItem("janeFacebookSinglePhotoId", "1463914419286187");
+  viewer.window.sessionStorage.setItem("janeFacebookExpectedPhotoCount", "1");
+  viewer.window.sessionStorage.setItem("janeFacebookCountSource", "post-single");
+  await viewer.advance(350);
+
+  expect(viewer.message()).toMatchObject({
+    kind: "photos",
+    sequence: 1,
+    photos: [{ id: "1463914419286187", url: "https://scontent.fbcdn.net/full_main.jpg" }],
+  });
+  viewer.window.__JANE_FACEBOOK_ACK__fixture = 1;
+  await viewer.advance(350);
+
+  expect(viewer.window.location.search).toBe("?fbid=1463914419286187");
+  expect(viewer.message()).toMatchObject({
+    kind: "done",
+    count: 1,
+    expectedCount: 1,
+    countSource: "viewer-end",
+    endConfirmed: true,
+    countConflict: false,
+  });
+});
