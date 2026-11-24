@@ -79,11 +79,16 @@ pub fn validate_post_url(value: &str) -> Result<Url, String> {
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
     let path = url.path().to_ascii_lowercase();
     let query = url.query().unwrap_or_default().to_ascii_lowercase();
+    let is_share_post = path.starts_with("/share/")
+        && !path.starts_with("/share/v/")
+        && !path.starts_with("/share/r/")
+        && path != "/share/v"
+        && path != "/share/r";
     if url.scheme() != "https"
         || !url.username().is_empty()
         || url.password().is_some()
         || !(host == "facebook.com" || host.ends_with(".facebook.com"))
-        || !(path.starts_with("/share/")
+        || !(is_share_post
             || path.contains("/permalink/")
             || path.contains("/posts/")
             || path.ends_with("/story.php")
@@ -235,6 +240,8 @@ mod tests {
         )
         .is_ok());
         assert!(validate_post_url("https://www.facebook.com/media/set/?set=pcb.123").is_ok());
+        assert!(validate_post_url("https://www.facebook.com/share/v/1DuAvWDUy7/").is_err());
+        assert!(validate_post_url("https://www.facebook.com/share/r/1AbCdEfG/").is_err());
         assert!(validate_post_url("http://www.facebook.com/share/p/abc123/").is_err());
         assert!(validate_post_url("https://example.com/posts/123").is_err());
     }

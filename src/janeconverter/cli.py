@@ -347,9 +347,13 @@ def process_conversion(
     is_audio_target = target_format in SUPPORTED_AUDIO_FORMATS or (
         target_format in ("source", "original") and str(content_category or "").lower() in ("audio", "music")
     )
+    is_video_target = target_format in SUPPORTED_VIDEO_FORMATS or (
+        target_format in ("source", "original") and str(content_category or "").lower() in ("video", "videos")
+    )
     is_image_target = target_format in SUPPORTED_IMAGE_FORMATS
+    skip_fb_photo_capture = is_video_target or target_format in SUPPORTED_AUDIO_FORMATS
 
-    if facebook_photo_manifest is None and is_facebook_post_url(source):
+    if facebook_photo_manifest is None and is_facebook_post_url(source) and not skip_fb_photo_capture:
         try:
             report(0.02, "Reading Facebook album / post...")
             fb_browser = auth_browser if auth_browser and auth_browser.lower() not in ("none", "disabled", "off", "false") else "guest"

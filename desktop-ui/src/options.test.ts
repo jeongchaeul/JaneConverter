@@ -101,6 +101,8 @@ describe("converter option parity", () => {
     expect(isFacebookPostLink("https://www.facebook.com/user/photos_by")).toBe(true);
     expect(isFacebookPostLink("https://www.facebook.com/user/photos")).toBe(true);
     expect(isFacebookPostLink("https://www.facebook.com/share/p/1FfgatjfC9/")).toBe(true);
+    expect(isFacebookPostLink("https://www.facebook.com/share/v/1DuAvWDUy7/")).toBe(false);
+    expect(isFacebookPostLink("https://www.facebook.com/share/r/1AbCdEfG/")).toBe(false);
     expect(isFacebookPostLink("https://www.facebook.com/groups/123/permalink/456/")).toBe(true);
     expect(isFacebookPostLink("https://example.com/not-facebook")).toBe(false);
   });

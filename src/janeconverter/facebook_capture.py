@@ -371,8 +371,9 @@ def is_facebook_post_url(value: str) -> bool:
         query = url.query.lower()
         if host in ("fb.watch", "www.fb.watch"):
             return True
+        is_share_post = path.startswith("/share/") and not re.match(r"^/share/[vr](?:/|$)", path)
         return (host == "facebook.com" or host.endswith(".facebook.com")) and (
-            path.startswith("/share/")
+            is_share_post
             or "/permalink" in path
             or "/posts/" in path
             or path.endswith("/story.php")
@@ -553,6 +554,27 @@ _FB_SESSION_LOCK = threading.Lock()
 _CACHED_FACEBOOK_SESSION: Optional[dict[str, Any]] = None
 
 
+def _extract_meta_tag_content(html: str, attr_name: str, attr_value: str) -> str:
+    """Return the content attribute of an HTML meta tag regardless of attribute order."""
+    pattern_a = (
+        rf'<meta[^>]+{re.escape(attr_name)}=["\']{re.escape(attr_value)}["\']'
+        rf'[^>]+content=["\']([^"\']+)["\']'
+    )
+    pattern_b = (
+        rf'<meta[^>]+content=["\']([^"\']+)["\']'
+        rf'[^>]+{re.escape(attr_name)}=["\']{re.escape(attr_value)}["\']'
+    )
+    match = re.search(pattern_a, html, re.IGNORECASE) or re.search(pattern_b, html, re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
+def _is_facebook_video_url(value: str) -> bool:
+    """Return True if a Facebook URL clearly points to a video, watch, or reel route."""
+    if not value:
+        return False
+    return bool(re.search(r"/(?:reel|videos|watch)(?:/|\?|$)", value.lower()))
+
+
 def _fetch_facebook_manifest_with_session(
     session: requests.Session,
     url: str,
@@ -618,11 +640,19 @@ def _fetch_facebook_manifest_with_session(
     raw_title = re.sub(r"\s*[\-\|]\s*Facebook.*$", "", raw_title, flags=re.IGNORECASE).strip()
     title = sanitize_filename(raw_title, max_length=60)
     if not title or title == "media_file":
-        og_match = re.search(r'<meta\s+property=["\']og:title["\']\s+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
-        if og_match:
-            title = sanitize_filename(og_match.group(1), max_length=60)
+        og_title = _extract_meta_tag_content(html, "property", "og:title")
+        if og_title:
+            title = sanitize_filename(og_title, max_length=60)
     if not title or title == "media_file":
         title = "Facebook Post"
+
+    og_type = _extract_meta_tag_content(html, "property", "og:type").lower()
+    og_url = _extract_meta_tag_content(html, "property", "og:url")
+    is_video_page = (
+        og_type.startswith("video")
+        or _is_facebook_video_url(final_url)
+        or _is_facebook_video_url(og_url)
+    )
 
     photos: dict[str, dict[str, Any]] = {}
     has_video = False
@@ -802,6 +832,7 @@ def _fetch_facebook_manifest_with_session(
                             node = edge.get("node") or {}
                             if node.get("is_playable") or node.get("__typename") == "Video":
                                 has_video = True
+                                continue
                             p_id = str(node.get("id") or "").strip()
                             viewer_img = node.get("viewer_image") or {}
                             img = node.get("image") or node.get("photo_image") or {}
@@ -922,6 +953,7 @@ def _fetch_facebook_manifest_with_session(
                                 edge_node = edge.get("node") or {}
                                 if edge_node.get("is_playable") or edge_node.get("__typename") == "Video":
                                     has_video = True
+                                    continue
                                 p_id = str(edge_node.get("id") or "").strip()
                                 viewer_img = edge_node.get("viewer_image") or {}
                                 img = edge_node.get("image") or edge_node.get("photo_image") or {}
@@ -955,6 +987,7 @@ def _fetch_facebook_manifest_with_session(
                             media = n.get("media") or {}
                             if media.get("is_playable") or media.get("__typename") == "Video":
                                 has_video = True
+                                continue
                             p_id = str(media.get("id") or n.get("deduplication_key") or "").strip()
                             viewer_img = media.get("viewer_image") or {}
                             img = media.get("image") or media.get("photo_image") or {}
@@ -983,6 +1016,7 @@ def _fetch_facebook_manifest_with_session(
                             for media in media_candidates:
                                 if media.get("is_playable") or media.get("__typename") == "Video":
                                     has_video = True
+                                    continue
                                 p_id = str(media.get("id") or att.get("target", {}).get("id") or "").strip()
                                 viewer_img = media.get("viewer_image") or {}
                                 img = media.get("image") or media.get("photo_image") or {}
@@ -1008,6 +1042,7 @@ def _fetch_facebook_manifest_with_session(
                         media = att_data.get("media") or {}
                         if media.get("is_playable") or media.get("__typename") == "Video":
                             has_video = True
+                            continue
                         p_id = str(media.get("id") or att_data.get("target", {}).get("id") or "").strip()
                         viewer_img = media.get("viewer_image") or {}
                         img = media.get("photo_image") or media.get("image") or {}
@@ -1022,15 +1057,16 @@ def _fetch_facebook_manifest_with_session(
                         pass
 
     # 4. Fallback to OpenGraph / Twitter meta tags for single photo posts
-    if not photos:
-        og_img_m = re.search(
-            r'<meta\s+(?:property=["\']og:image["\']|name=["\']twitter:image["\'])\s+content=["\']([^"\']+)["\']',
-            html,
-            re.IGNORECASE,
+    if not photos and not has_video and not is_video_page:
+        og_raw = (
+            _extract_meta_tag_content(html, "property", "og:image")
+            or _extract_meta_tag_content(html, "name", "twitter:image")
         )
-        if og_img_m:
-            og_uri = og_img_m.group(1).replace("&amp;", "&").replace(r"\/", "/")
-            if "fbcdn.net" in og_uri or "fbsbx.com" in og_uri:
+        if og_raw:
+            og_uri = og_raw.replace("&amp;", "&").replace(r"\/", "/")
+            if "/t15.5256-10/" in og_uri:
+                has_video = True
+            elif "fbcdn.net" in og_uri or "fbsbx.com" in og_uri:
                 cand_id = target_post_id or target_fbid or "photo_1"
                 id_match = re.search(r'_(\d{10,25})_', og_uri)
                 if id_match:
@@ -1092,6 +1128,7 @@ def _fetch_facebook_manifest_with_session(
         scoped_html = "".join(target_blocks) if target_blocks else html
         target_has_video = (
             has_video
+            or is_video_page
             or '"playable_url_quality_hd"' in scoped_html
             or '"dash_manifest"' in scoped_html
             or (target_blocks and ('"playable_url"' in scoped_html or '"video_id"' in scoped_html))

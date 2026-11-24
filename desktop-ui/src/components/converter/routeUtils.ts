@@ -106,9 +106,10 @@ export function isFacebookPostLink(value: string): boolean {
     const host = url.hostname.toLowerCase();
     const path = url.pathname.toLowerCase();
     const query = url.search.toLowerCase();
+    const isSharePost = path.startsWith("/share/") && !/^\/share\/[vr](?:\/|$)/.test(path);
     return (
       (host === "facebook.com" || host.endsWith(".facebook.com")) &&
-      (path.startsWith("/share/") ||
+      (isSharePost ||
         path.includes("/permalink/") ||
         path.includes("/posts/") ||
         path.endsWith("/story.php") ||

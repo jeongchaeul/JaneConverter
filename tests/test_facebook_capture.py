@@ -343,6 +343,8 @@ def test_manifest_empty_photos_raises(tmp_path):
 
 def test_is_facebook_post_url():
     assert facebook_capture.is_facebook_post_url("https://www.facebook.com/share/p/1EZzZ7RdBe/") is True
+    assert facebook_capture.is_facebook_post_url("https://www.facebook.com/share/v/1DuAvWDUy7/") is False
+    assert facebook_capture.is_facebook_post_url("https://www.facebook.com/share/r/1AbCdEfG/") is False
     assert facebook_capture.is_facebook_post_url("https://www.facebook.com/permalink.php?story_fbid=123&id=456") is True
     assert facebook_capture.is_facebook_post_url("https://www.facebook.com/user/posts/12345678") is True
     assert facebook_capture.is_facebook_post_url("https://www.facebook.com/photo/?fbid=12345678") is True
@@ -810,3 +812,124 @@ def test_fetch_facebook_manifest_profile_photostream(monkeypatch):
     photo_ids = [p["id"] for p in manifest["photos"]]
     assert "111222333" in photo_ids
     assert "444555666" in photo_ids
+
+
+def test_fetch_facebook_manifest_reel_video_skips_og_image_thumbnail(monkeypatch):
+    reel_html = (
+        '<!doctype html><html><head>'
+        '<title>Video Title | Facebook</title>'
+        '<meta property="og:type" content="video.other" />'
+        '<meta property="og:url" content="https://www.facebook.com/12345/videos/demo/1157651770295012/" />'
+        '<meta property="og:image" content="https://scontent.xx.fbcdn.net/v/t15.5256-10/904746082_2611740956011353_4437720304501399706_n.jpg?_nc_cat=108" />'
+        '</head><body></body></html>'
+    )
+
+    class _MockReelSession:
+        def __init__(self):
+            self.headers = {}
+            self.cookies = type("MockCookies", (), {"set": lambda *args, **kwargs: None})()
+
+        def get(self, url, headers=None, **kwargs):
+            if headers and headers.get("User-Agent") == "facebookexternalhit/1.1" and kwargs.get("allow_redirects") is False:
+                class _RedirectResp:
+                    status_code = 302
+                    headers = {"Location": "https://www.facebook.com/reel/1157651770295012?share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2Fv%2F1DuAvWDUy7%2F"}
+                return _RedirectResp()
+            if not headers or headers.get("User-Agent") != "facebookexternalhit/1.1":
+                class _FailResp:
+                    status_code = 400
+                    text = ""
+                    url = "https://www.facebook.com/reel/1157651770295012"
+                return _FailResp()
+
+            class _Resp:
+                status_code = 200
+                text = reel_html
+                url = "https://www.facebook.com/reel/1157651770295012"
+            return _Resp()
+
+    session = _MockReelSession()
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session)
+
+    manifest = facebook_capture.fetch_facebook_manifest(
+        "https://www.facebook.com/share/v/1DuAvWDUy7/",
+        browser="guest",
+    )
+    assert manifest is not None
+    assert manifest["media_kind"] == "video"
+    assert manifest["photos"] == []
+
+
+def test_fetch_facebook_manifest_video_attachment_not_treated_as_photo(monkeypatch):
+    video_post_html = (
+        '<!doctype html><html><head>'
+        '<title>Video Post Title</title>'
+        '<meta property="og:image" content="https://scontent.xx.fbcdn.net/v/t15.5256-10/thumb.jpg" />'
+        '</head><body>'
+        '<script type="application/json">{"attachment":{"media":{"__typename":"Video","is_playable":true,"id":"987654321","image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/v\\/t15.5256-10\\/thumb.jpg","width":1080,"height":1920}}}}</script>'
+        '</body></html>'
+    )
+
+    class _MockVideoPostSession:
+        def __init__(self):
+            self.headers = {}
+            self.cookies = type("MockCookies", (), {"set": lambda *args, **kwargs: None})()
+
+        def get(self, url, **kwargs):
+            class _Resp:
+                status_code = 200
+                text = video_post_html
+                url = "https://www.facebook.com/permalink.php?story_fbid=pfbid123&id=456"
+            return _Resp()
+
+    session = _MockVideoPostSession()
+    monkeypatch.setattr(facebook_capture.requests, "Session", lambda: session)
+
+    manifest = facebook_capture.fetch_facebook_manifest(
+        "https://www.facebook.com/permalink.php?story_fbid=pfbid123&id=456",
+        browser="guest",
+    )
+    assert manifest is not None
+    assert manifest["media_kind"] == "video"
+    assert manifest["photos"] == []
+
+
+def test_process_conversion_skips_facebook_photo_manifest_for_video_and_audio_targets(monkeypatch, tmp_path):
+    from janeconverter import cli
+
+    called = {"fb": 0, "stream": []}
+
+    def _fail_if_called(*args, **kwargs):
+        called["fb"] += 1
+        raise AssertionError("fetch_facebook_manifest should not run for explicit video/audio targets")
+
+    monkeypatch.setattr(cli, "fetch_facebook_manifest", _fail_if_called)
+    monkeypatch.setattr(cli, "ensure_free_disk_space", lambda *args, **kwargs: None)
+
+    def _fake_fetch_media_stream(*args, **kwargs):
+        called["stream"].append(
+            {
+                "source": kwargs.get("source"),
+                "audio_only": kwargs.get("audio_only"),
+                "target_format": kwargs.get("target_format"),
+            }
+        )
+        raise RuntimeError("reached stream extractor")
+
+    monkeypatch.setattr(cli, "fetch_media_stream", _fake_fetch_media_stream)
+
+    for fmt, cat in [("mp4", "Video"), ("mp3", "Audio"), ("source", "Video")]:
+        with pytest.raises(RuntimeError, match="reached stream extractor"):
+            cli.process_conversion(
+                source="https://www.facebook.com/share/p/video-post/",
+                output_dir=str(tmp_path),
+                target_format=fmt,
+                content_category=cat,
+            )
+
+    assert called["fb"] == 0
+    assert called["stream"] == [
+        {"source": "https://www.facebook.com/share/p/video-post/", "audio_only": False, "target_format": "mp4"},
+        {"source": "https://www.facebook.com/share/p/video-post/", "audio_only": True, "target_format": "mp3"},
+        {"source": "https://www.facebook.com/share/p/video-post/", "audio_only": False, "target_format": "source"},
+    ]
