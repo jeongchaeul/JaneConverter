@@ -8,7 +8,11 @@ import {
 } from "lucide-react";
 import type { RuntimeInfo, UpdateCheckResult } from "../../bridge";
 import { bridge } from "../../bridge";
-import { isAppUpdateAvailable } from "../UpdatePromptHeader";
+import {
+  isAppUpdateAvailable,
+  isEngineUpdateAvailable,
+  isFfmpegUpdateAvailable,
+} from "../UpdatePromptHeader";
 
 export function SettingsSystemTab({
   runtime,
@@ -16,11 +20,13 @@ export function SettingsSystemTab({
   checking,
   isCheckingUpdates,
   installing,
+  updatingEngine = false,
   updateDismissed,
   setUpdateDismissed,
   setMessage,
   updates,
   installUpdate,
+  updateEngine,
   onOpenChangesModal,
   setShowLocalChangesModal,
 }: {
@@ -29,14 +35,21 @@ export function SettingsSystemTab({
   checking: boolean;
   isCheckingUpdates?: boolean;
   installing: boolean;
+  updatingEngine?: boolean;
   updateDismissed: boolean;
   setUpdateDismissed: (dismissed: boolean) => void;
   setMessage: (msg: string) => void;
   updates: () => Promise<void>;
   installUpdate: () => Promise<void>;
+  updateEngine?: () => Promise<void>;
   onOpenChangesModal?: () => void;
   setShowLocalChangesModal: (show: boolean) => void;
 }) {
+  const openChangesModal = () => {
+    if (onOpenChangesModal) onOpenChangesModal();
+    else setShowLocalChangesModal(true);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
@@ -82,7 +95,7 @@ export function SettingsSystemTab({
           </div>
           <button
             type="button"
-            disabled={checking || isCheckingUpdates || installing}
+            disabled={checking || isCheckingUpdates || installing || updatingEngine}
             onClick={() => void updates()}
             className="subtle-button flex items-center gap-2 px-4 py-2 text-xs disabled:cursor-wait disabled:opacity-60"
           >
@@ -92,6 +105,10 @@ export function SettingsSystemTab({
         </div>
         {(() => {
           const hasAppUpdate = isAppUpdateAvailable(effectiveUpdateResult?.repo);
+          const hasEngineUpdate = isEngineUpdateAvailable(effectiveUpdateResult?.engine);
+          const hasFfmpegUpdate = isFfmpegUpdateAvailable(effectiveUpdateResult?.ffmpeg);
+          const hasComponentUpdate = hasEngineUpdate || hasFfmpegUpdate;
+
           if (hasAppUpdate && !updateDismissed) {
             return (
               <div
@@ -120,10 +137,7 @@ export function SettingsSystemTab({
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => {
-                        if (onOpenChangesModal) onOpenChangesModal();
-                        else setShowLocalChangesModal(true);
-                      }}
+                      onClick={openChangesModal}
                       className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs"
                     >
                       <Sparkles className="size-3.5" style={{ color: "var(--accent-color, #c52b68)" }} />
@@ -154,6 +168,77 @@ export function SettingsSystemTab({
                       disabled={installing}
                       onClick={() => {
                         setUpdateDismissed(true);
+                        setShowLocalChangesModal(false);
+                        setMessage("Update dismissed. You can check again anytime.");
+                      }}
+                      className="subtle-button px-3 py-2 text-xs disabled:opacity-60"
+                    >
+                      Not now
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          if (hasComponentUpdate && !updateDismissed) {
+            const headline =
+              hasEngineUpdate && hasFfmpegUpdate
+                ? "Extractor & FFmpeg updates are available"
+                : hasEngineUpdate
+                  ? `yt-dlp Extractor v${effectiveUpdateResult?.engine?.latest_version || "latest"} is available`
+                  : `FFmpeg Transcoder v${effectiveUpdateResult?.ffmpeg?.latest_version || "latest"} is available`;
+
+            const description = hasEngineUpdate
+              ? "Upgrade the yt-dlp extractor engine directly in-app to stay ahead of platform changes without reinstalling JaneConverter."
+              : "A newer FFmpeg transcoder release is available from the official distribution page.";
+
+            return (
+              <div
+                className="rounded-xl border border-[var(--accent-color,#c52b68)]/30 bg-[var(--accent-color,#c52b68)]/[0.06] p-4"
+                role="region"
+                aria-label="Component update available"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-zinc-100">{headline}</div>
+                    <p className="mt-1 max-w-xl text-xs leading-relaxed text-zinc-400">{description}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={openChangesModal}
+                      className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs"
+                    >
+                      <Sparkles className="size-3.5" style={{ color: "var(--accent-color, #c52b68)" }} />
+                      <span>View update</span>
+                    </button>
+                    {hasEngineUpdate && updateEngine ? (
+                      <button
+                        type="button"
+                        disabled={updatingEngine}
+                        onClick={() => void updateEngine()}
+                        className="primary-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-wait disabled:opacity-60"
+                      >
+                        <RefreshCw className={`size-3.5 ${updatingEngine ? "animate-spin" : ""}`} />
+                        {updatingEngine ? "Updating yt-dlp..." : "Update yt-dlp"}
+                      </button>
+                    ) : null}
+                    {hasFfmpegUpdate && effectiveUpdateResult?.ffmpeg?.release_url ? (
+                      <button
+                        type="button"
+                        onClick={() => void bridge.openUrl(effectiveUpdateResult.ffmpeg?.release_url ?? "")}
+                        className="subtle-button flex items-center gap-2 px-3 py-2 text-xs"
+                      >
+                        <ExternalLink className="size-3.5" /> Open FFmpeg release
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={updatingEngine}
+                      onClick={() => {
+                        setUpdateDismissed(true);
+                        setShowLocalChangesModal(false);
                         setMessage("Update dismissed. You can check again anytime.");
                       }}
                       className="subtle-button px-3 py-2 text-xs disabled:opacity-60"
@@ -198,10 +283,7 @@ export function SettingsSystemTab({
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (onOpenChangesModal) onOpenChangesModal();
-                      else setShowLocalChangesModal(true);
-                    }}
+                    onClick={openChangesModal}
                     className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs"
                   >
                     <Sparkles className="size-3.5" style={{ color: "var(--accent-color, #c52b68)" }} />
@@ -224,53 +306,91 @@ export function SettingsSystemTab({
 
         {effectiveUpdateResult && (
           <div className="grid gap-2 pt-1 sm:grid-cols-3">
-            <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2 text-xs">
-              <div className="text-zinc-400 font-medium flex items-center justify-between">
-                <span>JaneConverter</span>
-                {effectiveUpdateResult.repo?.has_update ? (
+            {isAppUpdateAvailable(effectiveUpdateResult.repo) ? (
+              <button
+                type="button"
+                onClick={openChangesModal}
+                className="rounded-xl border border-amber-400/30 bg-amber-400/[0.04] px-3 py-2 text-left text-xs transition-colors hover:border-amber-400/50 hover:bg-amber-400/[0.08]"
+              >
+                <div className="text-zinc-300 font-medium flex items-center justify-between">
+                  <span>JaneConverter</span>
                   <span className="text-[10px] text-amber-400 font-normal">Update available</span>
-                ) : (
+                </div>
+                <div className="mt-1 font-mono text-[11px] text-zinc-300 truncate">
+                  {effectiveUpdateResult.repo?.latest_commit
+                    ? `build ${effectiveUpdateResult.repo.latest_commit.slice(0, 7)}`
+                    : effectiveUpdateResult.repo?.current_version
+                      ? `v${effectiveUpdateResult.repo.current_version}`
+                      : "Current"}
+                </div>
+              </button>
+            ) : (
+              <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2 text-xs">
+                <div className="text-zinc-400 font-medium flex items-center justify-between">
+                  <span>JaneConverter</span>
                   <span className="text-[10px] text-emerald-400 font-normal">Up to date</span>
-                )}
+                </div>
+                <div className="mt-1 font-mono text-[11px] text-zinc-300 truncate">
+                  {effectiveUpdateResult.repo?.latest_commit
+                    ? `build ${effectiveUpdateResult.repo.latest_commit.slice(0, 7)}`
+                    : effectiveUpdateResult.repo?.current_version
+                      ? `v${effectiveUpdateResult.repo.current_version}`
+                      : "Current"}
+                </div>
               </div>
-              <div className="mt-1 font-mono text-[11px] text-zinc-300 truncate">
-                {effectiveUpdateResult.repo?.latest_commit
-                  ? `build ${effectiveUpdateResult.repo.latest_commit.slice(0, 7)}`
-                  : effectiveUpdateResult.repo?.current_version
-                    ? `v${effectiveUpdateResult.repo.current_version}`
-                    : "Current"}
-              </div>
-            </div>
+            )}
 
-            <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2 text-xs">
-              <div className="text-zinc-400 font-medium flex items-center justify-between">
-                <span>yt-dlp Extractor</span>
-                {effectiveUpdateResult.engine?.has_update ? (
+            {isEngineUpdateAvailable(effectiveUpdateResult.engine) ? (
+              <button
+                type="button"
+                onClick={openChangesModal}
+                className="rounded-xl border border-amber-400/30 bg-amber-400/[0.04] px-3 py-2 text-left text-xs transition-colors hover:border-amber-400/50 hover:bg-amber-400/[0.08]"
+              >
+                <div className="text-zinc-300 font-medium flex items-center justify-between">
+                  <span>yt-dlp Extractor</span>
                   <span className="text-[10px] text-amber-400 font-normal">Update available</span>
-                ) : (
+                </div>
+                <div className="mt-1 font-mono text-[11px] text-zinc-300 truncate">
+                  v{effectiveUpdateResult.engine?.current_version || "bundled"} → v{effectiveUpdateResult.engine?.latest_version}
+                </div>
+              </button>
+            ) : (
+              <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2 text-xs">
+                <div className="text-zinc-400 font-medium flex items-center justify-between">
+                  <span>yt-dlp Extractor</span>
                   <span className="text-[10px] text-emerald-400 font-normal">Up to date</span>
-                )}
+                </div>
+                <div className="mt-1 font-mono text-[11px] text-zinc-300 truncate">
+                  v{effectiveUpdateResult.engine?.current_version || "bundled"}
+                </div>
               </div>
-              <div className="mt-1 font-mono text-[11px] text-zinc-300 truncate">
-                v{effectiveUpdateResult.engine?.current_version || "bundled"}
-                {effectiveUpdateResult.engine?.has_update && ` → v${effectiveUpdateResult.engine?.latest_version}`}
-              </div>
-            </div>
+            )}
 
-            <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2 text-xs">
-              <div className="text-zinc-400 font-medium flex items-center justify-between">
-                <span>FFmpeg Transcoder</span>
-                {effectiveUpdateResult.ffmpeg?.has_update ? (
+            {isFfmpegUpdateAvailable(effectiveUpdateResult.ffmpeg) ? (
+              <button
+                type="button"
+                onClick={openChangesModal}
+                className="rounded-xl border border-amber-400/30 bg-amber-400/[0.04] px-3 py-2 text-left text-xs transition-colors hover:border-amber-400/50 hover:bg-amber-400/[0.08]"
+              >
+                <div className="text-zinc-300 font-medium flex items-center justify-between">
+                  <span>FFmpeg Transcoder</span>
                   <span className="text-[10px] text-amber-400 font-normal">Update available</span>
-                ) : (
+                </div>
+                <div className="mt-1 font-mono text-[11px] text-zinc-300 truncate">
+                  v{effectiveUpdateResult.ffmpeg?.current_version || (runtime?.ffmpegReady ? "ready" : "not detected")} → v{effectiveUpdateResult.ffmpeg?.latest_version}
+                </div>
+              </button>
+            ) : (
+              <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2 text-xs">
+                <div className="text-zinc-400 font-medium flex items-center justify-between">
+                  <span>FFmpeg Transcoder</span>
                   <span className="text-[10px] text-emerald-400 font-normal">Up to date</span>
-                )}
+                </div>
+                <div className="mt-1 font-mono text-[11px] text-zinc-300 truncate">
+                  v{effectiveUpdateResult.ffmpeg?.current_version || (runtime?.ffmpegReady ? "ready" : "not detected")}
+                </div>
               </div>
-              <div className="mt-1 font-mono text-[11px] text-zinc-300 truncate">
-                v{effectiveUpdateResult.ffmpeg?.current_version || (runtime?.ffmpegReady ? "ready" : "not detected")}
-                {effectiveUpdateResult.ffmpeg?.has_update && ` → v${effectiveUpdateResult.ffmpeg?.latest_version}`}
-              </div>
-            </div>
+            )}
           </div>
         )}
       </section>

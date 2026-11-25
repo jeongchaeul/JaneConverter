@@ -44,6 +44,7 @@ from .converter import (
     parse_time_offset_seconds,
 )
 from .updater import (
+    apply_engine_update,
     check_for_engine_updates,
     check_for_ffmpeg_updates,
     check_for_repo_updates,
@@ -1465,6 +1466,7 @@ def main():
     parser.add_argument("--no-update", action="store_true", help="Skip the read-only yt-dlp update availability check on startup")
     parser.add_argument("--check-updates", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--check-engine-updates", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--update-engine", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--check-ffmpeg-updates", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--hardware-snapshot-json", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--hardware-target-pid", type=int, help=argparse.SUPPRESS)
@@ -1578,6 +1580,12 @@ def main():
             "engine": check_for_engine_updates(),
             "ffmpeg": check_for_ffmpeg_updates(),
         }))
+        return
+    if args.update_engine:
+        result = apply_engine_update()
+        print(json.dumps(result))
+        if not result.get("success"):
+            sys.exit(1)
         return
     if args.check_ffmpeg_updates:
         print(json.dumps({"ffmpeg": check_for_ffmpeg_updates()}))

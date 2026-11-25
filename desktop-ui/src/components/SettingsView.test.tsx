@@ -7,6 +7,7 @@ import { SettingsView } from "./SettingsView";
 
 const updateCheck = vi.hoisted(() => ({ run: vi.fn() }));
 const installUpdate = vi.hoisted(() => ({ run: vi.fn() }));
+const updateEngine = vi.hoisted(() => ({ run: vi.fn() }));
 const relaunch = vi.hoisted(() => ({ run: vi.fn() }));
 const chooseFolder = vi.hoisted(() => ({ run: vi.fn() }));
 const setDataRoot = vi.hoisted(() => ({ run: vi.fn() }));
@@ -15,6 +16,7 @@ vi.mock("../bridge", () => ({
   bridge: {
     checkUpdates: updateCheck.run,
     installUpdate: installUpdate.run,
+    updateEngine: updateEngine.run,
     relaunch: relaunch.run,
     chooseFolder: chooseFolder.run,
     setDataRoot: setDataRoot.run,
@@ -25,7 +27,9 @@ describe("Settings updates", () => {
   beforeEach(() => {
     updateCheck.run.mockReset();
     installUpdate.run.mockReset();
+    updateEngine.run.mockReset();
     updateCheck.run.mockResolvedValue({ message: "Update check complete. JaneConverter is up to date." });
+    updateEngine.run.mockResolvedValue({ success: true, updated: true, latest_version: "2026.11.23", message: "yt-dlp Extractor updated to v2026.11.23." });
     relaunch.run.mockResolvedValue(undefined);
     chooseFolder.run.mockReset();
     setDataRoot.run.mockReset();
@@ -528,6 +532,65 @@ describe("Settings updates", () => {
 
     // 9. Verify helper text is placed directly under accent swatches
     expect(container.textContent).toContain('Accent highlight applies to progress bars');
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("opens Update Available modal on engine-only update and triggers updateEngine", async () => {
+    const engineOnlyAvailable = {
+      message: "Update check complete. Extractor engine update available: v2026.10.26 -> v2026.11.23.",
+      repo: {
+        has_update: false,
+        current_commit: "4b4fa16",
+        latest_commit: "4b4fa16",
+        commits: ["4b4fa16 fix(ui): current app build"],
+      },
+      engine: {
+        has_update: true,
+        current_version: "2026.10.26",
+        latest_version: "2026.11.23",
+      },
+    };
+    const refreshedUpToDate = {
+      message: "Update check complete. Extractor engine is up to date.",
+      repo: engineOnlyAvailable.repo,
+      engine: {
+        has_update: false,
+        current_version: "2026.11.23",
+        latest_version: "2026.11.23",
+      },
+    };
+    updateCheck.run.mockReset();
+    updateCheck.run
+      .mockResolvedValueOnce(engineOnlyAvailable)
+      .mockResolvedValueOnce(refreshedUpToDate);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => { root.render(<SettingsView runtime={sourceRuntime} onStatus={vi.fn()} initialTab="system" />); });
+
+    const checkBtn = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Check now"));
+    await act(async () => { checkBtn?.click(); await Promise.resolve(); });
+
+    expect(container.textContent).toContain("yt-dlp Extractor v2026.11.23 is available");
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain("Component updates available");
+
+    const updateBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) =>
+      b.textContent?.includes("Update yt-dlp")
+    );
+    expect(updateBtn).toBeDefined();
+    await act(async () => {
+      updateBtn?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(updateEngine.run).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("yt-dlp Extractor updated to v2026.11.23.");
 
     await act(async () => { root.unmount(); });
     container.remove();

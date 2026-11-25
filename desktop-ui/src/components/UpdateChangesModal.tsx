@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ExternalLink, GitCommit, Loader2, RefreshCw, Sparkles, X, Zap } from "lucide-react";
 import type { UpdateCheckResult } from "../bridge";
 import { bridge } from "../bridge";
-import { isAppUpdateAvailable } from "./UpdatePromptHeader";
+import {
+  isAppUpdateAvailable,
+  isEngineUpdateAvailable,
+  isFfmpegUpdateAvailable,
+} from "./UpdatePromptHeader";
 
 interface UpdateChangesModalProps {
   open: boolean;
@@ -10,6 +14,8 @@ interface UpdateChangesModalProps {
   updateResult: UpdateCheckResult | null;
   installing?: boolean;
   onInstall?: () => void;
+  updatingEngine?: boolean;
+  onUpdateEngine?: () => void;
   theme?: string;
 }
 
@@ -29,6 +35,8 @@ export function UpdateChangesModal({
   updateResult,
   installing = false,
   onInstall,
+  updatingEngine = false,
+  onUpdateEngine,
   theme = "dark",
 }: UpdateChangesModalProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -39,6 +47,9 @@ export function UpdateChangesModal({
   const engine = updateResult?.engine;
   const ffmpeg = updateResult?.ffmpeg;
   const isAppUpdate = isAppUpdateAvailable(repo);
+  const hasEngineUpdate = isEngineUpdateAvailable(engine);
+  const hasFfmpegUpdate = isFfmpegUpdateAvailable(ffmpeg);
+  const hasAnyUpdate = isAppUpdate || hasEngineUpdate || hasFfmpegUpdate;
 
   const rawCommits = repo?.commits ?? [];
   const meaningfulRaw = rawCommits.filter(
@@ -124,12 +135,16 @@ export function UpdateChangesModal({
         <div className="flex items-center gap-2">
           <Sparkles className="size-4" style={{ color: "var(--accent-color, #c52b68)" }} />
           <span className="mono-label">
-            {isAppUpdate ? "Push updates & changes" : "Changelog & build history"}
+            {isAppUpdate
+              ? "Push updates & changes"
+              : hasAnyUpdate
+                ? "Component updates available"
+                : "Changelog & build history"}
           </span>
         </div>
 
         <h2 id="update-modal-title" className="mt-2 text-xl font-semibold text-white">
-          {isAppUpdate ? "JaneConverter Update" : "JaneConverter Changelog"}
+          {hasAnyUpdate ? "JaneConverter Update" : "JaneConverter Changelog"}
         </h2>
 
         {/* Version progression pill or Up-to-date badge */}
@@ -154,6 +169,32 @@ export function UpdateChangesModal({
                 {repo.commits_behind} {repo.commits_behind === 1 ? "commit" : "commits"} behind
               </span>
             ) : null}
+          </div>
+        ) : hasAnyUpdate ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 font-mono text-emerald-300 font-medium">
+              <Check className="size-3.5 text-emerald-400" />
+              <span>App up to date</span>
+              <span className="text-emerald-400/60">•</span>
+              <span>{currentRev ? `build ${currentRev}` : (repo?.current_version ? `v${repo.current_version}` : "latest build")}</span>
+            </span>
+            {hasEngineUpdate && (
+              <span
+                className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-mono font-medium"
+                style={{
+                  borderColor: "var(--accent-glow, rgba(197, 43, 104, 0.4))",
+                  backgroundColor: "var(--accent-subtle, rgba(197, 43, 104, 0.15))",
+                  color: "var(--accent-color, #c52b68)",
+                }}
+              >
+                yt-dlp: v{engine?.current_version || "bundled"} → v{engine?.latest_version}
+              </span>
+            )}
+            {hasFfmpegUpdate && (
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-cyan-400/30 bg-cyan-400/10 px-2.5 py-1 font-mono font-medium text-cyan-200">
+                FFmpeg: v{ffmpeg?.current_version || "installed"} → v{ffmpeg?.latest_version}
+              </span>
+            )}
           </div>
         ) : (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
@@ -224,25 +265,38 @@ export function UpdateChangesModal({
         </div>
 
         {/* Engine update notice if yt-dlp was also updated */}
-        {engine?.has_update && (
-          <div className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-200">
-            <Zap className="size-3.5 shrink-0 text-emerald-400" />
-            <span>
-              Extractor engine upgrade ready: <strong>v{engine.current_version}</strong> → <strong>v{engine.latest_version}</strong>
-            </span>
+        {hasEngineUpdate && (
+          <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-200">
+            <div className="flex items-center gap-2">
+              <Zap className="size-3.5 shrink-0 text-emerald-400" />
+              <span>
+                Extractor engine upgrade ready: <strong>v{engine?.current_version}</strong> → <strong>v{engine?.latest_version}</strong>
+              </span>
+            </div>
+            {isAppUpdate && onUpdateEngine && (
+              <button
+                type="button"
+                disabled={updatingEngine}
+                onClick={onUpdateEngine}
+                className="inline-flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-500/20 px-2 py-1 text-[11px] font-medium text-emerald-100 hover:bg-emerald-500/30 disabled:opacity-50"
+              >
+                <RefreshCw className={`size-3 ${updatingEngine ? "animate-spin" : ""}`} />
+                <span>{updatingEngine ? "Updating..." : "Update yt-dlp"}</span>
+              </button>
+            )}
           </div>
         )}
 
         {/* FFmpeg transcoder update notice if FFmpeg has an update */}
-        {ffmpeg?.has_update && (
+        {hasFfmpegUpdate && (
           <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs text-cyan-200">
             <div className="flex items-center gap-2">
               <Sparkles className="size-3.5 shrink-0 text-cyan-400" />
               <span>
-                FFmpeg transcoder update available: <strong>v{ffmpeg.current_version}</strong> → <strong>v{ffmpeg.latest_version}</strong>
+                FFmpeg transcoder update available: <strong>v{ffmpeg?.current_version}</strong> → <strong>v{ffmpeg?.latest_version}</strong>
               </span>
             </div>
-            {ffmpeg.release_url ? (
+            {ffmpeg?.release_url ? (
               <button
                 type="button"
                 onClick={() => {
@@ -269,6 +323,18 @@ export function UpdateChangesModal({
               >
                 <RefreshCw className={`size-3.5 ${installing ? "animate-spin" : ""}`} />
                 <span>{installing ? "Installing update..." : "Update now"}</span>
+              </button>
+            ) : null}
+
+            {!isAppUpdate && hasEngineUpdate && onUpdateEngine ? (
+              <button
+                type="button"
+                disabled={updatingEngine}
+                onClick={onUpdateEngine}
+                className="primary-button flex items-center gap-2 px-3.5 py-2 text-xs disabled:cursor-wait disabled:opacity-60"
+              >
+                <RefreshCw className={`size-3.5 ${updatingEngine ? "animate-spin" : ""}`} />
+                <span>{updatingEngine ? "Updating yt-dlp..." : "Update yt-dlp"}</span>
               </button>
             ) : null}
 

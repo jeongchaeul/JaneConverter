@@ -626,6 +626,62 @@ pub async fn install_update(
 }
 
 #[tauri::command]
+pub async fn update_engine(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    if state
+        .active_job
+        .lock()
+        .map_err(|_| "The conversion registry is unavailable.".to_owned())?
+        .is_some()
+    {
+        return Err("Wait for the active conversion to finish before updating yt-dlp.".into());
+    }
+
+    let engine = find_python();
+    let mut command = Command::new(&engine);
+    if !packaged_engine(&engine) {
+        command.args(["run", "--locked", "janeconverter"]);
+    }
+    command.arg("--update-engine");
+    command.current_dir(project_root());
+
+    let output = tauri::async_runtime::spawn_blocking(move || {
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        crate::process::bounded_output(&mut command, Duration::from_secs(90), &cancel)
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {e}"))??;
+
+    let payload = serde_json::from_slice::<serde_json::Value>(&output.stdout).ok();
+    if !output.status.success()
+        || payload
+            .as_ref()
+            .and_then(|v| v.get("success"))
+            .and_then(serde_json::Value::as_bool)
+            == Some(false)
+    {
+        if let Some(error_msg) = payload
+            .as_ref()
+            .and_then(|v| v.get("error"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+        {
+            return Err(error_msg.to_owned());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        return Err(if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            "yt-dlp update failed.".to_owned()
+        });
+    }
+
+    Ok(payload.unwrap_or_else(|| serde_json::json!({ "success": true })))
+}
+
+#[tauri::command]
 pub fn get_chromium_cookie_policy() -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {

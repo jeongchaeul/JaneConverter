@@ -20,6 +20,23 @@ export function isAppUpdateAvailable(repo?: UpdateCheckResult["repo"]): boolean 
   return true;
 }
 
+export function isEngineUpdateAvailable(engine?: UpdateCheckResult["engine"]): boolean {
+  return Boolean(engine?.has_update);
+}
+
+export function isFfmpegUpdateAvailable(ffmpeg?: UpdateCheckResult["ffmpeg"]): boolean {
+  return Boolean(ffmpeg?.has_update);
+}
+
+export function hasAnyUpdateAvailable(result?: UpdateCheckResult | null): boolean {
+  if (!result) return false;
+  return (
+    isAppUpdateAvailable(result.repo) ||
+    isEngineUpdateAvailable(result.engine) ||
+    isFfmpegUpdateAvailable(result.ffmpeg)
+  );
+}
+
 interface UpdatePromptHeaderProps {
   updateResult: UpdateCheckResult | null;
   dismissed: boolean;
@@ -27,6 +44,8 @@ interface UpdatePromptHeaderProps {
   onDismiss: () => void;
   installing?: boolean;
   onInstall?: () => void;
+  updatingEngine?: boolean;
+  onUpdateEngine?: () => void;
 }
 
 export function UpdatePromptHeader({
@@ -36,6 +55,8 @@ export function UpdatePromptHeader({
   onDismiss,
   installing = false,
   onInstall,
+  updatingEngine = false,
+  onUpdateEngine,
 }: UpdatePromptHeaderProps) {
   if (dismissed || !updateResult) return null;
 
@@ -43,14 +64,20 @@ export function UpdatePromptHeader({
   const engine = updateResult.engine;
   const ffmpeg = updateResult.ffmpeg;
   const hasAppUpdate = isAppUpdateAvailable(repo);
+  const hasEngineUpdate = isEngineUpdateAvailable(engine);
+  const hasFfmpegUpdate = isFfmpegUpdateAvailable(ffmpeg);
 
-  if (!hasAppUpdate) return null;
+  if (!hasAppUpdate && !hasEngineUpdate && !hasFfmpegUpdate) return null;
 
-  const versionTag = repo?.latest_commit
-    ? `build ${repo.latest_commit.slice(0, 7)}`
-    : repo?.latest_version
-      ? `v${repo.latest_version}`
-      : "new release";
+  const versionTag = hasAppUpdate
+    ? repo?.latest_commit
+      ? `build ${repo.latest_commit.slice(0, 7)}`
+      : repo?.latest_version
+        ? `v${repo.latest_version}`
+        : "new release"
+    : hasEngineUpdate
+      ? `yt-dlp v${engine?.latest_version || "latest"}`
+      : `FFmpeg v${ffmpeg?.latest_version || "latest"}`;
 
   const commitsBehind = repo?.commits_behind ?? 0;
 
@@ -87,17 +114,17 @@ export function UpdatePromptHeader({
           >
             {versionTag}
           </span>
-          {commitsBehind > 0 && (
+          {hasAppUpdate && commitsBehind > 0 && (
             <span className="hidden sm:inline text-zinc-400">
               ({commitsBehind} new {commitsBehind === 1 ? "commit" : "commits"} pushed)
             </span>
           )}
-          {engine?.has_update && (
+          {hasAppUpdate && hasEngineUpdate && (
             <span className="hidden md:inline rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-300 border border-emerald-500/20">
               Extractor engine upgrade
             </span>
           )}
-          {ffmpeg?.has_update && (
+          {(hasAppUpdate || hasEngineUpdate) && hasFfmpegUpdate && (
             <span className="hidden md:inline rounded bg-cyan-500/10 px-1.5 py-0.5 text-[11px] text-cyan-300 border border-cyan-500/20">
               FFmpeg upgrade available
             </span>
@@ -118,10 +145,10 @@ export function UpdatePromptHeader({
           }}
         >
           <Sparkles className="size-3.5" />
-          <span>View brief changes</span>
+          <span>{hasAppUpdate ? "View brief changes" : "View update"}</span>
         </button>
 
-        {repo?.installer_available && onInstall && (
+        {hasAppUpdate && repo?.installer_available && onInstall && (
           <button
             type="button"
             disabled={installing}
@@ -130,6 +157,18 @@ export function UpdatePromptHeader({
           >
             <RefreshCw className={`size-3.5 ${installing ? "animate-spin" : ""}`} />
             <span>{installing ? "Installing..." : "Update now"}</span>
+          </button>
+        )}
+
+        {!hasAppUpdate && hasEngineUpdate && onUpdateEngine && (
+          <button
+            type="button"
+            disabled={updatingEngine}
+            onClick={onUpdateEngine}
+            className="primary-button flex items-center gap-1.5 px-2.5 py-1 text-xs disabled:opacity-50"
+          >
+            <RefreshCw className={`size-3.5 ${updatingEngine ? "animate-spin" : ""}`} />
+            <span>{updatingEngine ? "Updating yt-dlp..." : "Update yt-dlp"}</span>
           </button>
         )}
 

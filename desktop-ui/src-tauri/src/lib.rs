@@ -162,6 +162,7 @@ pub fn run() {
             notify_attention,
             check_updates,
             install_update,
+            update_engine,
             export_log_file,
             set_taskbar_progress,
             get_chromium_cookie_policy,

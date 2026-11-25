@@ -96,6 +96,15 @@ export interface UpdateCheckResult {
   };
 }
 
+export interface EngineUpdateResult {
+  success: boolean;
+  updated?: boolean;
+  current_version?: string;
+  latest_version?: string;
+  message?: string;
+  error?: string | null;
+}
+
 export interface ConversionRequest extends Omit<ConverterSettings, "fetchedDir"> {
   source: string;
   playlistIndexes?: string;
@@ -287,6 +296,7 @@ export interface JaneBridge {
   notifyAttention(): Promise<void>;
   checkUpdates(): Promise<UpdateCheckResult>;
   installUpdate(): Promise<void>;
+  updateEngine(): Promise<EngineUpdateResult>;
   chooseFlpFile(): Promise<string | null>;
   chooseAlsFile(): Promise<string | null>;
   flpDetectInstalled(): Promise<InstalledFlStudio[]>;
@@ -380,6 +390,7 @@ const demoBridge: JaneBridge = {
   async notifyAttention() {},
   async checkUpdates() { return { message: "Preview mode: update checks are available in the desktop build." }; },
   async installUpdate() {},
+  async updateEngine() { return { success: false, updated: false, error: "Engine updates are available in the desktop build." }; },
   async chooseFlpFile() { return null; },
   async chooseAlsFile() { return null; },
   async flpDetectInstalled() {
@@ -509,6 +520,7 @@ const tauriBridge: JaneBridge = {
   notifyAttention: () => invoke<void>("notify_attention"),
   checkUpdates: () => invoke<UpdateCheckResult>("check_updates"),
   installUpdate: () => invoke<void>("install_update"),
+  updateEngine: () => invoke<EngineUpdateResult>("update_engine"),
   exportLogFile: (content: string, defaultFilename?: string) =>
     invoke<string | null>("export_log_file", { content, defaultFilename: defaultFilename ?? null }),
   setTaskbarProgress: (progress, status) =>

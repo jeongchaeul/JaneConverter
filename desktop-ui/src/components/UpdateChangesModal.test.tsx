@@ -121,4 +121,57 @@ describe("UpdateChangesModal", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("displays component update UI and Update yt-dlp button for engine-only updates", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const onUpdateEngine = vi.fn();
+
+    const mockEngineOnly: UpdateCheckResult = {
+      message: "Extractor engine update available",
+      repo: {
+        has_update: false,
+        current_commit: "4b4fa16",
+        latest_commit: "4b4fa16",
+        commits: ["4b4fa16 fix(ui): latest app build"],
+      },
+      engine: {
+        has_update: true,
+        current_version: "2026.10.26",
+        latest_version: "2026.11.23",
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        <UpdateChangesModal
+          open={true}
+          onClose={vi.fn()}
+          updateResult={mockEngineOnly}
+          onUpdateEngine={onUpdateEngine}
+        />
+      );
+    });
+
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain("Component updates available");
+    expect(dialog?.textContent).toContain("JaneConverter Update");
+    expect(dialog?.textContent).toContain("App up to date");
+    expect(dialog?.textContent).toContain("yt-dlp: v2026.10.26 → v2026.11.23");
+
+    const updateBtn = Array.from(dialog?.querySelectorAll("button") ?? []).find((b) =>
+      b.textContent?.includes("Update yt-dlp")
+    );
+    expect(updateBtn).toBeDefined();
+    await act(async () => {
+      updateBtn?.click();
+    });
+    expect(onUpdateEngine).toHaveBeenCalledTimes(1);
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });

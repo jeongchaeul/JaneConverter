@@ -62,7 +62,7 @@ describe("UpdatePromptHeader", () => {
     container.remove();
   });
 
-  it("does not render when host build matches latest push or only engine has update", async () => {
+  it("does not render when host build matches latest push and no component updates exist", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -75,8 +75,8 @@ describe("UpdatePromptHeader", () => {
         latest_commit: "c51251b",
       },
       engine: {
-        has_update: true,
-        current_version: "2026.08.19",
+        has_update: false,
+        current_version: "2026.10.21",
         latest_version: "2026.10.21",
       },
     };
@@ -114,6 +114,65 @@ describe("UpdatePromptHeader", () => {
       );
     });
     expect(container.textContent).toBe("");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("renders yt-dlp update banner and triggers modal and update actions", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const onOpenChanges = vi.fn();
+    const onUpdateEngine = vi.fn();
+
+    const mockResultEngineOnly: UpdateCheckResult = {
+      message: "Extractor engine update available",
+      repo: {
+        has_update: false,
+        current_commit: "4b4fa16",
+        latest_commit: "4b4fa16",
+      },
+      engine: {
+        has_update: true,
+        current_version: "2026.10.26",
+        latest_version: "2026.11.23",
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        <UpdatePromptHeader
+          updateResult={mockResultEngineOnly}
+          dismissed={false}
+          onOpenChanges={onOpenChanges}
+          onDismiss={vi.fn()}
+          onUpdateEngine={onUpdateEngine}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain("Update available");
+    expect(container.textContent).toContain("yt-dlp v2026.11.23");
+
+    const viewBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("View update")
+    );
+    expect(viewBtn).toBeDefined();
+    await act(async () => {
+      viewBtn?.click();
+    });
+    expect(onOpenChanges).toHaveBeenCalledTimes(1);
+
+    const updateBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Update yt-dlp")
+    );
+    expect(updateBtn).toBeDefined();
+    await act(async () => {
+      updateBtn?.click();
+    });
+    expect(onUpdateEngine).toHaveBeenCalledTimes(1);
 
     await act(async () => { root.unmount(); });
     container.remove();

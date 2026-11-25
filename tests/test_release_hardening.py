@@ -278,12 +278,20 @@ def test_engine_update_version_bounds(monkeypatch):
         allow_install=True,
     ) is False
 
-    # 4. In packaged frozen executable, update_engine must be skipped
+    # 4. In packaged frozen executable, update_engine delegates to install_yt_dlp_override
     monkeypatch.setattr(sys, "frozen", True, raising=False)
+    override_calls = []
+    monkeypatch.setattr(
+        "janeconverter.engine_override.install_yt_dlp_override",
+        lambda target_version=None, status_callback=None, **_kwargs: (
+            override_calls.append(target_version)
+            or {"success": True, "updated": True, "latest_version": target_version}
+        ),
+    )
     logged = []
     assert updater.update_engine(
         status_callback=logged.append,
         info={"has_update": True, "online": True, "current_version": "2026.10.01", "latest_version": "2027.01.15"},
         allow_install=True,
-    ) is False
-    assert any("packaged desktop releases" in msg for msg in logged)
+    ) is True
+    assert override_calls == ["2027.01.15"]

@@ -708,10 +708,6 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None,
         log("Extractor engine installation is disabled for read-only update checks.")
         return False
 
-    if getattr(sys, "frozen", False):
-        log("In packaged desktop releases, extractor engine updates are bundled with application releases.")
-        return False
-
     if info is None:
         log("Checking for real-time extractor engine updates...")
         info = check_for_engine_updates()
@@ -735,6 +731,14 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None,
         return False
     log(f"New engine release detected: v{target_version}. Upgrading now...")
 
+    if getattr(sys, "frozen", False):
+        from .engine_override import install_yt_dlp_override
+
+        override_res = install_yt_dlp_override(target_version=target_version, status_callback=log)
+        if not override_res.get("success") and override_res.get("error"):
+            log(str(override_res["error"]))
+        return bool(override_res.get("success"))
+
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     cmd = [
         "uv",
@@ -757,6 +761,40 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None,
     except Exception as e:
         log(f"Notice: Automatic engine upgrade skipped ({e}).")
         return False
+
+
+def apply_engine_update(timeout_seconds: float = 30.0) -> Dict[str, Any]:
+    """Check PyPI and install a verified yt-dlp runtime override if an update exists."""
+    info = check_for_engine_updates(timeout_seconds=min(float(timeout_seconds), 6.0))
+    current_ver = str(info.get("current_version", "unknown"))
+    latest_ver = str(info.get("latest_version", current_ver))
+
+    if not info.get("online"):
+        return {
+            "success": False,
+            "updated": False,
+            "current_version": current_ver,
+            "latest_version": latest_ver,
+            "error": "Unable to reach PyPI to check for yt-dlp updates.",
+        }
+
+    if not info.get("has_update"):
+        return {
+            "success": True,
+            "updated": False,
+            "current_version": current_ver,
+            "latest_version": latest_ver,
+            "message": f"yt-dlp Extractor is already up to date (v{current_ver}).",
+        }
+
+    from .engine_override import install_yt_dlp_override
+
+    result = install_yt_dlp_override(
+        target_version=latest_ver,
+        timeout_seconds=timeout_seconds,
+    )
+    result["current_version"] = current_ver
+    return result
 
 def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]] = None,
                                 auto_apply: bool = False) -> Dict[str, Any]:

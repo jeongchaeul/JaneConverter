@@ -13,6 +13,7 @@ import type { ConverterSettings, RuntimeInfo, UpdateCheckResult } from "../bridg
 import { bridge } from "../bridge";
 import { StoryTermsModal } from "./StoryTermsModal";
 import { UpdateChangesModal } from "./UpdateChangesModal";
+import { hasAnyUpdateAvailable } from "./UpdatePromptHeader";
 import { SettingsBrowserTab } from "./settings/SettingsBrowserTab";
 import { SettingsHardwareTab } from "./settings/SettingsHardwareTab";
 import { SettingsThemeTab } from "./settings/SettingsThemeTab";
@@ -52,6 +53,8 @@ export function SettingsView({
   onCheckUpdates,
   isCheckingUpdates = false,
   onOpenChangesModal,
+  updatingEngine,
+  onUpdateEngine,
 }: {
   runtime: RuntimeInfo | null;
   settings?: ConverterSettings;
@@ -83,10 +86,14 @@ export function SettingsView({
   onCheckUpdates?: () => Promise<UpdateCheckResult>;
   isCheckingUpdates?: boolean;
   onOpenChangesModal?: () => void;
+  updatingEngine?: boolean;
+  onUpdateEngine?: () => Promise<void> | void;
 }) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [localUpdatingEngine, setLocalUpdatingEngine] = useState(false);
+  const effectiveUpdatingEngine = updatingEngine ?? localUpdatingEngine;
   const [localUpdateResult, setLocalUpdateResult] = useState<UpdateCheckResult | null>(null);
   const effectiveUpdateResult = propUpdateResult !== undefined ? propUpdateResult : localUpdateResult;
   const [updateDismissed, setUpdateDismissed] = useState(false);
@@ -179,6 +186,10 @@ export function SettingsView({
         setUpdateDismissed(false);
         setMessage(result.message);
         onStatus(result.message);
+        if (hasAnyUpdateAvailable(result)) {
+          if (onOpenChangesModal) onOpenChangesModal();
+          else setShowLocalChangesModal(true);
+        }
       } catch (error) {
         const nextMessage = error instanceof Error ? error.message : String(error);
         setMessage(nextMessage);
@@ -194,12 +205,46 @@ export function SettingsView({
       setUpdateDismissed(false);
       setMessage(result.message);
       onStatus(result.message);
+      if (hasAnyUpdateAvailable(result)) {
+        if (onOpenChangesModal) onOpenChangesModal();
+        else setShowLocalChangesModal(true);
+      }
     } catch (error) {
       const nextMessage = error instanceof Error ? error.message : String(error);
       setMessage(nextMessage);
       onStatus(nextMessage);
     } finally {
       setChecking(false);
+    }
+  }
+
+  async function updateEngine() {
+    if (onUpdateEngine) {
+      await onUpdateEngine();
+      return;
+    }
+    setLocalUpdatingEngine(true);
+    const target = effectiveUpdateResult?.engine?.latest_version;
+    const startMsg = target
+      ? `Downloading and verifying yt-dlp v${target}...`
+      : "Updating yt-dlp extractor...";
+    setMessage(startMsg);
+    onStatus(startMsg);
+    try {
+      const res = await bridge.updateEngine();
+      const refreshed = await bridge.checkUpdates().catch(() => null);
+      if (refreshed) {
+        setLocalUpdateResult(refreshed);
+      }
+      const doneMsg = res.message || (res.latest_version ? `yt-dlp Extractor updated to v${res.latest_version}.` : "yt-dlp Extractor updated.");
+      setMessage(doneMsg);
+      onStatus(doneMsg);
+    } catch (error) {
+      const failure = error instanceof Error ? error.message : String(error);
+      setMessage(`yt-dlp could not be updated: ${failure}`);
+      onStatus(`yt-dlp could not be updated: ${failure}`);
+    } finally {
+      setLocalUpdatingEngine(false);
     }
   }
 
@@ -337,11 +382,13 @@ export function SettingsView({
           checking={checking}
           isCheckingUpdates={isCheckingUpdates}
           installing={installing}
+          updatingEngine={effectiveUpdatingEngine}
           updateDismissed={updateDismissed}
           setUpdateDismissed={setUpdateDismissed}
           setMessage={setMessage}
           updates={updates}
           installUpdate={installUpdate}
+          updateEngine={updateEngine}
           onOpenChangesModal={onOpenChangesModal}
           setShowLocalChangesModal={setShowLocalChangesModal}
         />
@@ -388,6 +435,8 @@ export function SettingsView({
         updateResult={effectiveUpdateResult}
         installing={installing}
         onInstall={() => void installUpdate()}
+        updatingEngine={effectiveUpdatingEngine}
+        onUpdateEngine={() => void updateEngine()}
         theme={isColorLight(bgColor) ? "light" : "dark"}
       />
     </div>

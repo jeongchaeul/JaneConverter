@@ -9,7 +9,7 @@ import { ConsoleView } from "./components/ConsoleView";
 import { HardwarePipelineView } from "./components/HardwarePipelineView";
 import { SettingsView } from "./components/SettingsView";
 import { FetchedMediaView } from "./components/FetchedMediaView";
-import { UpdatePromptHeader, isAppUpdateAvailable } from "./components/UpdatePromptHeader";
+import { UpdatePromptHeader, hasAnyUpdateAvailable } from "./components/UpdatePromptHeader";
 import { UpdateChangesModal } from "./components/UpdateChangesModal";
 import { detectCategoryFromPath, findPresetName, formatBytes, formatElapsedMs } from "./options";
 import { appendOrCollapseProgressEvent, extractYouTubeUrlFromThumbnail } from "./components/inprogress/parser";
@@ -254,6 +254,7 @@ export default function App() {
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [updatingEngine, setUpdatingEngine] = useState(false);
   const [deletedInProgressKeys, setDeletedInProgressKeys] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -643,7 +644,7 @@ export default function App() {
       void bridge.checkUpdates().then((result) => {
         if (!mounted) return;
         setUpdateResult(result);
-        const hasUp = isAppUpdateAvailable(result.repo);
+        const hasUp = hasAnyUpdateAvailable(result);
         if (hasUp) {
           setUpdateDismissed(false);
         }
@@ -710,6 +711,31 @@ export default function App() {
       errorMessage(`The update could not be installed: ${failure}`);
     } finally {
       setInstallingUpdate(false);
+    }
+  }
+
+  async function handleUpdateEngine() {
+    setUpdatingEngine(true);
+    const target = updateResult?.engine?.latest_version;
+    const startMsg = target
+      ? `Downloading and verifying yt-dlp v${target}...`
+      : "Updating yt-dlp extractor...";
+    statusMessage(startMsg);
+    try {
+      const res = await bridge.updateEngine();
+      const refreshed = await bridge.checkUpdates().catch(() => null);
+      if (refreshed) {
+        setUpdateResult(refreshed);
+      }
+      statusMessage(
+        res.message ||
+          (res.latest_version ? `yt-dlp Extractor updated to v${res.latest_version}.` : "yt-dlp Extractor updated.")
+      );
+    } catch (error) {
+      const failure = error instanceof Error ? error.message : String(error);
+      errorMessage(`yt-dlp could not be updated: ${failure}`);
+    } finally {
+      setUpdatingEngine(false);
     }
   }
 
@@ -1026,6 +1052,8 @@ export default function App() {
             onCheckUpdates={handleCheckUpdates}
             isCheckingUpdates={isCheckingUpdates}
             onOpenChangesModal={() => setShowUpdateModal(true)}
+            updatingEngine={updatingEngine}
+            onUpdateEngine={() => void handleUpdateEngine()}
           />
         )
         : null;
@@ -1087,6 +1115,8 @@ export default function App() {
           onDismiss={() => setUpdateDismissed(true)}
           installing={installingUpdate}
           onInstall={() => void handleInstallUpdate()}
+          updatingEngine={updatingEngine}
+          onUpdateEngine={() => void handleUpdateEngine()}
         />
         <main className={`min-h-0 flex-1 px-8 py-6 ${activeView === "console" ? "flex flex-col overflow-hidden" : "overflow-y-auto"}`}>
           <div className={activeView === "converter" ? "block" : "hidden"}>
@@ -1304,6 +1334,8 @@ export default function App() {
         updateResult={updateResult}
         installing={installingUpdate}
         onInstall={() => void handleInstallUpdate()}
+        updatingEngine={updatingEngine}
+        onUpdateEngine={() => void handleUpdateEngine()}
         theme={theme}
       />
     </div>
