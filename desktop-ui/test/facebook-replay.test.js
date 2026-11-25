@@ -360,3 +360,78 @@ test("single-photo page permalink strips parent set=a. album, ignores comment ph
     countConflict: false,
   });
 });
+
+test("stale capture nonce resets previous sessionStorage keys and ACK wakes next scan quickly", async () => {
+  const html = readFileSync(resolve(process.cwd(), "test/fixtures/facebook-grid.html"), "utf8");
+  const dom = new JSDOM(html, {
+    url: "https://www.facebook.com/media/set/?set=pcb.999999",
+    runScripts: "outside-only",
+    pretendToBeVisual: true,
+  });
+  const { window } = dom;
+  window.sessionStorage.setItem("janeFacebookCaptureNonce", "old-nonce-from-previous-run");
+  window.sessionStorage.setItem("janeFacebookScannedPhotoIds", JSON.stringify(["999999999"]));
+  window.sessionStorage.setItem("janeFacebookExpectedPhotoCount", "99");
+  window.sessionStorage.setItem("janeFacebookCaptureMode", "viewer");
+  window.__JANE_NAVIGATE__ = (href) => window.history.replaceState({}, "", href);
+  Object.defineProperty(window.document.documentElement, "scrollHeight", { value: 768 });
+  window.scrollTo = () => {};
+  let now = 0;
+  let timerId = 0;
+  const timers = new Map();
+  class ReplayDate extends window.Date {
+    static now() { return now; }
+  }
+  window.Date = ReplayDate;
+  window.TextEncoder = TextEncoder;
+  window.setTimeout = (callback, delay = 0) => {
+    const id = ++timerId;
+    timers.set(id, { at: now + delay, callback, repeat: 0 });
+    return id;
+  };
+  window.setInterval = (callback, delay = 0) => {
+    const id = ++timerId;
+    timers.set(id, { at: now + delay, callback, repeat: delay });
+    return id;
+  };
+  const advance = async (milliseconds) => {
+    const until = now + milliseconds;
+    while (true) {
+      const next = [...timers.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next || next[1].at > until) break;
+      now = next[1].at;
+      timers.delete(next[0]);
+      if (next[1].repeat) {
+        timers.set(next[0], { ...next[1], at: now + next[1].repeat });
+      }
+      next[1].callback();
+      await Promise.resolve();
+    }
+    now = until;
+  };
+  const readMsg = () => {
+    const title = window.document.title;
+    if (!title.startsWith(prefix)) return null;
+    return JSON.parse(Buffer.from(title.slice(prefix.length), "base64url").toString("utf8"));
+  };
+
+  try {
+    window.eval(captureScript);
+    window.document.dispatchEvent(new window.Event("DOMContentLoaded"));
+
+    expect(window.sessionStorage.getItem("janeFacebookCaptureNonce")).toBe("fixture");
+    expect(window.sessionStorage.getItem("janeFacebookScannedPhotoIds")).toBeNull();
+
+    await advance(150);
+    expect(window.sessionStorage.getItem("janeFacebookCaptureMode")).toBe("grid");
+
+    await advance(260);
+    expect(readMsg()).toMatchObject({ kind: "photos", sequence: 1, expectedCount: 3 });
+
+    window.__JANE_FACEBOOK_ACK__fixture = 1;
+    await advance(25);
+    expect(readMsg()).toMatchObject({ kind: "photos", sequence: 2, expectedCount: 3 });
+  } finally {
+    dom.window.close();
+  }
+});

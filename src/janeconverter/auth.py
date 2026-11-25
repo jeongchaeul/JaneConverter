@@ -150,7 +150,10 @@ def filter_cookie_jar_for_domains(jar: Any, allowed_domains: Iterable[str]) -> A
         return http.cookiejar.CookieJar()
 
     try:
-        isolated = type(jar)()
+        if hasattr(jar, "set_cookie"):
+            isolated = type(jar)()
+        else:
+            raise TypeError("Cookie container lacks set_cookie")
     except Exception:
         try:
             from yt_dlp.cookies import YoutubeDLCookieJar

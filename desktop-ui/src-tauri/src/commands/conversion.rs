@@ -76,21 +76,23 @@ pub fn start_conversion(
             .lock()
             .map_err(|_| "The Facebook capture registry is unavailable.")?;
         if let Some(capture_id) = facebook_capture_id.as_deref() {
-            if !valid_capture_id(capture_id) || !captures.contains_key(capture_id) {
+            if !valid_capture_id(capture_id) {
                 return Err(
                     "The Facebook photo capture has expired. Capture the album again.".into(),
                 );
             }
-            let session = captures
-                .get(capture_id)
-                .cloned()
-                .ok_or_else(|| "The Facebook guest session has expired.".to_string())?;
-            if session.created.elapsed() >= Duration::from_secs(600)
-                || session.in_use.load(Ordering::Relaxed)
-            {
-                return Err("The Facebook guest session has expired or is already in use.".into());
+            if let Some(session) = captures.get(capture_id).cloned() {
+                if session.created.elapsed() >= Duration::from_secs(600)
+                    || session.in_use.load(Ordering::Relaxed)
+                {
+                    return Err(
+                        "The Facebook guest session has expired or is already in use.".into(),
+                    );
+                }
+                Some((capture_id.to_owned(), session))
+            } else {
+                None
             }
-            Some((capture_id.to_owned(), session))
         } else {
             None
         }
@@ -233,7 +235,7 @@ pub fn start_conversion(
             manifests.remove(capture_id);
         }
     }
-    let facebook_refresh = facebook_capture_id.as_ref().map(|capture_id| {
+    let facebook_refresh = facebook_session.as_ref().map(|(capture_id, _)| {
         let captures = Arc::clone(&state.facebook_captures);
         let capture_id = capture_id.clone();
         Arc::new(move |request_id: &str, photo_id: &str| {

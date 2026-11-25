@@ -493,6 +493,10 @@ export default function App() {
           lastJobContextRef.current = activeJobContextRef.current;
         }
       }
+      if (event.jobId === "capture" && captureBusyRef.current) {
+        if (event.progress !== undefined) setProgress(event.progress);
+        if (event.message) setStatus(event.message);
+      }
       if (event.jobId && event.jobId === activeJobRef.current) {
         if (event.progress !== undefined) setProgress(event.progress);
         setStatus(event.message);

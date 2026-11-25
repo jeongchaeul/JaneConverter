@@ -933,3 +933,185 @@ def test_process_conversion_skips_facebook_photo_manifest_for_video_and_audio_ta
         {"source": "https://www.facebook.com/share/p/video-post/", "audio_only": True, "target_format": "mp3"},
         {"source": "https://www.facebook.com/share/p/video-post/", "audio_only": False, "target_format": "source"},
     ]
+
+
+def test_fetch_facebook_manifest_parallel_http_viewer_walker(monkeypatch):
+    post_html = (
+        '<html><head><title>Album Post - Facebook</title></head><body>'
+        '<script>'
+        '{"mediaset_token":"pcb.2156692884932580",'
+        '"all_subattachments":{"count":4,"nodes":['
+        '{"media":{"__typename":"Photo","id":"100001"}},'
+        '{"media":{"__typename":"Photo","id":"100002"}}'
+        ']}}'
+        '</script></body></html>'
+    )
+    viewer_pages = {
+        "100001": (
+            '<script>{"currMedia":{"__typename":"Photo","id":"100001",'
+            '"image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/p1.jpg","width":1080,"height":1080}},'
+            '"nextMediaAfterNodeId":{"__typename":"Photo","id":"100002"}}</script>',
+            "https://www.facebook.com/photo/?fbid=100001&set=pcb.2156692884932580",
+        ),
+        "100002": (
+            '<script>{"currMedia":{"__typename":"Photo","id":"100002",'
+            '"image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/p2.jpg","width":1080,"height":1080}},'
+            '"nextMediaAfterNodeId":{"__typename":"Photo","id":"100003"}}</script>',
+            "https://www.facebook.com/photo/?fbid=100002&set=pcb.2156692884932580",
+        ),
+        "100003": (
+            '<script>{"currMedia":{"__typename":"Photo","id":"100003",'
+            '"image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/p3.jpg","width":1080,"height":1080}},'
+            '"nextMediaAfterNodeId":{"__typename":"Photo","id":"100004"}}</script>',
+            "https://www.facebook.com/photo/?fbid=100003&set=pcb.2156692884932580",
+        ),
+        "100004": (
+            '<script>{"currMedia":{"__typename":"Photo","id":"100004",'
+            '"image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/p4.jpg","width":1080,"height":1080}}}</script>',
+            "https://www.facebook.com/photo/?fbid=100004&set=pcb.2156692884932580",
+        ),
+    }
+
+    class _MockSession:
+        def __init__(self):
+            self.headers = {}
+            self.requested = []
+
+        def get(self, url, **kwargs):
+            self.requested.append(url)
+            class _Resp:
+                def __init__(self, text, resp_url):
+                    self.status_code = 200
+                    self.text = text
+                    self.url = resp_url
+            if "/media/set/" in url:
+                raise AssertionError("guest post walk should skip wasted /media/set/?set=pcb. request")
+            for pid, (html_body, resp_url) in viewer_pages.items():
+                if f"fbid={pid}" in url:
+                    return _Resp(html_body, resp_url)
+            return _Resp(post_html, "https://www.facebook.com/groups/1/permalink/2156692884932580/")
+
+    monkeypatch.setattr(facebook_capture.requests, "Session", _MockSession)
+    progress_updates = []
+    manifest = facebook_capture.fetch_facebook_manifest(
+        "https://www.facebook.com/groups/1/permalink/2156692884932580/",
+        browser="guest",
+        progress_callback=lambda pct, msg: progress_updates.append((pct, msg)),
+    )
+    assert manifest is not None
+    assert manifest["complete"] is True
+    assert manifest["expected_count"] == 4
+    assert [p["id"] for p in manifest["photos"]] == ["100001", "100002", "100003", "100004"]
+    assert any("Found 4 of 4" in msg for _, msg in progress_updates)
+
+
+def test_fetch_facebook_manifest_incomplete_viewer_walk_marks_incomplete(monkeypatch):
+    post_html = (
+        '<html><head><title>Album Post - Facebook</title></head><body>'
+        '<script>'
+        '{"mediaset_token":"pcb.555666",'
+        '"all_subattachments":{"count":4,"nodes":['
+        '{"media":{"__typename":"Photo","id":"200001"}},'
+        '{"media":{"__typename":"Photo","id":"200002"}}'
+        ']}}'
+        '</script></body></html>'
+    )
+
+    class _MockSession:
+        def __init__(self):
+            self.headers = {}
+
+        def get(self, url, **kwargs):
+            class _Resp:
+                def __init__(self, text, resp_url):
+                    self.status_code = 200
+                    self.text = text
+                    self.url = resp_url
+            if "fbid=200001" in url:
+                return _Resp(
+                    '<script>{"id":"200001","image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/p1.jpg","width":1080},"nextMediaAfterNodeId":{"__typename":"Photo","id":"200002"}}</script>',
+                    url,
+                )
+            if "fbid=200002" in url:
+                return _Resp(
+                    '<script>{"id":"200002","image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/p2.jpg","width":1080},"nextMediaAfterNodeId":{"__typename":"Photo","id":"200003"}}</script>',
+                    url,
+                )
+            if "fbid=200003" in url:
+                return _Resp("<html>Log in</html>", "https://www.facebook.com/login/")
+            return _Resp(post_html, "https://www.facebook.com/groups/1/permalink/555666/")
+
+    monkeypatch.setattr(facebook_capture.requests, "Session", _MockSession)
+    manifest = facebook_capture.fetch_facebook_manifest(
+        "https://www.facebook.com/groups/1/permalink/555666/",
+        browser="guest",
+    )
+    assert manifest is not None
+    assert manifest["complete"] is False
+    assert manifest["expected_count"] == 4
+
+
+def test_fetch_facebook_manifest_single_photo_permalink_ignores_page_album_set(monkeypatch):
+    post_html = (
+        '<html><head><title>Single Page Photo - Facebook</title></head><body>'
+        '<a href="https://www.facebook.com/photo/?fbid=1463914419286187&amp;set=a.1400784518932511">photo</a>'
+        '<a href="https://www.facebook.com/photo.php?fbid=3274205172919118&amp;set=p.3274205172919118&amp;comment_id=99">comment</a>'
+        '</body></html>'
+    )
+
+    class _MockSession:
+        def __init__(self):
+            self.headers = {}
+            self.urls = []
+
+        def get(self, url, **kwargs):
+            self.urls.append(url)
+            class _Resp:
+                def __init__(self, text, resp_url):
+                    self.status_code = 200
+                    self.text = text
+                    self.url = resp_url
+            if "fbid=1463914419286187" in url:
+                assert "set=a." not in url
+                return _Resp(
+                    '<script>{"currMedia":{"__typename":"Photo","id":"1463914419286187","image":{"uri":"https:\\/\\/scontent.xx.fbcdn.net\\/main.jpg","width":1529}}}</script>',
+                    url,
+                )
+            return _Resp(post_html, "https://www.facebook.com/permalink.php?story_fbid=123&id=456")
+
+    monkeypatch.setattr(facebook_capture.requests, "Session", _MockSession)
+    manifest = facebook_capture.fetch_facebook_manifest(
+        "https://www.facebook.com/permalink.php?story_fbid=123&id=456",
+        browser="guest",
+    )
+    assert manifest is not None
+    assert manifest["complete"] is True
+    assert [p["id"] for p in manifest["photos"]] == ["1463914419286187"]
+
+
+def test_cli_facebook_guest_probe_emits_progress_and_json(monkeypatch, capsys):
+    import json
+    import sys
+    from janeconverter import cli
+
+    def _fake_fetch(url, browser=None, progress_callback=None, **_kwargs):
+        assert browser == "guest"
+        if progress_callback:
+            progress_callback(0.14, "Found 1 of 1 public Facebook photos...")
+        return {
+            "platform": "facebook",
+            "title": "Probe Post",
+            "media_kind": "photo",
+            "complete": True,
+            "photos": [{"id": "123456", "url": "https://scontent.xx.fbcdn.net/p1.jpg", "width": 1080, "alternates": []}],
+        }
+
+    monkeypatch.setattr(cli, "fetch_facebook_manifest", _fake_fetch)
+    monkeypatch.setattr(sys, "argv", ["janeconverter", "--facebook-guest-probe", "https://www.facebook.com/share/p/abc/"])
+    cli.main()
+    captured = capsys.readouterr()
+    assert "__JANE_CAPTURE_PROGRESS__\t0.1400\tFound 1 of 1 public Facebook photos..." in captured.err
+    payload = json.loads(captured.out)
+    assert payload["ok"] is True
+    assert payload["media_kind"] == "photo"
+    assert len(payload["photos"]) == 1

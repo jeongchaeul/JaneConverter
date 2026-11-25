@@ -1,10 +1,16 @@
 use crate::facebook_capture;
-use crate::model::{FacebookCaptureResult, FacebookPhotoManifest, SocialCaptureResult};
+use crate::model::{
+    ConverterEvent, FacebookCaptureResult, FacebookPhoto, FacebookPhotoManifest,
+    SocialCaptureResult,
+};
 use crate::paths;
+use crate::process::{emit_event, terminate_child};
 use crate::social_photo_capture;
 use crate::{AppState, FacebookCaptureSession, FacebookRefreshWaiters};
 use std::fs;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -223,8 +229,187 @@ fn clean_facebook_capture_profile(path: &Path) {
     clean_profile_directory_delayed(path.to_path_buf(), "JaneConverter-facebook-");
 }
 
-fn clean_social_capture_profile(path: &Path) {
-    clean_profile_directory_delayed(path.to_path_buf(), "JaneConverter-social-");
+pub fn guest_webview_profile_dir() -> Result<PathBuf, String> {
+    let dir = std::env::temp_dir().join("JaneConverter-guest-webview");
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("Could not prepare the guest browser profile: {error}"))?;
+    Ok(dir)
+}
+
+pub fn parse_probe_progress_line(line: &str) -> Option<(f32, String)> {
+    let rest = line.strip_prefix("__JANE_CAPTURE_PROGRESS__\t")?;
+    let (pct_str, msg) = rest.split_once('\t')?;
+    let pct = pct_str.trim().parse::<f32>().ok()?;
+    if !pct.is_finite() {
+        return None;
+    }
+    let clean_msg = msg.trim();
+    if clean_msg.is_empty() {
+        return None;
+    }
+    Some((pct.clamp(0.01, 0.99), clean_msg.to_owned()))
+}
+
+fn is_grid_only_facebook_url(url: &url::Url) -> bool {
+    let path = url.path().to_ascii_lowercase();
+    let query = url.query().unwrap_or_default().to_ascii_lowercase();
+    path.contains("/media/set") || path.contains("/photos") || query.contains("sk=photos")
+}
+
+fn try_fast_facebook_guest_probe(
+    app: &tauri::AppHandle,
+    source_url: &url::Url,
+    source_raw: &str,
+    cancel_flag: &AtomicBool,
+) -> Option<facebook_capture::CaptureOutcome> {
+    if is_grid_only_facebook_url(source_url) || cancel_flag.load(Ordering::Relaxed) {
+        return None;
+    }
+
+    let engine = paths::find_python();
+    let mut command = Command::new(&engine);
+    if !paths::packaged_engine(&engine) {
+        command.args(["run", "--locked", "janeconverter"]);
+    }
+    command
+        .args(["--facebook-guest-probe", source_raw.trim()])
+        .current_dir(paths::project_root())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    paths::prepare_command(&mut command);
+
+    let mut child = command.spawn().ok()?;
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+
+    let app_for_stderr = app.clone();
+    let stderr_handle = std::thread::spawn(move || {
+        if let Some(pipe) = stderr_pipe {
+            let reader = BufReader::new(pipe);
+            for line in reader.lines().map_while(Result::ok) {
+                if let Some((progress, message)) = parse_probe_progress_line(&line) {
+                    emit_event(
+                        &app_for_stderr,
+                        ConverterEvent {
+                            job_id: "capture".into(),
+                            kind: "progress".into(),
+                            message,
+                            progress: Some(progress),
+                            output: None,
+                        },
+                    );
+                }
+            }
+        }
+    });
+
+    let stdout_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = stdout_pipe {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let started = Instant::now();
+    let deadline = Duration::from_secs(25);
+    let exited_ok = loop {
+        if cancel_flag.load(Ordering::Relaxed) || started.elapsed() >= deadline {
+            terminate_child(&mut child);
+            let _ = stdout_handle.join();
+            let _ = stderr_handle.join();
+            return None;
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status.success(),
+            Ok(None) => std::thread::sleep(Duration::from_millis(35)),
+            Err(_) => {
+                terminate_child(&mut child);
+                let _ = stdout_handle.join();
+                let _ = stderr_handle.join();
+                return None;
+            }
+        }
+    };
+
+    let stdout_bytes = stdout_handle.join().unwrap_or_default();
+    let _ = stderr_handle.join();
+    if !exited_ok || cancel_flag.load(Ordering::Relaxed) {
+        return None;
+    }
+
+    let payload: serde_json::Value = serde_json::from_slice(&stdout_bytes).ok()?;
+    if payload.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
+        return None;
+    }
+
+    let media_kind = payload
+        .get("media_kind")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let title: String = payload
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Facebook Post")
+        .chars()
+        .take(500)
+        .collect();
+
+    if media_kind == "video" {
+        return Some(facebook_capture::CaptureOutcome::Video(title));
+    }
+    if media_kind != "photo" {
+        return None;
+    }
+
+    let raw_photos = payload.get("photos")?.as_array()?;
+    if raw_photos.is_empty() || raw_photos.len() > 10000 {
+        return None;
+    }
+
+    let mut accumulator = facebook_capture::CaptureAccumulator::default();
+    for entry in raw_photos {
+        let id = entry.get("id").and_then(serde_json::Value::as_str)?.trim();
+        let url = entry.get("url").and_then(serde_json::Value::as_str)?.trim();
+        if !(5..=30).contains(&id.len())
+            || !id.bytes().all(|b| b.is_ascii_digit())
+            || !facebook_capture::validate_photo_url(url)
+        {
+            return None;
+        }
+        let width = entry
+            .get("width")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(1080)
+            .min(20_000) as u32;
+        let alternates = entry
+            .get("alternates")
+            .and_then(serde_json::Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .filter(|alt| facebook_capture::validate_photo_url(alt))
+                    .map(str::to_owned)
+                    .take(3)
+                    .collect()
+            })
+            .unwrap_or_default();
+        accumulator.add_photo(FacebookPhoto {
+            id: id.to_owned(),
+            url: url.to_owned(),
+            width,
+            alternates,
+        });
+    }
+
+    let photos = accumulator.ordered_photos();
+    if photos.is_empty() {
+        return None;
+    }
+    Some(facebook_capture::CaptureOutcome::Photos(
+        FacebookPhotoManifest { title, photos },
+    ))
 }
 
 pub fn sweep_stale_webview_profiles() {
@@ -291,12 +476,84 @@ pub async fn capture_facebook_album(
     close_idle_facebook_captures(&state.facebook_captures, None);
     close_all_social_captures(&state.social_captures);
 
+    let probe_cancel = Arc::new(AtomicBool::new(false));
+    state
+        .facebook_probe_cancels
+        .lock()
+        .map_err(|_| "The Facebook capture registry is unavailable.")?
+        .insert(capture_id.clone(), Arc::clone(&probe_cancel));
+    let app_for_probe = app.clone();
+    let url_for_probe = source_url.clone();
+    let source_for_probe = source.clone();
+    let cancel_for_probe = Arc::clone(&probe_cancel);
+    let fast_probe = tauri::async_runtime::spawn_blocking(move || {
+        try_fast_facebook_guest_probe(
+            &app_for_probe,
+            &url_for_probe,
+            &source_for_probe,
+            &cancel_for_probe,
+        )
+    })
+    .await
+    .ok()
+    .flatten();
+    if let Ok(mut cancels) = state.facebook_probe_cancels.lock() {
+        cancels.remove(&capture_id);
+    }
+    if probe_cancel.load(Ordering::Relaxed) {
+        return Err("Facebook photo capture was cancelled.".into());
+    }
+    if let Some(outcome) = fast_probe {
+        match outcome {
+            facebook_capture::CaptureOutcome::Photos(manifest) => {
+                let registered_at = Instant::now();
+                let result = FacebookCaptureResult {
+                    capture_id: capture_id.clone(),
+                    title: manifest.title.clone(),
+                    photo_count: manifest.photos.len(),
+                    media_kind: "photo",
+                };
+                state
+                    .facebook_manifests
+                    .lock()
+                    .map_err(|_| "The Facebook photo manifest registry is unavailable.")?
+                    .insert(
+                        capture_id.clone(),
+                        (source.trim().to_string(), manifest, registered_at),
+                    );
+                let manifests = Arc::clone(&state.facebook_manifests);
+                let expiry_capture_id = capture_id;
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(600));
+                    if let Ok(mut values) = manifests.lock() {
+                        let is_expired =
+                            values
+                                .get(&expiry_capture_id)
+                                .is_some_and(|(_, _, created)| {
+                                    created.elapsed() >= Duration::from_secs(600)
+                                });
+                        if is_expired {
+                            values.remove(&expiry_capture_id);
+                        }
+                    }
+                });
+                return Ok(result);
+            }
+            facebook_capture::CaptureOutcome::Video(title) => {
+                return Ok(FacebookCaptureResult {
+                    capture_id,
+                    title,
+                    photo_count: 0,
+                    media_kind: "video",
+                });
+            }
+        }
+    }
+
     let sequence = state.sequence.fetch_add(1, Ordering::Relaxed);
     let nonce = format!("{}-{sequence}", paths::now_stamp());
     let label = format!("facebook-capture-{sequence}");
-    let profile = std::env::temp_dir().join(format!("JaneConverter-facebook-{nonce}"));
-    fs::create_dir(&profile)
-        .map_err(|error| format!("Could not create a temporary guest session: {error}"))?;
+    let profile = guest_webview_profile_dir()?;
 
     let (sender, receiver) = mpsc::channel::<Result<facebook_capture::CaptureOutcome, String>>();
     let accumulator = Arc::new(Mutex::new(facebook_capture::CaptureAccumulator::default()));
@@ -306,6 +563,7 @@ pub async fn capture_facebook_album(
     let nonce_for_title = nonce.clone();
     let refresh_function = format!("__JANE_FACEBOOK_REFRESH__{nonce}");
     let sender_for_title = sender.clone();
+    let app_for_title = app.clone();
     let initial_script = facebook_capture::initialization_script(&nonce);
     let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(source_url))
         .title("Reading public Facebook album")
@@ -353,6 +611,27 @@ pub async fn capture_facebook_album(
                         collected.photos.len()
                     };
                     let _ = window.set_title(&format!("Found {count} public Facebook photos..."));
+                    let expected = message.expected_count.filter(|&v| v > 0);
+                    let progress_msg = if let Some(total) = expected {
+                        format!("Found {count} of {total} public Facebook photos...")
+                    } else {
+                        format!("Found {count} public Facebook photos...")
+                    };
+                    let progress_val = if let Some(total) = expected {
+                        0.03 + 0.22 * ((count.min(total) as f32) / (total as f32))
+                    } else {
+                        (0.03 + (count as f32 * 0.02)).min(0.22)
+                    };
+                    emit_event(
+                        &app_for_title,
+                        ConverterEvent {
+                            job_id: "capture".into(),
+                            kind: "progress".into(),
+                            message: progress_msg,
+                            progress: Some(progress_val),
+                            output: None,
+                        },
+                    );
                     let ack_key =
                         serde_json::to_string(&format!("__JANE_FACEBOOK_ACK__{nonce_for_title}"))
                             .unwrap_or_else(|_| {
@@ -427,7 +706,6 @@ pub async fn capture_facebook_album(
     let window = match builder.build() {
         Ok(window) => window,
         Err(error) => {
-            clean_facebook_capture_profile(&profile);
             return Err(format!(
                 "Could not open the isolated Facebook capture window: {error}"
             ));
@@ -542,6 +820,11 @@ pub fn cancel_facebook_album(state: State<'_, AppState>, capture_id: String) -> 
         return Err("The Facebook capture session is invalid.".into());
     }
     state.active_paused.store(false, Ordering::Relaxed);
+    if let Ok(cancels) = state.facebook_probe_cancels.lock() {
+        if let Some(flag) = cancels.get(&capture_id) {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
     let session = state
         .facebook_captures
         .lock()
@@ -593,9 +876,7 @@ pub async fn capture_social_post_photos(
     let sequence = state.sequence.fetch_add(1, Ordering::Relaxed);
     let nonce = format!("{}-{sequence}", paths::now_stamp());
     let label = format!("social-photo-capture-{sequence}");
-    let profile = std::env::temp_dir().join(format!("JaneConverter-social-{nonce}"));
-    fs::create_dir(&profile)
-        .map_err(|error| format!("Could not create a temporary guest session: {error}"))?;
+    let profile = guest_webview_profile_dir()?;
 
     let (sender, receiver) =
         mpsc::channel::<Result<social_photo_capture::CaptureOutcome, String>>();
@@ -605,6 +886,7 @@ pub async fn capture_social_post_photos(
     let accumulator_for_title = Arc::clone(&accumulator);
     let nonce_for_title = nonce.clone();
     let sender_for_title = sender.clone();
+    let app_for_title = app.clone();
     let platform_for_title = platform;
     let initial_script =
         social_photo_capture::initialization_script(&nonce, platform, source_url.as_str());
@@ -670,6 +952,21 @@ pub async fn capture_social_post_photos(
                         "Found {capture_count} {} photos...",
                         platform_for_title.label()
                     ));
+                    let progress_msg = format!(
+                        "Found {capture_count} {} photos...",
+                        platform_for_title.label()
+                    );
+                    let progress_val = (0.03 + (capture_count as f32 * 0.03)).min(0.22);
+                    emit_event(
+                        &app_for_title,
+                        ConverterEvent {
+                            job_id: "capture".into(),
+                            kind: "progress".into(),
+                            message: progress_msg,
+                            progress: Some(progress_val),
+                            output: None,
+                        },
+                    );
                     let ack_key = serde_json::to_string(&format!(
                         "__JANE_SOCIAL_PHOTO_ACK__{nonce_for_title}"
                     ))
@@ -732,7 +1029,6 @@ pub async fn capture_social_post_photos(
     let window = match builder.build() {
         Ok(window) => window,
         Err(error) => {
-            clean_social_capture_profile(&profile);
             return Err(format!(
                 "Could not open the isolated {} guest session: {error}",
                 platform.label()
@@ -756,7 +1052,6 @@ pub async fn capture_social_post_photos(
         captures.remove(&capture_id);
     }
     let _ = window.close();
-    clean_social_capture_profile(&profile);
 
     match received {
         Ok(Ok(Ok(social_photo_capture::CaptureOutcome::Photos(manifest)))) => {
@@ -818,4 +1113,41 @@ pub fn cancel_social_post_photos(
             .map_err(|error| format!("Could not cancel the photo capture: {error}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{guest_webview_profile_dir, parse_probe_progress_line};
+
+    #[test]
+    fn guest_webview_profile_dir_is_shared_and_under_temp_dir() {
+        let first = guest_webview_profile_dir().expect("guest profile dir");
+        let second = guest_webview_profile_dir().expect("guest profile dir");
+        assert_eq!(first, second);
+        assert!(first.starts_with(std::env::temp_dir()));
+        assert_eq!(
+            first.file_name().and_then(|n| n.to_str()),
+            Some("JaneConverter-guest-webview")
+        );
+        assert!(first.is_dir());
+    }
+
+    #[test]
+    fn parses_valid_probe_progress_lines_and_rejects_malformed_input() {
+        assert_eq!(
+            parse_probe_progress_line(
+                "__JANE_CAPTURE_PROGRESS__\t0.1450\tFound 7 of 14 public Facebook photos..."
+            ),
+            Some((0.145, "Found 7 of 14 public Facebook photos...".to_owned()))
+        );
+        assert_eq!(parse_probe_progress_line("random stderr line"), None);
+        assert_eq!(
+            parse_probe_progress_line("__JANE_CAPTURE_PROGRESS__\tNaN\tmsg"),
+            None
+        );
+        assert_eq!(
+            parse_probe_progress_line("__JANE_CAPTURE_PROGRESS__\t0.10\t   "),
+            None
+        );
+    }
 }

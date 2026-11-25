@@ -63,6 +63,8 @@ pub struct AppState {
     pub(crate) facebook_captures:
         Arc<Mutex<std::collections::HashMap<String, FacebookCaptureSession>>>,
     pub(crate) facebook_manifests: FacebookManifestStore,
+    pub(crate) facebook_probe_cancels:
+        Arc<Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>>,
     pub(crate) social_captures: Arc<Mutex<std::collections::HashMap<String, WebviewWindow>>>,
     pub(crate) social_manifests: SocialManifestStore,
 }
@@ -81,6 +83,7 @@ impl Default for AppState {
             access: Arc::new(Mutex::new(None)),
             facebook_captures: Arc::new(Mutex::new(std::collections::HashMap::new())),
             facebook_manifests: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            facebook_probe_cancels: Arc::new(Mutex::new(std::collections::HashMap::new())),
             social_captures: Arc::new(Mutex::new(std::collections::HashMap::new())),
             social_manifests: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
@@ -88,6 +91,11 @@ impl Default for AppState {
 }
 
 pub(crate) fn cleanup_app_state(state: &AppState) {
+    if let Ok(mut cancels) = state.facebook_probe_cancels.lock() {
+        for (_, flag) in cancels.drain() {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
     close_all_social_captures(&state.social_captures);
     close_all_facebook_captures(&state.facebook_captures);
     if let Ok(mut access) = state.access.lock() {

@@ -1462,6 +1462,7 @@ def main():
     parser.add_argument("--browser-media-path", help=argparse.SUPPRESS)
     parser.add_argument("--facebook-photo-manifest-stdin", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--facebook-capture-id", help=argparse.SUPPRESS)
+    parser.add_argument("--facebook-guest-probe", help=argparse.SUPPRESS)
     parser.add_argument("--social-photo-manifest-stdin", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-update", action="store_true", help="Skip the read-only yt-dlp update availability check on startup")
     parser.add_argument("--check-updates", action="store_true", help=argparse.SUPPRESS)
@@ -1586,6 +1587,42 @@ def main():
         print(json.dumps(result))
         if not result.get("success"):
             sys.exit(1)
+        return
+    if args.facebook_guest_probe:
+        def _probe_progress(pct: float, msg: str) -> None:
+            clean_msg = str(msg or "").replace("\r", " ").replace("\n", " ").strip()
+            sys.stderr.write(f"__JANE_CAPTURE_PROGRESS__\t{float(pct):.4f}\t{clean_msg}\n")
+            sys.stderr.flush()
+
+        try:
+            manifest = fetch_facebook_manifest(
+                args.facebook_guest_probe,
+                browser="guest",
+                progress_callback=_probe_progress,
+            )
+            if manifest and manifest.get("media_kind") == "video":
+                print(json.dumps({
+                    "ok": True,
+                    "media_kind": "video",
+                    "title": manifest.get("title") or "Facebook Video",
+                }))
+            elif (
+                manifest
+                and manifest.get("media_kind") == "photo"
+                and manifest.get("complete") is True
+                and isinstance(manifest.get("photos"), list)
+                and len(manifest["photos"]) >= 1
+            ):
+                print(json.dumps({
+                    "ok": True,
+                    "media_kind": "photo",
+                    "title": manifest.get("title") or "Facebook Post",
+                    "photos": manifest["photos"],
+                }))
+            else:
+                print(json.dumps({"ok": False, "reason": "incomplete_or_unavailable"}))
+        except Exception as error:
+            print(json.dumps({"ok": False, "reason": str(error)}))
         return
     if args.check_ffmpeg_updates:
         print(json.dumps({"ffmpeg": check_for_ffmpeg_updates()}))

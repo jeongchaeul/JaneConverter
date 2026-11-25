@@ -1118,6 +1118,47 @@ it("groupIndexesByPreset groups selected items by their distinct presets", () =>
     view.container.remove();
   });
 
+  it("clears prior completion banner when starting a second conversion", async () => {
+    const onStart = vi.fn().mockResolvedValue(true);
+    const view = renderView(undefined, undefined, onStart);
+
+    await act(async () => {
+      view.updateProps({
+        events: [
+          {
+            jobId: "job-1",
+            kind: "finished",
+            message: "Conversion complete: first.png",
+            output: "C:/output/first.png",
+          },
+        ],
+      });
+    });
+
+    expect(view.container.textContent).toContain("Conversion finished and verified via ffprobe.");
+
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "https://example.com/second");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const convertBtn = Array.from(view.container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Convert media")
+    );
+    await act(async () => {
+      convertBtn?.click();
+      await Promise.resolve();
+    });
+
+    expect(view.container.textContent).not.toContain("Conversion finished and verified via ffprobe.");
+    expect(onStart).toHaveBeenCalledTimes(1);
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
   it("shows an Instagram profile banner and button to redirect to active stories", async () => {
     const profileUrl = "https://www.instagram.com/mzwerr/";
     const view = renderView();

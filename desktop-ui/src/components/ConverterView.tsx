@@ -299,6 +299,7 @@ export function ConverterView({
       onStatus("Ephemeral story extraction requires accepting the Terms of Usage and legal compliance agreement.");
       return false;
     }
+    setCompletedItem(null);
 
     const effectiveBaseSettings = overrideSettings || settings;
     const customSettings: ConverterSettings | undefined = customPreset

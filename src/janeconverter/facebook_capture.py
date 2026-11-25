@@ -201,7 +201,6 @@ def download_facebook_photo_manifest(
     remaining_refreshes = MAX_RENDITION_REFRESHES
     refreshed_photo_ids: set[str] = set()
     lock = threading.Lock()
-    disk_write_lock = threading.Lock()
     stop_event = threading.Event()
 
     def report(progress: float, message: str) -> None:
@@ -282,14 +281,14 @@ def download_facebook_photo_manifest(
                     extension = IMAGE_EXTENSIONS.get(image.format or "")
                     if not extension or image.width < 1 or image.height < 1 or image.width * image.height > 100_000_000:
                         raise ValueError("unsupported image format")
-                    image.verify()
+                    if str(target_format or "source").lower().strip() in ("", "source", "original"):
+                        image.verify()
                 verified_path = os.path.splitext(image_path)[0] + extension
                 os.replace(image_path, verified_path)
                 final_path = convert_image_format(verified_path, target_format, quality)
                 final_filename = os.path.basename(final_path)
                 final_target_path = os.path.join(target_dir, final_filename)
-                with disk_write_lock:
-                    shutil.move(final_path, final_target_path)
+                shutil.move(final_path, final_target_path)
                 print(f"[+] Saved photo: {index}. {final_filename}", flush=True)
                 print(f"[*] Photo #{index} Saved: {final_target_path}", flush=True)
 
@@ -309,7 +308,7 @@ def download_facebook_photo_manifest(
                         pass
 
     items = [(index, photo_id, photo) for index, (photo_id, photo) in enumerate(photos.items(), start=1)]
-    effective_workers = max_workers if max_workers is not None else min(8, len(photos))
+    effective_workers = max_workers if max_workers is not None else min(12, len(photos))
 
     try:
         if effective_workers <= 1:
@@ -575,6 +574,151 @@ def _is_facebook_video_url(value: str) -> bool:
     return bool(re.search(r"/(?:reel|videos|watch)(?:/|\?|$)", value.lower()))
 
 
+def _decode_fb_escaped_uri(raw_val: str) -> str:
+    return (
+        raw_val.replace("\\u0025", "%")
+        .replace("\\u0026", "&")
+        .replace("\\/", "/")
+    )
+
+
+def _extract_photo_from_viewer_html(
+    viewer_html: str,
+    pid: str,
+) -> tuple[Optional[tuple[str, int, int]], Optional[str]]:
+    """Extract the full-res image tuple and nextMediaAfterNodeId from /photo/ HTML."""
+    photo_tuple: Optional[tuple[str, int, int]] = None
+    id_re = re.compile(rf'"(?:id|photo_id|fbid)"\s*:\s*"{re.escape(pid)}"')
+    for match in id_re.finditer(viewer_html):
+        start = max(0, match.start() - 250)
+        end = min(len(viewer_html), match.end() + 1500)
+        window = viewer_html[start:end]
+        uri_m = re.search(
+            r'"(?:viewer_image|image|photo_image)"\s*:\s*\{[^}]*?"uri"\s*:\s*"([^"]+)"',
+            window,
+        )
+        if not uri_m:
+            continue
+        decoded = _decode_fb_escaped_uri(uri_m.group(1))
+        lowered = decoded.lower()
+        if (
+            ("fbcdn.net" in lowered or "fbsbx.com" in lowered)
+            and "/t45." not in lowered
+            and "1997-6" not in lowered
+            and "emoji.php" not in lowered
+            and "rsrc.php" not in lowered
+            and "/stickers/" not in lowered
+            and "/reactions/" not in lowered
+        ):
+            w_m = re.search(r'"width"\s*:\s*(\d+)', window)
+            h_m = re.search(r'"height"\s*:\s*(\d+)', window)
+            w = int(w_m.group(1)) if w_m else 1080
+            h = int(h_m.group(1)) if h_m else 0
+            photo_tuple = (decoded, w, h)
+            break
+
+    next_m = re.search(
+        r'"nextMediaAfterNodeId"\s*:\s*\{\s*"__typename"\s*:\s*"Photo"\s*,\s*"id"\s*:\s*"([0-9]{5,30})"',
+        viewer_html,
+    )
+    next_id = next_m.group(1) if next_m else None
+    return photo_tuple, next_id
+
+
+def _walk_facebook_photo_viewer_http(
+    session: requests.Session,
+    seed_ids: list[str],
+    album_set: str,
+    expected_count: int,
+    add_photo_fn: Callable[[str, str, int, int], None],
+    photos: dict[str, dict[str, Any]],
+    report: Callable[[float, str], None],
+    abort_event: Optional[Any] = None,
+) -> bool:
+    """Fetch initial /photo/ seed pages in parallel and walk any tail via nextMediaAfterNodeId."""
+    seeds = [pid for pid in dict.fromkeys(seed_ids) if PHOTO_ID_RE.fullmatch(pid)]
+    if not seeds:
+        return False
+
+    batch = seeds[:8]
+
+    def fetch_one(pid: str) -> tuple[str, Optional[tuple[str, int, int]], Optional[str], bool]:
+        if abort_event and abort_event.is_set():
+            return pid, None, None, False
+        viewer_url = f"https://www.facebook.com/photo/?fbid={pid}"
+        if album_set:
+            viewer_url += f"&set={urllib.parse.quote(album_set, safe='.')}"
+        try:
+            resp = session.get(viewer_url, allow_redirects=True, timeout=(10, 20))
+        except Exception:
+            return pid, None, None, False
+        resp_url = str(getattr(resp, "url", "") or "").lower()
+        if getattr(resp, "status_code", 0) != 200 or "/login" in resp_url:
+            return pid, None, None, False
+        photo_tuple, next_id = _extract_photo_from_viewer_html(resp.text, pid)
+        return pid, photo_tuple, next_id, True
+
+    if len(batch) == 1:
+        results = [fetch_one(batch[0])]
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(batch))) as executor:
+            results = list(executor.map(fetch_one, batch))
+
+    if abort_event and abort_event.is_set():
+        raise KeyboardInterrupt("Facebook photo probe aborted by user.")
+
+    for pid, photo_tuple, _next_id, ok in results:
+        if not ok:
+            return False
+        if photo_tuple:
+            add_photo_fn(pid, *photo_tuple)
+
+    if photos:
+        if expected_count > 0:
+            pct = min(0.24, 0.04 + 0.20 * (min(len(photos), expected_count) / expected_count))
+            report(pct, f"Found {len(photos)} of {expected_count} public Facebook photos...")
+        else:
+            report(min(0.24, 0.04 + 0.02 * len(photos)), f"Found {len(photos)} public Facebook photos...")
+
+    end_reached = False
+    if expected_count == 1 and len(photos) >= 1:
+        end_reached = True
+    elif results and results[-1][2] is None and len(photos) >= len(batch):
+        end_reached = True
+
+    if album_set and (expected_count == 0 or len(photos) < expected_count):
+        cur_next = next((nxt for (_pid, _pt, nxt, _ok) in reversed(results) if nxt and nxt not in photos), None)
+        visited = set(photos.keys()) | set(batch)
+        hop_limit = min(expected_count + 5, 100) if expected_count > 0 else 50
+        hops = 0
+        while cur_next and cur_next not in visited and hops < hop_limit:
+            if expected_count > 0 and len(photos) >= expected_count:
+                break
+            if abort_event and abort_event.is_set():
+                raise KeyboardInterrupt("Facebook photo probe aborted by user.")
+            visited.add(cur_next)
+            hops += 1
+            pid, photo_tuple, nxt, ok = fetch_one(cur_next)
+            if not ok:
+                return False
+            if photo_tuple:
+                add_photo_fn(pid, *photo_tuple)
+                if expected_count > 0:
+                    pct = min(0.24, 0.04 + 0.20 * (min(len(photos), expected_count) / expected_count))
+                    report(pct, f"Found {len(photos)} of {expected_count} public Facebook photos...")
+                else:
+                    pct = min(0.24, 0.04 + 0.015 * len(photos))
+                    report(pct, f"Found {len(photos)} public Facebook photos...")
+            if nxt is None or nxt in visited:
+                end_reached = True
+                break
+            cur_next = nxt
+
+    if expected_count > 0:
+        return len(photos) >= expected_count
+    return len(photos) >= 1 and end_reached
+
+
 def _fetch_facebook_manifest_with_session(
     session: requests.Session,
     url: str,
@@ -588,6 +732,14 @@ def _fetch_facebook_manifest_with_session(
     def report(pct: float, msg: str):
         if original_report:
             original_report(pct, msg)
+
+    if hasattr(session, "mount"):
+        try:
+            adapter = requests.adapters.HTTPAdapter(pool_connections=16, pool_maxsize=16)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+        except Exception:
+            pass
 
     url = resolve_facebook_share_url(url, session)
 
@@ -795,8 +947,71 @@ def _fetch_facebook_manifest_with_session(
         if m_token:
             valid_mediaset = m_token.group(1)
 
+    scoped_search_blocks = target_blocks if target_blocks else [html]
+    expected_subattachment_count = 0
+    seed_ids: list[str] = []
+    seen_seed_ids: set[str] = set()
+
+    def _add_seed_id(pid: str) -> None:
+        if pid and PHOTO_ID_RE.fullmatch(pid) and pid not in seen_seed_ids:
+            seen_seed_ids.add(pid)
+            seed_ids.append(pid)
+
+    if target_fbid:
+        _add_seed_id(target_fbid)
+
+    for b in scoped_search_blocks:
+        for m in re.finditer(r'"all_subattachments"\s*:\s*(\{)', b):
+            obj_str = _extract_balanced_json(b[m.start(1):], "{", "}")
+            if not obj_str:
+                continue
+            try:
+                sub_obj = json.loads(obj_str)
+                cnt = int(sub_obj.get("count") or 0)
+                if 1 <= cnt <= MAX_PHOTOS:
+                    expected_subattachment_count = max(expected_subattachment_count, cnt)
+                for node in sub_obj.get("nodes") or []:
+                    media = node.get("media") or {}
+                    if media.get("__typename") == "Photo" and not media.get("is_playable"):
+                        _add_seed_id(str(media.get("id") or "").strip())
+            except Exception:
+                pass
+
+    if target_blocks or not seed_ids:
+        for b in scoped_search_blocks:
+            for m in re.finditer(r'"__typename"\s*:\s*"Photo"[^\}]{0,160}"id"\s*:\s*"(\d{5,30})"', b):
+                _add_seed_id(m.group(1))
+            for m in re.finditer(r'(?:photo(?:\.php)?/?\?fbid=|fbid=)(\d{5,30})(?:&(?:amp;)?([^"\'<>\s]*))?', b):
+                qs_tail = (m.group(2) or "").lower()
+                if qs_tail.startswith("set=p.") or "comment_id=" in qs_tail or "reply_comment_id=" in qs_tail:
+                    continue
+                _add_seed_id(m.group(1))
+
+    is_photostream_url = (
+        "sk=photos" in url.lower()
+        or "/photos" in url.lower()
+        or "sk=photos" in final_url.lower()
+        or "/photos" in final_url.lower()
+        or "/media/set" in url.lower()
+        or "/media/set" in final_url.lower()
+    )
+    is_multi_photo = bool(
+        (valid_mediaset and (valid_mediaset.startswith("pcb.") or valid_mediaset.startswith("gm.")))
+        or expected_subattachment_count >= 2
+        or len(seed_ids) >= 2
+    )
+    skip_guest_mediaset = bool(
+        found_browser is None
+        and valid_mediaset
+        and valid_mediaset.startswith("pcb.")
+        and seed_ids
+        and "/media/set" not in final_url.lower()
+    )
+    mediaset_complete = False
+    viewer_walk_complete = False
+
     # 1. Check for complete album via valid_mediaset
-    if valid_mediaset:
+    if valid_mediaset and not skip_guest_mediaset:
         target_album_url = f"https://www.facebook.com/media/set/?set={valid_mediaset}"
         album_html = html if final_url.lower().startswith(target_album_url.lower()) else None
         if album_html is None:
@@ -968,12 +1183,13 @@ def _fetch_facebook_manifest_with_session(
                             pi = media.get("page_info", {}) if isinstance(media, dict) else {}
                             has_next = bool(pi.get("has_next_page"))
                             cursor = pi.get("end_cursor")
+                        if edges_match and photos and not has_next:
+                            mediaset_complete = True
                     except Exception:
                         pass
 
     # 2. Inspect subattachments and attachments inside scoped target blocks (or fallback to global)
     if not photos:
-        scoped_search_blocks = target_blocks if target_blocks else [html]
 
         for b in scoped_search_blocks:
             for m in re.finditer(r'"all_subattachments"\s*:\s*(\{)', b):
@@ -1056,6 +1272,32 @@ def _fetch_facebook_manifest_with_session(
                     except Exception:
                         pass
 
+    # 3.5. Fast parallel HTTP /photo/ viewer walker for public posts whose full-res URIs are not inline
+    if (not photos or (expected_subattachment_count > 1 and len(photos) < expected_subattachment_count)) and seed_ids and not is_photostream_url:
+        walk_set = valid_mediaset if (valid_mediaset and (valid_mediaset.startswith("pcb.") or valid_mediaset.startswith("gm."))) else ""
+        if not is_multi_photo and not walk_set:
+            viewer_walk_complete = _walk_facebook_photo_viewer_http(
+                session,
+                [seed_ids[0]],
+                "",
+                1,
+                _add_photo,
+                photos,
+                report,
+                abort_event,
+            )
+        else:
+            viewer_walk_complete = _walk_facebook_photo_viewer_http(
+                session,
+                seed_ids,
+                walk_set,
+                expected_subattachment_count,
+                _add_photo,
+                photos,
+                report,
+                abort_event,
+            )
+
     # 4. Fallback to OpenGraph / Twitter meta tags for single photo posts
     if not photos and not has_video and not is_video_page:
         og_raw = (
@@ -1137,12 +1379,23 @@ def _fetch_facebook_manifest_with_session(
             return {"platform": "facebook", "title": title, "photos": [], "media_kind": "video"}
         return None
 
-    report(0.08, f"Found {len(photos)} photos in '{title}'. Starting download...")
+    expected_total = expected_subattachment_count if expected_subattachment_count > 0 else len(photos)
+    complete = False
+    if viewer_walk_complete or mediaset_complete:
+        complete = True
+    elif expected_subattachment_count > 0:
+        complete = len(photos) >= expected_subattachment_count
+    elif not is_multi_photo and len(photos) == 1 and not is_photostream_url:
+        complete = True
+
+    report(0.24 if viewer_walk_complete else 0.08, f"Found {len(photos)} photos in '{title}'. Starting download...")
     return {
         "platform": "facebook",
         "title": title,
         "photos": list(photos.values()),
         "media_kind": "photo",
+        "complete": complete,
+        "expected_count": expected_total,
     }
 
 
@@ -1164,8 +1417,6 @@ def fetch_facebook_manifest(
 ) -> Optional[dict[str, Any]]:
     """Extract photo metadata from a Facebook post using guest requests or local browser session cookies."""
     url = resolve_facebook_share_url(url)
-    patch_yt_dlp_cookie_database_reader()
-    import yt_dlp
 
     def report(pct: float, msg: str):
         if progress_callback:
@@ -1193,6 +1444,9 @@ def fetch_facebook_manifest(
             )
         finally:
             _close_session(guest_session)
+
+    patch_yt_dlp_cookie_database_reader()
+    import yt_dlp
 
     global _CACHED_FACEBOOK_SESSION
 

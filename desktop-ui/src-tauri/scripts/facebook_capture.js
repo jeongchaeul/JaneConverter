@@ -1,5 +1,6 @@
 (() => {
   const seenScripts = new WeakSet();
+  const scriptMetaCache = new WeakMap();
   const nonce = __NONCE_JSON__;
   const prefix = "__JANE_FACEBOOK_CAPTURE__" + nonce + "__";
   const ackKey = "__JANE_FACEBOOK_ACK__" + nonce;
@@ -14,6 +15,32 @@
   const attemptsKey = "janeFacebookCaptureAttempts";
   const startedAtKey = "janeFacebookCaptureStartedAt";
   const viewerImageKey = "janeFacebookViewerImageUrl";
+  const captureNonceKey = "janeFacebookCaptureNonce";
+  try {
+    const prevNonce = sessionStorage.getItem(captureNonceKey);
+    if (prevNonce && prevNonce !== nonce) {
+      for (const k of [
+        expectedCountKey,
+        captureModeKey,
+        albumSetKey,
+        scannedIdsKey,
+        singlePhotoTargetKey,
+        pendingRefreshKey,
+        pendingRefreshAttemptsKey,
+        attemptsKey,
+        startedAtKey,
+        viewerImageKey,
+        "janeFacebookKnownPhotoIds",
+        "janeFacebookLastProgressAt",
+        "janeFacebookCountSource",
+        "janeFacebookCountConflict",
+        "janeFacebookCaptureTitle",
+      ]) {
+        sessionStorage.removeItem(k);
+      }
+    }
+    sessionStorage.setItem(captureNonceKey, nonce);
+  } catch (_) {}
   const MAX_PHOTOS = 10000;
   const MAX_ATTEMPTS = 1800;
   const MAX_CAPTURE_MS = 180000;
@@ -21,7 +48,7 @@
   const BOTTOM_PROBE_INTERVAL = 4;
   const MAX_EXPANSION_CLICKS = 20;
   let lastPageTitle = document.title || "";
-  window[ackKey] = 0;
+  let currentAck = 0;
   let scanned;
   try { scanned = new Set(JSON.parse(sessionStorage.getItem(scannedIdsKey) || "[]")); }
   catch (_) { scanned = new Set(); }
@@ -74,10 +101,82 @@
   let endConfirmed = false;
   let lastRelevantMutationAt = Date.now();
   let scheduledScan = 0;
-  const scheduleScan = (delay = 100) => {
-    if (finished || scheduledScan) return;
+  const scheduleScan = (delay = 100, urgent = false) => {
+    if (finished) return;
+    if (scheduledScan) {
+      if (!urgent) return;
+      try { clearTimeout(scheduledScan); } catch (_) {}
+      scheduledScan = 0;
+    }
     scheduledScan = setTimeout(() => { scheduledScan = 0; scan(); }, delay);
   };
+  try {
+    Object.defineProperty(window, ackKey, {
+      get: () => currentAck,
+      set: (val) => {
+        currentAck = val;
+        if (awaitingSequence && val === awaitingSequence) {
+          scheduleScan(10, true);
+        }
+      },
+      configurable: true,
+    });
+  } catch (_) {
+    window[ackKey] = 0;
+  }
+  const getScriptMeta = (script) => {
+    const text = script.textContent || "";
+    const cached = scriptMetaCache.get(script);
+    if (cached && cached.len === text.length) return cached;
+    const hasSubattachments = text.includes("all_subattachments");
+    const subMatch = hasSubattachments
+      ? /"all_subattachments"\s*:\s*\{\s*"count"\s*:\s*(\d{1,3})/.exec(text)
+      : null;
+    const subattachmentCount = subMatch ? Number(subMatch[1]) : 0;
+    const hasSetTokens = text.includes("pcb.") || text.includes("gm.") || text.includes("set=a.") || text.includes("set=pb.");
+    const postAlbumSetAll = hasSetTokens
+      ? ((/(?:"mediaset_token"\s*:\s*"|[?&]set=)((?:pcb|gm|a|pb)\.[0-9_.-]{5,50})/.exec(text))?.[1] || "")
+      : "";
+    const postAlbumSetStrict = (text.includes("pcb.") || text.includes("gm."))
+      ? ((/(?:"mediaset_token"\s*:\s*"|[?&]set=)((?:pcb|gm)\.[0-9_.-]{5,50})/.exec(text))?.[1] || "")
+      : "";
+    const hasPhotoTokens = text.includes("fbid=") || hasSubattachments || text.includes('"Photo"') || text.includes("viewer_image");
+    let startHref = null;
+    let startSub = null;
+    let startSingle = null;
+    if (hasPhotoTokens) {
+      const mHref = /photo\.php\?fbid=([0-9]{5,30})&(?:amp;)?set=((?:pcb|gm|a)\.[0-9]{5,30})/.exec(text);
+      if (mHref) {
+        startHref = { photoId: mHref[1], set: mHref[2] };
+      } else {
+        const mSub = /"all_subattachments"\s*:\s*\{[\s\S]{0,1200}?"__typename"\s*:\s*"Photo"[\s\S]{0,1200}?"id"\s*:\s*"([0-9]{5,30})"/.exec(text);
+        if (mSub) {
+          startSub = { photoId: mSub[1] };
+        } else {
+          const mSingle = /(?:photo(?:\.php)?\/?\?fbid=|fbid=)([0-9]{5,30})/.exec(text);
+          if (mSingle) startSingle = { photoId: mSingle[1] };
+        }
+      }
+    }
+    const nextMediaId = text.includes("nextMediaAfterNodeId")
+      ? ((/"nextMediaAfterNodeId"\s*:\s*\{\s*"__typename"\s*:\s*"Photo"\s*,\s*"id"\s*:\s*"([0-9]{5,30})"/.exec(text))?.[1] || "")
+      : "";
+    const meta = {
+      len: text.length,
+      hasMultiPhoto: text.includes("pcb.") || /"mediaset_token"\s*:\s*"(?:pcb|gm)\./.test(text) || subattachmentCount >= 2,
+      subattachmentCount,
+      hasPhotoAttachment: text.includes('"Photo"') && (text.includes('"attachment"') || text.includes('"currMedia"')),
+      postAlbumSetAll,
+      postAlbumSetStrict,
+      startHref,
+      startSub,
+      startSingle,
+      nextMediaId,
+    };
+    scriptMetaCache.set(script, meta);
+    return meta;
+  };
+  let cachedViewerPhoto = null;
   const send = (value) => {
     const bytes = new TextEncoder().encode(JSON.stringify(value));
     let binary = "";
@@ -199,10 +298,7 @@
     }
     if (domPhotoIds.size >= 2) return true;
     for (const script of document.scripts) {
-      const text = script.textContent || "";
-      if (text.includes("pcb.") || /"mediaset_token"\s*:\s*"(?:pcb|gm)\./.test(text)) return true;
-      const subMatch = /"all_subattachments"\s*:\s*\{\s*"count"\s*:\s*(\d{1,3})/.exec(text);
-      if (subMatch && Number(subMatch[1]) >= 2) return true;
+      if (getScriptMeta(script).hasMultiPhoto) return true;
     }
     const sources = [
       readPageTitle(),
@@ -251,15 +347,11 @@
     }
     if (!onAlbumPage && !location.pathname.toLowerCase().includes("/photo")) {
       for (const script of document.scripts) {
-        const text = script.textContent || "";
-        if (text.includes("all_subattachments")) {
-          const match = /"all_subattachments"\s*:\s*\{\s*"count"\s*:\s*(\d{1,3})/.exec(text);
-          if (match) {
-            const count = Number(match[1]);
-            if (count >= 1 && count <= MAX_PHOTOS) lowerBound = Math.max(lowerBound, count);
-          }
+        const meta = getScriptMeta(script);
+        if (meta.subattachmentCount >= 1 && meta.subattachmentCount <= MAX_PHOTOS) {
+          lowerBound = Math.max(lowerBound, meta.subattachmentCount);
         }
-        if (lowerBound === 0 && text.includes('"Photo"') && (text.includes('"attachment"') || text.includes('"currMedia"'))) {
+        if (lowerBound === 0 && meta.hasPhotoAttachment) {
           lowerBound = Math.max(lowerBound, 1);
         }
       }
@@ -408,13 +500,9 @@
     const allowPageAlbum = allowPageAlbumSet();
     const multiPhoto = hasMultiPhotoPostEvidence();
     for (const script of document.scripts) {
-      const text = script.textContent || "";
-      if (!text.includes("pcb.") && !text.includes("gm.") && !text.includes("set=a.") && !text.includes("set=pb.")) continue;
-      const pattern = allowPageAlbum
-        ? /(?:"mediaset_token"\s*:\s*"|[?&]set=)((?:pcb|gm|a|pb)\.[0-9_.-]{5,50})/
-        : /(?:"mediaset_token"\s*:\s*"|[?&]set=)((?:pcb|gm)\.[0-9_.-]{5,50})/;
-      const match = pattern.exec(text);
-      if (match) return match[1];
+      const meta = getScriptMeta(script);
+      const matched = allowPageAlbum ? meta.postAlbumSetAll : meta.postAlbumSetStrict;
+      if (matched) return matched;
     }
     if (multiPhoto) {
       const pathMatch = /\/(?:permalink|posts)\/([0-9]{5,30})/.exec(location.pathname);
@@ -462,13 +550,9 @@
       } catch (_) {}
     }
     for (const script of document.scripts) {
-      const text = script.textContent || "";
-      if (!text.includes("fbid=") && !text.includes("all_subattachments") && !text.includes('"Photo"') && !text.includes("viewer_image")) continue;
-      const hrefMatch = /photo\.php\?fbid=([0-9]{5,30})&(?:amp;)?set=((?:pcb|gm|a)\.[0-9]{5,30})/.exec(text);
-      const subMatch = !hrefMatch && /"all_subattachments"\s*:\s*\{[\s\S]{0,1200}?"__typename"\s*:\s*"Photo"[\s\S]{0,1200}?"id"\s*:\s*"([0-9]{5,30})"/.exec(text);
-      const singleMatch = !hrefMatch && !subMatch && /(?:photo(?:\.php)?\/?\?fbid=|fbid=)([0-9]{5,30})/.exec(text);
-      const photoId = hrefMatch ? hrefMatch[1] : (subMatch ? subMatch[1] : (singleMatch ? singleMatch[1] : ""));
-      const rawMatchedSet = hrefMatch ? hrefMatch[2] : (pageSet || "");
+      const meta = getScriptMeta(script);
+      const photoId = meta.startHref ? meta.startHref.photoId : (meta.startSub ? meta.startSub.photoId : (meta.startSingle ? meta.startSingle.photoId : ""));
+      const rawMatchedSet = meta.startHref ? meta.startHref.set : (pageSet || "");
       const keepMatchedSet = rawMatchedSet && (!rawMatchedSet.startsWith("a.") && !rawMatchedSet.startsWith("pb.") || allowPageAlbum);
       const set = keepMatchedSet ? rawMatchedSet : "";
       if (photoId) {
@@ -491,6 +575,15 @@
   };
   const findScriptViewerPhoto = (expectedId) => {
     if (!/^[0-9]{5,30}$/.test(expectedId || "")) return null;
+    const scriptCount = document.scripts.length;
+    const lastScriptLen = scriptCount > 0 ? (document.scripts[scriptCount - 1].textContent || "").length : 0;
+    if (
+      cachedViewerPhoto
+      && cachedViewerPhoto.id === expectedId
+      && (cachedViewerPhoto.result || (cachedViewerPhoto.scriptCount === scriptCount && cachedViewerPhoto.lastScriptLen === lastScriptLen))
+    ) {
+      return cachedViewerPhoto.result;
+    }
     const idRe = new RegExp(`"(?:id|photo_id|fbid)"\\s*:\\s*"${expectedId}"`, "g");
     for (const script of document.scripts) {
       const text = script.textContent || "";
@@ -506,11 +599,14 @@
           if (isCdn(decodedUrl)) {
             const fullUrl = cleanFbUrl(decodedUrl);
             const alts = fullUrl !== decodedUrl ? [decodedUrl] : [];
-            return {id: expectedId, url: fullUrl, width: Number(widthMatch ? widthMatch[1] : "1080") || 1080, alternates: alts};
+            const found = {id: expectedId, url: fullUrl, width: Number(widthMatch ? widthMatch[1] : "1080") || 1080, alternates: alts};
+            cachedViewerPhoto = { id: expectedId, scriptCount, lastScriptLen, result: found };
+            return found;
           }
         }
       }
     }
+    cachedViewerPhoto = { id: expectedId, scriptCount, lastScriptLen, result: null };
     return null;
   };
   const findCurrentViewerPhoto = () => {
@@ -595,12 +691,10 @@
       return nextUrl.href;
     }
     for (const script of document.scripts) {
-      const text = script.textContent || "";
-      if (!text.includes("nextMediaAfterNodeId")) continue;
-      const match = /"nextMediaAfterNodeId"\s*:\s*\{\s*"__typename"\s*:\s*"Photo"\s*,\s*"id"\s*:\s*"([0-9]{5,30})"/.exec(text);
-      if (match && match[1] && match[1] !== currentId && !scanned.has(match[1])) {
+      const nextId = getScriptMeta(script).nextMediaId;
+      if (nextId && nextId !== currentId && !scanned.has(nextId)) {
         const nextUrl = new URL("/photo/", location.href);
-        nextUrl.searchParams.set("fbid", match[1]);
+        nextUrl.searchParams.set("fbid", nextId);
         if (albumSet) nextUrl.searchParams.set("set", albumSet);
         return nextUrl.href;
       }
@@ -654,12 +748,10 @@
     if (/^[0-9]{5,30}$/.test(currentId)) {
       const albumSet = sessionStorage.getItem(albumSetKey) || new URL(location.href).searchParams.get("set") || findPostAlbumSet();
       for (const script of document.scripts) {
-        const text = script.textContent || "";
-        if (!text.includes("nextMediaAfterNodeId")) continue;
-        const match = /"nextMediaAfterNodeId"\s*:\s*\{\s*"__typename"\s*:\s*"Photo"\s*,\s*"id"\s*:\s*"([0-9]{5,30})"/.exec(text);
-        if (match && match[1] && match[1] !== currentId) {
+        const nextId = getScriptMeta(script).nextMediaId;
+        if (nextId && nextId !== currentId) {
           const nextUrl = new URL("/photo/", location.href);
-          nextUrl.searchParams.set("fbid", match[1]);
+          nextUrl.searchParams.set("fbid", nextId);
           if (albumSet) nextUrl.searchParams.set("set", albumSet);
           return nextUrl.href;
         }
@@ -956,7 +1048,13 @@
         previousCount = scanned.size;
         if (pending.length && awaitingSequence === 0) {
           awaitingSequence = ++nextSequence;
-          inFlightPayload = {kind:"photos",sequence:awaitingSequence,photos:pending.splice(0,1),title};
+          inFlightPayload = {
+            kind: "photos",
+            sequence: awaitingSequence,
+            photos: pending.splice(0, 1),
+            title,
+            ...(expectedCount ? { expectedCount } : {}),
+          };
           inFlightTicks = 0;
           send(inFlightPayload);
         }
@@ -1035,7 +1133,13 @@
       if (scanned.size) sessionStorage.setItem(scannedIdsKey, JSON.stringify(Array.from(scanned)));
       if (pending.length && awaitingSequence === 0) {
         awaitingSequence = ++nextSequence;
-        inFlightPayload = {kind:"photos",sequence:awaitingSequence,photos:pending.splice(0,2),title};
+        inFlightPayload = {
+          kind: "photos",
+          sequence: awaitingSequence,
+          photos: pending.splice(0,2),
+          title,
+          ...(expectedCount ? { expectedCount } : {}),
+        };
         inFlightTicks = 0;
         send(inFlightPayload);
       }
@@ -1096,6 +1200,30 @@
     setInterval(() => scheduleScan(100), 1000);
     scheduleScan(100);
   };
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", observe, {once:true});
-  else observe();
+  let observed = false;
+  let earlyScanTimer = 0;
+  const startObserve = () => {
+    if (observed) return;
+    observed = true;
+    if (earlyScanTimer) {
+      try { clearInterval(earlyScanTimer); } catch (_) {}
+      earlyScanTimer = 0;
+    }
+    observe();
+  };
+  if (document.readyState === "loading") {
+    if (location.pathname.toLowerCase().includes("/photo")) {
+      earlyScanTimer = setInterval(() => {
+        if (finished || observed) {
+          try { clearInterval(earlyScanTimer); } catch (_) {}
+          earlyScanTimer = 0;
+          return;
+        }
+        if (document.body) scan();
+      }, 80);
+    }
+    document.addEventListener("DOMContentLoaded", startObserve, {once:true});
+  } else {
+    startObserve();
+  }
 })();
