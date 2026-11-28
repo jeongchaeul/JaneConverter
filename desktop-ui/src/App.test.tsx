@@ -293,4 +293,65 @@ describe("Application shell", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("loads saved export and scratch folders even if runtimeInfo rejects and never overwrites them before hydration", async () => {
+    let resolveSettings!: (value: Awaited<ReturnType<typeof bridge.settingsGet>>) => void;
+    vi.spyOn(bridge, "settingsGet").mockImplementation(
+      () => new Promise((resolve) => { resolveSettings = resolve; })
+    );
+    vi.spyOn(bridge, "runtimeInfo").mockRejectedValue(new Error("probe failed"));
+    const saveSpy = vi.spyOn(bridge, "settingsSave").mockResolvedValue();
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => { root.render(<App />); });
+
+    // Trigger a category change via source input BEFORE settingsGet resolves
+    const sourceInput = container.querySelector<HTMLInputElement>('input[aria-label="Source media URL or local path"]');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(sourceInput, "C:\\photos\\sample.png");
+      sourceInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // Must NOT save defaultSettings ("converted" / "") over disk while settingsGet is still pending
+    expect(saveSpy).not.toHaveBeenCalled();
+
+    // Now resolve real saved settings; pending category patch merges onto saved outputDir & tempDir
+    await act(async () => {
+      resolveSettings({
+        outputDir: "Z:\\My Drive\\Desktop Main\\JaneConverter Library Outputs",
+        fetchedDir: "fetched",
+        tempDir: "G:\\temp jc",
+        category: "Music",
+        format: "mp3",
+        bitrate: "320k",
+        sampleRate: 48000,
+        resolution: "original",
+        normalize: false,
+        useGpu: false,
+        saveCover: true,
+        saveMetadata: true,
+        retries: 2,
+      });
+      await Promise.resolve();
+    });
+
+    const exportInput = container.querySelector<HTMLInputElement>('input[aria-label="Export folder"]');
+    const tempInput = container.querySelector<HTMLInputElement>('input[aria-label="Temporary scratch folder"]');
+    expect(exportInput?.value).toBe("Z:\\My Drive\\Desktop Main\\JaneConverter Library Outputs");
+    expect(tempInput?.value).toBe("G:\\temp jc");
+    expect(saveSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outputDir: "Z:\\My Drive\\Desktop Main\\JaneConverter Library Outputs",
+        tempDir: "G:\\temp jc",
+        category: "Image",
+      })
+    );
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });

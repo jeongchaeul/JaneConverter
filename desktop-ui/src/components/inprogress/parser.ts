@@ -10,7 +10,7 @@ export const READY_RE = /Ready:\s*(?:(\d+)\.\s*)?(.*)/i;
 export const ERROR_RE = /\[\!\]\s*Error converting track\s*#(\d+)\s*'(.*?)':\s*(.*)/i;
 export const REQUEUE_RE = /\[\*\]\s*Requeuing\s*(?:track\s*)?#(\d+)/i;
 export const PLAYLIST_HEADER_RE = /(?:Playlist:\s*(.*)|\[\*\]\s*Found\s*(\d+)\s*tracks\s*in\s*'(.*?)')/i;
-export const PHOTO_ALBUM_HEADER_RE = /Found\s*(\d+)\s*photos\s*in\s*['"]?(.*?)['"]?\.\s*Starting/i;
+export const PHOTO_ALBUM_HEADER_RE = /Found\s*(\d+)\s*photos?\s*in\s*(?:['"](.+?)['"](?=\.\s*Starting|$)|([^\r\n]+?)(?=\.\s*Starting))/i;
 export const PHOTO_PROGRESS_RE = /Downloading\s*(?:Facebook|Instagram|Pinterest|social)?\s*photo\s*(\d+)\s*of\s*(\d+)/i;
 export const PHOTO_COMPLETED_RE = /(?:Downloaded|Saved)\s*(?:all\s*)?(\d+)\s*(?:public\s*)?(?:Facebook|Instagram|Pinterest)?\s*photo/i;
 export const COVER_ART_RE = /\[\*\]\s*Playlist Cover Art:\s*(.*)/i;
@@ -444,11 +444,12 @@ export function parseConversionEvents(
       }
     }
 
-    // 4. Detect Facebook or Social Photo Album header: Found <n> photos in '<title>'. Starting download...
+    // 4. Detect Facebook or Social Photo Album header: Found <n> photos in '<title>'[. Starting download...]
     const photoHeaderMatch = PHOTO_ALBUM_HEADER_RE.exec(rawMsg);
     if (photoHeaderMatch) {
       detectedTotal = parseInt(photoHeaderMatch[1], 10);
-      if (photoHeaderMatch[2]) detectedTitle = photoHeaderMatch[2].trim();
+      const parsedTitle = (photoHeaderMatch[2] || photoHeaderMatch[3] || "").trim();
+      if (parsedTitle) detectedTitle = parsedTitle;
       detectedKind = "image";
     }
 

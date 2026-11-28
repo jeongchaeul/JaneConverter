@@ -1338,4 +1338,63 @@ describe("ConsoleView", () => {
     });
     container.remove();
   });
+
+  it("extracts Facebook album title without '. Starting', keeps Overall Progress pinned on long URLs, and syncs 100% progress bar width", async () => {
+    const longUrl = "https://web.facebook.com/permalink.php?story_fbid=pfbid031hr6kG78XnBLJtTdy9fzqUTyj7Ab6BE3NGV8Qty2dQWQgb2qW2ZVgKXk1DTpZhdwl&id=615883643101234";
+    const parsedFromHeader = parseConversionEvents(
+      [
+        { jobId: "fb-10", kind: "started", message: "[*] Starting conversion..." },
+        { jobId: "fb-10", kind: "log", message: "[*] Found 10 photos in 'Facebook Post'" },
+        { jobId: "fb-10", kind: "log", message: "[+] Saved photo: 1. Facebook Post_001.png" },
+      ],
+      "Image",
+      "png",
+      longUrl,
+      "fb-10",
+      true
+    );
+    expect(parsedFromHeader.summary.title).toBe("Facebook Post");
+    expect(parsedFromHeader.summary.total).toBe(10);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    // Even when title is still a long unbroken URL and live progress lags at 0.95 while all items are ready,
+    // the header row stays single-line (no flex-wrap) with Overall Progress shrink-0 and bar width at 100%.
+    await act(async () => {
+      root.render(
+        <ConsoleView
+          events={[
+            { jobId: "fb-live", kind: "log", message: "[+] Saved photo: 1. Facebook Post_001.png" },
+            { jobId: "fb-live", kind: "log", message: "[+] Saved photo: 2. Facebook Post_002.png" },
+          ]}
+          jobId="fb-live"
+          running={true}
+          progress={0.95}
+          sourceTitle={longUrl}
+          initialMode="in_progress"
+          onClear={vi.fn()}
+          onStatus={vi.fn()}
+        />
+      );
+    });
+
+    const heading = container.querySelector("h2");
+    expect(heading?.textContent).toBe(longUrl);
+    expect(heading?.getAttribute("title")).toBe(longUrl);
+
+    const overallRow = heading?.closest(".panel")?.firstElementChild;
+    expect(overallRow?.className).not.toContain("flex-wrap");
+    expect(overallRow?.lastElementChild?.className).toContain("shrink-0");
+
+    expect(container.textContent).toContain("100%");
+    const barFill = container.querySelector<HTMLDivElement>(".h-2.w-full > div");
+    expect(barFill?.style.width).toBe("100%");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
 });

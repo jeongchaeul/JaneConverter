@@ -149,6 +149,8 @@ export default function App() {
   const [settings, setSettings] = useState<ConverterSettings>(defaultSettings);
   const settingsRef = useRef<ConverterSettings>(defaultSettings);
   settingsRef.current = settings;
+  const settingsLoadedRef = useRef(false);
+  const pendingSettingsPatchRef = useRef<Partial<ConverterSettings> | null>(null);
   const [events, setEvents] = useState<ConverterEvent[]>([]);
   const [rawEvents, setRawEvents] = useState<ConverterEvent[]>([]);
   const [access, setAccess] = useState<AccessStatus>({ active: false, link: "", browser: "", source: null, bridgeConnected: false });
@@ -464,11 +466,27 @@ export default function App() {
 
   useEffect(() => {
     let mounted = true;
-    void Promise.all([bridge.runtimeInfo(), bridge.settingsGet(), bridge.accessStatus()]).then(([nextRuntime, nextSettings, nextAccess]) => {
+    void bridge.settingsGet().then((nextSettings) => {
       if (!mounted) return;
-      setRuntime(nextRuntime);
-      setSettings(nextSettings);
-      setAccess(nextAccess);
+      settingsLoadedRef.current = true;
+      const pendingPatch = pendingSettingsPatchRef.current;
+      pendingSettingsPatchRef.current = null;
+      const merged = pendingPatch ? { ...nextSettings, ...pendingPatch } : nextSettings;
+      settingsRef.current = merged;
+      setSettings(merged);
+      if (pendingPatch) {
+        void bridge.settingsSave(merged).catch((error) => errorMessage(error instanceof Error ? error.message : String(error)));
+      }
+    }).catch((error) => {
+      if (mounted) errorMessage(error instanceof Error ? error.message : String(error));
+    });
+    void bridge.runtimeInfo().then((nextRuntime) => {
+      if (mounted) setRuntime(nextRuntime);
+    }).catch((error) => {
+      if (mounted) errorMessage(error instanceof Error ? error.message : String(error));
+    });
+    void bridge.accessStatus().then((nextAccess) => {
+      if (mounted) setAccess(nextAccess);
     }).catch((error) => {
       if (mounted) errorMessage(error instanceof Error ? error.message : String(error));
     });
@@ -753,6 +771,19 @@ export default function App() {
   }
 
   function updateSettings(next: ConverterSettings) {
+    if (!settingsLoadedRef.current) {
+      const prev = settingsRef.current;
+      const patch: Partial<ConverterSettings> = {};
+      for (const key of Object.keys(next) as Array<keyof ConverterSettings>) {
+        if (next[key] !== prev[key]) {
+          (patch as Record<string, unknown>)[key] = next[key];
+        }
+      }
+      pendingSettingsPatchRef.current = { ...(pendingSettingsPatchRef.current || {}), ...patch };
+      settingsRef.current = next;
+      setSettings(next);
+      return;
+    }
     settingsRef.current = next;
     setSettings(next);
     void bridge.settingsSave(next).catch((error) => errorMessage(error instanceof Error ? error.message : String(error)));

@@ -729,7 +729,11 @@ export function InProgressView({
     setContextMenu({ x, y, item });
   }
 
-  const effectiveProgress = isViewingLive && progress > 0 ? progress : summary.overallProgress;
+  const rawProgress = isViewingLive && progress > 0
+    ? Math.max(progress, summary.overallProgress)
+    : summary.overallProgress;
+  const effectiveProgress = Math.min(1, Math.max(0, rawProgress));
+  const effectivePercent = Math.round(effectiveProgress * 100);
   const batchCover = getBatchCover();
   const hasOutputDir = Boolean(summary.outputDir || outputDir);
 
@@ -838,8 +842,8 @@ export function InProgressView({
 
       {/* 2. Hero Batch Card with Master Progress */}
       <div className="panel p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-4 min-w-0">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex min-w-0 flex-1 items-center gap-4">
             {batchCover && (
               <div className="size-14 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]">
                 <img
@@ -851,8 +855,11 @@ export function InProgressView({
                 />
               </div>
             )}
-            <div className="min-w-0">
-              <h2 className="truncate text-base font-semibold text-white tracking-tight">
+            <div className="min-w-0 flex-1">
+              <h2
+                className="truncate text-base font-semibold text-white tracking-tight"
+                title={summary.title || "Converting Media"}
+              >
                 {summary.title || "Converting Media"}
               </h2>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
@@ -911,9 +918,9 @@ export function InProgressView({
             </div>
           </div>
 
-          <div className="text-right">
+          <div className="shrink-0 text-right">
             <div className="font-mono text-xl font-bold text-white tracking-tight">
-              {Math.round(effectiveProgress * 100)}%
+              {effectivePercent}%
             </div>
             <div className="text-[10px] uppercase tracking-wider text-zinc-500">Overall Progress</div>
           </div>
@@ -922,9 +929,9 @@ export function InProgressView({
         {/* Master Progress Bar */}
         <div className="relative mt-4 h-2 w-full overflow-hidden rounded-full bg-white/[0.06]">
           <div
-            className="h-full rounded-full transition-all duration-300"
+            className="h-full rounded-full transition-[width] duration-200 ease-out"
             style={{
-              width: `${Math.round(effectiveProgress * 100)}%`,
+              width: `${effectivePercent}%`,
               backgroundColor: "var(--accent-color, #c52b68)",
               boxShadow: "0 0 16px var(--accent-glow, rgba(197,43,104,.6))",
             }}

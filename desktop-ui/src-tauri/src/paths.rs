@@ -268,6 +268,18 @@ pub fn settings_path() -> PathBuf {
     data_root().join("native.settings")
 }
 
+fn settings_backup_path() -> Option<PathBuf> {
+    if cfg!(test) || std::env::var_os("JANECONVERTER_DATA_DIR").is_some() {
+        return None;
+    }
+    let backup = user_data_root().join("native.settings.backup");
+    if backup == settings_path() {
+        None
+    } else {
+        Some(backup)
+    }
+}
+
 pub fn default_output_dir() -> PathBuf {
     data_root().join("converted")
 }
@@ -437,16 +449,35 @@ pub fn packaged_engine(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-pub fn read_kv() -> HashMap<String, String> {
+fn parse_kv_str(content: &str) -> HashMap<String, String> {
     let mut values = HashMap::new();
-    if let Ok(content) = fs::read_to_string(settings_path()) {
-        for line in content.lines() {
-            if let Some((key, value)) = line.split_once('=') {
-                values.insert(key.trim().to_owned(), value.trim().to_owned());
+    for line in content.lines() {
+        if let Some((key, value)) = line.split_once('=') {
+            let trimmed_key = key.trim();
+            if !trimmed_key.is_empty() {
+                values.insert(trimmed_key.to_owned(), value.trim().to_owned());
             }
         }
     }
     values
+}
+
+pub fn read_kv() -> HashMap<String, String> {
+    if let Ok(content) = fs::read_to_string(settings_path()) {
+        let values = parse_kv_str(&content);
+        if !values.is_empty() {
+            return values;
+        }
+    }
+    if let Some(backup) = settings_backup_path() {
+        if let Ok(content) = fs::read_to_string(backup) {
+            let values = parse_kv_str(&content);
+            if !values.is_empty() {
+                return values;
+            }
+        }
+    }
+    HashMap::new()
 }
 
 fn parse_bool(values: &HashMap<String, String>, key: &str, default: bool) -> bool {
@@ -576,8 +607,30 @@ pub fn settings_get_internal() -> ConverterSettings {
     }
 }
 
+fn write_atomic(path: &Path, body: &str) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp_name = format!(
+        ".{}.tmp.{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("native.settings"),
+        std::process::id()
+    );
+    let tmp_path = path.with_file_name(tmp_name);
+    if fs::write(&tmp_path, body).is_ok() {
+        if fs::rename(&tmp_path, path).is_ok() {
+            return Ok(());
+        }
+        let _ = fs::remove_file(&tmp_path);
+    }
+    fs::write(path, body)
+}
+
 pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
-    if let Some(parent) = settings_path().parent() {
+    let target = settings_path();
+    if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)?;
     }
     let clean = |v: &str| v.replace(['\r', '\n'], "");
@@ -696,7 +749,11 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
     .iter()
     .map(|(key, value)| format!("{key}={value}\n"))
     .collect::<String>();
-    fs::write(settings_path(), body)
+    write_atomic(&target, &body)?;
+    if let Some(backup) = settings_backup_path() {
+        let _ = write_atomic(&backup, &body);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -765,5 +822,27 @@ mod tests {
         assert_eq!(candidates[1], dir.join("runtime"));
         assert_eq!(candidates[2], dir.join("resources"));
         assert_eq!(candidates[3], dir.to_path_buf());
+    }
+
+    #[test]
+    fn write_settings_preserves_custom_export_and_temp_paths_atomically() {
+        let content = "output_dir=Z:\\My Drive\\Desktop Main\\JaneConverter Library Outputs\ntemp_dir=G:\\temp jc\n";
+        let parsed = parse_kv_str(content);
+        assert_eq!(
+            parsed.get("output_dir").map(String::as_str),
+            Some("Z:\\My Drive\\Desktop Main\\JaneConverter Library Outputs")
+        );
+        assert_eq!(
+            parsed.get("temp_dir").map(String::as_str),
+            Some("G:\\temp jc")
+        );
+
+        let temp_root = std::env::temp_dir().join(format!("janec-paths-test-{}", now_stamp()));
+        let target = temp_root.join("native.settings");
+        write_atomic(&target, content).expect("atomic write should succeed");
+        let round_tripped =
+            parse_kv_str(&fs::read_to_string(&target).expect("settings file should be readable"));
+        assert_eq!(round_tripped, parsed);
+        let _ = fs::remove_dir_all(&temp_root);
     }
 }
